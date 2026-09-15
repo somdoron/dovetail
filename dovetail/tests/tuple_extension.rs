@@ -285,7 +285,8 @@ type Invalid = Int32 ~ () => Bool
 
 #[test]
 fn extension_in_generic_record_field_uses_erased_storage() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 record Extended<T, U> = value: T ~ U
 function make<T, U>(left: T, right: U): Extended<T, U> =
@@ -296,5 +297,7 @@ function main(): Unit =
     assert triple.value._0 == 1
     assert triple.value._1
     assert triple.value._2 == "x"
-"#).expect("extension in generic record field");
+"#,
+    )
+    .expect("extension in generic record field");
 }

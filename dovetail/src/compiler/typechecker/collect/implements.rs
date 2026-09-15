@@ -5,7 +5,7 @@ use crate::parser::ast::{Expr, ImplementDecl};
 
 use crate::common::types::Fqn;
 use crate::typechecker::registry::{
-    ImplBlockSignature, ImplMethodSignature, GenericFunctionDef, TraitSignature,
+    GenericFunctionDef, ImplBlockSignature, ImplMethodSignature, TraitSignature,
 };
 use crate::typechecker::types::{NamedTraitBound, TraitBound, TraitBounds, Type};
 
@@ -52,7 +52,10 @@ impl Collector<'_> {
         };
 
         if crate::typechecker::types::is_tuple_constraint(&trait_fqn) {
-            self.diagnostics.error(impl_decl.span.clone(), "Tuple is a built-in structural constraint and cannot be implemented");
+            self.diagnostics.error(
+                impl_decl.span.clone(),
+                "Tuple is a built-in structural constraint and cannot be implemented",
+            );
             return;
         }
 
@@ -122,7 +125,10 @@ impl Collector<'_> {
                 continue;
             }
 
-            let trait_assoc = trait_sig.associated_types.iter().find(|a| a.name == assoc_def.name.value);
+            let trait_assoc = trait_sig
+                .associated_types
+                .iter()
+                .find(|a| a.name == assoc_def.name.value);
             let trait_assoc = match trait_assoc {
                 Some(a) => a,
                 None => {
@@ -152,7 +158,9 @@ impl Collector<'_> {
             }
 
             // Validate GAT type param names match
-            let gat_type_params: Vec<TypeParamName> = assoc_def.type_params.iter()
+            let gat_type_params: Vec<TypeParamName> = assoc_def
+                .type_params
+                .iter()
                 .map(|tp| TypeParamName(tp.value.clone()))
                 .collect();
 
@@ -184,15 +192,15 @@ impl Collector<'_> {
             } else {
                 let mut gat_resolve_map = BTreeMap::new();
                 for tp in &gat_type_params {
-                    gat_resolve_map.insert(
-                        tp.0.clone(),
-                        Type::TypeVariable(tp.clone(), vec![]),
-                    );
+                    gat_resolve_map.insert(tp.0.clone(), Type::TypeVariable(tp.clone(), vec![]));
                 }
                 self.resolve_type_expr_with_type_params(&assoc_def.type_expr, &gat_resolve_map)
             };
 
-            associated_type_defs.insert(assoc_def.name.value.clone(), (gat_type_params, resolved_type));
+            associated_type_defs.insert(
+                assoc_def.name.value.clone(),
+                (gat_type_params, resolved_type),
+            );
         }
 
         // Check completeness: every trait associated type must be defined
@@ -263,8 +271,12 @@ impl Collector<'_> {
             // distinct parameter lists (§1.2). Prefer the entry whose param
             // count matches; fall back to the first same-name entry so the
             // existing signature-mismatch diagnostics still fire.
-            let parameter_names: Vec<_> = impl_decl.type_params.iter().chain(&method.type_params)
-                .map(|name| TypeParamName(name.value.clone())).collect();
+            let parameter_names: Vec<_> = impl_decl
+                .type_params
+                .iter()
+                .chain(&method.type_params)
+                .map(|name| TypeParamName(name.value.clone()))
+                .collect();
             let match_scope = super::implementation_matching::MethodScope {
                 parameters: &parameter_names,
                 enclosing_bounds: &TraitBounds::empty(),
@@ -277,8 +289,11 @@ impl Collector<'_> {
                 .filter(|((name, _, _, _, _), _)| *name == method.name.value)
                 .find(|(_, contract)| {
                     self.implementation_matches_method(
-                        method, &contract.params, &contract.type_params,
-                        &contract.trait_bounds, &match_scope,
+                        method,
+                        &contract.params,
+                        &contract.type_params,
+                        &contract.trait_bounds,
+                        &match_scope,
                     )
                 })
                 .or_else(|| {
@@ -288,20 +303,28 @@ impl Collector<'_> {
                         .find(|((name, _, _, _, _), _)| *name == method.name.value)
                 });
 
-            let ((trait_name, trait_method_type_params, trait_params, trait_return_type, trait_method_bounds), original_contract) =
-                match trait_method {
-                    Some(m) => m,
-                    None => {
-                        self.diagnostics.error(
-                            method.name.span.clone(),
-                            format!(
-                                "method '{}' is not a member of trait '{}'",
-                                method.name.value, impl_decl.trait_name.value
-                            ),
-                        );
-                        continue;
-                    }
-                };
+            let (
+                (
+                    trait_name,
+                    trait_method_type_params,
+                    trait_params,
+                    trait_return_type,
+                    trait_method_bounds,
+                ),
+                original_contract,
+            ) = match trait_method {
+                Some(m) => m,
+                None => {
+                    self.diagnostics.error(
+                        method.name.span.clone(),
+                        format!(
+                            "method '{}' is not a member of trait '{}'",
+                            method.name.value, impl_decl.trait_name.value
+                        ),
+                    );
+                    continue;
+                }
+            };
 
             matched_trait_methods.insert(member_signature_key(trait_name, trait_params));
 
@@ -330,12 +353,21 @@ impl Collector<'_> {
                 }
 
                 // Resolve impl method trait bounds from where clause
-                let contract_bounds = expand_trait_bound_gats(&rename_method_bounds(
-                    trait_method_bounds, trait_method_type_params, &impl_method_type_params, &trait_subst,
-                ), &gat_defs);
-                let contract_scope = Type::type_param_map(&impl_method_type_params, &contract_bounds);
+                let contract_bounds = expand_trait_bound_gats(
+                    &rename_method_bounds(
+                        trait_method_bounds,
+                        trait_method_type_params,
+                        &impl_method_type_params,
+                        &trait_subst,
+                    ),
+                    &gat_defs,
+                );
+                let contract_scope =
+                    Type::type_param_map(&impl_method_type_params, &contract_bounds);
                 let mut impl_method_trait_bounds = self.resolve_trait_bounds_in_scope(
-                    &method.where_clause, &impl_method_type_params, &contract_scope,
+                    &method.where_clause,
+                    &impl_method_type_params,
+                    &contract_scope,
                 );
                 impl_method_trait_bounds.merge(&contract_bounds);
 
@@ -357,10 +389,9 @@ impl Collector<'_> {
                     .collect();
 
                 let return_type = match &method.return_type {
-                    Some(type_expr) => self.resolve_type_expr_with_type_params(
-                        type_expr,
-                        &method_type_params_map,
-                    ),
+                    Some(type_expr) => {
+                        self.resolve_type_expr_with_type_params(type_expr, &method_type_params_map)
+                    }
                     None => Type::Unit,
                 };
 
@@ -381,15 +412,26 @@ impl Collector<'_> {
 
                 // Substitute both scopes together to preserve names in enclosing arguments.
                 let mut contract_substitution = trait_subst.clone();
-                contract_substitution.extend(trait_method_type_params.iter().cloned()
-                    .zip(impl_method_type_params.iter().cloned().map(|name| Type::TypeVariable(name, vec![]))));
+                contract_substitution.extend(
+                    trait_method_type_params.iter().cloned().zip(
+                        impl_method_type_params
+                            .iter()
+                            .cloned()
+                            .map(|name| Type::TypeVariable(name, vec![])),
+                    ),
+                );
 
                 // Validate parameter types (rename trait type params for comparison)
                 let mut params_ok = true;
-                for (i, ((_, impl_ty), (_, trait_ty))) in
-                    params.iter().zip(original_contract.params.iter()).enumerate()
+                for (i, ((_, impl_ty), (_, trait_ty))) in params
+                    .iter()
+                    .zip(original_contract.params.iter())
+                    .enumerate()
                 {
-                    let renamed_trait_ty = expand_gats(&substitute_trait_type_params(trait_ty, &contract_substitution), &gat_defs);
+                    let renamed_trait_ty = expand_gats(
+                        &substitute_trait_type_params(trait_ty, &contract_substitution),
+                        &gat_defs,
+                    );
                     if !crate::typechecker::subtyping::identical(impl_ty, &renamed_trait_ty) {
                         self.diagnostics.error(
                             method.params[i].span.clone(),
@@ -406,7 +448,13 @@ impl Collector<'_> {
                 }
 
                 // Validate return type
-                let renamed_trait_return = expand_gats(&substitute_trait_type_params(&original_contract.return_type, &contract_substitution), &gat_defs);
+                let renamed_trait_return = expand_gats(
+                    &substitute_trait_type_params(
+                        &original_contract.return_type,
+                        &contract_substitution,
+                    ),
+                    &gat_defs,
+                );
                 if !crate::typechecker::subtyping::identical(&return_type, &renamed_trait_return) {
                     let span = method
                         .return_type
@@ -429,7 +477,7 @@ impl Collector<'_> {
 
                 collected_methods.push(ImplMethodSignature {
                     dispatch_name: trait_sig.method_dispatch_name(original_contract),
-                name: SymbolName(method.name.value.clone()),
+                    name: SymbolName(method.name.value.clone()),
                     visibility: method.visibility,
                     method_type_params: impl_method_type_params.clone(),
                     params: params.clone(),
@@ -553,7 +601,7 @@ impl Collector<'_> {
 
                 collected_methods.push(ImplMethodSignature {
                     dispatch_name: trait_sig.method_dispatch_name(original_contract),
-                name: SymbolName(method.name.value.clone()),
+                    name: SymbolName(method.name.value.clone()),
                     visibility: method.visibility,
                     method_type_params: vec![],
                     params,
@@ -716,7 +764,10 @@ impl Collector<'_> {
                         is_async: false,
                         is_intrinsic: false,
                         is_property: false,
-                        trait_bounds: expand_trait_bound_gats(&substitute_trait_bounds(&trait_method_sig.trait_bounds, &trait_subst), &gat_defs),
+                        trait_bounds: expand_trait_bound_gats(
+                            &substitute_trait_bounds(&trait_method_sig.trait_bounds, &trait_subst),
+                            &gat_defs,
+                        ),
                         is_default: true,
                     });
                     continue;
@@ -733,8 +784,9 @@ impl Collector<'_> {
 
         // 5b. Check completeness: all trait properties must be implemented
         // (same default escape hatch).
-        for ((trait_prop_name, p_params, p_return), trait_prop_sig) in
-            substituted_properties.iter().zip(trait_sig.properties.iter())
+        for ((trait_prop_name, p_params, p_return), trait_prop_sig) in substituted_properties
+            .iter()
+            .zip(trait_sig.properties.iter())
         {
             if !matched_trait_properties.contains(trait_prop_name) {
                 if trait_prop_sig.default_source.is_some() {
@@ -768,12 +820,16 @@ impl Collector<'_> {
         // duplicates only (same full for-type): sibling instantiations are
         // legal, and generic-vs-concrete overlap is reported by the
         // coherence rule with both locations instead.
-        let merged_has_dup = self
-            .dependency_registry
-            .has_exact_trait_impl(&trait_fqn, &for_type, &resolved_trait_type_args);
-        let pkg_has_dup = self
-            .package_registry
-            .has_exact_trait_impl(&trait_fqn, &for_type, &resolved_trait_type_args);
+        let merged_has_dup = self.dependency_registry.has_exact_trait_impl(
+            &trait_fqn,
+            &for_type,
+            &resolved_trait_type_args,
+        );
+        let pkg_has_dup = self.package_registry.has_exact_trait_impl(
+            &trait_fqn,
+            &for_type,
+            &resolved_trait_type_args,
+        );
 
         if merged_has_dup || pkg_has_dup {
             self.diagnostics.error(
@@ -816,9 +872,13 @@ impl Collector<'_> {
         let type_params_map = Type::type_param_map(&type_params, &impl_trait_bounds);
 
         // 2. Resolve for_type with type params in scope
-        let for_type = self.resolve_type_expr_with_type_params(&impl_decl.for_type, &type_params_map);
+        let for_type =
+            self.resolve_type_expr_with_type_params(&impl_decl.for_type, &type_params_map);
         if for_type.contains_tuple_extension() && !for_type.is_recursive_tuple_head(&type_params) {
-            self.diagnostics.error(impl_decl.for_type.span(), "symbolic tuple extension implementation heads are not supported yet".to_string());
+            self.diagnostics.error(
+                impl_decl.for_type.span(),
+                "symbolic tuple extension implementation heads are not supported yet".to_string(),
+            );
             return;
         }
         if for_type.is_error() {
@@ -852,7 +912,10 @@ impl Collector<'_> {
         };
 
         if crate::typechecker::types::is_tuple_constraint(&trait_fqn) {
-            self.diagnostics.error(impl_decl.span.clone(), "Tuple is a built-in structural constraint and cannot be implemented");
+            self.diagnostics.error(
+                impl_decl.span.clone(),
+                "Tuple is a built-in structural constraint and cannot be implemented",
+            );
             return;
         }
 
@@ -896,7 +959,10 @@ impl Collector<'_> {
             .iter()
             .map(|te| self.resolve_type_expr_with_type_params(te, &type_params_map))
             .collect();
-        if resolved_trait_type_args.iter().any(Type::contains_tuple_extension) {
+        if resolved_trait_type_args
+            .iter()
+            .any(Type::contains_tuple_extension)
+        {
             self.diagnostics.error(
                 impl_decl.trait_name.span.clone(),
                 "symbolic tuple extension implementation heads are not supported yet (including trait arguments)".to_string(),
@@ -929,7 +995,10 @@ impl Collector<'_> {
                 continue;
             }
 
-            let trait_assoc = trait_sig.associated_types.iter().find(|a| a.name == assoc_def.name.value);
+            let trait_assoc = trait_sig
+                .associated_types
+                .iter()
+                .find(|a| a.name == assoc_def.name.value);
             let trait_assoc = match trait_assoc {
                 Some(a) => a,
                 None => {
@@ -959,7 +1028,9 @@ impl Collector<'_> {
             }
 
             // Validate GAT type param names match
-            let gat_type_params: Vec<TypeParamName> = assoc_def.type_params.iter()
+            let gat_type_params: Vec<TypeParamName> = assoc_def
+                .type_params
+                .iter()
                 .map(|tp| TypeParamName(tp.value.clone()))
                 .collect();
 
@@ -992,15 +1063,15 @@ impl Collector<'_> {
             } else {
                 let mut gat_resolve_map = type_params_map.clone();
                 for tp in &gat_type_params {
-                    gat_resolve_map.insert(
-                        tp.0.clone(),
-                        Type::TypeVariable(tp.clone(), vec![]),
-                    );
+                    gat_resolve_map.insert(tp.0.clone(), Type::TypeVariable(tp.clone(), vec![]));
                 }
                 self.resolve_type_expr_with_type_params(&assoc_def.type_expr, &gat_resolve_map)
             };
 
-            associated_type_defs.insert(assoc_def.name.value.clone(), (gat_type_params, resolved_type));
+            associated_type_defs.insert(
+                assoc_def.name.value.clone(),
+                (gat_type_params, resolved_type),
+            );
         }
 
         // Check completeness: every trait associated type must be defined
@@ -1088,8 +1159,12 @@ impl Collector<'_> {
             // distinct parameter lists (§1.2). Prefer the entry whose param
             // count matches; fall back to the first same-name entry so the
             // existing signature-mismatch diagnostics still fire.
-            let parameter_names: Vec<_> = impl_decl.type_params.iter().chain(&method.type_params)
-                .map(|name| TypeParamName(name.value.clone())).collect();
+            let parameter_names: Vec<_> = impl_decl
+                .type_params
+                .iter()
+                .chain(&method.type_params)
+                .map(|name| TypeParamName(name.value.clone()))
+                .collect();
             let match_scope = super::implementation_matching::MethodScope {
                 parameters: &parameter_names,
                 enclosing_bounds: &impl_trait_bounds,
@@ -1102,8 +1177,11 @@ impl Collector<'_> {
                 .filter(|((name, _, _, _, _), _)| *name == method.name.value)
                 .find(|(_, contract)| {
                     self.implementation_matches_method(
-                        method, &contract.params, &contract.type_params,
-                        &contract.trait_bounds, &match_scope,
+                        method,
+                        &contract.params,
+                        &contract.type_params,
+                        &contract.trait_bounds,
+                        &match_scope,
                     )
                 })
                 .or_else(|| {
@@ -1113,20 +1191,28 @@ impl Collector<'_> {
                         .find(|((name, _, _, _, _), _)| *name == method.name.value)
                 });
 
-            let ((trait_name, trait_method_type_params, trait_params, _trait_return_type, trait_method_bounds), original_contract) =
-                match trait_method {
-                    Some(m) => m,
-                    None => {
-                        self.diagnostics.error(
-                            method.name.span.clone(),
-                            format!(
-                                "method '{}' is not a member of trait '{}'",
-                                method.name.value, impl_decl.trait_name.value
-                            ),
-                        );
-                        continue;
-                    }
-                };
+            let (
+                (
+                    trait_name,
+                    trait_method_type_params,
+                    trait_params,
+                    _trait_return_type,
+                    trait_method_bounds,
+                ),
+                original_contract,
+            ) = match trait_method {
+                Some(m) => m,
+                None => {
+                    self.diagnostics.error(
+                        method.name.span.clone(),
+                        format!(
+                            "method '{}' is not a member of trait '{}'",
+                            method.name.value, impl_decl.trait_name.value
+                        ),
+                    );
+                    continue;
+                }
+            };
 
             matched_trait_methods.insert(member_signature_key(trait_name, trait_params));
 
@@ -1161,12 +1247,20 @@ impl Collector<'_> {
 
             // Resolve method-level trait bounds over combined params, merge with impl block bounds
             let mut contract_bounds = impl_trait_bounds.clone();
-            contract_bounds.merge(&expand_trait_bound_gats(&rename_method_bounds(
-                trait_method_bounds, trait_method_type_params, &method_type_params, &trait_subst,
-            ), &gat_defs));
+            contract_bounds.merge(&expand_trait_bound_gats(
+                &rename_method_bounds(
+                    trait_method_bounds,
+                    trait_method_type_params,
+                    &method_type_params,
+                    &trait_subst,
+                ),
+                &gat_defs,
+            ));
             let contract_scope = Type::type_param_map(&all_method_type_params, &contract_bounds);
             let mut method_trait_bounds = self.resolve_trait_bounds_in_scope(
-                &method.where_clause, &all_method_type_params, &contract_scope,
+                &method.where_clause,
+                &all_method_type_params,
+                &contract_scope,
             );
             method_trait_bounds.merge(&contract_bounds);
 
@@ -1211,15 +1305,26 @@ impl Collector<'_> {
 
             // Substitute both scopes together to preserve names in enclosing arguments.
             let mut contract_substitution = trait_subst.clone();
-            contract_substitution.extend(trait_method_type_params.iter().cloned()
-                .zip(method_type_params.iter().cloned().map(|name| Type::TypeVariable(name, vec![]))));
+            contract_substitution.extend(
+                trait_method_type_params.iter().cloned().zip(
+                    method_type_params
+                        .iter()
+                        .cloned()
+                        .map(|name| Type::TypeVariable(name, vec![])),
+                ),
+            );
 
             // Validate parameter types
             let mut params_ok = true;
-            for (i, ((_, impl_ty), (_, trait_ty))) in
-                params.iter().zip(original_contract.params.iter()).enumerate()
+            for (i, ((_, impl_ty), (_, trait_ty))) in params
+                .iter()
+                .zip(original_contract.params.iter())
+                .enumerate()
             {
-                let renamed_trait_ty = expand_gats(&substitute_trait_type_params(trait_ty, &contract_substitution), &gat_defs);
+                let renamed_trait_ty = expand_gats(
+                    &substitute_trait_type_params(trait_ty, &contract_substitution),
+                    &gat_defs,
+                );
                 if !crate::typechecker::subtyping::identical(impl_ty, &renamed_trait_ty) {
                     self.diagnostics.error(
                         method.params[i].span.clone(),
@@ -1236,7 +1341,13 @@ impl Collector<'_> {
             }
 
             // Validate return type
-            let renamed_trait_return = expand_gats(&substitute_trait_type_params(&original_contract.return_type, &contract_substitution), &gat_defs);
+            let renamed_trait_return = expand_gats(
+                &substitute_trait_type_params(
+                    &original_contract.return_type,
+                    &contract_substitution,
+                ),
+                &gat_defs,
+            );
             if !crate::typechecker::subtyping::identical(&return_type, &renamed_trait_return) {
                 let span = method
                     .return_type
@@ -1332,10 +1443,8 @@ impl Collector<'_> {
                 .params
                 .iter()
                 .map(|p| {
-                    let ty = self.resolve_type_expr_with_type_params(
-                        &p.type_annotation,
-                        &type_params_map,
-                    );
+                    let ty = self
+                        .resolve_type_expr_with_type_params(&p.type_annotation, &type_params_map);
                     (p.name.value.clone(), ty)
                 })
                 .collect();
@@ -1457,7 +1566,10 @@ impl Collector<'_> {
                         is_async: false,
                         is_intrinsic: false,
                         is_property: false,
-                        trait_bounds: expand_trait_bound_gats(&substitute_trait_bounds(&trait_method_sig.trait_bounds, &trait_subst), &gat_defs),
+                        trait_bounds: expand_trait_bound_gats(
+                            &substitute_trait_bounds(&trait_method_sig.trait_bounds, &trait_subst),
+                            &gat_defs,
+                        ),
                         is_default: true,
                     });
                     continue;
@@ -1474,8 +1586,9 @@ impl Collector<'_> {
 
         // 5b. Check completeness: all trait properties must be implemented
         // (same default escape hatch).
-        for ((trait_prop_name, p_params, p_return), trait_prop_sig) in
-            substituted_properties.iter().zip(trait_sig.properties.iter())
+        for ((trait_prop_name, p_params, p_return), trait_prop_sig) in substituted_properties
+            .iter()
+            .zip(trait_sig.properties.iter())
         {
             if !matched_trait_properties.contains(trait_prop_name) {
                 if trait_prop_sig.default_source.is_some() {
@@ -1524,16 +1637,27 @@ impl Collector<'_> {
     }
 
     /// Resolve a trait name to its FQN and signature using import-aware resolution.
-    pub(super) fn resolve_trait(&self, name: &str) -> Option<(crate::common::types::Fqn, TraitSignature)> {
+    pub(super) fn resolve_trait(
+        &self,
+        name: &str,
+    ) -> Option<(crate::common::types::Fqn, TraitSignature)> {
         let fqn = self.resolve_name_to_fqn(name, |fqn| {
-            self.package_registry.lookup_trait(fqn, &self.package_path).is_some()
-                || self.dependency_registry.lookup_trait(fqn, &self.package_path).is_some()
+            self.package_registry
+                .lookup_trait(fqn, &self.package_path)
+                .is_some()
+                || self
+                    .dependency_registry
+                    .lookup_trait(fqn, &self.package_path)
+                    .is_some()
         })?;
 
         let sig = self
             .package_registry
             .lookup_trait(&fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_trait(&fqn, &self.package_path))?;
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_trait(&fqn, &self.package_path)
+            })?;
 
         Some((fqn, sig.clone()))
     }
@@ -1555,11 +1679,7 @@ pub(super) fn substitute_self(ty: &Type, for_type: &Type) -> Type {
     match ty {
         Type::SelfType => for_type.clone(),
         Type::Array(elem) => Type::Array(Box::new(substitute_self(elem, for_type))),
-        Type::GenericRecord {
-            fqn,
-            type_args,
-            ..
-        } => {
+        Type::GenericRecord { fqn, type_args, .. } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, a)| (*v, substitute_self(a, for_type)))
@@ -1571,11 +1691,7 @@ pub(super) fn substitute_self(ty: &Type, for_type: &Type) -> Type {
                 type_args: new_type_args,
             }
         }
-        Type::GenericEnum {
-            fqn,
-            type_args,
-            ..
-        } => {
+        Type::GenericEnum { fqn, type_args, .. } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, a)| (*v, substitute_self(a, for_type)))
@@ -1587,19 +1703,36 @@ pub(super) fn substitute_self(ty: &Type, for_type: &Type) -> Type {
                 type_args: new_type_args,
             }
         }
-        Type::TupleExtend(left, right) => Type::tuple_extend(substitute_self(left, for_type), substitute_self(right, for_type)),
-        Type::AssociatedProjection(projection) => projection.map(|ty| substitute_self(ty, for_type)).into_type(),
-        Type::TupleProjection(receiver, kind) => Type::tuple_projection(substitute_self(receiver, for_type), *kind),
+        Type::TupleExtend(left, right) => Type::tuple_extend(
+            substitute_self(left, for_type),
+            substitute_self(right, for_type),
+        ),
+        Type::AssociatedProjection(projection) => projection
+            .map(|ty| substitute_self(ty, for_type))
+            .into_type(),
+        Type::TupleProjection(receiver, kind) => {
+            Type::tuple_projection(substitute_self(receiver, for_type), *kind)
+        }
         Type::Tuple(types, _) => {
             let new_types: Vec<Type> = types.iter().map(|t| substitute_self(t, for_type)).collect();
             let mn = crate::common::types::MangledName::for_tuple(&new_types);
             Type::Tuple(new_types, mn)
         }
         Type::TypeConstructor { name, type_args } => {
-            let new_args: Vec<Type> = type_args.iter().map(|t| substitute_self(t, for_type)).collect();
-            Type::TypeConstructor { name: name.clone(), type_args: new_args }
+            let new_args: Vec<Type> = type_args
+                .iter()
+                .map(|t| substitute_self(t, for_type))
+                .collect();
+            Type::TypeConstructor {
+                name: name.clone(),
+                type_args: new_args,
+            }
         }
-        Type::GenericNewtype { fqn, type_args, concrete_inner_type } => {
+        Type::GenericNewtype {
+            fqn,
+            type_args,
+            concrete_inner_type,
+        } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, a)| (*v, substitute_self(a, for_type)))
@@ -1612,7 +1745,10 @@ pub(super) fn substitute_self(ty: &Type, for_type: &Type) -> Type {
             }
         }
         Type::Function(params, ret) => {
-            let new_params: Vec<Type> = params.iter().map(|t| substitute_self(t, for_type)).collect();
+            let new_params: Vec<Type> = params
+                .iter()
+                .map(|t| substitute_self(t, for_type))
+                .collect();
             let new_ret = Box::new(substitute_self(ret, for_type));
             Type::Function(new_params, new_ret)
         }
@@ -1620,9 +1756,6 @@ pub(super) fn substitute_self(ty: &Type, for_type: &Type) -> Type {
         other => other.clone(),
     }
 }
-
-/// Replace trait-level type parameters with concrete types from the substitution map.
-/// Used when implementing a generic trait: `implement From<Int32> for MyRec` replaces T → Int32.
 
 /// Key identifying one member among same-name overloads created by `extends`
 /// flattening: the member name plus its rendered param types.
@@ -1633,12 +1766,17 @@ pub(super) fn member_signature_key(name: &str, params: &[(String, Type)]) -> (St
     )
 }
 
+/// Replace trait-level type parameters with concrete types from the substitution map.
+/// Used when implementing a generic trait: `implement From<Int32> for MyRec` replaces T → Int32.
 pub(crate) fn substitute_trait_type_params(
     ty: &Type,
     subst: &BTreeMap<TypeParamName, Type>,
 ) -> Type {
     match ty {
-        Type::SelfType => subst.get(&TypeParamName("Self".to_string())).cloned().unwrap_or(Type::SelfType),
+        Type::SelfType => subst
+            .get(&TypeParamName("Self".to_string()))
+            .cloned()
+            .unwrap_or(Type::SelfType),
         Type::TypeVariable(name, bounds) => {
             if let Some(concrete) = subst.get(name) {
                 concrete.clone()
@@ -1649,14 +1787,8 @@ pub(crate) fn substitute_trait_type_params(
         Type::GenericParam(name, bounds, id) => subst.get(name).cloned().unwrap_or_else(|| {
             Type::GenericParam(name.clone(), substitute_bound_types(bounds, subst), *id)
         }),
-        Type::Array(elem) => {
-            Type::Array(Box::new(substitute_trait_type_params(elem, subst)))
-        }
-        Type::GenericRecord {
-            fqn,
-            type_args,
-            ..
-        } => {
+        Type::Array(elem) => Type::Array(Box::new(substitute_trait_type_params(elem, subst))),
+        Type::GenericRecord { fqn, type_args, .. } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, substitute_trait_type_params(t, subst)))
@@ -1668,11 +1800,7 @@ pub(crate) fn substitute_trait_type_params(
                 type_args: new_type_args,
             }
         }
-        Type::GenericEnum {
-            fqn,
-            type_args,
-            ..
-        } => {
+        Type::GenericEnum { fqn, type_args, .. } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, substitute_trait_type_params(t, subst)))
@@ -1684,20 +1812,39 @@ pub(crate) fn substitute_trait_type_params(
                 type_args: new_type_args,
             }
         }
-        Type::TupleExtend(left, right) => Type::tuple_extend(substitute_trait_type_params(left, subst), substitute_trait_type_params(right, subst)),
-        Type::AssociatedProjection(projection) => projection.map(|ty| substitute_trait_type_params(ty, subst)).into_type(),
-        Type::TupleProjection(receiver, kind) => Type::tuple_projection(substitute_trait_type_params(receiver, subst), *kind),
+        Type::TupleExtend(left, right) => Type::tuple_extend(
+            substitute_trait_type_params(left, subst),
+            substitute_trait_type_params(right, subst),
+        ),
+        Type::AssociatedProjection(projection) => projection
+            .map(|ty| substitute_trait_type_params(ty, subst))
+            .into_type(),
+        Type::TupleProjection(receiver, kind) => {
+            Type::tuple_projection(substitute_trait_type_params(receiver, subst), *kind)
+        }
         Type::Tuple(types, _) => {
-            let new_types: Vec<Type> = types.iter().map(|t| substitute_trait_type_params(t, subst)).collect();
+            let new_types: Vec<Type> = types
+                .iter()
+                .map(|t| substitute_trait_type_params(t, subst))
+                .collect();
             let mn = crate::common::types::MangledName::for_tuple(&new_types);
             Type::Tuple(new_types, mn)
         }
         Type::TypeConstructor { name, type_args } => {
-            let new_args: Vec<Type> = type_args.iter().map(|t| substitute_trait_type_params(t, subst)).collect();
-            Type::TypeConstructor { name: name.clone(), type_args: new_args }
+            let new_args: Vec<Type> = type_args
+                .iter()
+                .map(|t| substitute_trait_type_params(t, subst))
+                .collect();
+            Type::TypeConstructor {
+                name: name.clone(),
+                type_args: new_args,
+            }
         }
         Type::Function(params, ret) => {
-            let new_params: Vec<Type> = params.iter().map(|t| substitute_trait_type_params(t, subst)).collect();
+            let new_params: Vec<Type> = params
+                .iter()
+                .map(|t| substitute_trait_type_params(t, subst))
+                .collect();
             let new_ret = Box::new(substitute_trait_type_params(ret, subst));
             Type::Function(new_params, new_ret)
         }
@@ -1731,8 +1878,15 @@ pub(crate) fn substitute_trait_type_params(
                 type_args: new_type_args,
             }
         }
-        Type::Newtype(fqn, inner) => Type::Newtype(fqn.clone(), Box::new(substitute_trait_type_params(inner, subst))),
-        Type::GenericNewtype { fqn, type_args, concrete_inner_type } => {
+        Type::Newtype(fqn, inner) => Type::Newtype(
+            fqn.clone(),
+            Box::new(substitute_trait_type_params(inner, subst)),
+        ),
+        Type::GenericNewtype {
+            fqn,
+            type_args,
+            concrete_inner_type,
+        } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, substitute_trait_type_params(t, subst)))
@@ -1759,18 +1913,30 @@ pub(crate) fn substitute_trait_bounds(
     result
 }
 
-fn substitute_bound_types(bounds: &[TraitBound], subst: &BTreeMap<TypeParamName, Type>) -> Vec<TraitBound> {
-    bounds.iter().map(|bound| match bound {
-        TraitBound::IsClass => TraitBound::IsClass,
-        TraitBound::Named(bound) => TraitBound::Named(NamedTraitBound {
-            trait_fqn: bound.trait_fqn.clone(),
-            kind: bound.kind.clone(),
-            type_args: bound.type_args.iter().map(|ty| substitute_trait_type_params(ty, subst)).collect(),
-            associated_types: bound.associated_types.iter().map(|(name, ty)| {
-                (name.clone(), substitute_trait_type_params(ty, subst))
-            }).collect(),
-        }),
-    }).collect()
+fn substitute_bound_types(
+    bounds: &[TraitBound],
+    subst: &BTreeMap<TypeParamName, Type>,
+) -> Vec<TraitBound> {
+    bounds
+        .iter()
+        .map(|bound| match bound {
+            TraitBound::IsClass => TraitBound::IsClass,
+            TraitBound::Named(bound) => TraitBound::Named(NamedTraitBound {
+                trait_fqn: bound.trait_fqn.clone(),
+                kind: bound.kind.clone(),
+                type_args: bound
+                    .type_args
+                    .iter()
+                    .map(|ty| substitute_trait_type_params(ty, subst))
+                    .collect(),
+                associated_types: bound
+                    .associated_types
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), substitute_trait_type_params(ty, subst)))
+                    .collect(),
+            }),
+        })
+        .collect()
 }
 
 /// Align method-bound keys and their referenced types by parameter position.
@@ -1783,13 +1949,22 @@ pub(crate) fn rename_method_bounds(
     // Substitute both scopes simultaneously so newly inserted enclosing arguments
     // cannot be captured by a method parameter with the same source name.
     let mut substitution = enclosing_substitution.clone();
-    substitution.extend(original.iter().cloned()
-        .zip(renamed.iter().cloned().map(|name| Type::TypeVariable(name, vec![]))));
+    substitution.extend(
+        original.iter().cloned().zip(
+            renamed
+                .iter()
+                .cloned()
+                .map(|name| Type::TypeVariable(name, vec![])),
+        ),
+    );
     let substituted = substitute_trait_bounds(bounds, &substitution);
     let mut result = TraitBounds::empty();
     for (name, bounds) in substituted.iter() {
-        let name = original.iter().position(|parameter| parameter == name)
-            .and_then(|index| renamed.get(index)).unwrap_or(name);
+        let name = original
+            .iter()
+            .position(|parameter| parameter == name)
+            .and_then(|index| renamed.get(index))
+            .unwrap_or(name);
         result.insert(name.clone(), bounds.clone());
     }
     result
@@ -1802,7 +1977,10 @@ pub(crate) fn expand_trait_bound_gats(
 ) -> TraitBounds {
     let mut result = TraitBounds::empty();
     for (parameter, requirements) in bounds.iter() {
-        result.insert(parameter.clone(), expand_bound_gats(requirements, definitions));
+        result.insert(
+            parameter.clone(),
+            expand_bound_gats(requirements, definitions),
+        );
     }
     result
 }
@@ -1811,17 +1989,26 @@ fn expand_bound_gats(
     requirements: &[TraitBound],
     definitions: &BTreeMap<TypeParamName, (Vec<TypeParamName>, Type)>,
 ) -> Vec<TraitBound> {
-    requirements.iter().map(|requirement| match requirement {
-        TraitBound::IsClass => TraitBound::IsClass,
-        TraitBound::Named(bound) => TraitBound::Named(NamedTraitBound {
-            trait_fqn: bound.trait_fqn.clone(),
-            kind: bound.kind.clone(),
-            type_args: bound.type_args.iter().map(|ty| expand_gats(ty, definitions)).collect(),
-            associated_types: bound.associated_types.iter().map(|(name, ty)| {
-                (name.clone(), expand_gats(ty, definitions))
-            }).collect(),
-        }),
-    }).collect()
+    requirements
+        .iter()
+        .map(|requirement| match requirement {
+            TraitBound::IsClass => TraitBound::IsClass,
+            TraitBound::Named(bound) => TraitBound::Named(NamedTraitBound {
+                trait_fqn: bound.trait_fqn.clone(),
+                kind: bound.kind.clone(),
+                type_args: bound
+                    .type_args
+                    .iter()
+                    .map(|ty| expand_gats(ty, definitions))
+                    .collect(),
+                associated_types: bound
+                    .associated_types
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), expand_gats(ty, definitions)))
+                    .collect(),
+            }),
+        })
+        .collect()
 }
 
 /// Expand generic associated type references to their concrete types.
@@ -1837,8 +2024,10 @@ pub(crate) fn expand_gats(
     match ty {
         Type::TypeConstructor { name, type_args } => {
             if let Some((params, body)) = gat_defs.get(name) {
-                let expanded_args: Vec<Type> = type_args.iter().map(|a| expand_gats(a, gat_defs)).collect();
-                let subst: BTreeMap<TypeParamName, Type> = params.iter()
+                let expanded_args: Vec<Type> =
+                    type_args.iter().map(|a| expand_gats(a, gat_defs)).collect();
+                let subst: BTreeMap<TypeParamName, Type> = params
+                    .iter()
                     .zip(expanded_args.iter())
                     .map(|(p, a)| (p.clone(), a.clone()))
                     .collect();
@@ -1846,12 +2035,17 @@ pub(crate) fn expand_gats(
             } else {
                 Type::TypeConstructor {
                     name: name.clone(),
-                    type_args: type_args.iter().map(|argument| expand_gats(argument, gat_defs)).collect(),
+                    type_args: type_args
+                        .iter()
+                        .map(|argument| expand_gats(argument, gat_defs))
+                        .collect(),
                 }
             }
         }
         Type::Array(elem) => Type::Array(Box::new(expand_gats(elem, gat_defs))),
-        Type::Newtype(fqn, inner) => Type::Newtype(fqn.clone(), Box::new(expand_gats(inner, gat_defs))),
+        Type::Newtype(fqn, inner) => {
+            Type::Newtype(fqn.clone(), Box::new(expand_gats(inner, gat_defs)))
+        }
         Type::TypeVariable(name, bounds) => {
             Type::TypeVariable(name.clone(), expand_bound_gats(bounds, gat_defs))
         }
@@ -1861,15 +2055,25 @@ pub(crate) fn expand_gats(
         Type::GenericClass { fqn, type_args, .. } => Type::GenericClass {
             fqn: fqn.clone(),
             mangled_name: crate::common::types::MangledName::for_type(fqn),
-            type_args: type_args.iter().map(|(variance, argument)| {
-                (*variance, expand_gats(argument, gat_defs))
-            }).collect(),
+            type_args: type_args
+                .iter()
+                .map(|(variance, argument)| (*variance, expand_gats(argument, gat_defs)))
+                .collect(),
         },
         Type::InterfaceObject { traits, .. } => Type::interface_intersection(
-            traits.iter().map(|component| (
-                component.trait_fqn.clone(),
-                component.trait_type_args.iter().map(|argument| expand_gats(argument, gat_defs)).collect(),
-            )).collect(),
+            traits
+                .iter()
+                .map(|component| {
+                    (
+                        component.trait_fqn.clone(),
+                        component
+                            .trait_type_args
+                            .iter()
+                            .map(|argument| expand_gats(argument, gat_defs))
+                            .collect(),
+                    )
+                })
+                .collect(),
         ),
         Type::GenericRecord { fqn, type_args, .. } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
@@ -1895,15 +2099,25 @@ pub(crate) fn expand_gats(
                 type_args: new_type_args,
             }
         }
-        Type::TupleExtend(left, right) => Type::tuple_extend(expand_gats(left, gat_defs), expand_gats(right, gat_defs)),
-        Type::AssociatedProjection(projection) => projection.map(|ty| expand_gats(ty, gat_defs)).into_type(),
-        Type::TupleProjection(receiver, kind) => Type::tuple_projection(expand_gats(receiver, gat_defs), *kind),
+        Type::TupleExtend(left, right) => {
+            Type::tuple_extend(expand_gats(left, gat_defs), expand_gats(right, gat_defs))
+        }
+        Type::AssociatedProjection(projection) => {
+            projection.map(|ty| expand_gats(ty, gat_defs)).into_type()
+        }
+        Type::TupleProjection(receiver, kind) => {
+            Type::tuple_projection(expand_gats(receiver, gat_defs), *kind)
+        }
         Type::Tuple(types, _) => {
             let new_types: Vec<Type> = types.iter().map(|t| expand_gats(t, gat_defs)).collect();
             let mn = crate::common::types::MangledName::for_tuple(&new_types);
             Type::Tuple(new_types, mn)
         }
-        Type::GenericNewtype { fqn, type_args, concrete_inner_type } => {
+        Type::GenericNewtype {
+            fqn,
+            type_args,
+            concrete_inner_type,
+        } => {
             let new_type_args: Vec<(crate::common::types::Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, expand_gats(t, gat_defs)))

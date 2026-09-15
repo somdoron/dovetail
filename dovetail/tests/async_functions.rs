@@ -77,7 +77,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("async functions must have an explicit return type")),
+        errors
+            .iter()
+            .any(|e| e.contains("async functions must have an explicit return type")),
         "expected 'async functions must have an explicit return type' error, got: {:?}",
         errors
     );
@@ -97,7 +99,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("async function return type must implement Awaitable")),
+        errors
+            .iter()
+            .any(|e| e.contains("async function return type must implement Awaitable")),
         "expected 'async function return type must implement Awaitable' error, got: {:?}",
         errors
     );
@@ -360,7 +364,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("async function return type must implement Awaitable")),
+        errors
+            .iter()
+            .any(|e| e.contains("async function return type must implement Awaitable")),
         "expected Awaitable error for async class method, got: {:?}",
         errors
     );
@@ -386,7 +392,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("async function return type must implement Awaitable")),
+        errors
+            .iter()
+            .any(|e| e.contains("async function return type must implement Awaitable")),
         "expected Awaitable error for async extension method, got: {:?}",
         errors
     );
@@ -407,7 +415,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("async function return type must implement Awaitable")),
+        errors
+            .iter()
+            .any(|e| e.contains("async function return type must implement Awaitable")),
         "expected Awaitable error for async module method, got: {:?}",
         errors
     );
@@ -539,7 +549,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("await can only be used inside an async function")),
+        errors
+            .iter()
+            .any(|e| e.contains("await can only be used inside an async function")),
         "expected 'await can only be used inside an async function' error, got: {:?}",
         errors
     );
@@ -557,7 +569,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement Awaitable")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement Awaitable")),
         "expected 'does not implement Awaitable' error, got: {:?}",
         errors
     );
@@ -923,7 +937,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type mismatch") || e.contains("cannot await")),
+        errors
+            .iter()
+            .any(|e| e.contains("type mismatch") || e.contains("cannot await")),
         "expected type error for tail await with mismatched value types, got: {:?}",
         errors
     );
@@ -946,7 +962,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("binary '+' requires operands of the same type")),
+        errors
+            .iter()
+            .any(|e| e.contains("binary '+' requires operands of the same type")),
         "expected binary '+' type error for String + Int32 in await sub-expression, got: {:?}",
         errors
     );
@@ -1196,7 +1214,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("async closure requires expected type context")),
+        errors
+            .iter()
+            .any(|e| e.contains("async closure requires expected type context")),
         "expected 'async closure requires expected type context' error, got: {:?}",
         errors
     );
@@ -1216,7 +1236,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement Awaitable")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement Awaitable")),
         "expected 'does not implement Awaitable' error, got: {:?}",
         errors
     );
@@ -1405,7 +1427,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("not assignable to async return type") || e.contains("no From")),
+        errors
+            .iter()
+            .any(|e| e.contains("not assignable to async return type") || e.contains("no From")),
         "expected incompatible error type diagnostic, got: {:?}",
         errors
     );
@@ -1428,7 +1452,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("expects 1 type parameter") && e.contains("2 were provided")),
+        errors
+            .iter()
+            .any(|e| e.contains("expects 1 type parameter") && e.contains("2 were provided")),
         "expected type param count mismatch error, got: {:?}",
         errors
     );
@@ -1507,11 +1533,16 @@ function main(): Unit = ()
     );
     // Should have the type param count mismatch error but NOT cascading "await can only be used inside async" errors
     assert!(
-        errors.iter().any(|e| e.contains("expects 1 type parameter")),
+        errors
+            .iter()
+            .any(|e| e.contains("expects 1 type parameter")),
         "expected type param count error, got: {:?}",
         errors
     );
-    let await_errors: Vec<_> = errors.iter().filter(|e| e.contains("await can only be used inside")).collect();
+    let await_errors: Vec<_> = errors
+        .iter()
+        .filter(|e| e.contains("await can only be used inside"))
+        .collect();
     assert!(
         await_errors.is_empty(),
         "should not have cascading await errors, got: {:?}",
@@ -1920,7 +1951,8 @@ function main(): Unit =
 
 #[test]
 fn async_closures_defer_work_before_the_first_await() {
-    common::compile_and_run_async(r#"
+    common::compile_and_run_async(
+        r#"
 package a
 function main(): Unit =
     let mutable calls = 0
@@ -1941,5 +1973,7 @@ function main(): Unit =
     assert calls == 2
     second.evaluate()
     assert calls == 3
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 }

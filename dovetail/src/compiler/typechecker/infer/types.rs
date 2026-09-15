@@ -41,12 +41,11 @@ impl Inference<'_> {
     /// Works for any symbol kind — functions, globals, record types, generic records.
     pub(super) fn resolve_fqn(&self, name: &str, kind: SymbolKind) -> Option<Fqn> {
         // 1. Check import scope for symbol import
-        if let Some(resolved) = self.import_scope.lookup(name) {
-            if let ImportTarget::Symbol(ref fqn) = resolved.target {
-                if self.symbol_exists(fqn, &kind) {
-                    return Some(fqn.clone());
-                }
-            }
+        if let Some(resolved) = self.import_scope.lookup(name)
+            && let ImportTarget::Symbol(ref fqn) = resolved.target
+            && self.symbol_exists(fqn, &kind)
+        {
+            return Some(fqn.clone());
         }
 
         // 2. Check within current module or class (if any)
@@ -89,10 +88,14 @@ impl Inference<'_> {
                 self.registry
                     .lookup_function(fqn, &self.package_path, &self.current_file)
                     .is_some()
-                    || self.registry.lookup_generic_function(fqn, &self.package_path).is_some()
+                    || self
+                        .registry
+                        .lookup_generic_function(fqn, &self.package_path)
+                        .is_some()
             }
             SymbolKind::Global => {
-                if self.registry
+                if self
+                    .registry
                     .lookup_global(fqn, &self.package_path, &self.current_file)
                     .is_some()
                 {
@@ -114,42 +117,44 @@ impl Inference<'_> {
                 }
                 false
             }
-            SymbolKind::Record => {
-                self.registry
-                    .lookup_record_type(fqn, &self.package_path, &self.current_file)
-                    .is_some()
-            }
-            SymbolKind::Enum => {
-                self.registry
-                    .lookup_enum_type(fqn, &self.package_path, &self.current_file)
-                    .is_some()
-            }
-            SymbolKind::Class => {
-                self.registry.lookup_class_type(fqn, &self.package_path).is_some()
-            }
+            SymbolKind::Record => self
+                .registry
+                .lookup_record_type(fqn, &self.package_path, &self.current_file)
+                .is_some(),
+            SymbolKind::Enum => self
+                .registry
+                .lookup_enum_type(fqn, &self.package_path, &self.current_file)
+                .is_some(),
+            SymbolKind::Class => self
+                .registry
+                .lookup_class_type(fqn, &self.package_path)
+                .is_some(),
             SymbolKind::Module => self.registry.lookup_module(fqn).is_some(),
-            SymbolKind::Newtype => {
-                self.registry
-                    .lookup_newtype_type(fqn, &self.package_path, &self.current_file)
-                    .is_some()
-            }
-            SymbolKind::TypeAlias => {
-                self.registry
-                    .lookup_type_alias(fqn, &self.package_path, &self.current_file)
-                    .is_some()
-            }
-            SymbolKind::Trait => self.registry.lookup_trait(fqn, &self.package_path).is_some(),
+            SymbolKind::Newtype => self
+                .registry
+                .lookup_newtype_type(fqn, &self.package_path, &self.current_file)
+                .is_some(),
+            SymbolKind::TypeAlias => self
+                .registry
+                .lookup_type_alias(fqn, &self.package_path, &self.current_file)
+                .is_some(),
+            SymbolKind::Trait => self
+                .registry
+                .lookup_trait(fqn, &self.package_path)
+                .is_some(),
         }
     }
     /// Resolve a trait name to its FQN via imports or same-package lookup.
     pub(super) fn resolve_trait_fqn(&self, name: &str) -> Option<Fqn> {
         // 1. Check import scope
-        if let Some(resolved) = self.import_scope.lookup(name) {
-            if let ImportTarget::Symbol(ref fqn) = resolved.target {
-                if self.registry.lookup_trait(fqn, &self.package_path).is_some() {
-                    return Some(fqn.clone());
-                }
-            }
+        if let Some(resolved) = self.import_scope.lookup(name)
+            && let ImportTarget::Symbol(ref fqn) = resolved.target
+            && self
+                .registry
+                .lookup_trait(fqn, &self.package_path)
+                .is_some()
+        {
+            return Some(fqn.clone());
         }
 
         // 2. Same-package lookup
@@ -157,7 +162,11 @@ impl Inference<'_> {
             package: self.package_path.clone(),
             symbol: SymbolName(name.to_string()),
         };
-        if self.registry.lookup_trait(&fqn, &self.package_path).is_some() {
+        if self
+            .registry
+            .lookup_trait(&fqn, &self.package_path)
+            .is_some()
+        {
             return Some(fqn);
         }
 
@@ -166,7 +175,11 @@ impl Inference<'_> {
             package: PackagePath(vec!["standard".into(), "prelude".into()]),
             symbol: SymbolName(name.to_string()),
         };
-        if self.registry.lookup_trait(&prelude_fqn, &self.package_path).is_some() {
+        if self
+            .registry
+            .lookup_trait(&prelude_fqn, &self.package_path)
+            .is_some()
+        {
             return Some(prelude_fqn);
         }
 
@@ -179,14 +192,26 @@ impl Inference<'_> {
     /// object coercion when the concrete type implements the trait.
     #[allow(clippy::only_used_in_recursion)]
     pub(super) fn is_assignable(&self, expected: &Type, actual: &Type) -> bool {
-        if actual == expected || actual.is_error() || expected.is_error() || actual.is_never() || expected.is_any() {
+        if actual == expected
+            || actual.is_error()
+            || expected.is_error()
+            || actual.is_never()
+            || expected.is_any()
+        {
             return true;
         }
-        if matches!((expected, actual), (Type::AssociatedProjection(_), Type::AssociatedProjection(_))) {
+        if matches!(
+            (expected, actual),
+            (Type::AssociatedProjection(_), Type::AssociatedProjection(_))
+        ) {
             return crate::typechecker::subtyping::identical(expected, actual);
         }
         // TypeParameter identity: same name → assignable (used in generic bodies)
-        if let (Type::TypeVariable(a, _) | Type::GenericParam(a, _, _), Type::TypeVariable(b, _) | Type::GenericParam(b, _, _)) = (expected, actual) {
+        if let (
+            Type::TypeVariable(a, _) | Type::GenericParam(a, _, _),
+            Type::TypeVariable(b, _) | Type::GenericParam(b, _, _),
+        ) = (expected, actual)
+        {
             return a == b;
         }
         // Newtype identity: same FQN → assignable (inner type may differ during collection)
@@ -195,36 +220,58 @@ impl Inference<'_> {
         }
         // Structural comparison for GenericRecord types: match FQN + type args with variance.
         if let (
-            Type::GenericRecord { fqn: fqn_e, type_args: args_e, .. },
-            Type::GenericRecord { fqn: fqn_a, type_args: args_a, .. },
+            Type::GenericRecord {
+                fqn: fqn_e,
+                type_args: args_e,
+                ..
+            },
+            Type::GenericRecord {
+                fqn: fqn_a,
+                type_args: args_a,
+                ..
+            },
         ) = (expected, actual)
         {
             if fqn_e != fqn_a || args_e.len() != args_a.len() {
                 return false;
             }
-            return args_e.iter().zip(args_a.iter()).all(|((v_e, e), (_, a))| {
-                self.check_variance(*v_e, e, a)
-            });
+            return args_e
+                .iter()
+                .zip(args_a.iter())
+                .all(|((v_e, e), (_, a))| self.check_variance(*v_e, e, a));
         }
         // Structural comparison for GenericEnum types: match FQN + type args with variance.
         if let (
-            Type::GenericEnum { fqn: fqn_e, type_args: args_e, .. },
-            Type::GenericEnum { fqn: fqn_a, type_args: args_a, .. },
+            Type::GenericEnum {
+                fqn: fqn_e,
+                type_args: args_e,
+                ..
+            },
+            Type::GenericEnum {
+                fqn: fqn_a,
+                type_args: args_a,
+                ..
+            },
         ) = (expected, actual)
         {
             if fqn_e != fqn_a || args_e.len() != args_a.len() {
                 return false;
             }
-            return args_e.iter().zip(args_a.iter()).all(|((v_e, e), (_, a))| {
-                self.check_variance(*v_e, e, a)
-            });
+            return args_e
+                .iter()
+                .zip(args_a.iter())
+                .all(|((v_e, e), (_, a))| self.check_variance(*v_e, e, a));
         }
         // Interface object → interface object: superset → subset. Every expected
         // component must be matched by an actual component with the same FQN and
         // pairwise-assignable type args ((A and B) <: A, (A and B and C) <: (A and B)).
         if let (
-            Type::InterfaceObject { traits: traits_e, .. },
-            Type::InterfaceObject { traits: traits_a, .. },
+            Type::InterfaceObject {
+                traits: traits_e, ..
+            },
+            Type::InterfaceObject {
+                traits: traits_a, ..
+            },
         ) = (expected, actual)
         {
             // Component type args are INVARIANT: a generic interface's args
@@ -234,10 +281,22 @@ impl Inference<'_> {
             // in its super closure: a `B`-object is an `A`-object.
             return traits_e.iter().all(|ce| {
                 traits_a.iter().any(|ca| {
-                    let args = if ce.trait_fqn == ca.trait_fqn { Some(ca.trait_type_args.clone()) } else {
-                        self.registry.super_closure_args(&ca.trait_fqn,&ca.trait_type_args,&ce.trait_fqn)
+                    let args = if ce.trait_fqn == ca.trait_fqn {
+                        Some(ca.trait_type_args.clone())
+                    } else {
+                        self.registry.super_closure_args(
+                            &ca.trait_fqn,
+                            &ca.trait_type_args,
+                            &ce.trait_fqn,
+                        )
                     };
-                    args.is_some_and(|args| args.len()==ce.trait_type_args.len() && args.iter().zip(&ce.trait_type_args).all(|(a,e)| self.is_assignable(e,a) && self.is_assignable(a,e)))
+                    args.is_some_and(|args| {
+                        args.len() == ce.trait_type_args.len()
+                            && args
+                                .iter()
+                                .zip(&ce.trait_type_args)
+                                .all(|(a, e)| self.is_assignable(e, a) && self.is_assignable(a, e))
+                    })
                 })
             });
         }
@@ -250,19 +309,27 @@ impl Inference<'_> {
         }
         // Structural comparison for GenericNewtype: same FQN + type args with variance
         if let (
-            Type::GenericNewtype { fqn: fqn_e, type_args: args_e, .. },
-            Type::GenericNewtype { fqn: fqn_a, type_args: args_a, .. },
+            Type::GenericNewtype {
+                fqn: fqn_e,
+                type_args: args_e,
+                ..
+            },
+            Type::GenericNewtype {
+                fqn: fqn_a,
+                type_args: args_a,
+                ..
+            },
         ) = (expected, actual)
+            && fqn_e == fqn_a
         {
-            if fqn_e == fqn_a {
-                return args_e.len() == args_a.len()
-                    && args_e.iter().zip(args_a.iter()).all(|((v_e, e), (_, a))| {
-                        self.check_variance(*v_e, e, a)
-                    });
-            }
-            // Different wrappers may still support the T -> ByName<T>
-            // conversion below, including when T is itself a newtype.
+            return args_e.len() == args_a.len()
+                && args_e
+                    .iter()
+                    .zip(args_a.iter())
+                    .all(|((v_e, e), (_, a))| self.check_variance(*v_e, e, a));
         }
+        // Different wrappers may still support the T -> ByName<T>
+        // conversion below, including when T is itself a newtype.
         // Structural comparison for Array types.
         //
         // `Array<T>` is INVARIANT in `T`, so the element types must agree in both
@@ -275,7 +342,9 @@ impl Inference<'_> {
         if let (Type::Array(elem_e), Type::Array(elem_a)) = (expected, actual) {
             return self.is_assignable(elem_e, elem_a) && self.is_assignable(elem_a, elem_e);
         }
-        if let (Type::TupleExtend(left_e, right_e), Type::TupleExtend(left_a, right_a)) = (expected, actual) {
+        if let (Type::TupleExtend(left_e, right_e), Type::TupleExtend(left_a, right_a)) =
+            (expected, actual)
+        {
             // Only the right element can widen without changing the tuple's outer shape.
             return crate::typechecker::subtyping::identical(left_e, left_a)
                 && self.is_assignable(right_e, right_a);
@@ -285,10 +354,15 @@ impl Inference<'_> {
             if types_e.len() != types_a.len() {
                 return false;
             }
-            return types_e.iter().zip(types_a.iter()).all(|(e, a)| self.is_assignable(e, a));
+            return types_e
+                .iter()
+                .zip(types_a.iter())
+                .all(|(e, a)| self.is_assignable(e, a));
         }
         // Structural comparison for Function types: contravariant in params, covariant in return
-        if let (Type::Function(params_e, ret_e), Type::Function(params_a, ret_a)) = (expected, actual) {
+        if let (Type::Function(params_e, ret_e), Type::Function(params_a, ret_a)) =
+            (expected, actual)
+        {
             if params_e.len() != params_a.len() {
                 return false;
             }
@@ -311,28 +385,30 @@ impl Inference<'_> {
         // type must satisfy every component of the (possibly intersected) set.
         // A type parameter satisfies a component via its declared bounds
         // (type_satisfies_trait checks them), so `T where T: I` coerces to `I`.
-        if let Type::InterfaceObject { traits, .. } = expected {
-            if traits
+        if let Type::InterfaceObject { traits, .. } = expected
+            && traits
                 .iter()
                 .all(|c| self.type_satisfies_trait(&c.trait_fqn, &c.trait_type_args, actual, 0))
-            {
-                return true;
-            }
+        {
+            return true;
         }
         // Implicit coercion: T → ByName<T> (auto-wrapping at call sites)
         // ByName<T> inner type is () => T; the type arg is T itself.
-        if let Type::GenericNewtype { fqn, type_args, .. } = expected {
-            if is_byname_fqn(fqn) && type_args.len() == 1 {
-                let inner_t = &type_args[0].1;
-                return self.is_assignable(inner_t, actual);
-            }
+        if let Type::GenericNewtype { fqn, type_args, .. } = expected
+            && is_byname_fqn(fqn)
+            && type_args.len() == 1
+        {
+            let inner_t = &type_args[0].1;
+            return self.is_assignable(inner_t, actual);
         }
         false
     }
 
     /// Check assignability for a single type argument position given its variance.
     fn check_variance(&self, variance: Variance, expected: &Type, actual: &Type) -> bool {
-        if actual.is_error() || expected.is_error() { return true; }
+        if actual.is_error() || expected.is_error() {
+            return true;
+        }
         crate::typechecker::subtyping::argument(self.registry, variance, expected, actual)
     }
 
@@ -351,8 +427,16 @@ impl Inference<'_> {
         }
         match (a, b) {
             (
-                Type::GenericClass { fqn: fa, mangled_name, type_args: aa },
-                Type::GenericClass { fqn: fb, type_args: ab, .. },
+                Type::GenericClass {
+                    fqn: fa,
+                    mangled_name,
+                    type_args: aa,
+                },
+                Type::GenericClass {
+                    fqn: fb,
+                    type_args: ab,
+                    ..
+                },
             ) if fa == fb && aa.len() == ab.len() => {
                 let new_args = self.lub_type_args(aa, ab)?;
                 Some(Type::GenericClass {
@@ -362,8 +446,16 @@ impl Inference<'_> {
                 })
             }
             (
-                Type::GenericEnum { fqn: fa, mangled_name, type_args: aa },
-                Type::GenericEnum { fqn: fb, type_args: ab, .. },
+                Type::GenericEnum {
+                    fqn: fa,
+                    mangled_name,
+                    type_args: aa,
+                },
+                Type::GenericEnum {
+                    fqn: fb,
+                    type_args: ab,
+                    ..
+                },
             ) if fa == fb && aa.len() == ab.len() => {
                 let new_args = self.lub_type_args(aa, ab)?;
                 Some(Type::GenericEnum {
@@ -373,8 +465,16 @@ impl Inference<'_> {
                 })
             }
             (
-                Type::GenericRecord { fqn: fa, mangled_name, type_args: aa },
-                Type::GenericRecord { fqn: fb, type_args: ab, .. },
+                Type::GenericRecord {
+                    fqn: fa,
+                    mangled_name,
+                    type_args: aa,
+                },
+                Type::GenericRecord {
+                    fqn: fb,
+                    type_args: ab,
+                    ..
+                },
             ) if fa == fb && aa.len() == ab.len() => {
                 let new_args = self.lub_type_args(aa, ab)?;
                 Some(Type::GenericRecord {
@@ -452,13 +552,18 @@ impl Inference<'_> {
         // A concrete → interface coercion whose target is provided only by
         // several distinct sub-trait impls (extends) has no principled choice
         // of implementation — require a direct impl.
-        if let Type::InterfaceObject { traits, .. } = expected {
-            if !matches!(actual, Type::InterfaceObject { .. }) {
-                for c in traits {
-                    if let Some(providers) = self.ambiguous_trait_providers(&c.trait_fqn, &c.trait_type_args, actual) {
-                        let names: Vec<String> =
-                            providers.iter().map(|f| format!("'{}'", f.symbol)).collect();
-                        self.diagnostics.error(
+        if let Type::InterfaceObject { traits, .. } = expected
+            && !matches!(actual, Type::InterfaceObject { .. })
+        {
+            for c in traits {
+                if let Some(providers) =
+                    self.ambiguous_trait_providers(&c.trait_fqn, &c.trait_type_args, actual)
+                {
+                    let names: Vec<String> = providers
+                        .iter()
+                        .map(|f| format!("'{}'", f.symbol))
+                        .collect();
+                    self.diagnostics.error(
                             span.clone(),
                             format!(
                                 "ambiguous implementations of trait '{}' for type '{}': provided by both {}; implement '{}' directly to disambiguate",
@@ -466,7 +571,6 @@ impl Inference<'_> {
                                 c.trait_fqn.symbol,
                             ),
                         );
-                    }
                 }
             }
         }
@@ -493,9 +597,14 @@ impl Inference<'_> {
 
     pub(super) fn resolve_type_expr(&mut self, type_expr: &TypeExpr) -> Type {
         match type_expr {
-            TypeExpr::TupleExtend(left, right, _) => Type::tuple_extend(self.resolve_type_expr(left), self.resolve_type_expr(right)),
+            TypeExpr::TupleExtend(left, right, _) => {
+                Type::tuple_extend(self.resolve_type_expr(left), self.resolve_type_expr(right))
+            }
             TypeExpr::Tuple(type_exprs, _span) => {
-                let types: Vec<Type> = type_exprs.iter().map(|te| self.resolve_type_expr(te)).collect();
+                let types: Vec<Type> = type_exprs
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te))
+                    .collect();
                 if types.iter().any(|t| t.is_error()) {
                     return Type::Error;
                 }
@@ -509,26 +618,23 @@ impl Inference<'_> {
                 // arguments" message rather than a downstream "type
                 // mismatch: T vs concrete" once the template TypeVariable
                 // leaks into the let-binding/return-type check.
-                if named.type_args.is_empty() {
-                    if let Some(expected) = self.expected_type_param_count(&named.name.value) {
-                        if expected > 0 {
-                            self.diagnostics.error(
-                                named.span.clone(),
-                                format!(
-                                    "expected {expected} type argument(s) for '{}', found 0",
-                                    named.name.value
-                                ),
-                            );
-                            return Type::Error;
-                        }
-                    }
+                if named.type_args.is_empty()
+                    && let Some(expected) = self.expected_type_param_count(&named.name.value)
+                    && expected > 0
+                {
+                    self.diagnostics.error(
+                        named.span.clone(),
+                        format!(
+                            "expected {expected} type argument(s) for '{}', found 0",
+                            named.name.value
+                        ),
+                    );
+                    return Type::Error;
                 }
 
-                if let Some(ty) = self.resolve_type_name(
-                    &named.name.value,
-                    &named.type_args,
-                    &named.span,
-                ) {
+                if let Some(ty) =
+                    self.resolve_type_name(&named.name.value, &named.type_args, &named.span)
+                {
                     self.record_type_reference(&ty, &named.name.span);
                     return ty;
                 }
@@ -537,7 +643,10 @@ impl Inference<'_> {
                 Type::Error
             }
             TypeExpr::Function(param_exprs, ret_expr, _span) => {
-                let param_types: Vec<Type> = param_exprs.iter().map(|te| self.resolve_type_expr(te)).collect();
+                let param_types: Vec<Type> = param_exprs
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te))
+                    .collect();
                 let ret_type = self.resolve_type_expr(ret_expr);
                 if param_types.iter().any(|t| t.is_error()) || ret_type.is_error() {
                     return Type::Error;
@@ -608,7 +717,11 @@ impl Inference<'_> {
             self.diagnostics.error(named.span.clone(), message);
             return None;
         };
-        let Some(sig) = self.registry.lookup_trait(&trait_fqn, &self.package_path).cloned() else {
+        let Some(sig) = self
+            .registry
+            .lookup_trait(&trait_fqn, &self.package_path)
+            .cloned()
+        else {
             self.diagnostics.error(
                 named.span.clone(),
                 format!("unknown type: '{}'", named.name.value),
@@ -650,10 +763,17 @@ impl Inference<'_> {
 
     /// Record a type reference for LSP navigation, only for types with navigable definitions.
     fn record_type_reference(&mut self, ty: &Type, span: &Span) {
-        let is_navigable = matches!(ty,
-            Type::Record(..) | Type::Enum(..) | Type::Class(..) | Type::Newtype(..)
-            | Type::GenericRecord { .. } | Type::GenericEnum { .. } | Type::GenericClass { .. }
-            | Type::GenericNewtype { .. } | Type::InterfaceObject { .. }
+        let is_navigable = matches!(
+            ty,
+            Type::Record(..)
+                | Type::Enum(..)
+                | Type::Class(..)
+                | Type::Newtype(..)
+                | Type::GenericRecord { .. }
+                | Type::GenericEnum { .. }
+                | Type::GenericClass { .. }
+                | Type::GenericNewtype { .. }
+                | Type::InterfaceObject { .. }
         );
         if is_navigable {
             self.type_references.push(TypeReference {
@@ -666,7 +786,10 @@ impl Inference<'_> {
     /// Resolve a slice of type expressions into concrete types.
     /// Returns `None` if any type argument resolves to an error.
     pub(super) fn resolve_type_args(&mut self, type_args: &[TypeExpr]) -> Option<Vec<Type>> {
-        let resolved: Vec<Type> = type_args.iter().map(|ta| self.resolve_type_expr(ta)).collect();
+        let resolved: Vec<Type> = type_args
+            .iter()
+            .map(|ta| self.resolve_type_expr(ta))
+            .collect();
         if resolved.iter().any(|t| t.is_error()) {
             None
         } else {
@@ -785,16 +908,12 @@ impl Inference<'_> {
             Some(expected) if expected != got => {
                 self.diagnostics.error(
                     named.span.clone(),
-                    format!(
-                        "expected {expected} type argument(s) for '{name}', found {got}"
-                    ),
+                    format!("expected {expected} type argument(s) for '{name}', found {got}"),
                 );
             }
             _ => {
-                self.diagnostics.error(
-                    named.span.clone(),
-                    format!("unknown type: '{name}'"),
-                );
+                self.diagnostics
+                    .error(named.span.clone(), format!("unknown type: '{name}'"));
             }
         }
     }
@@ -820,22 +939,44 @@ impl Inference<'_> {
         type_args: &[TypeExpr],
         span: &Span,
     ) -> Option<Type> {
-
-        if let Some((root, member)) = name.split_once('.') {
-            if let Some(receiver) = self.current_type_params.get(&crate::common::types::TypeParamName(root.to_string())).cloned() {
-                let parameters: Vec<_> = type_args.iter().map(|ty| self.resolve_type_expr(ty)).collect();
-                return Some(match crate::typechecker::associated_types::resolve_reference(
-                    &receiver, member, parameters, &[self.registry],
+        if let Some((root, member)) = name.split_once('.')
+            && let Some(receiver) = self
+                .current_type_params
+                .get(&crate::common::types::TypeParamName(root.to_string()))
+                .cloned()
+        {
+            let parameters: Vec<_> = type_args
+                .iter()
+                .map(|ty| self.resolve_type_expr(ty))
+                .collect();
+            return Some(
+                match crate::typechecker::associated_types::resolve_reference(
+                    &receiver,
+                    member,
+                    parameters,
+                    &[self.registry],
                 ) {
                     Ok(ty) => ty,
-                    Err(message) => { self.diagnostics.error(span.clone(), message); Type::Error }
-                });
-            }
+                    Err(message) => {
+                        self.diagnostics.error(span.clone(), message);
+                        Type::Error
+                    }
+                },
+            );
         }
-        if let Some(Type::AssociatedProjection(projection)) = self.current_type_params.get(&crate::common::types::TypeParamName(name.to_string())).cloned() {
-            if projection.parameters.len() != type_args.len() { return None; }
+        if let Some(Type::AssociatedProjection(projection)) = self
+            .current_type_params
+            .get(&crate::common::types::TypeParamName(name.to_string()))
+            .cloned()
+        {
+            if projection.parameters.len() != type_args.len() {
+                return None;
+            }
             let mut projection = *projection;
-            projection.parameters = type_args.iter().map(|ty| self.resolve_type_expr(ty)).collect();
+            projection.parameters = type_args
+                .iter()
+                .map(|ty| self.resolve_type_expr(ty))
+                .collect();
             return Some(projection.into_type());
         }
         // 0. Type parameter in scope (e.g. `T` inside a generic function body).
@@ -884,209 +1025,201 @@ impl Inference<'_> {
 
         // Helper: build TypeVariable placeholders for a list of type params,
         // carrying each param's bounds from the trait-bounds table.
-        let template_args =
-            |type_params: &[crate::common::types::TypeParamName],
-             trait_bounds: &crate::typechecker::types::TraitBounds| -> Vec<Type> {
-                type_params
-                    .iter()
-                    .map(|tp| {
-                        let bounds = trait_bounds.get(tp).cloned().unwrap_or_default();
-                        Type::TypeVariable(tp.clone(), bounds)
-                    })
-                    .collect()
-            };
+        let template_args = |type_params: &[crate::common::types::TypeParamName],
+                             trait_bounds: &crate::typechecker::types::TraitBounds|
+         -> Vec<Type> {
+            type_params
+                .iter()
+                .map(|tp| {
+                    let bounds = trait_bounds.get(tp).cloned().unwrap_or_default();
+                    Type::TypeVariable(tp.clone(), bounds)
+                })
+                .collect()
+        };
 
         // 3. Records (registered as `Type::Record(fqn, mn)` whether generic
         //    or not; generic-ness lives in `record_types`).
-        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Record) {
-            if let Some(def) = self
+        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Record)
+            && let Some(def) = self
                 .registry
                 .lookup_record_type(&fqn, &self.package_path, &self.current_file)
                 .cloned()
-            {
-                if def.type_params.is_empty() {
-                    return if type_args.is_empty() {
-                        self.registry
-                            .lookup_type(&fqn, &self.package_path, &self.current_file)
-                            .cloned()
-                    } else {
-                        None
-                    };
-                }
-                let resolved_args = if type_args.is_empty() {
-                    // Template form — caller resolves T from context.
-                    template_args(&def.type_params, &def.trait_bounds)
+        {
+            if def.type_params.is_empty() {
+                return if type_args.is_empty() {
+                    self.registry
+                        .lookup_type(&fqn, &self.package_path, &self.current_file)
+                        .cloned()
                 } else {
-                    if type_args.len() != def.type_params.len() {
-                        return None;
-                    }
-                    let args = resolve_args_or_error(type_args, self);
-                    if args.iter().any(|t| t.is_error()) {
-                        return Some(Type::Error);
-                    }
-                    args
+                    None
                 };
-                return Some(self.resolve_generic_record(&fqn, &def, &resolved_args, span));
             }
+            let resolved_args = if type_args.is_empty() {
+                // Template form — caller resolves T from context.
+                template_args(&def.type_params, &def.trait_bounds)
+            } else {
+                if type_args.len() != def.type_params.len() {
+                    return None;
+                }
+                let args = resolve_args_or_error(type_args, self);
+                if args.iter().any(|t| t.is_error()) {
+                    return Some(Type::Error);
+                }
+                args
+            };
+            return Some(self.resolve_generic_record(&fqn, &def, &resolved_args, span));
         }
 
         // 4. Enums.
-        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Enum) {
-            if let Some(def) = self
+        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Enum)
+            && let Some(def) = self
                 .registry
                 .lookup_enum_type(&fqn, &self.package_path, &self.current_file)
                 .cloned()
-            {
-                if def.type_params.is_empty() {
-                    return if type_args.is_empty() {
-                        self.registry
-                            .lookup_type(&fqn, &self.package_path, &self.current_file)
-                            .cloned()
-                    } else {
-                        None
-                    };
-                }
-                let resolved_args = if type_args.is_empty() {
-                    template_args(&def.type_params, &def.trait_bounds)
+        {
+            if def.type_params.is_empty() {
+                return if type_args.is_empty() {
+                    self.registry
+                        .lookup_type(&fqn, &self.package_path, &self.current_file)
+                        .cloned()
                 } else {
-                    if type_args.len() != def.type_params.len() {
-                        return None;
-                    }
-                    let args = resolve_args_or_error(type_args, self);
-                    if args.iter().any(|t| t.is_error()) {
-                        return Some(Type::Error);
-                    }
-                    args
+                    None
                 };
-                return Some(self.resolve_generic_enum_type(&fqn, &def, &resolved_args));
             }
+            let resolved_args = if type_args.is_empty() {
+                template_args(&def.type_params, &def.trait_bounds)
+            } else {
+                if type_args.len() != def.type_params.len() {
+                    return None;
+                }
+                let args = resolve_args_or_error(type_args, self);
+                if args.iter().any(|t| t.is_error()) {
+                    return Some(Type::Error);
+                }
+                args
+            };
+            return Some(self.resolve_generic_enum_type(&fqn, &def, &resolved_args));
         }
 
         // 5. Classes.
-        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Class) {
-            if let Some(def) = self
+        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Class)
+            && let Some(def) = self
                 .registry
                 .lookup_class_type(&fqn, &self.package_path)
                 .cloned()
-            {
-                if def.type_params.is_empty() {
-                    return if type_args.is_empty() {
-                        self.registry
-                            .lookup_type(&fqn, &self.package_path, &self.current_file)
-                            .cloned()
-                    } else {
-                        None
-                    };
-                }
-                let resolved_args = if type_args.is_empty() {
-                    template_args(&def.type_params, &def.trait_bounds)
+        {
+            if def.type_params.is_empty() {
+                return if type_args.is_empty() {
+                    self.registry
+                        .lookup_type(&fqn, &self.package_path, &self.current_file)
+                        .cloned()
                 } else {
-                    if type_args.len() != def.type_params.len() {
-                        return None;
-                    }
-                    let args = resolve_args_or_error(type_args, self);
-                    if args.iter().any(|t| t.is_error()) {
-                        return Some(Type::Error);
-                    }
-                    args
+                    None
                 };
-                return Some(self.infer_generic_class(&fqn, &def, &resolved_args, span));
             }
+            let resolved_args = if type_args.is_empty() {
+                template_args(&def.type_params, &def.trait_bounds)
+            } else {
+                if type_args.len() != def.type_params.len() {
+                    return None;
+                }
+                let args = resolve_args_or_error(type_args, self);
+                if args.iter().any(|t| t.is_error()) {
+                    return Some(Type::Error);
+                }
+                args
+            };
+            return Some(self.infer_generic_class(&fqn, &def, &resolved_args, span));
         }
 
         // 6. Newtypes.
-        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Newtype) {
-            if let Some(sig) = self
+        if let Some(fqn) = self.resolve_fqn(name, SymbolKind::Newtype)
+            && let Some(sig) = self
                 .registry
                 .lookup_newtype_type(&fqn, &self.package_path, &self.current_file)
                 .cloned()
-            {
-                if sig.type_params.is_empty() {
-                    return if type_args.is_empty() {
-                        self.registry
-                            .lookup_type(&fqn, &self.package_path, &self.current_file)
-                            .cloned()
-                    } else {
-                        None
-                    };
-                }
-                let resolved_args = if type_args.is_empty() {
-                    template_args(&sig.type_params, &sig.trait_bounds)
+        {
+            if sig.type_params.is_empty() {
+                return if type_args.is_empty() {
+                    self.registry
+                        .lookup_type(&fqn, &self.package_path, &self.current_file)
+                        .cloned()
                 } else {
-                    if type_args.len() != sig.type_params.len() {
-                        return None;
-                    }
-                    let args = resolve_args_or_error(type_args, self);
-                    if args.iter().any(|t| t.is_error()) {
-                        return Some(Type::Error);
-                    }
-                    args
+                    None
                 };
-                return Some(self.resolve_generic_newtype(&fqn, &sig, &resolved_args, span));
             }
+            let resolved_args = if type_args.is_empty() {
+                template_args(&sig.type_params, &sig.trait_bounds)
+            } else {
+                if type_args.len() != sig.type_params.len() {
+                    return None;
+                }
+                let args = resolve_args_or_error(type_args, self);
+                if args.iter().any(|t| t.is_error()) {
+                    return Some(Type::Error);
+                }
+                args
+            };
+            return Some(self.resolve_generic_newtype(&fqn, &sig, &resolved_args, span));
         }
 
         // 7. Type aliases — covers both generic and non-generic.
-        if let Some(alias_fqn) = self.resolve_fqn(name, SymbolKind::TypeAlias) {
-            if let Some(alias_sig) = self
+        if let Some(alias_fqn) = self.resolve_fqn(name, SymbolKind::TypeAlias)
+            && let Some(alias_sig) = self
                 .registry
                 .lookup_type_alias(&alias_fqn, &self.package_path, &self.current_file)
                 .cloned()
-            {
-                if alias_sig.type_params.is_empty() {
-                    if !type_args.is_empty() {
-                        return None;
-                    }
-                    return Some(alias_sig.expanded_type);
-                }
-                if type_args.len() != alias_sig.type_params.len() {
+        {
+            if alias_sig.type_params.is_empty() {
+                if !type_args.is_empty() {
                     return None;
                 }
-                let resolved_args = resolve_args_or_error(type_args, self);
-                if resolved_args.iter().any(|t| t.is_error()) {
-                    return Some(Type::Error);
-                }
-                self.check_trait_bounds(
-                    &alias_sig.trait_bounds,
-                    &alias_sig.type_params,
-                    &resolved_args,
-                    span,
-                );
-                let substitution = TypeParamSubstitution::from_pairs(
-                    &alias_sig.type_params,
-                    &resolved_args,
-                );
-                return Some(apply_substitution(&substitution, &alias_sig.expanded_type));
+                return Some(alias_sig.expanded_type);
             }
+            if type_args.len() != alias_sig.type_params.len() {
+                return None;
+            }
+            let resolved_args = resolve_args_or_error(type_args, self);
+            if resolved_args.iter().any(|t| t.is_error()) {
+                return Some(Type::Error);
+            }
+            self.check_trait_bounds(
+                &alias_sig.trait_bounds,
+                &alias_sig.type_params,
+                &resolved_args,
+                span,
+            );
+            let substitution =
+                TypeParamSubstitution::from_pairs(&alias_sig.type_params, &resolved_args);
+            return Some(apply_substitution(&substitution, &alias_sig.expanded_type));
         }
 
         // 8. Interfaces → interface object (supports generic interfaces).
         // A plain trait is bound-only and may not appear in type position.
-        if let Some(trait_fqn) = self.resolve_trait_fqn(name) {
-            if let Some(sig) = self
+        if let Some(trait_fqn) = self.resolve_trait_fqn(name)
+            && let Some(sig) = self
                 .registry
                 .lookup_trait(&trait_fqn, &self.package_path)
                 .cloned()
-            {
-                if type_args.len() != sig.type_params.len() {
-                    return None;
-                }
-                if !sig.is_interface {
-                    self.diagnostics.error(
+        {
+            if type_args.len() != sig.type_params.len() {
+                return None;
+            }
+            if !sig.is_interface {
+                self.diagnostics.error(
                         span.clone(),
                         format!(
                             "trait '{}' cannot be used as a type; declare it as an 'interface' to use it as an object type",
                             trait_fqn.symbol.0
                         ),
                     );
-                    return Some(Type::Error);
-                }
-                let trait_type_args = resolve_args_or_error(type_args, self);
-                if trait_type_args.iter().any(|t| t.is_error()) {
-                    return Some(Type::Error);
-                }
-                return Some(Type::interface_object(trait_fqn, trait_type_args));
+                return Some(Type::Error);
             }
+            let trait_type_args = resolve_args_or_error(type_args, self);
+            if trait_type_args.iter().any(|t| t.is_error()) {
+                return Some(Type::Error);
+            }
+            return Some(Type::interface_object(trait_fqn, trait_type_args));
         }
 
         None
@@ -1107,5 +1240,4 @@ impl Inference<'_> {
             .lookup_enum_type(&fqn, &self.package_path, &self.current_file)
             .cloned()
     }
-
 }

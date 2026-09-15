@@ -94,14 +94,17 @@ fn find_enclosing_call(
 
     // Check if this expression is a call expression
     let call_kind = match &expr.kind {
-        TypedExprKind::FunctionCall { name, args, type_params: _ } => {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params: _,
+        } => {
             let active = compute_active_param(args, &expr.span, line, column);
-            Some((
-                CallKind::FunctionCall { name: name.clone() },
-                active,
-            ))
+            Some((CallKind::FunctionCall { name: name.clone() }, active))
         }
-        TypedExprKind::ClassNew { mangled_name, args, .. } => {
+        TypedExprKind::ClassNew {
+            mangled_name, args, ..
+        } => {
             let active = compute_active_param(args, &expr.span, line, column);
             Some((
                 CallKind::ClassNew {
@@ -120,12 +123,7 @@ fn find_enclosing_call(
                 .enumerate()
                 .map(|(i, a)| (format!("arg{i}"), a.ty.clone()))
                 .collect();
-            Some((
-                CallKind::ClassVirtualCall {
-                    args: param_info,
-                },
-                active,
-            ))
+            Some((CallKind::ClassVirtualCall { args: param_info }, active))
         }
         TypedExprKind::ClassSuperCall {
             method_mangled,
@@ -155,8 +153,9 @@ fn find_enclosing_call(
                 Type::InterfaceObject { traits, .. } => traits
                     .iter()
                     .find(|c| {
-                        crate::common::types::MangledName::for_interface_object_per_interface(&c.trait_fqn)
-                            == *interface_mangled_name
+                        crate::common::types::MangledName::for_interface_object_per_interface(
+                            &c.trait_fqn,
+                        ) == *interface_mangled_name
                     })
                     .map(|c| c.trait_fqn.clone())
                     .unwrap_or_else(|| traits[0].trait_fqn.clone()),
@@ -387,9 +386,7 @@ fn walk_children_for_calls(
         TypedExprKind::Await { operand, .. } | TypedExprKind::Use { operand, .. } => {
             find_enclosing_call(operand, file, line, column, best);
         }
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => {
+        TypedExprKind::ForLoop { iterable, body, .. } => {
             find_enclosing_call(iterable, file, line, column, best);
             find_enclosing_call(body, file, line, column, best);
         }
@@ -420,8 +417,7 @@ fn walk_children_for_calls(
                 find_enclosing_call(arg, file, line, column, best);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -466,9 +462,7 @@ fn walk_pattern_for_calls(
                 walk_pattern_for_calls(p, file, line, column, best);
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for fp in field_patterns {
                 walk_pattern_for_calls(&fp.pattern, file, line, column, best);
             }
@@ -581,7 +575,12 @@ fn build_signature_help(
                 .iter()
                 .map(|(n, t)| format!("{n}: {t}"))
                 .collect();
-            let label = format!("{}({}): {}", method_name, params_str.join(", "), method.return_type);
+            let label = format!(
+                "{}({}): {}",
+                method_name,
+                params_str.join(", "),
+                method.return_type
+            );
             let params = method
                 .params
                 .iter()

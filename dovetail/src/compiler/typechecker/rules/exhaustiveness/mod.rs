@@ -8,8 +8,8 @@
 //! When metadata is missing the check bails silently: a failed lookup must
 //! never surface as a false "non-exhaustive".
 
-mod ctor;
 mod class_regions;
+mod ctor;
 mod matrix;
 mod witness;
 
@@ -49,14 +49,12 @@ impl TypedExprVisitor for ExhaustivenessRule<'_> {
     fn visit_match(&mut self, expr: &TypedExpr, diagnostics: &mut Diagnostics) {
         // Depth-first, so inner matches report before the outer one.
         visitor::walk_match(self, expr, diagnostics);
-        if let TypedExprKind::Match { subject, arms } = &expr.kind {
-            if !subject.ty.is_error() {
-                if let Some(msg) =
-                    check_match_exhaustiveness(arms, &subject.ty, self.types, self.registry)
-                {
-                    diagnostics.error(expr.span.clone(), msg);
-                }
-            }
+        if let TypedExprKind::Match { subject, arms } = &expr.kind
+            && !subject.ty.is_error()
+            && let Some(msg) =
+                check_match_exhaustiveness(arms, &subject.ty, self.types, self.registry)
+        {
+            diagnostics.error(expr.span.clone(), msg);
         }
     }
 }
@@ -76,13 +74,20 @@ fn check_match_exhaustiveness(
     for arm in arms.iter().filter(|a| a.guard.is_none()) {
         match cx.lower(&arm.pattern, scrutinee_ty) {
             Ok(p) => rows.push(vec![p]),
-            Err(_) => return needs_reified_proof.then(|| "cannot prove generic match coverage; add a fallback case".to_string()),
+            Err(_) => {
+                return needs_reified_proof.then(|| {
+                    "cannot prove generic match coverage; add a fallback case".to_string()
+                });
+            }
         }
     }
 
     let witnesses = match missing_witnesses(&cx, &rows, std::slice::from_ref(scrutinee_ty), 0) {
         Ok(witnesses) => witnesses,
-        Err(_) => return needs_reified_proof.then(|| "cannot prove generic match coverage; add a fallback case".to_string()),
+        Err(_) => {
+            return needs_reified_proof
+                .then(|| "cannot prove generic match coverage; add a fallback case".to_string());
+        }
     };
     if witnesses.is_empty() {
         return None;
@@ -100,16 +105,33 @@ fn check_match_exhaustiveness(
     Some(format!(
         "non-exhaustive match: missing case for {}{}",
         rendered.join(", "),
-        if needs_reified_proof { "; add the remaining cases or a fallback case" } else { "" }
+        if needs_reified_proof {
+            "; add the remaining cases or a fallback case"
+        } else {
+            ""
+        }
     ))
 }
 
 fn reified_pattern(pattern: &crate::typechecker::types::TypedPattern) -> bool {
     use crate::typechecker::types::TypedPattern as P;
     match pattern {
-        P::TypeAnnotated { ty: Type::GenericClass { .. } | Type::GenericRecord { .. } | Type::GenericEnum { .. }, .. } => true,
-        P::Tuple { element_patterns, .. } | P::EnumVariant { payload_patterns: element_patterns, .. } => element_patterns.iter().any(reified_pattern),
-        P::Record { fields, .. } | P::EnumVariantRecord { field_patterns: fields, .. } => fields.iter().any(|f|reified_pattern(&f.pattern)),
+        P::TypeAnnotated {
+            ty: Type::GenericClass { .. } | Type::GenericRecord { .. } | Type::GenericEnum { .. },
+            ..
+        } => true,
+        P::Tuple {
+            element_patterns, ..
+        }
+        | P::EnumVariant {
+            payload_patterns: element_patterns,
+            ..
+        } => element_patterns.iter().any(reified_pattern),
+        P::Record { fields, .. }
+        | P::EnumVariantRecord {
+            field_patterns: fields,
+            ..
+        } => fields.iter().any(|f| reified_pattern(&f.pattern)),
         P::Newtype { inner_pattern, .. } => reified_pattern(inner_pattern),
         _ => false,
     }
@@ -234,7 +256,10 @@ mod tests {
     #[test]
     fn int_with_wildcard_is_exhaustive() {
         assert_eq!(
-            check(&[arm(int_pat(1)), arm(TypedPattern::Wildcard)], &Type::Int32),
+            check(
+                &[arm(int_pat(1)), arm(TypedPattern::Wildcard)],
+                &Type::Int32
+            ),
             None
         );
     }

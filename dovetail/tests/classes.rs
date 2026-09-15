@@ -18,7 +18,9 @@ fn typecheck_project(project: &ResolvedProject, workspace_root: &Path) -> Vec<St
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Check, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Check,
+        &std::collections::HashMap::new(),
+        false,
     );
     result
         .diagnostics
@@ -463,9 +465,9 @@ function main(): Unit =
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = typecheck_project(&project, dir.path());
@@ -512,9 +514,9 @@ function main(): Unit =
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = typecheck_project(&project, dir.path());
@@ -684,7 +686,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot extend final class")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot extend final class")),
         "expected 'cannot extend final class' error, got: {:?}",
         errors
     );
@@ -705,7 +709,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("override") && e.contains("no matching")),
+        errors
+            .iter()
+            .any(|e| e.contains("override") && e.contains("no matching")),
         "expected 'no matching method to override' error, got: {:?}",
         errors
     );
@@ -727,7 +733,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot override final method")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot override final method")),
         "expected 'cannot override final method' error, got: {:?}",
         errors
     );
@@ -1295,7 +1303,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot instantiate abstract class")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot instantiate abstract class")),
         "expected 'cannot instantiate abstract class' error, got: {:?}",
         errors
     );
@@ -1313,7 +1323,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be both abstract and final")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be both abstract and final")),
         "expected 'abstract and final' error, got: {:?}",
         errors
     );
@@ -1332,7 +1344,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("abstract method") && e.contains("non-abstract class")),
+        errors
+            .iter()
+            .any(|e| e.contains("abstract method") && e.contains("non-abstract class")),
         "expected 'abstract method in non-abstract class' error, got: {:?}",
         errors
     );
@@ -1351,7 +1365,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("must be an instance method")),
+        errors
+            .iter()
+            .any(|e| e.contains("must be an instance method")),
         "expected 'must be instance method' error, got: {:?}",
         errors
     );
@@ -1370,7 +1386,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be both abstract and final")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be both abstract and final")),
         "expected 'abstract and final method' error, got: {:?}",
         errors
     );
@@ -1389,7 +1407,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be both abstract and override")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be both abstract and override")),
         "expected 'abstract and override method' error, got: {:?}",
         errors
     );
@@ -1410,7 +1430,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("must implement abstract method")),
+        errors
+            .iter()
+            .any(|e| e.contains("must implement abstract method")),
         "expected 'must implement abstract method' error, got: {:?}",
         errors
     );
@@ -1433,7 +1455,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("must implement abstract method")),
+        errors
+            .iter()
+            .any(|e| e.contains("must implement abstract method")),
         "expected 'must implement abstract method from grandparent' error, got: {:?}",
         errors
     );
@@ -1455,7 +1479,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("shadows") && e.contains("override")),
+        errors
+            .iter()
+            .any(|e| e.contains("shadows") && e.contains("override")),
         "expected 'shadows parent method, use override' error, got: {:?}",
         errors
     );
@@ -1643,7 +1669,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("super") && e.contains("class")),
+        errors
+            .iter()
+            .any(|e| e.contains("super") && e.contains("class")),
         "expected 'super can only be used inside a class method' error, got: {:?}",
         errors
     );
@@ -1683,7 +1711,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("no method") && e.contains("parent")),
+        errors
+            .iter()
+            .any(|e| e.contains("no method") && e.contains("parent")),
         "expected 'no method found in parent' error, got: {:?}",
         errors
     );
@@ -2150,13 +2180,15 @@ class Dog() implements Greeter
         }],
         project_dir: dir.path().to_path_buf(),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     let errors = typecheck_project(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("must implement method 'greet' from trait 'Greeter'")),
+        errors
+            .iter()
+            .any(|e| e.contains("must implement method 'greet' from trait 'Greeter'")),
         "expected missing method error, got: {errors:?}"
     );
 }
@@ -2185,13 +2217,15 @@ class Dog() implements Unknown
         }],
         project_dir: dir.path().to_path_buf(),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     let errors = typecheck_project(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("unknown trait: 'Unknown'")),
+        errors
+            .iter()
+            .any(|e| e.contains("unknown trait: 'Unknown'")),
         "expected unknown trait error, got: {errors:?}"
     );
 }
@@ -2224,13 +2258,15 @@ class Dog() implements Greeter =
         }],
         project_dir: dir.path().to_path_buf(),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     let errors = typecheck_project(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("abstract method") && e.contains("non-abstract class")),
+        errors
+            .iter()
+            .any(|e| e.contains("abstract method") && e.contains("non-abstract class")),
         "expected abstract-in-non-abstract error, got: {errors:?}"
     );
 }
@@ -2534,7 +2570,10 @@ function main(): Unit =
     ()
 "#,
     );
-    assert!(result.is_err(), "should error on type mismatch in constructor");
+    assert!(
+        result.is_err(),
+        "should error on type mismatch in constructor"
+    );
 }
 
 #[test]
@@ -3030,9 +3069,9 @@ function main(): Unit = get_name<Unrelated>(Unrelated())
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = typecheck_project(&project, dir.path());
@@ -3206,9 +3245,9 @@ function main(): Unit =
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = typecheck_project(&project, dir.path());
@@ -3408,7 +3447,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("unrelated") || e.contains("never match")),
+        errors
+            .iter()
+            .any(|e| e.contains("unrelated") || e.contains("never match")),
         "expected 'unrelated' or 'never match' error, got: {:?}",
         errors
     );
@@ -3632,7 +3673,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("abstract property") && e.contains("non-abstract")),
+        errors
+            .iter()
+            .any(|e| e.contains("abstract property") && e.contains("non-abstract")),
         "expected error about abstract property in non-abstract class, got: {errors:?}"
     );
 }
@@ -3652,7 +3695,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("override") && e.contains("no matching")),
+        errors
+            .iter()
+            .any(|e| e.contains("override") && e.contains("no matching")),
         "expected error about override without parent, got: {errors:?}"
     );
 }
@@ -3691,7 +3736,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("abstract") && e.contains("final")),
+        errors
+            .iter()
+            .any(|e| e.contains("abstract") && e.contains("final")),
         "expected error about abstract+final, got: {errors:?}"
     );
 }
@@ -3709,7 +3756,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("abstract property") && e.contains("instance")),
+        errors
+            .iter()
+            .any(|e| e.contains("abstract property") && e.contains("instance")),
         "expected error about abstract static property, got: {errors:?}"
     );
 }
@@ -4031,7 +4080,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("override") && e.contains("no matching")),
+        errors
+            .iter()
+            .any(|e| e.contains("override") && e.contains("no matching")),
         "expected error about override without parent on generic class, got: {errors:?}"
     );
 }
@@ -4049,7 +4100,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("abstract property") && e.contains("non-abstract")),
+        errors
+            .iter()
+            .any(|e| e.contains("abstract property") && e.contains("non-abstract")),
         "expected error about abstract property in non-abstract generic class, got: {errors:?}"
     );
 }
@@ -4070,7 +4123,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("shadows") && e.contains("override")),
+        errors
+            .iter()
+            .any(|e| e.contains("shadows") && e.contains("override")),
         "expected error about shadowing without override on generic class, got: {errors:?}"
     );
 }
@@ -4090,7 +4145,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("must implement") && e.contains("content")),
+        errors
+            .iter()
+            .any(|e| e.contains("must implement") && e.contains("content")),
         "expected error about unimplemented abstract property, got: {errors:?}"
     );
 }
@@ -4391,7 +4448,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot assign to immutable")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot assign to immutable")),
         "expected immutability error, got: {errors:?}"
     );
 }
@@ -4463,7 +4522,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("references type parameter")),
+        errors
+            .iter()
+            .any(|e| e.contains("references type parameter")),
         "expected type-parameter rejection, got: {:?}",
         errors,
     );
@@ -4492,7 +4553,7 @@ function main(): Unit =
 #[test]
 fn test_covariant_class_immutable_field_variance_cast() {
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4513,7 +4574,7 @@ function main(): Unit =
 #[test]
 fn test_covariant_class_mutable_field_shared_state() {
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class MutBox<out T>(public mutable value: Int32)
@@ -4535,7 +4596,7 @@ function main(): Unit =
 fn test_covariant_class_mutable_t_field_rejected() {
     // Mutable field of covariant type T must be in invariant position — rejected.
     let errors = common::compile_expecting_errors(
-r#"
+        r#"
 package a
 
 class Holder<out T>(public mutable value: T)
@@ -4556,7 +4617,7 @@ function main(): Unit = ()
 fn test_covariant_class_immutable_t_field_through_cast() {
     // Immutable covariant field can be read through a variance cast.
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4577,7 +4638,7 @@ function main(): Unit =
 #[test]
 fn test_covariant_class_mixed_mutable_immutable_fields() {
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4602,7 +4663,7 @@ function main(): Unit =
 #[test]
 fn test_covariant_class_multiple_mutable_fields() {
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4632,7 +4693,7 @@ function main(): Unit =
 #[test]
 fn test_covariant_class_method_through_cast() {
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4655,7 +4716,7 @@ function main(): Unit =
 fn test_covariant_class_direct_let_shared_mutation() {
     // Direct let-binding variance cast: x and y share the same boxed mutable field
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4679,7 +4740,7 @@ function main(): Unit =
 fn test_covariant_class_write_through_cast_ref() {
     // Write through the cast reference, read back through the original
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4701,7 +4762,7 @@ function main(): Unit =
 fn test_covariant_class_invariant_no_boxing() {
     // Invariant generic class should NOT box mutable fields (no variance cast needed)
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Cell<T>(public mutable value: T)
@@ -4719,7 +4780,7 @@ function main(): Unit =
 fn test_covariant_class_let_binding_mutable_field() {
     // Let-binding mutable field inside a covariant class is also boxed
     common::compile_and_run(
-r#"
+        r#"
 package a
 
 class Animal(public name: String)
@@ -4786,7 +4847,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("non-exhaustive") && e.contains("Rectangle")),
+        errors
+            .iter()
+            .any(|e| e.contains("non-exhaustive") && e.contains("Rectangle")),
         "expected non-exhaustive error mentioning Rectangle, got: {:?}",
         errors
     );
@@ -4855,7 +4918,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("must be 'final' or 'sealed abstract'")),
+        errors
+            .iter()
+            .any(|e| e.contains("must be 'final' or 'sealed abstract'")),
         "expected error about final or sealed abstract, got: {:?}",
         errors
     );
@@ -4932,7 +4997,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("non-exhaustive") && e.contains("Triple")),
+        errors
+            .iter()
+            .any(|e| e.contains("non-exhaustive") && e.contains("Triple")),
         "expected non-exhaustive error mentioning Triple, got: {:?}",
         errors
     );
@@ -5083,7 +5150,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("non-exhaustive") && e.contains("MapIO")),
+        errors
+            .iter()
+            .any(|e| e.contains("non-exhaustive") && e.contains("MapIO")),
         "expected non-exhaustive error mentioning MapIO, got: {:?}",
         errors
     );

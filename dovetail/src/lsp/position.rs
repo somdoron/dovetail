@@ -1,6 +1,8 @@
 use crate::common::span::{FilePath, Span};
 use crate::common::types::{Fqn, MangledName, VarName};
-use crate::typechecker::types::{Type, TypeReference, TypedExpr, TypedExprKind, TypedModule, TypedPattern};
+use crate::typechecker::types::{
+    Type, TypeReference, TypedExpr, TypedExprKind, TypedModule, TypedPattern,
+};
 
 /// A classified node at a cursor position in the typed AST.
 #[derive(Debug)]
@@ -8,21 +10,43 @@ pub enum NodeAtPosition {
     /// A function call: `add(1, 2)`
     FunctionCall { name: MangledName, span: Span },
     /// A first-class function reference: `let f = add`
-    FunctionRef { name: MangledName, ty: Type, span: Span },
+    FunctionRef {
+        name: MangledName,
+        ty: Type,
+        span: Span,
+    },
     /// A bound method reference: `obj.method`
-    MethodRef { method_name: MangledName, span: Span },
+    MethodRef {
+        method_name: MangledName,
+        span: Span,
+    },
     /// A field access: `record.field`
-    FieldAccess { receiver_type: Type, field_name: String, span: Span },
+    FieldAccess {
+        receiver_type: Type,
+        field_name: String,
+        span: Span,
+    },
     /// A local variable reference: `x`
     VarRef { name: VarName, ty: Type, span: Span },
     /// A global variable reference: `globalVar`
-    GlobalRef { name: MangledName, ty: Type, span: Span },
+    GlobalRef {
+        name: MangledName,
+        ty: Type,
+        span: Span,
+    },
     /// A record construction: `Point { x = 1, y = 2 }`
     RecordCreate { fqn: Fqn, span: Span },
     /// An enum variant construction: `Option.Some(1)`
-    EnumCreate { fqn: Fqn, variant_name: String, span: Span },
+    EnumCreate {
+        fqn: Fqn,
+        variant_name: String,
+        span: Span,
+    },
     /// A class instantiation: `new MyClass(args)`
-    ClassNew { mangled_name: MangledName, span: Span },
+    ClassNew {
+        mangled_name: MangledName,
+        span: Span,
+    },
     /// A let binding: `let x = 1`
     Let { name: VarName, ty: Type, span: Span },
     /// A type reference: `e is T`, `e as T`, trait coercion, type annotation
@@ -202,7 +226,11 @@ fn walk_children<'a>(
                 walk_expr(arg, file, line, column, best);
             }
         }
-        TypedExprKind::If { condition, then_branch, else_branch } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             walk_expr(condition, file, line, column, best);
             walk_expr(then_branch, file, line, column, best);
             if let Some(eb) = else_branch {
@@ -230,7 +258,8 @@ fn walk_children<'a>(
                 walk_expr(field_expr, file, line, column, best);
             }
         }
-        TypedExprKind::EnumCreate { args, .. } | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
+        TypedExprKind::EnumCreate { args, .. }
+        | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
             for arg in args {
                 walk_expr(arg, file, line, column, best);
             }
@@ -241,7 +270,9 @@ fn walk_children<'a>(
                 walk_expr(value, file, line, column, best);
             }
         }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => {
             walk_expr(object, file, line, column, best);
             for (_, _, val) in overrides {
                 walk_expr(val, file, line, column, best);
@@ -335,8 +366,7 @@ fn walk_children<'a>(
                 walk_expr(arg, file, line, column, best);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -375,7 +405,9 @@ fn walk_pattern<'a>(
                 walk_pattern(&fp.pattern, file, line, column, best);
             }
         }
-        TypedPattern::EnumVariant { payload_patterns, .. } => {
+        TypedPattern::EnumVariant {
+            payload_patterns, ..
+        } => {
             for p in payload_patterns {
                 walk_pattern(p, file, line, column, best);
             }
@@ -385,7 +417,9 @@ fn walk_pattern<'a>(
                 walk_pattern(&fp.pattern, file, line, column, best);
             }
         }
-        TypedPattern::Tuple { element_patterns, .. } => {
+        TypedPattern::Tuple {
+            element_patterns, ..
+        } => {
             for p in element_patterns {
                 walk_pattern(p, file, line, column, best);
             }
@@ -440,16 +474,21 @@ fn classify_expr(expr: &TypedExpr) -> NodeAtPosition {
             name: name.clone(),
             span: expr.span.clone(),
         },
-        TypedExprKind::FunctionRef { name, type_params: _ } => NodeAtPosition::FunctionRef {
+        TypedExprKind::FunctionRef {
+            name,
+            type_params: _,
+        } => NodeAtPosition::FunctionRef {
             name: name.clone(),
             ty: expr.ty.clone(),
             span: expr.span.clone(),
         },
-        TypedExprKind::MethodRef { method_name, type_params: _, .. } => NodeAtPosition::MethodRef {
+        TypedExprKind::MethodRef { method_name, .. } => NodeAtPosition::MethodRef {
             method_name: method_name.clone(),
             span: expr.span.clone(),
         },
-        TypedExprKind::FieldAccess { object, field_name, .. } => NodeAtPosition::FieldAccess {
+        TypedExprKind::FieldAccess {
+            object, field_name, ..
+        } => NodeAtPosition::FieldAccess {
             receiver_type: object.ty.clone(),
             field_name: field_name.clone(),
             span: expr.span.clone(),
@@ -468,14 +507,16 @@ fn classify_expr(expr: &TypedExpr) -> NodeAtPosition {
             fqn: fqn.clone(),
             span: expr.span.clone(),
         },
-        TypedExprKind::EnumCreate { fqn, variant_name, .. }
-        | TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, .. } => {
-            NodeAtPosition::EnumCreate {
-                fqn: fqn.clone(),
-                variant_name: variant_name.clone(),
-                span: expr.span.clone(),
-            }
+        TypedExprKind::EnumCreate {
+            fqn, variant_name, ..
         }
+        | TypedExprKind::EnumVariantRecordCreate {
+            fqn, variant_name, ..
+        } => NodeAtPosition::EnumCreate {
+            fqn: fqn.clone(),
+            variant_name: variant_name.clone(),
+            span: expr.span.clone(),
+        },
         TypedExprKind::ClassNew { mangled_name, .. } => NodeAtPosition::ClassNew {
             mangled_name: mangled_name.clone(),
             span: expr.span.clone(),
@@ -485,12 +526,13 @@ fn classify_expr(expr: &TypedExpr) -> NodeAtPosition {
             ty: var_ty.clone(),
             span: expr.span.clone(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, .. } => {
-            NodeAtPosition::ClassNew {
-                mangled_name: target_mangled_name.clone(),
-                span: expr.span.clone(),
-            }
-        }
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            ..
+        } => NodeAtPosition::ClassNew {
+            mangled_name: target_mangled_name.clone(),
+            span: expr.span.clone(),
+        },
         TypedExprKind::RecordWith { fqn, .. } => NodeAtPosition::RecordCreate {
             fqn: fqn.clone(),
             span: expr.span.clone(),
@@ -509,12 +551,10 @@ fn classify_expr(expr: &TypedExpr) -> NodeAtPosition {
             ty: expr.ty.clone(),
             span: expr.span.clone(),
         },
-        TypedExprKind::ClassSuperCall { method_mangled, .. } => {
-            NodeAtPosition::FunctionCall {
-                name: method_mangled.clone(),
-                span: expr.span.clone(),
-            }
-        }
+        TypedExprKind::ClassSuperCall { method_mangled, .. } => NodeAtPosition::FunctionCall {
+            name: method_mangled.clone(),
+            span: expr.span.clone(),
+        },
         _ => NodeAtPosition::TypedExpr {
             ty: expr.ty.clone(),
             span: expr.span.clone(),

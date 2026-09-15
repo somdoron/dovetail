@@ -106,7 +106,10 @@ pub(super) fn generate_realloc(pinned_alloc: u32, pinned_free: u32) -> Function 
     f.instruction(&Instruction::LocalGet(result));
     f.instruction(&Instruction::LocalGet(old_ptr));
     f.instruction(&Instruction::LocalGet(old_size));
-    f.instruction(&Instruction::MemoryCopy { src_mem: 0, dst_mem: 0 });
+    f.instruction(&Instruction::MemoryCopy {
+        src_mem: 0,
+        dst_mem: 0,
+    });
     // free the old block
     f.instruction(&Instruction::LocalGet(old_ptr));
     f.instruction(&Instruction::Call(pinned_free));
@@ -143,7 +146,11 @@ pub(super) fn generate_realloc(pinned_alloc: u32, pinned_free: u32) -> Function 
 use super::{GLOBAL_PINNED_BRK, GLOBAL_PINNED_FREE_HEAD, SCRATCH_LIMIT};
 
 /// Block header word 0: the block's total size, header included.
-const HDR_SIZE: MemArg = MemArg { offset: 0, align: 2, memory_index: 0 };
+const HDR_SIZE: MemArg = MemArg {
+    offset: 0,
+    align: 2,
+    memory_index: 0,
+};
 
 /// Block header word 1: the free-list `next` link while the block is free.
 ///
@@ -152,7 +159,11 @@ const HDR_SIZE: MemArg = MemArg { offset: 0, align: 2, memory_index: 0 };
 /// so the allocator may only read or write it on blocks that are on the free
 /// list. That is what rules the header out as a place to record "this block
 /// has been freed", and why the tag below lives in the size word instead.
-const HDR_NEXT: MemArg = MemArg { offset: 4, align: 2, memory_index: 0 };
+const HDR_NEXT: MemArg = MemArg {
+    offset: 4,
+    align: 2,
+    memory_index: 0,
+};
 
 /// Set in the size word while the block is on the free list.
 ///
@@ -547,8 +558,7 @@ mod tests {
             let engine = Engine::default();
             let module = WasmModule::new(&engine, build_module()).expect("module is invalid");
             let mut store = Store::new(&engine, ());
-            let instance =
-                Instance::new(&mut store, &module, &[]).expect("instantiation failed");
+            let instance = Instance::new(&mut store, &module, &[]).expect("instantiation failed");
             let alloc = instance
                 .get_typed_func::<i32, i32>(&mut store, "alloc")
                 .unwrap();
@@ -558,11 +568,19 @@ mod tests {
             let realloc = instance
                 .get_typed_func::<(i32, i32, i32, i32), i32>(&mut store, "realloc")
                 .unwrap();
-            Heap { store, alloc, free, realloc, instance }
+            Heap {
+                store,
+                alloc,
+                free,
+                realloc,
+                instance,
+            }
         }
 
         fn alloc(&mut self, size: i32) -> i32 {
-            self.alloc.call(&mut self.store, size).expect("alloc trapped")
+            self.alloc
+                .call(&mut self.store, size)
+                .expect("alloc trapped")
         }
 
         fn free(&mut self, ptr: i32) {
@@ -689,7 +707,11 @@ mod tests {
         let mut globals = GlobalSection::new();
         for init in super::super::RUNTIME_GLOBAL_INITS {
             globals.global(
-                GlobalType { val_type: ValType::I32, mutable: true, shared: false },
+                GlobalType {
+                    val_type: ValType::I32,
+                    mutable: true,
+                    shared: false,
+                },
                 &ConstExpr::i32_const(init),
             );
         }
@@ -834,7 +856,11 @@ mod tests {
         for n in 10..500 {
             round(&mut heap, n);
         }
-        assert_eq!(heap.brk(), brk, "steady-state allocation must not grow the heap");
+        assert_eq!(
+            heap.brk(),
+            brk,
+            "steady-state allocation must not grow the heap"
+        );
     }
 
     #[test]

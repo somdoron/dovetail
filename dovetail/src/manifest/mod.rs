@@ -1,8 +1,8 @@
 mod formatting;
 pub use formatting::formatting_directories;
-mod resolve;
 mod dependencies;
 mod git;
+mod resolve;
 pub use dependencies::validate_closure as validate_dependency_closure;
 pub use dependencies::{ResolveOptions, UpdateRequest, load_manifest_with_options};
 mod toml_schema;
@@ -169,7 +169,11 @@ pub enum ManifestError {
     /// Project directory already exists on disk.
     ProjectDirAlreadyExists { project: String, path: PathBuf },
     /// A declared resource file does not exist on disk.
-    ResourceNotFound { project: String, resource: String, expected: PathBuf },
+    ResourceNotFound {
+        project: String,
+        resource: String,
+        expected: PathBuf,
+    },
     /// A declared resource path escapes the project directory.
     ResourcePathEscape { project: String, resource: String },
     /// A `[[project.macro]]` entry has an unsupported `kind` value.
@@ -293,7 +297,11 @@ impl fmt::Display for ManifestError {
                     path.display()
                 )
             }
-            Self::ResourceNotFound { project, resource, expected } => {
+            Self::ResourceNotFound {
+                project,
+                resource,
+                expected,
+            } => {
                 write!(
                     f,
                     "project `{project}`: resource `{resource}` not found: {}",
@@ -306,36 +314,49 @@ impl fmt::Display for ManifestError {
                     "project `{project}`: resource `{resource}` path escapes project directory (`..` not allowed)"
                 )
             }
-            Self::UnsupportedMacroKind { project, macro_name, kind } => {
+            Self::UnsupportedMacroKind {
+                project,
+                macro_name,
+                kind,
+            } => {
                 write!(
                     f,
                     "project `{project}`: macro `{macro_name}` has unsupported kind `{kind}` (only \"derive\" is supported)"
                 )
             }
-            Self::MacroPackageMismatch { project, macro_name, package } => {
+            Self::MacroPackageMismatch {
+                project,
+                macro_name,
+                package,
+            } => {
                 write!(
                     f,
                     "project `{project}`: macro `{macro_name}` declares package `{package}`, but no such package is declared in this project"
                 )
             }
-            Self::MacroScriptNotFound { project, macro_name, expected } => {
+            Self::MacroScriptNotFound {
+                project,
+                macro_name,
+                expected,
+            } => {
                 write!(
                     f,
                     "project `{project}`: macro `{macro_name}` script not found: {}",
                     expected.display()
                 )
             }
-            Self::MacroScriptPathEscape { project, macro_name, script } => {
+            Self::MacroScriptPathEscape {
+                project,
+                macro_name,
+                script,
+            } => {
                 write!(
                     f,
                     "project `{project}`: macro `{macro_name}` script `{script}` escapes project directory (`..` not allowed)"
                 )
             }
             Self::DuplicateMacro { project, fqn } => {
-                write!(
-                    f,
-                    "project `{project}`: duplicate macro `{fqn}`"
-                )
+                write!(f, "project `{project}`: duplicate macro `{fqn}`")
             }
             Self::InvalidComponent { project, reason } => {
                 write!(
@@ -439,10 +460,20 @@ pub fn init_workspace(workspace_root: &Path, project_name: &str) -> Result<(), V
     };
     let ignore_path = workspace_root.join(".gitignore");
     let mut ignore = std::fs::read_to_string(&ignore_path).unwrap_or_default();
-    if !ignore.lines().any(|line| line == ".dovetail/" || line == "/.dovetail/") {
-        if !ignore.is_empty() && !ignore.ends_with('\n') { ignore.push('\n'); }
+    if !ignore
+        .lines()
+        .any(|line| line == ".dovetail/" || line == "/.dovetail/")
+    {
+        if !ignore.is_empty() && !ignore.ends_with('\n') {
+            ignore.push('\n');
+        }
         ignore.push_str(".dovetail/\n");
-        std::fs::write(&ignore_path, ignore).map_err(|source| vec![ManifestError::IoError { path: ignore_path, source }])?;
+        std::fs::write(&ignore_path, ignore).map_err(|source| {
+            vec![ManifestError::IoError {
+                path: ignore_path,
+                source,
+            }]
+        })?;
     }
     let content = toml_schema::serialize_manifest(&manifest).map_err(|e| vec![e])?;
     std::fs::write(&manifest_path, content).map_err(|e| {
@@ -477,7 +508,12 @@ pub fn add_project(workspace_root: &Path, project_name: &str) -> Result<(), Vec<
 
     // Check local names and explicit imported aliases before creating files.
     if raw.project.iter().any(|p| p.name == project_name)
-        || raw.dependencies.iter().flat_map(|d| &d.projects).any(|p| p.names().1 == project_name) {
+        || raw
+            .dependencies
+            .iter()
+            .flat_map(|d| &d.projects)
+            .any(|p| p.names().1 == project_name)
+    {
         return Err(vec![ManifestError::DuplicateProject {
             name: project_name.to_string(),
         }]);
@@ -596,7 +632,10 @@ packages = ["utils", "."]
 
         // myapp depends on mylib.
         assert_eq!(workspace.projects[1].depends.len(), 1);
-        assert_eq!(workspace.projects[1].depends[0].0, workspace.projects[0].identity());
+        assert_eq!(
+            workspace.projects[1].depends[0].0,
+            workspace.projects[0].identity()
+        );
     }
 
     #[test]
@@ -780,11 +819,17 @@ packages = ["com.example.myapp.utils", "."]
         let temporary = tempfile::tempdir().unwrap();
         init_workspace(temporary.path(), "app").unwrap();
         std::fs::create_dir(temporary.path().join("sources")).unwrap();
-        std::fs::rename(temporary.path().join("app"), temporary.path().join("sources/app")).unwrap();
+        std::fs::rename(
+            temporary.path().join("app"),
+            temporary.path().join("sources/app"),
+        )
+        .unwrap();
         std::os::unix::fs::symlink("sources/app", temporary.path().join("app")).unwrap();
 
         let workspace = load_manifest(temporary.path()).unwrap();
-        let app = workspace.project("app").expect("root project remains selectable");
+        let app = workspace
+            .project("app")
+            .expect("root project remains selectable");
         assert!(workspace.is_local(app));
         assert_eq!(workspace.result_key(app), "app");
     }
@@ -796,12 +841,18 @@ impl ResolvedProject {
     }
 
     pub(crate) fn generated_sources_dir(&self, root: &Path) -> PathBuf {
-        root.join(".dovetail/generated").join(git::digest(&format!("{}:{}", env!("CARGO_PKG_VERSION"), self.identity())))
+        root.join(".dovetail/generated").join(git::digest(&format!(
+            "{}:{}",
+            env!("CARGO_PKG_VERSION"),
+            self.identity()
+        )))
     }
 
     /// Resolver identity, independent of the source package FQNs and aliases.
     pub fn identity(&self) -> String {
-        self.resolved_identity.clone().unwrap_or_else(|| Self::local_identity(&self.project_dir, &self.name.0))
+        self.resolved_identity
+            .clone()
+            .unwrap_or_else(|| Self::local_identity(&self.project_dir, &self.name.0))
     }
 }
 
@@ -811,12 +862,22 @@ impl ResolvedWorkspace {
     }
 
     pub fn project(&self, key: &str) -> Option<&ResolvedProject> {
-        self.projects.iter().find(|p| p.identity() == key)
-            .or_else(|| self.projects.iter().find(|p| self.is_local(p) && p.name.0 == key))
+        self.projects
+            .iter()
+            .find(|p| p.identity() == key)
+            .or_else(|| {
+                self.projects
+                    .iter()
+                    .find(|p| self.is_local(p) && p.name.0 == key)
+            })
     }
 
     pub fn result_key(&self, project: &ResolvedProject) -> String {
-        if self.is_local(project) { project.name.0.clone() } else { project.identity() }
+        if self.is_local(project) {
+            project.name.0.clone()
+        } else {
+            project.identity()
+        }
     }
 }
 

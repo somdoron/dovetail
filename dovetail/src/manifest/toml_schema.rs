@@ -7,7 +7,11 @@ use super::ManifestError;
 pub(super) struct RawManifest {
     #[serde(rename = "compiler-version")]
     pub compiler_version: String,
-    #[serde(default, rename = "standard-tag", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "standard-tag",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub standard_tag: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dependencies: Vec<RawDependency>,

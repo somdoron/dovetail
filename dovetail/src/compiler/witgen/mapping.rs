@@ -5,8 +5,8 @@
 
 use wit_parser::{Resolve, Type, TypeDefKind};
 
-use super::names;
 use super::BindgenError;
+use super::names;
 
 /// Structural sketch of the Dovetail type a WIT type projects to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,10 +157,7 @@ pub fn map_wit_type(resolve: &Resolve, ty: &Type) -> Result<DovetailTypeSketch, 
                 }
                 other => {
                     return Err(BindgenError {
-                        message: format!(
-                            "WIT type kind `{}` is not supported yet",
-                            other.as_str()
-                        ),
+                        message: format!("WIT type kind `{}` is not supported yet", other.as_str()),
                     });
                 }
             }

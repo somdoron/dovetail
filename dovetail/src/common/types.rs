@@ -252,7 +252,13 @@ impl MangledName {
     pub fn for_test(package_path: &PackagePath, test_name: &str) -> Self {
         let sanitized: String = test_name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c.is_alphanumeric() || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         Self(format!("$test${}.{}", package_path, sanitized))
     }
@@ -315,7 +321,11 @@ impl InterfaceMemberName {
         if non_self_param_types.is_empty() {
             Self(method_name.to_string())
         } else {
-            Self(format!("{}${}", method_name, non_self_param_types.join("$")))
+            Self(format!(
+                "{}${}",
+                method_name,
+                non_self_param_types.join("$")
+            ))
         }
     }
 }

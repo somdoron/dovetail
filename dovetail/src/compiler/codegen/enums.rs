@@ -11,7 +11,11 @@ pub fn build_enum_base_subtype(reified: bool) -> SubType {
         supertype_idx: None,
         composite_type: wasm_encoder::CompositeType {
             inner: wasm_encoder::CompositeInnerType::Struct(StructType {
-                fields: if reified { vec![super::runtime_types::id_field()].into_boxed_slice() } else { Box::new([]) },
+                fields: if reified {
+                    vec![super::runtime_types::id_field()].into_boxed_slice()
+                } else {
+                    Box::new([])
+                },
             }),
             shared: false,
             describes: None,
@@ -39,7 +43,9 @@ pub fn build_enum_variant_subtype(
         })
         .collect();
 
-    if reified { fields.insert(0,super::runtime_types::id_field()); }
+    if reified {
+        fields.insert(0, super::runtime_types::id_field());
+    }
     SubType {
         is_final: true,
         supertype_idx: Some(base_type_index),
@@ -53,4 +59,3 @@ pub fn build_enum_variant_subtype(
         },
     }
 }
-

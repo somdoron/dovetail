@@ -21,9 +21,7 @@ use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use wit_parser::abi::{AbiVariant, WasmType};
-use wit_parser::{
-    Function, FunctionKind, Resolve, Type, TypeDefKind, TypeId, WorldItem, WorldKey,
-};
+use wit_parser::{Function, FunctionKind, Resolve, Type, TypeDefKind, TypeId, WorldItem, WorldKey};
 
 /// The WIT and the version come from the compiler itself — the same list, in
 /// the same order, that `codegen::component::p3_resolve` pushes into its
@@ -47,7 +45,10 @@ struct Row {
 /// The concurrency builtins the guest calls directly rather than through any
 /// one interface. Hand-written because they belong to no WIT function.
 fn root_rows() -> Vec<Row> {
-    let root = |name: &str, description: &str, params: Vec<&'static str>, results: Vec<&'static str>| Row {
+    let root = |name: &str,
+                description: &str,
+                params: Vec<&'static str>,
+                results: Vec<&'static str>| Row {
         module: "$root".to_string(),
         name: name.to_string(),
         description: description.to_string(),
@@ -55,12 +56,37 @@ fn root_rows() -> Vec<Row> {
         results,
     };
     vec![
-        root("[waitable-set-new]", "waitable-set.new", vec![], vec!["I32"]),
-        root("[waitable-set-wait]", "waitable-set.wait(set, retptr) -> event", vec!["I32", "I32"], vec!["I32"]),
-        root("[waitable-set-drop]", "waitable-set.drop", vec!["I32"], vec![]),
-        root("[waitable-join]", "waitable.join(waitable, set)", vec!["I32", "I32"], vec![]),
+        root(
+            "[waitable-set-new]",
+            "waitable-set.new",
+            vec![],
+            vec!["I32"],
+        ),
+        root(
+            "[waitable-set-wait]",
+            "waitable-set.wait(set, retptr) -> event",
+            vec!["I32", "I32"],
+            vec!["I32"],
+        ),
+        root(
+            "[waitable-set-drop]",
+            "waitable-set.drop",
+            vec!["I32"],
+            vec![],
+        ),
+        root(
+            "[waitable-join]",
+            "waitable.join(waitable, set)",
+            vec!["I32", "I32"],
+            vec![],
+        ),
         root("[subtask-drop]", "subtask.drop", vec!["I32"], vec![]),
-        root("[subtask-cancel]", "subtask.cancel -> status", vec!["I32"], vec!["I32"]),
+        root(
+            "[subtask-cancel]",
+            "subtask.cancel -> status",
+            vec!["I32"],
+            vec!["I32"],
+        ),
     ]
 }
 
@@ -139,7 +165,9 @@ pub fn generate() -> String {
 fn function_rows(resolve: &Resolve, module: &str, func: &Function) -> Vec<Row> {
     let is_async = matches!(
         func.kind,
-        FunctionKind::AsyncFreestanding | FunctionKind::AsyncMethod(_) | FunctionKind::AsyncStatic(_)
+        FunctionKind::AsyncFreestanding
+            | FunctionKind::AsyncMethod(_)
+            | FunctionKind::AsyncStatic(_)
     );
     let variant = if is_async {
         AbiVariant::GuestImportAsync
@@ -170,7 +198,14 @@ fn function_rows(resolve: &Resolve, module: &str, func: &Function) -> Vec<Row> {
     // results, in declaration order — the same numbering the canonical ABI uses
     // in `[stream-read-N]` and friends.
     for (index, (ty, from_params)) in payload_types(resolve, func).into_iter().enumerate() {
-        rows.extend(payload_rows(resolve, module, func, &ty, index as u32, from_params));
+        rows.extend(payload_rows(
+            resolve,
+            module,
+            func,
+            &ty,
+            index as u32,
+            from_params,
+        ));
     }
     rows
 }
@@ -248,9 +283,21 @@ fn payload_rows(
     let mut builtins: Vec<(String, Vec<&'static str>, Vec<&'static str>)> = Vec::new();
     if guest_writes {
         builtins.push((format!("[{word}-new-{index}]"), vec![], vec!["I64"]));
-        builtins.push((format!("[{word}-cancel-write-{index}]"), vec!["I32"], vec!["I32"]));
-        builtins.push((format!("[{word}-drop-writable-{index}]"), vec!["I32"], vec![]));
-        builtins.push((format!("[{word}-drop-readable-{index}]"), vec!["I32"], vec![]));
+        builtins.push((
+            format!("[{word}-cancel-write-{index}]"),
+            vec!["I32"],
+            vec!["I32"],
+        ));
+        builtins.push((
+            format!("[{word}-drop-writable-{index}]"),
+            vec!["I32"],
+            vec![],
+        ));
+        builtins.push((
+            format!("[{word}-drop-readable-{index}]"),
+            vec!["I32"],
+            vec![],
+        ));
         builtins.push((
             format!("[async-lower][{word}-write-{index}]"),
             if word == "stream" {
@@ -261,8 +308,16 @@ fn payload_rows(
             vec!["I32"],
         ));
     } else {
-        builtins.push((format!("[{word}-cancel-read-{index}]"), vec!["I32"], vec!["I32"]));
-        builtins.push((format!("[{word}-drop-readable-{index}]"), vec!["I32"], vec![]));
+        builtins.push((
+            format!("[{word}-cancel-read-{index}]"),
+            vec!["I32"],
+            vec!["I32"],
+        ));
+        builtins.push((
+            format!("[{word}-drop-readable-{index}]"),
+            vec!["I32"],
+            vec![],
+        ));
         builtins.push((
             format!("[async-lower][{word}-read-{index}]"),
             if word == "stream" {
@@ -325,7 +380,9 @@ fn module_tag(module: &str) -> String {
         .nth(1)
         .and_then(|rest| rest.split('/').next())
         .expect("interface id has no package");
-    format!("{package}_{interface}").to_uppercase().replace('-', "_")
+    format!("{package}_{interface}")
+        .to_uppercase()
+        .replace('-', "_")
 }
 
 /// `[async-lower][stream-read-0][method]descriptor.read-via-stream`
@@ -358,8 +415,10 @@ fn render(rows: &[Row]) -> String {
     out.push_str("#![allow(dead_code)]\n\n");
     out.push_str("//! GENERATED by tools/p3-table-gen — the p3 WASI import table.\n");
     out.push_str("//! Derived from dovetail/wit/wasi-p3-*.wit via wit-parser wasm_signature.\n");
-    out.push_str("//! Regenerate with `cargo run -p p3-table-gen > \
-                  dovetail/src/compiler/codegen/p3_imports.rs`\n");
+    out.push_str(
+        "//! Regenerate with `cargo run -p p3-table-gen > \
+                  dovetail/src/compiler/codegen/p3_imports.rs`\n",
+    );
     out.push_str("//! if the WIT changes; do not hand-edit sigs.\n\n");
     out.push_str("use wasm_encoder::ValType;\n\n");
     out.push_str("pub struct P3Import {\n");

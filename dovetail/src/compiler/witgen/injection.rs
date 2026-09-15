@@ -8,9 +8,9 @@ use std::sync::Arc;
 use crate::common::span::FilePath;
 use crate::common::types::PackagePath;
 use crate::compiler::layout::LayoutFilter;
-use crate::compiler::lexer::{attach_doc_comments, Lexer};
-use crate::compiler::parser::ast::PackageAst;
+use crate::compiler::lexer::{Lexer, attach_doc_comments};
 use crate::compiler::parser::Parser;
+use crate::compiler::parser::ast::PackageAst;
 use crate::compiler::typechecker;
 use crate::compiler::typechecker::registry::Registry;
 use crate::compiler::typechecker::types::TypedModule;
@@ -24,7 +24,11 @@ fn compile_wit_bindings_package(
     virtual_file: &str,
     base_registry: &Registry,
 ) -> Result<typechecker::TypeCheckerResult, String> {
-    let file: FilePath = Arc::from(if virtual_file.starts_with(".dovetail/") { virtual_file.to_string() } else { format!("<wit>/{virtual_file}") });
+    let file: FilePath = Arc::from(if virtual_file.starts_with(".dovetail/") {
+        virtual_file.to_string()
+    } else {
+        format!("<wit>/{virtual_file}")
+    });
     let mut lexer = Lexer::new(source, file);
     let raw_tokens = lexer.tokenize();
     if !lexer.diagnostics().is_empty() {
@@ -96,12 +100,16 @@ pub(crate) fn inject_wit_bindings(
             let path = directory.join(&filename);
             if std::fs::read_to_string(&path).ok().as_deref() != Some(&generated.source) {
                 use std::io::Write;
-                let mut file = tempfile::NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
-                file.write_all(generated.source.as_bytes()).map_err(|e| e.to_string())?;
+                let mut file =
+                    tempfile::NamedTempFile::new_in(directory).map_err(|e| e.to_string())?;
+                file.write_all(generated.source.as_bytes())
+                    .map_err(|e| e.to_string())?;
                 file.persist(&path).map_err(|e| e.to_string())?;
             }
             generated_source_path(root, &path)?
-        } else { filename };
+        } else {
+            filename
+        };
         let tc = compile_wit_bindings_package(&generated.source, &virtual_file, registry)?;
         *registry = registry.merge(&tc.registry);
         if let Some(ref mut pr) = project_registry {
@@ -115,7 +123,11 @@ pub(crate) fn inject_wit_bindings(
 /// Span paths use forward slashes on every platform, including Windows.
 fn generated_source_path(root: &std::path::Path, path: &std::path::Path) -> Result<String, String> {
     let relative = path.strip_prefix(root).map_err(|error| error.to_string())?;
-    Ok(relative.components().map(|part| part.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
+    Ok(relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 /// Fill the universe's function table by locating generated binding
@@ -134,7 +146,8 @@ pub(crate) fn build_wit_table(
         for (mangled, func) in &module.functions {
             let generated_file = func.span.file.as_ref();
             let disk_binding = generated_file.starts_with(".dovetail/generated/")
-                && generated_file.ends_with(&format!("/{}.dove", interface.dovetail_package.0.join(".")));
+                && generated_file
+                    .ends_with(&format!("/{}.dove", interface.dovetail_package.0.join(".")));
             if generated_file != virtual_file && !disk_binding {
                 continue;
             }
@@ -186,28 +199,32 @@ pub(crate) fn build_component_universe(
         decls.push(decl);
         component_bytes.push((component.display_name.clone(), bytes));
     }
-    let (universe, bindings) =
-        super::universe::build_universe(&decls).map_err(|e| e.message)?;
+    let (universe, bindings) = super::universe::build_universe(&decls).map_err(|e| e.message)?;
     Ok(Some((universe, bindings, component_bytes)))
 }
 
-
 #[cfg(test)]
 mod wit_binding_tests {
+    use super::super::WitFuncKind;
+    use super::super::universe::{WitImportDecl, build_universe};
     use super::*;
     use crate::common::types::PackagePath;
     use crate::compiler::typechecker::types::TypedModule;
-    use super::super::universe::{build_universe, WitImportDecl};
-    use super::super::WitFuncKind;
 
-    const SQLITE_WIT: &str =
-        include_str!("../../../../components/sqlite-shim/wit/sqlite-raw.wit");
+    const SQLITE_WIT: &str = include_str!("../../../../components/sqlite-shim/wit/sqlite-raw.wit");
 
     #[test]
     fn generated_binding_span_path_uses_portable_separators() {
         let root = std::path::Path::new("workspace");
-        let path = root.join(".dovetail").join("generated").join("identity").join("sqlite.raw.dove");
-        assert_eq!(generated_source_path(root, &path).unwrap(), ".dovetail/generated/identity/sqlite.raw.dove");
+        let path = root
+            .join(".dovetail")
+            .join("generated")
+            .join("identity")
+            .join("sqlite.raw.dove");
+        assert_eq!(
+            generated_source_path(root, &path).unwrap(),
+            ".dovetail/generated/identity/sqlite.raw.dove"
+        );
     }
 
     /// The generated bindings must typecheck and every generated function
@@ -262,8 +279,15 @@ mod wit_binding_tests {
         }
         let workspace = tempfile::tempdir().unwrap();
         let directory = workspace.path().join(".dovetail/generated/test");
-        inject_wit_bindings(&universe, &bindings, &mut registry, None, &mut module, Some((workspace.path(), &directory)))
-            .expect("inject");
+        inject_wit_bindings(
+            &universe,
+            &bindings,
+            &mut registry,
+            None,
+            &mut module,
+            Some((workspace.path(), &directory)),
+        )
+        .expect("inject");
         assert!(directory.join("sqlite.raw.dove").is_file());
         build_wit_table(&mut universe, &bindings, &module);
 
@@ -286,6 +310,9 @@ mod wit_binding_tests {
             .filter(|r| matches!(r.kind, WitFuncKind::AsyncFinish(_)))
             .count();
         assert!(starts > 0, "expected async start bindings");
-        assert_eq!(starts, finishes, "each async import needs a start and finish");
+        assert_eq!(
+            starts, finishes,
+            "each async import needs a start and finish"
+        );
     }
 }

@@ -36,7 +36,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &func.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         let param_types: Vec<&Type> = params.iter().map(|(_, ty)| ty).collect();
@@ -100,7 +101,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &func.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         self.package_registry.register_generic_function(

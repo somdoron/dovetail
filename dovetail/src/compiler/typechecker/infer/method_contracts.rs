@@ -101,7 +101,11 @@ impl Inference<'_> {
                 && ordinary.get(&name).is_some_and(|methods| {
                     methods.iter().any(|method| {
                         !method.is_property
-                            && application.matches(&method.params, &method.return_type, &substitution)
+                            && application.matches(
+                                &method.params,
+                                &method.return_type,
+                                &substitution,
+                            )
                     })
                 })
             {

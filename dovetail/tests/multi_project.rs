@@ -8,13 +8,15 @@ use tempfile::tempdir;
 
 #[test]
 fn class_identity_across_dependency_layouts_and_generic_bounds() {
-    let (_dir, workspace) = make_two_project_workspace(r#"
+    let (_dir, workspace) = make_two_project_workspace(
+        r#"
 package lib
 public class Base(public mutable value: Int32)
 public class GenericBase<T>(public mutable payload: T)
 public function identityHash<T>(value: T): Int64 where T: class = ClassIdentity.hash(value)
 public function same<T>(a: T, b: T): Bool where T: class = ClassIdentity.equals(a, b)
-"#, r#"
+"#,
+        r#"
 package app
 import lib.Base
 import lib.GenericBase
@@ -39,7 +41,8 @@ function main(): Unit =
     genericBase.payload = 11
     assert genericChild.payload == 11
     assert genericChild.pair._1 == 9
-"#);
+"#,
+    );
     build_workspace_and_run(&workspace, Some("myapp"), "myapp");
     build_workspace_and_run(&workspace, Some("myapp"), "myapp");
 }
@@ -50,7 +53,14 @@ fn build_workspace_and_run(
     project_filter: Option<&str>,
     run_project: &str,
 ) {
-    let result = dovetail::build_workspace(workspace, project_filter, dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        workspace,
+        project_filter,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
 
     if result.diagnostics.has_errors() {
         let errors: Vec<String> = result
@@ -112,9 +122,9 @@ fn make_two_project_workspace(
                 }],
                 project_dir: dir.path().join("mylib"),
                 main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+                resources: vec![],
+                macros: vec![],
+                components: vec![],
             },
             ResolvedProject {
                 resolved_identity: None,
@@ -127,9 +137,9 @@ fn make_two_project_workspace(
                 }],
                 project_dir: dir.path().join("myapp"),
                 main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+                resources: vec![],
+                macros: vec![],
+                components: vec![],
             },
         ],
         workspace_root: dir.path().to_path_buf(),
@@ -215,14 +225,28 @@ function main(): Unit = assert double(21) == 42
     );
 
     // Filter to "myapp" → builds both (mylib + myapp)
-    let result = dovetail::build_workspace(&workspace, Some("myapp"), dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        Some("myapp"),
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
     assert!(!result.diagnostics.has_errors());
     assert_eq!(result.project_results.len(), 2);
     assert_eq!(result.project_results[0].0, "mylib");
     assert_eq!(result.project_results[1].0, "myapp");
 
     // Filter to "mylib" → builds only mylib
-    let result = dovetail::build_workspace(&workspace, Some("mylib"), dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        Some("mylib"),
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
     assert!(!result.diagnostics.has_errors());
     assert_eq!(result.project_results.len(), 1);
     assert_eq!(result.project_results[0].0, "mylib");
@@ -245,7 +269,14 @@ function main(): Unit = ()
 "#,
     );
 
-    let result = dovetail::build_workspace(&workspace, None, dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        None,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
     assert!(result.diagnostics.has_errors());
     // Only mylib should have been attempted
     assert_eq!(result.project_results.len(), 1);
@@ -347,16 +378,28 @@ function main(): Unit = assert answer() == 42
     );
     let tests = dir.path().join("mylib/test");
     fs::create_dir_all(&tests).unwrap();
-    fs::write(tests.join("box.dove"), r#"
+    fs::write(
+        tests.join("box.dove"),
+        r#"
 package test
 class TestBox<T>(public value: T)
 test "generic test class" = assert TestBox(42).value == 42
-"#).unwrap();
+"#,
+    )
+    .unwrap();
     let result = dovetail::build_workspace(
-        &workspace, None, dovetail::BuildMode::Test,
-        &std::collections::HashMap::new(), false, None,
+        &workspace,
+        None,
+        dovetail::BuildMode::Test,
+        &std::collections::HashMap::new(),
+        false,
+        None,
     );
-    let errors: Vec<_> = result.diagnostics.iter().map(|d| d.message.clone()).collect();
+    let errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect();
     assert!(!result.diagnostics.has_errors(), "{errors:?}");
     assert_eq!(result.project_results.len(), 2);
 }

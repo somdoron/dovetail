@@ -20,7 +20,9 @@ impl Inference<'_> {
         let mangled_name = MangledName::for_global(&fqn);
 
         // Look up the global's registered type from the registry
-        let registered_sig = self.registry.lookup_global(&fqn, &self.package_path, &self.current_file);
+        let registered_sig =
+            self.registry
+                .lookup_global(&fqn, &self.package_path, &self.current_file);
         let expected_ty = registered_sig.map(|sig| sig.ty.clone());
 
         // Global initializers run in an empty scope (no local variables)
@@ -41,16 +43,19 @@ impl Inference<'_> {
         } else {
             // For untyped globals, verify the inferred type matches the registry
             let inferred_ty = typed_init.ty.clone();
-            if let Some(sig) = self.registry.lookup_global(&fqn, &self.package_path, &self.current_file) {
-                if sig.ty != inferred_ty && !inferred_ty.is_error() {
-                    self.diagnostics.error(
+            if let Some(sig) =
+                self.registry
+                    .lookup_global(&fqn, &self.package_path, &self.current_file)
+                && sig.ty != inferred_ty
+                && !inferred_ty.is_error()
+            {
+                self.diagnostics.error(
                         typed_init.span.clone(),
                         format!(
                             "type mismatch: global '{}' registered as '{}' but initializer has type '{}'",
                             global.name.value, sig.ty, inferred_ty
                         ),
                     );
-                }
             }
             inferred_ty
         };
@@ -88,7 +93,9 @@ impl Inference<'_> {
         };
         let mangled_name = MangledName::for_global(&fqn);
 
-        let registered_sig = self.registry.lookup_global(&fqn, &self.package_path, &self.current_file);
+        let registered_sig =
+            self.registry
+                .lookup_global(&fqn, &self.package_path, &self.current_file);
         let expected_ty = registered_sig.map(|sig| sig.ty.clone());
 
         self.push_scope();
@@ -126,11 +133,24 @@ impl Inference<'_> {
     pub(super) fn lookup_global(
         &mut self,
         name: &str,
-    ) -> Option<(MangledName, crate::typechecker::types::Type, bool, Vec<crate::typechecker::types::Type>)> {
+    ) -> Option<(
+        MangledName,
+        crate::typechecker::types::Type,
+        bool,
+        Vec<crate::typechecker::types::Type>,
+    )> {
         let fqn = self.resolve_fqn(name, super::types::SymbolKind::Global)?;
         // Try concrete globals first
-        if let Some(sig) = self.registry.lookup_global(&fqn, &self.package_path, &self.current_file) {
-            return Some((sig.mangled_name.clone(), sig.ty.clone(), sig.mutable, vec![]));
+        if let Some(sig) = self
+            .registry
+            .lookup_global(&fqn, &self.package_path, &self.current_file)
+        {
+            return Some((
+                sig.mangled_name.clone(),
+                sig.ty.clone(),
+                sig.mutable,
+                vec![],
+            ));
         }
         // Try generic module global (e.g., fqn.symbol = "Box.count")
         if let Some(dot_pos) = fqn.symbol.0.rfind('.') {
@@ -147,10 +167,9 @@ impl Inference<'_> {
                     .type_params
                     .iter()
                     .map(|tp| {
-                        self.current_type_params
-                            .get(tp)
-                            .cloned()
-                            .unwrap_or(crate::typechecker::types::Type::TypeVariable(tp.clone(), vec![]))
+                        self.current_type_params.get(tp).cloned().unwrap_or(
+                            crate::typechecker::types::Type::TypeVariable(tp.clone(), vec![]),
+                        )
                     })
                     .collect();
                 return self.instantiate_and_resolve_generic_global(
@@ -163,5 +182,4 @@ impl Inference<'_> {
         }
         None
     }
-
 }

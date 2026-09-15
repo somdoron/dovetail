@@ -95,7 +95,11 @@ impl LayoutFilter {
 
             // 3b. Handle RBrace — close brace-delimited context
             if token.kind == TokenKind::RBrace {
-                if self.pending_context.as_ref().is_some_and(|pending| pending.is_brace) {
+                if self
+                    .pending_context
+                    .as_ref()
+                    .is_some_and(|pending| pending.is_brace)
+                {
                     // Empty braces have not pushed a context yet. In particular,
                     // do not pop the enclosing match/function blocks for `Case {}`.
                     self.pending_context = None;
@@ -291,12 +295,13 @@ impl LayoutFilter {
 
         // After closing, check if we need Sep at the remaining context.
         // Suppress Sep before closing delimiters.
-        if !token_kind.is_closing_delimiter() && !self.follows_explicit_separator() {
-            if let Some(ctx) = self.context_stack.last() {
-                if col == ctx.column && ctx.is_seq_block {
-                    self.pending_tokens.push_back(self.make_sep_token());
-                }
-            }
+        if !token_kind.is_closing_delimiter()
+            && !self.follows_explicit_separator()
+            && let Some(ctx) = self.context_stack.last()
+            && col == ctx.column
+            && ctx.is_seq_block
+        {
+            self.pending_tokens.push_back(self.make_sep_token());
         }
     }
 
@@ -312,10 +317,10 @@ impl LayoutFilter {
             self.pending_tokens.push_back(self.make_end_token());
         }
         // Pop the brace context itself (no End token — `}` serves as the delimiter)
-        if let Some(ctx) = self.context_stack.last() {
-            if ctx.is_brace_delimited {
-                self.context_stack.pop();
-            }
+        if let Some(ctx) = self.context_stack.last()
+            && ctx.is_brace_delimited
+        {
+            self.context_stack.pop();
         }
         // Discard any pending context (e.g. from `=` inside the brace block)
         self.pending_context = None;
@@ -496,9 +501,14 @@ mod tests {
             "function f(x) =\n    match x with\n        case Value {} => 1\n        case Empty => 0\n",
         );
         let k = kinds(&tokens);
-        let brace = k.iter().position(|kind| *kind == TokenKind::RBrace).unwrap();
+        let brace = k
+            .iter()
+            .position(|kind| *kind == TokenKind::RBrace)
+            .unwrap();
         assert_eq!(k[brace + 1], TokenKind::FatArrow);
-        let cases: Vec<_> = k.iter().enumerate()
+        let cases: Vec<_> = k
+            .iter()
+            .enumerate()
             .filter_map(|(index, kind)| (*kind == TokenKind::Case).then_some(index))
             .collect();
         assert_eq!(cases.len(), 2);

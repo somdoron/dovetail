@@ -2,8 +2,8 @@ use crate::common::diagnostics::Diagnostics;
 use crate::common::types::VarName;
 use crate::typechecker::types::{Type, TypedExpr, TypedExprKind, TypedModule};
 
-use super::visitor::{self, TypedExprVisitor};
 use super::Rule;
+use super::visitor::{self, TypedExprVisitor};
 
 /// Warns when `as` is used on an `Any` value without a preceding `is` guard.
 ///
@@ -39,35 +39,35 @@ impl Rule for UnsafeCastRule {
 
 impl TypedExprVisitor for UnsafeCastRule {
     fn visit_expr(&mut self, expr: &TypedExpr, diagnostics: &mut Diagnostics) {
-        if let TypedExprKind::TypeCast { value, target_type } = &expr.kind {
-            if value.ty.is_any() {
-                if let TypedExprKind::VarRef { name, .. } = &value.kind {
-                    if !self
-                        .guards
-                        .iter()
-                        .any(|(v, t)| v == name && t == target_type)
-                    {
-                        diagnostics.warning(
-                            expr.span.clone(),
-                            format!(
-                                "'as {t}' cast may panic at runtime; \
-                                 use 'if {v} is {t} then ... {v} as {t} ...' \
-                                 or a match with 'case {v}: {t} =>'",
-                                v = name,
-                                t = target_type,
-                            ),
-                        );
-                    }
-                } else {
+        if let TypedExprKind::TypeCast { value, target_type } = &expr.kind
+            && value.ty.is_any()
+        {
+            if let TypedExprKind::VarRef { name, .. } = &value.kind {
+                if !self
+                    .guards
+                    .iter()
+                    .any(|(v, t)| v == name && t == target_type)
+                {
                     diagnostics.warning(
                         expr.span.clone(),
                         format!(
-                            "'as {}' cast may panic at runtime; \
-                             use a match with type pattern instead",
-                            target_type,
+                            "'as {t}' cast may panic at runtime; \
+                                 use 'if {v} is {t} then ... {v} as {t} ...' \
+                                 or a match with 'case {v}: {t} =>'",
+                            v = name,
+                            t = target_type,
                         ),
                     );
                 }
+            } else {
+                diagnostics.warning(
+                    expr.span.clone(),
+                    format!(
+                        "'as {}' cast may panic at runtime; \
+                             use a match with type pattern instead",
+                        target_type,
+                    ),
+                );
             }
         }
         visitor::walk_expr(self, expr, diagnostics);
@@ -105,10 +105,10 @@ impl TypedExprVisitor for UnsafeCastRule {
 }
 
 fn extract_is_guard(condition: &TypedExpr) -> Option<(VarName, Type)> {
-    if let TypedExprKind::TypeTest { value, target_type } = &condition.kind {
-        if let TypedExprKind::VarRef { name, .. } = &value.kind {
-            return Some((name.clone(), target_type.clone()));
-        }
+    if let TypedExprKind::TypeTest { value, target_type } = &condition.kind
+        && let TypedExprKind::VarRef { name, .. } = &value.kind
+    {
+        return Some((name.clone(), target_type.clone()));
     }
     None
 }

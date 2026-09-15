@@ -57,7 +57,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("missing implementation of method 'alpha' from trait 'Beta'")),
+        errors
+            .iter()
+            .any(|e| e.contains("missing implementation of method 'alpha' from trait 'Beta'")),
         "the inherited member must be required inline, got: {:?}",
         errors
     );
@@ -88,7 +90,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("missing implementation of method 'alpha' from trait 'Beta'")),
+        errors
+            .iter()
+            .any(|e| e.contains("missing implementation of method 'alpha' from trait 'Beta'")),
         "a separate `implement Alpha` must not satisfy Beta's flattened set, got: {:?}",
         errors
     );
@@ -266,7 +270,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("must implement method 'alpha' from trait 'Beta'")),
+        errors
+            .iter()
+            .any(|e| e.contains("must implement method 'alpha' from trait 'Beta'")),
         "class must implement inherited members too, got: {:?}",
         errors
     );
@@ -290,7 +296,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("an interface may extend only interfaces; 'Alpha' is a trait")),
+        errors
+            .iter()
+            .any(|e| e.contains("an interface may extend only interfaces; 'Alpha' is a trait")),
         "expected the interface-extends-only-interfaces error, got: {:?}",
         errors
     );
@@ -314,12 +322,16 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("'extends' cycle detected")),
+        errors
+            .iter()
+            .any(|e| e.contains("'extends' cycle detected")),
         "expected a cycle error, got: {:?}",
         errors
     );
     assert!(
-        errors.iter().any(|e| e.contains("expected 'Int32'") || e.contains("mismatch") || e.contains("found")),
+        errors.iter().any(|e| e.contains("expected 'Int32'")
+            || e.contains("mismatch")
+            || e.contains("found")),
         "unrelated errors must still accumulate, got: {:?}",
         errors
     );
@@ -342,7 +354,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("method 'alpha' with the same signature is already inherited from trait 'Alpha'")),
+        errors.iter().any(|e| e.contains(
+            "method 'alpha' with the same signature is already inherited from trait 'Alpha'"
+        )),
         "redeclaring an inherited signature without a body is redundant, got: {:?}",
         errors
     );
@@ -365,7 +379,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("method 'alpha' conflicts with member inherited from trait 'Alpha'")),
+        errors.iter().any(
+            |e| e.contains("method 'alpha' conflicts with member inherited from trait 'Alpha'")
+        ),
         "same params + different return must conflict, got: {:?}",
         errors
     );
@@ -415,7 +431,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("unknown trait: 'Missing'")),
+        errors
+            .iter()
+            .any(|e| e.contains("unknown trait: 'Missing'")),
         "unknown super must error, got: {:?}",
         errors
     );
@@ -442,7 +460,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("duplicate super trait 'Alpha' in extends clause")),
+        errors
+            .iter()
+            .any(|e| e.contains("duplicate super trait 'Alpha' in extends clause")),
         "duplicate supers must error, got: {:?}",
         errors
     );
@@ -545,7 +565,11 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous implementations of trait 'Alpha'") && e.contains("'Beta'") && e.contains("'Gamma'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous implementations of trait 'Alpha'")
+                && e.contains("'Beta'")
+                && e.contains("'Gamma'")),
         "two distinct providers with no direct impl must be ambiguous, got: {:?}",
         errors
     );
@@ -633,7 +657,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement trait 'Producer<String>'")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement trait 'Producer<String>'")),
         "closure substitution must reject mismatched super args, got: {:?}",
         errors
     );
@@ -889,7 +915,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous implementations of trait 'Alpha'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous implementations of trait 'Alpha'")),
         "coercing with two providers and no direct impl must be ambiguous, got: {:?}",
         errors
     );
@@ -1003,7 +1031,8 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("conflicts with method of the same name inherited from trait")
+        errors.iter().any(|e| e
+            .contains("conflicts with method of the same name inherited from trait")
             || e.contains("conflicts with property of the same name inherited from trait")),
         "inherited method/property name collisions across supers must error, got: {:?}",
         errors
@@ -1032,7 +1061,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("missing implementation of method")),
+        errors
+            .iter()
+            .any(|e| e.contains("missing implementation of method")),
         "implementing one overload must not satisfy another, got: {:?}",
         errors
     );
@@ -1185,7 +1216,9 @@ function main(): Unit =
     assert ri.grow().who() == 2
 "#,
     )
-    .expect("an inherited Self re-box carries its own provider's members when no direct impl exists");
+    .expect(
+        "an inherited Self re-box carries its own provider's members when no direct impl exists",
+    );
 }
 
 #[test]
@@ -1706,7 +1739,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous implementations of trait 'Usable'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous implementations of trait 'Usable'")),
         "two distinct Usable providers must be a use-site ambiguity error, got: {:?}",
         errors
     );
@@ -1768,7 +1803,9 @@ function main(): Unit =
     assert Beta.alpha(r) == 2
 "#,
     )
-    .expect("an explicit disambiguation on a LOCAL in a default body keeps its typecheck resolution");
+    .expect(
+        "an explicit disambiguation on a LOCAL in a default body keeps its typecheck resolution",
+    );
 }
 
 #[test]
@@ -1883,7 +1920,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous property 'size'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous property 'size'")),
         "different origin APPLICATIONS must stay ambiguous, got: {:?}",
         errors
     );
@@ -1960,7 +1999,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous implementations of trait 'Conv'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous implementations of trait 'Conv'")),
         "a direct impl of a DIFFERENT application must not mask provider ambiguity, got: {:?}",
         errors
     );
@@ -1994,7 +2035,9 @@ function main(): Unit =
     assert both.m() == 1
 "#,
     )
-    .expect("dispatch must go through the EXACT deduped component, not the first that can reach it");
+    .expect(
+        "dispatch must go through the EXACT deduped component, not the first that can reach it",
+    );
 }
 
 #[test]
@@ -2109,7 +2152,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous implementations of trait 'Zup'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous implementations of trait 'Zup'")),
         "a direct impl for a SIBLING for_type must not mask provider ambiguity, got: {:?}",
         errors
     );
@@ -2224,7 +2269,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous property 'size'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous property 'size'")),
         "a property declared by two bounds must be ambiguous, got: {:?}",
         errors
     );
@@ -2377,7 +2424,8 @@ function main(): Unit =
 
 #[test]
 fn test_sibling_for_type_does_not_discard_applicable_block() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Wrap<T> =
@@ -2399,12 +2447,15 @@ implement Beta for Wrap<Int32> =
 function main(): Unit =
     let w = Wrap<Int32> { item = 5 }
     assert w.alpha() == 2
-"#).expect("a sibling for_type block must not discard the applicable one");
+"#,
+    )
+    .expect("a sibling for_type block must not discard the applicable one");
 }
 
 #[test]
 fn test_unrelated_same_name_trait_does_not_defeat_dedup() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2433,12 +2484,15 @@ function main(): Unit =
     let r = Rec { x = 0 }
     assert r.foo(5) == 1
     assert r.foo("hi") == 3
-"#).expect("an unrelated same-named member must not defeat the origin dedup");
+"#,
+    )
+    .expect("an unrelated same-named member must not defeat the origin dedup");
 }
 
 #[test]
 fn test_generic_origin_application_dedups() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2460,12 +2514,15 @@ implement IntProducer for Rec =
 function main(): Unit =
     let r = Rec { x = 0 }
     assert r.produce() == 1
-"#).expect("a GENERIC origin application dedups against its sub-trait");
+"#,
+    )
+    .expect("a GENERIC origin application dedups against its sub-trait");
 }
 
 #[test]
 fn test_generic_blocks_direct_impl_wins() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Wrap<T> =
@@ -2487,14 +2544,17 @@ implement <T> Beta for Wrap<T> =
 function main(): Unit =
     let w = Wrap<Int32> { item = 5 }
     assert w.alpha() == 1
-"#).expect("direct-impl-wins holds for generic blocks too");
+"#,
+    )
+    .expect("direct-impl-wins holds for generic blocks too");
 }
 
 // ── Round-19 review regressions ─────────────────────────────────────
 
 #[test]
 fn test_static_property_origin_dedup() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2515,12 +2575,15 @@ implement Beta for Rec =
 
 function main(): Unit =
     assert Rec.tag == 1
-"#).expect("static properties get the extends origin dedup too");
+"#,
+    )
+    .expect("static properties get the extends origin dedup too");
 }
 
 #[test]
 fn test_generic_static_origin_dedup() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Wrap<T> =
@@ -2541,12 +2604,15 @@ implement <T> Beta for Wrap<T> =
 
 function main(): Unit =
     assert Wrap<Int32>.mk() == 1
-"#).expect("generic-block statics get the extends origin dedup too");
+"#,
+    )
+    .expect("generic-block statics get the extends origin dedup too");
 }
 
 #[test]
 fn test_method_reference_origin_dedup() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2570,14 +2636,17 @@ function apply(f: () => Int32): Int32 = f()
 function main(): Unit =
     let r = Rec { x = 0 }
     assert apply(r.foo) == 1
-"#).expect("method REFERENCES get the extends origin dedup too");
+"#,
+    )
+    .expect("method REFERENCES get the extends origin dedup too");
 }
 
 // ── Round-20 review regressions ─────────────────────────────────────
 
 #[test]
 fn test_static_call_via_bounds_origin_wins() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2602,12 +2671,15 @@ function getB<T>(): Int32 where T: Beta + Alpha = T.mk()
 function main(): Unit =
     assert getA<Rec>() == 10
     assert getB<Rec>() == 10
-"#).expect("bound ORDER must not decide a static call through bounds");
+"#,
+    )
+    .expect("bound ORDER must not decide a static call through bounds");
 }
 
 #[test]
 fn test_static_property_via_bounds_origin_wins() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2632,12 +2704,15 @@ function getB<T>(): Int32 where T: Beta + Alpha = T.tag
 function main(): Unit =
     assert getA<Rec>() == 1
     assert getB<Rec>() == 1
-"#).expect("bound ORDER must not decide a static property through bounds");
+"#,
+    )
+    .expect("bound ORDER must not decide a static property through bounds");
 }
 
 #[test]
 fn test_generic_static_property_origin_not_declaration_order() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Wrap<T> =
@@ -2658,12 +2733,15 @@ implement <T> Alpha for Wrap<T> =
 
 function main(): Unit =
     assert Wrap<Int32>.tag == 1
-"#).expect("declaration ORDER must not decide a generic static property");
+"#,
+    )
+    .expect("declaration ORDER must not decide a generic static property");
 }
 
 #[test]
 fn test_static_function_reference_origin_dedup() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2685,12 +2763,15 @@ implement Beta for Rec =
 function main(): Unit =
     let g: () => Int32 = Rec.mk
     assert g() == 1
-"#).expect("static function references get the origin dedup");
+"#,
+    )
+    .expect("static function references get the origin dedup");
 }
 
 #[test]
 fn test_instance_method_reference_via_type_name_origin_dedup() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2712,14 +2793,17 @@ implement Beta for Rec =
 function main(): Unit =
     let f: (Rec) => Int32 = Rec.foo
     assert f(Rec { x = 0 }) == 1
-"#).expect("Type.method references get the origin dedup");
+"#,
+    )
+    .expect("Type.method references get the origin dedup");
 }
 
 // ── Round-21 review regressions ─────────────────────────────────────
 
 #[test]
 fn test_static_vs_instance_member_across_extends_rejected() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 record Rec =
@@ -2739,9 +2823,12 @@ function useAlpha<T>(): Int32 where T: Alpha = T.foo()
 
 function main(): Unit =
     assert useAlpha<Rec>() == 5
-"#);
+"#,
+    );
     assert!(
-        errors.iter().any(|e| e.contains("one takes 'self' and the other does not")),
+        errors
+            .iter()
+            .any(|e| e.contains("one takes 'self' and the other does not")),
         "a static/instance same-name pair across extends must be rejected, got: {:?}",
         errors
     );
@@ -2749,7 +2836,8 @@ function main(): Unit =
 
 #[test]
 fn test_instance_vs_static_member_across_extends_rejected() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 record Rec =
@@ -2768,9 +2856,12 @@ implement Beta for Rec =
 function main(): Unit =
     let r = Rec { x = 0 }
     assert r.foo() == 5
-"#);
+"#,
+    );
     assert!(
-        errors.iter().any(|e| e.contains("one takes 'self' and the other does not")),
+        errors
+            .iter()
+            .any(|e| e.contains("one takes 'self' and the other does not")),
         "the mirror direction must be rejected too, got: {:?}",
         errors
     );
@@ -2778,7 +2869,8 @@ function main(): Unit =
 
 #[test]
 fn test_static_via_bounds_different_arity_not_ambiguous() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2800,14 +2892,17 @@ function callIt<T>(): Int32 where T: Alpha + Beta = T.mk(2, 3)
 
 function main(): Unit =
     assert callIt<Rec>() == 5
-"#).expect("only candidates that can accept the call compete");
+"#,
+    )
+    .expect("only candidates that can accept the call compete");
 }
 
 // ── Round-22 review regressions ─────────────────────────────────────
 
 #[test]
 fn test_cross_super_static_instance_method_rejected() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 record Rec =
@@ -2831,9 +2926,12 @@ function inst<T>(v: T): Int32 where T: C = v.f(1)
 function main(): Unit =
     let r = Rec { x = 0 }
     assert inst(r) == 101
-"#);
+"#,
+    );
     assert!(
-        errors.iter().any(|e| e.contains("one takes 'self' and the other does not")),
+        errors
+            .iter()
+            .any(|e| e.contains("one takes 'self' and the other does not")),
         "cross-super static/instance method clash must be rejected, got: {:?}",
         errors
     );
@@ -2841,7 +2939,8 @@ function main(): Unit =
 
 #[test]
 fn test_cross_super_static_instance_property_rejected() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 record Rec =
@@ -2865,9 +2964,12 @@ function inst<T>(v: T): Int32 where T: C = v.tag
 function main(): Unit =
     let r = Rec { x = 0 }
     assert inst(r) == 1
-"#);
+"#,
+    );
     assert!(
-        errors.iter().any(|e| e.contains("one takes 'self' and the other does not")),
+        errors
+            .iter()
+            .any(|e| e.contains("one takes 'self' and the other does not")),
         "cross-super static/instance property clash must be rejected, got: {:?}",
         errors
     );
@@ -2875,7 +2977,8 @@ function main(): Unit =
 
 #[test]
 fn test_cross_super_identical_members_share_one_slot() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -2899,5 +3002,7 @@ function useA<T>(v: T): Int32 where T: A = v.f()
 function main(): Unit =
     let r = Rec { x = 0 }
     assert useA(r) == 7
-"#).expect("two supers declaring an IDENTICAL member still share one slot");
+"#,
+    )
+    .expect("two supers declaring an IDENTICAL member still share one slot");
 }

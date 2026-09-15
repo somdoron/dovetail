@@ -2,8 +2,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::common::span::Span;
 use super::desugar_use::is_resource_use_result;
+use crate::common::span::Span;
 use crate::common::types::{MangledName, SymbolName, VarName, Variance};
 
 use crate::common::types::Fqn;
@@ -53,7 +53,10 @@ pub fn desugar_await_expressions(module: &mut TypedModule) {
                 // Extract the AsyncBlock fields
                 let body = std::mem::replace(&mut func.body, dummy_expr());
                 match body.kind {
-                    TypedExprKind::AsyncBlock { body, succeed_method } => (*body, succeed_method),
+                    TypedExprKind::AsyncBlock {
+                        body,
+                        succeed_method,
+                    } => (*body, succeed_method),
                     _ => unreachable!(),
                 }
             }
@@ -80,19 +83,27 @@ pub fn desugar_await_expressions(module: &mut TypedModule) {
             maybe_wrap_in_succeed(inner_body, &return_type, &succeed_method)
         };
 
-        func.body = defer_async_body(walk_expr_for_async_closures(new_body), &return_type, &fn_name);
+        func.body = defer_async_body(
+            walk_expr_for_async_closures(new_body),
+            &return_type,
+            &fn_name,
+        );
     }
     for test in &mut module.tests {
         test.body = walk_expr_for_async_closures(std::mem::replace(&mut test.body, dummy_expr()));
     }
     for global in module.globals.values_mut() {
-        global.initializer = walk_expr_for_async_closures(std::mem::replace(&mut global.initializer, dummy_expr()));
+        global.initializer =
+            walk_expr_for_async_closures(std::mem::replace(&mut global.initializer, dummy_expr()));
     }
     for block in &mut module.implement_blocks {
         for method in block.methods.iter_mut().chain(block.properties.iter_mut()) {
             let body = std::mem::replace(&mut method.body, dummy_expr());
             match body.kind {
-                TypedExprKind::AsyncBlock { body: inner_body, succeed_method } => {
+                TypedExprKind::AsyncBlock {
+                    body: inner_body,
+                    succeed_method,
+                } => {
                     let return_type = method.return_type.clone();
                     let succeed = Some(succeed_method);
                     let fn_name = method.name.0.clone();
@@ -101,10 +112,18 @@ pub fn desugar_await_expressions(module: &mut TypedModule) {
                     } else {
                         maybe_wrap_in_succeed(*inner_body, &return_type, &succeed)
                     };
-                    method.body = defer_async_body(walk_expr_for_async_closures(new_body), &return_type, &fn_name);
+                    method.body = defer_async_body(
+                        walk_expr_for_async_closures(new_body),
+                        &return_type,
+                        &fn_name,
+                    );
                 }
                 _ => {
-                    method.body = walk_expr_for_async_closures(TypedExpr { kind: body.kind, ty: body.ty, span: body.span });
+                    method.body = walk_expr_for_async_closures(TypedExpr {
+                        kind: body.kind,
+                        ty: body.ty,
+                        span: body.span,
+                    });
                 }
             }
         }
@@ -113,7 +132,10 @@ pub fn desugar_await_expressions(module: &mut TypedModule) {
         for method in block.methods.iter_mut().chain(block.properties.iter_mut()) {
             let body = std::mem::replace(&mut method.body, dummy_expr());
             match body.kind {
-                TypedExprKind::AsyncBlock { body: inner_body, succeed_method } => {
+                TypedExprKind::AsyncBlock {
+                    body: inner_body,
+                    succeed_method,
+                } => {
                     let return_type = method.return_type.clone();
                     let succeed = Some(succeed_method);
                     let fn_name = method.name.0.clone();
@@ -122,10 +144,18 @@ pub fn desugar_await_expressions(module: &mut TypedModule) {
                     } else {
                         maybe_wrap_in_succeed(*inner_body, &return_type, &succeed)
                     };
-                    method.body = defer_async_body(walk_expr_for_async_closures(new_body), &return_type, &fn_name);
+                    method.body = defer_async_body(
+                        walk_expr_for_async_closures(new_body),
+                        &return_type,
+                        &fn_name,
+                    );
                 }
                 _ => {
-                    method.body = walk_expr_for_async_closures(TypedExpr { kind: body.kind, ty: body.ty, span: body.span });
+                    method.body = walk_expr_for_async_closures(TypedExpr {
+                        kind: body.kind,
+                        ty: body.ty,
+                        span: body.span,
+                    });
                 }
             }
         }
@@ -147,7 +177,9 @@ fn defer_async_body(body: TypedExpr, return_type: &Type, function_name: &str) ->
         span: span.clone(),
     };
     let deferred = TypedExpr {
-        kind: TypedExprKind::NewtypeCreate { value: Box::new(closure) },
+        kind: TypedExprKind::NewtypeCreate {
+            value: Box::new(closure),
+        },
         ty: Type::GenericNewtype {
             fqn: Fqn::from_dotted("standard.prelude.ByName").unwrap(),
             type_args: vec![(Variance::Covariant, return_type.clone())],
@@ -197,7 +229,10 @@ fn maybe_wrap_in_succeed(
         && is_resource_use_result(last)
         && (last.ty == *return_type || already_lifted(&last.ty, return_type))
     {
-        return TypedExpr { ty: return_type.clone(), ..body };
+        return TypedExpr {
+            ty: return_type.clone(),
+            ..body
+        };
     }
     wrap_in_succeed(body, return_type, succeed_method)
 }
@@ -220,8 +255,10 @@ fn already_lifted(actual: &Type, return_type: &Type) -> bool {
 
 fn wrapper_parameters(ty: &Type) -> Option<&[(Variance, Type)]> {
     match ty {
-        Type::GenericClass { type_args, .. } | Type::GenericEnum { type_args, .. }
-        | Type::GenericRecord { type_args, .. } | Type::GenericNewtype { type_args, .. } => Some(type_args),
+        Type::GenericClass { type_args, .. }
+        | Type::GenericEnum { type_args, .. }
+        | Type::GenericRecord { type_args, .. }
+        | Type::GenericNewtype { type_args, .. } => Some(type_args),
         _ => None,
     }
 }
@@ -248,13 +285,13 @@ fn widens_to(actual: &Type, expected: &Type) -> bool {
         && actual.try_to_fqn() == expected.try_to_fqn()
         && actual_params.len() == expected_params.len()
     {
-        return actual_params.iter().zip(expected_params).all(|((variance, actual), (_, expected))| {
-            match variance {
+        return actual_params.iter().zip(expected_params).all(
+            |((variance, actual), (_, expected))| match variance {
                 Variance::Covariant => widens_to(actual, expected),
                 Variance::Contravariant => widens_to(expected, actual),
                 Variance::Invariant => actual == expected,
-            }
-        });
+            },
+        );
     }
     let (actual_mn, expected_mn) = match (actual, expected) {
         (Type::Class(_, a), Type::Class(_, e)) => (a.clone(), e),
@@ -309,9 +346,16 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
 
     let kind = match expr.kind {
         // The core case: a closure whose body is an AsyncBlock
-        TypedExprKind::Closure { params, body, captures } => {
+        TypedExprKind::Closure {
+            params,
+            body,
+            captures,
+        } => {
             match body.kind {
-                TypedExprKind::AsyncBlock { body: inner_body, succeed_method: _ } => {
+                TypedExprKind::AsyncBlock {
+                    body: inner_body,
+                    succeed_method: _,
+                } => {
                     // Extract the Awaitable return type from the closure's function type
                     let awaitable_ret = match &ty {
                         Type::Function(_, ret) => (**ret).clone(),
@@ -323,7 +367,10 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
                     let success = super::awaitable::success_type(&awaitable_ret)
                         .expect("async closure implements Awaitable");
                     let succeed = Some(synth_awaitable_method(
-                        "succeed", awaitable_ret.clone(), success, vec![],
+                        "succeed",
+                        awaitable_ret.clone(),
+                        success,
+                        vec![],
                     ));
 
                     let desugared = if contains_await(&inner_body) {
@@ -340,7 +387,9 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
 
                     // Recurse into the desugared body in case it contains more async closures
                     let desugared = defer_async_body(
-                        walk_expr_for_async_closures(desugared), &awaitable_ret, "<closure>",
+                        walk_expr_for_async_closures(desugared),
+                        &awaitable_ret,
+                        "<closure>",
                     );
 
                     TypedExprKind::Closure {
@@ -351,7 +400,11 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
                 }
                 _ => {
                     // Non-async closure — still walk the body for nested async closures
-                    let body = TypedExpr { kind: body.kind, ty: body.ty, span: body.span };
+                    let body = TypedExpr {
+                        kind: body.kind,
+                        ty: body.ty,
+                        span: body.span,
+                    };
                     TypedExprKind::Closure {
                         params,
                         body: Box::new(walk_expr_for_async_closures(body)),
@@ -362,10 +415,12 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
         }
 
         // === Recursive cases (same pattern as desugar_try.rs walk_expr) ===
-
-        TypedExprKind::Block(exprs) => {
-            TypedExprKind::Block(exprs.into_iter().map(walk_expr_for_async_closures).collect())
-        }
+        TypedExprKind::Block(exprs) => TypedExprKind::Block(
+            exprs
+                .into_iter()
+                .map(walk_expr_for_async_closures)
+                .collect(),
+        ),
 
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(walk_expr_for_async_closures(*message)),
@@ -377,26 +432,46 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
         },
 
         TypedExprKind::Let {
-            name, mutable, boxed, var_ty, value,
+            name,
+            mutable,
+            boxed,
+            var_ty,
+            value,
         } => TypedExprKind::Let {
-            name, mutable, boxed, var_ty,
+            name,
+            mutable,
+            boxed,
+            var_ty,
             value: Box::new(walk_expr_for_async_closures(*value)),
         },
 
         TypedExprKind::Assign {
-            name, target_ty, boxed, value,
+            name,
+            target_ty,
+            boxed,
+            value,
         } => TypedExprKind::Assign {
-            name, target_ty, boxed,
+            name,
+            target_ty,
+            boxed,
             value: Box::new(walk_expr_for_async_closures(*value)),
         },
 
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
             name,
             type_params,
             value: Box::new(walk_expr_for_async_closures(*value)),
         },
 
-        TypedExprKind::FunctionCall { name, args, type_params } => TypedExprKind::FunctionCall {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => TypedExprKind::FunctionCall {
             name,
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
             type_params,
@@ -413,7 +488,11 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
             operand: Box::new(walk_expr_for_async_closures(*operand)),
         },
 
-        TypedExprKind::If { condition, then_branch, else_branch } => TypedExprKind::If {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => TypedExprKind::If {
             condition: Box::new(walk_expr_for_async_closures(*condition)),
             then_branch: Box::new(walk_expr_for_async_closures(*then_branch)),
             else_branch: else_branch.map(|e| Box::new(walk_expr_for_async_closures(*e))),
@@ -426,54 +505,105 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
 
         TypedExprKind::Match { subject, arms } => TypedExprKind::Match {
             subject: Box::new(walk_expr_for_async_closures(*subject)),
-            arms: arms.into_iter().map(|arm| crate::typechecker::types::TypedMatchArm {
-                body: Box::new(walk_expr_for_async_closures(*arm.body)),
-                ..arm
-            }).collect(),
+            arms: arms
+                .into_iter()
+                .map(|arm| crate::typechecker::types::TypedMatchArm {
+                    body: Box::new(walk_expr_for_async_closures(*arm.body)),
+                    ..arm
+                })
+                .collect(),
         },
 
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
             fqn,
             type_params,
-            fields: fields.into_iter().map(|(name, expr)| (name, walk_expr_for_async_closures(expr))).collect(),
+            fields: fields
+                .into_iter()
+                .map(|(name, expr)| (name, walk_expr_for_async_closures(expr)))
+                .collect(),
         },
 
         TypedExprKind::TupleLiteral { elements } => TypedExprKind::TupleLiteral {
-            elements: elements.into_iter().map(walk_expr_for_async_closures).collect(),
+            elements: elements
+                .into_iter()
+                .map(walk_expr_for_async_closures)
+                .collect(),
         },
 
-        TypedExprKind::EnumCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumCreate {
-            fqn, variant_name,
+        TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
             type_params,
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
 
-        TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumVariantRecordCreate {
-            fqn, variant_name,
+        TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
             type_params,
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
 
-        TypedExprKind::FieldAccess { object, field_name, field_index, boxed } => TypedExprKind::FieldAccess {
+        TypedExprKind::FieldAccess {
+            object,
+            field_name,
+            field_index,
+            boxed,
+        } => TypedExprKind::FieldAccess {
             object: Box::new(walk_expr_for_async_closures(*object)),
-            field_name, field_index, boxed,
+            field_name,
+            field_index,
+            boxed,
         },
 
-        TypedExprKind::FieldAssign { object, field_name, field_index, value, boxed } => TypedExprKind::FieldAssign {
+        TypedExprKind::FieldAssign {
+            object,
+            field_name,
+            field_index,
+            value,
+            boxed,
+        } => TypedExprKind::FieldAssign {
             object: Box::new(walk_expr_for_async_closures(*object)),
-            field_name, field_index, boxed,
+            field_name,
+            field_index,
+            boxed,
             value: Box::new(walk_expr_for_async_closures(*value)),
         },
 
-        TypedExprKind::RecordWith { object, fqn, overrides, type_params } => TypedExprKind::RecordWith {
+        TypedExprKind::RecordWith {
+            object,
+            fqn,
+            overrides,
+            type_params,
+        } => TypedExprKind::RecordWith {
             object: Box::new(walk_expr_for_async_closures(*object)),
             fqn,
             type_params,
-            overrides: overrides.into_iter().map(|(name, idx, expr)| (name, idx, walk_expr_for_async_closures(expr))).collect(),
+            overrides: overrides
+                .into_iter()
+                .map(|(name, idx, expr)| (name, idx, walk_expr_for_async_closures(expr)))
+                .collect(),
         },
 
         TypedExprKind::ArrayLiteral { elements } => TypedExprKind::ArrayLiteral {
-            elements: elements.into_iter().map(walk_expr_for_async_closures).collect(),
+            elements: elements
+                .into_iter()
+                .map(walk_expr_for_async_closures)
+                .collect(),
         },
 
         TypedExprKind::IntrinsicCall { intrinsic, args } => TypedExprKind::IntrinsicCall {
@@ -489,8 +619,13 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
             value: Box::new(walk_expr_for_async_closures(*value)),
             target_type,
         },
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => TypedExprKind::LetDestructure {
-            pattern, var_ty,
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
             value: Box::new(walk_expr_for_async_closures(*value)),
         },
         TypedExprKind::NewtypeCreate { value } => TypedExprKind::NewtypeCreate {
@@ -499,38 +634,76 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
         TypedExprKind::NewtypeValue { value } => TypedExprKind::NewtypeValue {
             value: Box::new(walk_expr_for_async_closures(*value)),
         },
-        TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => TypedExprKind::InterfaceObjectCoerce {
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        } => TypedExprKind::InterfaceObjectCoerce {
             inner: Box::new(walk_expr_for_async_closures(*inner)),
-            interface_mangled_name, concrete_type, vtable_methods,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
         },
-        TypedExprKind::TemplateInterfaceObjectCoerce { inner, traits, concrete_type } => TypedExprKind::TemplateInterfaceObjectCoerce {
+        TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner,
+            traits,
+            concrete_type,
+        } => TypedExprKind::TemplateInterfaceObjectCoerce {
             inner: Box::new(walk_expr_for_async_closures(*inner)),
-            traits, concrete_type,
+            traits,
+            concrete_type,
         },
         TypedExprKind::InterfaceObjectUpcast { inner } => TypedExprKind::InterfaceObjectUpcast {
             inner: Box::new(walk_expr_for_async_closures(*inner)),
         },
-        TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver, args } => TypedExprKind::InterfaceObjectMethodCall {
-            interface_mangled_name, method_name, member_name,
+        TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver,
+            args,
+        } => TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
             receiver: Box::new(walk_expr_for_async_closures(*receiver)),
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
             mangled_name,
             type_params,
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
-            fields: fields.into_iter().map(walk_expr_for_async_closures).collect(),
+            fields: fields
+                .into_iter()
+                .map(walk_expr_for_async_closures)
+                .collect(),
         },
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => TypedExprKind::ClassVirtualCall {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => TypedExprKind::ClassVirtualCall {
             object: Box::new(walk_expr_for_async_closures(*object)),
             vtable_slot,
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
-        TypedExprKind::ClassSuperCall { method_mangled, args } => TypedExprKind::ClassSuperCall {
+        TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args,
+        } => TypedExprKind::ClassSuperCall {
             method_mangled,
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
@@ -542,28 +715,62 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
             callee: Box::new(walk_expr_for_async_closures(*callee)),
             args: args.into_iter().map(walk_expr_for_async_closures).collect(),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(walk_expr_for_async_closures(*object)),
             method_name,
             type_params,
         },
 
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => TypedExprKind::Await {
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
             operand: Box::new(walk_expr_for_async_closures(*operand)),
-            return_type, and_then_method, map_method, source_location_mn,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
         },
 
-        TypedExprKind::Try { operand, unwrap_method, unwrap_return_type, return_type, from_method } => TypedExprKind::Try {
+        TypedExprKind::Try {
+            operand,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
+        } => TypedExprKind::Try {
             operand: Box::new(walk_expr_for_async_closures(*operand)),
-            unwrap_method, unwrap_return_type, return_type, from_method,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
         },
 
-        TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => TypedExprKind::Use {
+        TypedExprKind::Use {
+            operand,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
+        } => TypedExprKind::Use {
             operand: Box::new(walk_expr_for_async_closures(*operand)),
-            inner_type, source_error, target_error, from_method,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
         },
 
-        TypedExprKind::AsyncBlock { body, succeed_method } => TypedExprKind::AsyncBlock {
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => TypedExprKind::AsyncBlock {
             body: Box::new(walk_expr_for_async_closures(*body)),
             succeed_method,
         },
@@ -598,7 +805,14 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
         | TypedExprKind::Break
         | TypedExprKind::Continue) => kind,
 
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
             trait_fqn,
             trait_type_params,
             for_type,
@@ -607,7 +821,13 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
             method_type_params,
         },
         kind @ TypedExprKind::ImplFunctionRef { .. } => kind,
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
+        TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
             ext_fqn,
             for_type,
             method_name,
@@ -620,7 +840,11 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
     TypedExpr { kind, ty, span }
 }
 
-fn wrap_in_succeed(body: TypedExpr, return_type: &Type, succeed_method: &Option<ResolvedImplMethod>) -> TypedExpr {
+fn wrap_in_succeed(
+    body: TypedExpr,
+    return_type: &Type,
+    succeed_method: &Option<ResolvedImplMethod>,
+) -> TypedExpr {
     let succeed = match succeed_method {
         Some(m) => m.clone(),
         None => return body,
@@ -642,12 +866,25 @@ fn wrap_in_succeed(body: TypedExpr, return_type: &Type, succeed_method: &Option<
 }
 
 /// Desugar a body that contains await expressions.
-fn desugar_body(body: TypedExpr, return_type: &Type, succeed_method: &Option<ResolvedImplMethod>, function_name: &str) -> TypedExpr {
+fn desugar_body(
+    body: TypedExpr,
+    return_type: &Type,
+    succeed_method: &Option<ResolvedImplMethod>,
+    function_name: &str,
+) -> TypedExpr {
     match body.kind {
-        TypedExprKind::Block(stmts) => desugar_stmts(stmts, return_type, body.span, succeed_method, function_name),
+        TypedExprKind::Block(stmts) => {
+            desugar_stmts(stmts, return_type, body.span, succeed_method, function_name)
+        }
         _ => {
             // Single expression body — wrap in a vec
-            desugar_stmts(vec![body.clone()], return_type, body.span, succeed_method, function_name)
+            desugar_stmts(
+                vec![body.clone()],
+                return_type,
+                body.span,
+                succeed_method,
+                function_name,
+            )
         }
     }
 }
@@ -685,33 +922,50 @@ fn fresh_await_var() -> VarName {
 }
 
 /// Build a SourceLocation record expression from an await span and function name.
-fn build_source_location(await_span: &Span, function_name: &str, source_location_mn: &MangledName) -> TypedExpr {
+fn build_source_location(
+    await_span: &Span,
+    function_name: &str,
+    source_location_mn: &MangledName,
+) -> TypedExpr {
     let source_location_fqn = Fqn::from_dotted("standard.prelude.SourceLocation").unwrap();
-    let source_location_type = Type::Record(source_location_fqn.clone(), source_location_mn.clone());
+    let source_location_type =
+        Type::Record(source_location_fqn.clone(), source_location_mn.clone());
     TypedExpr {
         kind: TypedExprKind::RecordCreate {
             fqn: source_location_fqn,
             fields: vec![
-                ("file".to_string(), TypedExpr {
-                    kind: TypedExprKind::StringLiteral(await_span.file.to_string()),
-                    ty: Type::String,
-                    span: synthetic_span(),
-                }),
-                ("line".to_string(), TypedExpr {
-                    kind: TypedExprKind::Int32Literal(await_span.line as i32),
-                    ty: Type::Int32,
-                    span: synthetic_span(),
-                }),
-                ("column".to_string(), TypedExpr {
-                    kind: TypedExprKind::Int32Literal(await_span.column as i32),
-                    ty: Type::Int32,
-                    span: synthetic_span(),
-                }),
-                ("functionName".to_string(), TypedExpr {
-                    kind: TypedExprKind::StringLiteral(function_name.to_string()),
-                    ty: Type::String,
-                    span: synthetic_span(),
-                }),
+                (
+                    "file".to_string(),
+                    TypedExpr {
+                        kind: TypedExprKind::StringLiteral(await_span.file.to_string()),
+                        ty: Type::String,
+                        span: synthetic_span(),
+                    },
+                ),
+                (
+                    "line".to_string(),
+                    TypedExpr {
+                        kind: TypedExprKind::Int32Literal(await_span.line as i32),
+                        ty: Type::Int32,
+                        span: synthetic_span(),
+                    },
+                ),
+                (
+                    "column".to_string(),
+                    TypedExpr {
+                        kind: TypedExprKind::Int32Literal(await_span.column as i32),
+                        ty: Type::Int32,
+                        span: synthetic_span(),
+                    },
+                ),
+                (
+                    "functionName".to_string(),
+                    TypedExpr {
+                        kind: TypedExprKind::StringLiteral(function_name.to_string()),
+                        ty: Type::String,
+                        span: synthetic_span(),
+                    },
+                ),
             ],
             type_params: vec![],
         },
@@ -746,10 +1000,20 @@ fn desugar_stmts(
         let continuation = if rest.is_empty() {
             None
         } else {
-            Some(desugar_stmts(rest, return_type, span.clone(), succeed_method, function_name))
+            Some(desugar_stmts(
+                rest,
+                return_type,
+                span.clone(),
+                succeed_method,
+                function_name,
+            ))
         };
         let async_chain = lower_await_stmt(
-            stmt, continuation, return_type, succeed_method, function_name,
+            stmt,
+            continuation,
+            return_type,
+            succeed_method,
+            function_name,
         );
         return prepend_before(before, async_chain, return_type, span);
     }
@@ -758,7 +1022,8 @@ fn desugar_stmts(
     // when their type equals the context (possible with an Any success type).
     let block_ty = before.last().map(|s| s.ty.clone()).unwrap_or(Type::Unit);
     let already_async = before.last().is_some_and(|last| {
-        is_resource_use_result(last) && (block_ty == *return_type || already_lifted(&block_ty, return_type))
+        is_resource_use_result(last)
+            && (block_ty == *return_type || already_lifted(&block_ty, return_type))
     });
     let block = TypedExpr {
         kind: TypedExprKind::Block(before),
@@ -814,16 +1079,26 @@ fn lower_await_stmt(
             match continuation {
                 None => operand_async,
                 Some(cont) => build_and_then(
-                    operand_async, VarName("$tail_await".into()), stmt_ty,
-                    cont, return_type, succeed_method, function_name, stmt_span,
+                    operand_async,
+                    VarName("$tail_await".into()),
+                    stmt_ty,
+                    cont,
+                    return_type,
+                    succeed_method,
+                    function_name,
+                    stmt_span,
                 ),
             }
         }
 
         // `let x = await foo` — directly bind the await's value.
-        TypedExprKind::Let { name, mutable, boxed, var_ty, value }
-            if matches!(value.kind, TypedExprKind::Await { .. }) =>
-        {
+        TypedExprKind::Let {
+            name,
+            mutable,
+            boxed,
+            var_ty,
+            value,
+        } if matches!(value.kind, TypedExprKind::Await { .. }) => {
             let operand = match value.kind {
                 TypedExprKind::Await { operand, .. } => *operand,
                 _ => unreachable!(),
@@ -840,13 +1115,19 @@ fn lower_await_stmt(
                 // the mutable let at the head of the continuation.
                 let tmp = VarName(format!("$mut_init${}", name.0));
                 let tmp_ref = TypedExpr {
-                    kind: TypedExprKind::VarRef { name: tmp.clone(), boxed: false },
+                    kind: TypedExprKind::VarRef {
+                        name: tmp.clone(),
+                        boxed: false,
+                    },
                     ty: var_ty.clone(),
                     span: stmt_span.clone(),
                 };
                 let mutable_let = TypedExpr {
                     kind: TypedExprKind::Let {
-                        name, mutable: true, boxed, var_ty: var_ty.clone(),
+                        name,
+                        mutable: true,
+                        boxed,
+                        var_ty: var_ty.clone(),
                         value: Box::new(tmp_ref),
                     },
                     ty: Type::Unit,
@@ -860,44 +1141,73 @@ fn lower_await_stmt(
                     span: cont_span,
                 };
                 build_and_then(
-                    operand, tmp, var_ty,
-                    wrapped_cont, return_type, succeed_method, function_name, stmt_span,
+                    operand,
+                    tmp,
+                    var_ty,
+                    wrapped_cont,
+                    return_type,
+                    succeed_method,
+                    function_name,
+                    stmt_span,
                 )
             } else {
                 build_and_then(
-                    operand, name, var_ty,
-                    cont, return_type, succeed_method, function_name, stmt_span,
+                    operand,
+                    name,
+                    var_ty,
+                    cont,
+                    return_type,
+                    succeed_method,
+                    function_name,
+                    stmt_span,
                 )
             }
         }
 
         // `let x = <expr with await inside>` — recursively desugar value into
         // an Async<var_ty, E>, then chain the let-binding into the continuation.
-        TypedExprKind::Let { name, mutable: _, boxed: _, var_ty, value } => {
-            let value_async = lower_expr_to_async(
-                *value, &var_ty, return_type, succeed_method, function_name,
-            );
+        TypedExprKind::Let {
+            name,
+            mutable: _,
+            boxed: _,
+            var_ty,
+            value,
+        } => {
+            let value_async =
+                lower_expr_to_async(*value, &var_ty, return_type, succeed_method, function_name);
             let cont = continuation.unwrap_or_else(|| {
                 synth_unit_succeed(return_type, succeed_method, stmt_span.clone())
             });
             build_and_then(
-                value_async, name, var_ty,
-                cont, return_type, succeed_method, function_name, stmt_span,
+                value_async,
+                name,
+                var_ty,
+                cont,
+                return_type,
+                succeed_method,
+                function_name,
+                stmt_span,
             )
         }
 
         // Keep destructured bindings in the same continuation as their uses.
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => {
-            let value_async = lower_expr_to_async(
-                *value, &var_ty, return_type, succeed_method, function_name,
-            );
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => {
+            let value_async =
+                lower_expr_to_async(*value, &var_ty, return_type, succeed_method, function_name);
             let name = VarName("$destructure_result".into());
             let binding = TypedExpr {
                 kind: TypedExprKind::LetDestructure {
                     pattern,
                     var_ty: var_ty.clone(),
                     value: Box::new(TypedExpr {
-                        kind: TypedExprKind::VarRef { name: name.clone(), boxed: false },
+                        kind: TypedExprKind::VarRef {
+                            name: name.clone(),
+                            boxed: false,
+                        },
                         ty: var_ty.clone(),
                         span: stmt_span.clone(),
                     }),
@@ -910,8 +1220,14 @@ fn lower_await_stmt(
             });
             let body = prepend_before(vec![binding], cont, return_type, stmt_span.clone());
             build_and_then(
-                value_async, name, var_ty,
-                body, return_type, succeed_method, function_name, stmt_span,
+                value_async,
+                name,
+                var_ty,
+                body,
+                return_type,
+                succeed_method,
+                function_name,
+                stmt_span,
             )
         }
 
@@ -925,13 +1241,24 @@ fn lower_await_stmt(
                 );
             }
             let while_call = build_while_loop_call(
-                *condition, *body, return_type, succeed_method, function_name, stmt_span.clone(),
+                *condition,
+                *body,
+                return_type,
+                succeed_method,
+                function_name,
+                stmt_span.clone(),
             );
             match continuation {
                 None => while_call,
                 Some(cont) => build_and_then(
-                    while_call, VarName("$while_unit".into()), Type::Unit,
-                    cont, return_type, succeed_method, function_name, stmt_span,
+                    while_call,
+                    VarName("$while_unit".into()),
+                    Type::Unit,
+                    cont,
+                    return_type,
+                    succeed_method,
+                    function_name,
+                    stmt_span,
                 ),
             }
         }
@@ -939,15 +1266,29 @@ fn lower_await_stmt(
         // `match` / `if` at statement level with await inside arms/branches.
         TypedExprKind::Match { .. } | TypedExprKind::If { .. } => {
             let inner_ty = stmt_ty.clone();
-            let stmt_rebuilt = TypedExpr { kind: stmt.kind, ty: stmt_ty.clone(), span: stmt_span.clone() };
+            let stmt_rebuilt = TypedExpr {
+                kind: stmt.kind,
+                ty: stmt_ty.clone(),
+                span: stmt_span.clone(),
+            };
             let lifted = lift_branching_to_async(
-                stmt_rebuilt, &inner_ty, return_type, succeed_method, function_name,
+                stmt_rebuilt,
+                &inner_ty,
+                return_type,
+                succeed_method,
+                function_name,
             );
             match continuation {
                 None => lifted,
                 Some(cont) => build_and_then(
-                    lifted, VarName("$branch_val".into()), inner_ty,
-                    cont, return_type, succeed_method, function_name, stmt_span,
+                    lifted,
+                    VarName("$branch_val".into()),
+                    inner_ty,
+                    cont,
+                    return_type,
+                    succeed_method,
+                    function_name,
+                    stmt_span,
                 ),
             }
         }
@@ -957,15 +1298,29 @@ fn lower_await_stmt(
         // its value type, then chain the continuation.
         _ => {
             let inner_ty = stmt_ty.clone();
-            let stmt_rebuilt = TypedExpr { kind: stmt.kind, ty: stmt_ty, span: stmt_span.clone() };
+            let stmt_rebuilt = TypedExpr {
+                kind: stmt.kind,
+                ty: stmt_ty,
+                span: stmt_span.clone(),
+            };
             let stmt_async = lower_expr_to_async(
-                stmt_rebuilt, &inner_ty, return_type, succeed_method, function_name,
+                stmt_rebuilt,
+                &inner_ty,
+                return_type,
+                succeed_method,
+                function_name,
             );
             match continuation {
                 None => stmt_async,
                 Some(cont) => build_and_then(
-                    stmt_async, VarName("$expr_val".into()), inner_ty,
-                    cont, return_type, succeed_method, function_name, stmt_span,
+                    stmt_async,
+                    VarName("$expr_val".into()),
+                    inner_ty,
+                    cont,
+                    return_type,
+                    succeed_method,
+                    function_name,
+                    stmt_span,
                 ),
             }
         }
@@ -989,10 +1344,8 @@ fn lower_expr_to_async(
     let async_inner_ty = super::awaitable::rebind(async_template, inner_ty.clone());
 
     if !contains_await(&expr) {
-        let inner_succeed = synth_awaitable_method(
-            "succeed", async_inner_ty.clone(), inner_ty.clone(),
-            vec![],
-        );
+        let inner_succeed =
+            synth_awaitable_method("succeed", async_inner_ty.clone(), inner_ty.clone(), vec![]);
         return wrap_in_succeed(expr, &async_inner_ty, &Some(inner_succeed));
     }
 
@@ -1002,7 +1355,10 @@ fn lower_expr_to_async(
     }
 
     // Match/If with await inside — full branching lift.
-    if matches!(expr.kind, TypedExprKind::Match { .. } | TypedExprKind::If { .. }) {
+    if matches!(
+        expr.kind,
+        TypedExprKind::Match { .. } | TypedExprKind::If { .. }
+    ) {
         return lift_branching_to_async(expr, inner_ty, return_type, succeed_method, function_name);
     }
 
@@ -1016,11 +1372,15 @@ fn lower_expr_to_async(
     // (`let a = await f()` then `await g(a)`) is evaluated before its binding
     // exists ("undefined local" at codegen).
     if let TypedExprKind::Block(stmts) = expr.kind {
-        let inner_succeed = synth_awaitable_method(
-            "succeed", async_inner_ty.clone(), inner_ty.clone(),
-            vec![],
+        let inner_succeed =
+            synth_awaitable_method("succeed", async_inner_ty.clone(), inner_ty.clone(), vec![]);
+        return desugar_stmts(
+            stmts,
+            &async_inner_ty,
+            span,
+            &Some(inner_succeed),
+            function_name,
         );
-        return desugar_stmts(stmts, &async_inner_ty, span, &Some(inner_succeed), function_name);
     }
 
     // General case: hoist the first await inside this expression, bind via
@@ -1040,7 +1400,11 @@ fn lower_expr_to_async(
     // must lift to `Async<bound_ty, E>` before using it as the andThen stem.
     let operand = if await_data.needs_lift {
         lift_control_flow_to_async(
-            await_data.operand, &bound_ty, return_type, succeed_method, function_name,
+            await_data.operand,
+            &bound_ty,
+            return_type,
+            succeed_method,
+            function_name,
         )
     } else {
         await_data.operand
@@ -1050,10 +1414,22 @@ fn lower_expr_to_async(
     // is the SAME outer Async<FnT, E> so build_and_then knows the closure's
     // result type, but the closure body's actual type is async_inner_ty.
     // We synthesize a local andThen tied to async_inner_ty.
-    let cont = lower_expr_to_async(modified_expr, inner_ty, return_type, succeed_method, function_name);
+    let cont = lower_expr_to_async(
+        modified_expr,
+        inner_ty,
+        return_type,
+        succeed_method,
+        function_name,
+    );
     build_and_then_typed(
-        operand, bind_name, bound_ty,
-        cont, &async_inner_ty, succeed_method, function_name, span,
+        operand,
+        bind_name,
+        bound_ty,
+        cont,
+        &async_inner_ty,
+        succeed_method,
+        function_name,
+        span,
     )
 }
 
@@ -1071,10 +1447,8 @@ fn lift_branching_to_async(
     let async_template = outer_awaitable_context(return_type, succeed_method);
     let async_inner_ty = super::awaitable::rebind(async_template, inner_ty.clone());
     // Block-level type args for the impl `Awaitable<inner_ty> for Async<inner_ty, E>`.
-    let inner_succeed = synth_awaitable_method(
-        "succeed", async_inner_ty.clone(), inner_ty.clone(),
-        vec![],
-    );
+    let inner_succeed =
+        synth_awaitable_method("succeed", async_inner_ty.clone(), inner_ty.clone(), vec![]);
     let inner_succeed_opt = Some(inner_succeed);
 
     // Evaluate an effectful subject/condition once, before choosing a branch.
@@ -1088,16 +1462,26 @@ fn lift_branching_to_async(
         let bind_name = fresh_await_var();
         let bind_ty = head.ty.clone();
         let replacement = TypedExpr {
-            kind: TypedExprKind::VarRef { name: bind_name.clone(), boxed: false },
+            kind: TypedExprKind::VarRef {
+                name: bind_name.clone(),
+                boxed: false,
+            },
             ty: bind_ty.clone(),
             span: head.span.clone(),
         };
         let (head, continuation_kind) = match expr.kind {
             TypedExprKind::Match { subject, arms } => (
                 *subject,
-                TypedExprKind::Match { subject: Box::new(replacement), arms },
+                TypedExprKind::Match {
+                    subject: Box::new(replacement),
+                    arms,
+                },
             ),
-            TypedExprKind::If { condition, then_branch, else_branch } => (
+            TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => (
                 *condition,
                 TypedExprKind::If {
                     condition: Box::new(replacement),
@@ -1112,15 +1496,24 @@ fn lift_branching_to_async(
             ty: expr.ty,
             span: expr.span,
         };
-        let operand = lower_expr_to_async(
-            head, &bind_ty, return_type, succeed_method, function_name,
-        );
+        let operand =
+            lower_expr_to_async(head, &bind_ty, return_type, succeed_method, function_name);
         let continuation = lift_branching_to_async(
-            continuation_expr, inner_ty, return_type, succeed_method, function_name,
+            continuation_expr,
+            inner_ty,
+            return_type,
+            succeed_method,
+            function_name,
         );
         return build_and_then(
-            operand, bind_name, bind_ty, continuation, &async_inner_ty,
-            &inner_succeed_opt, function_name, span,
+            operand,
+            bind_name,
+            bind_ty,
+            continuation,
+            &async_inner_ty,
+            &inner_succeed_opt,
+            function_name,
+            span,
         );
     }
 
@@ -1140,23 +1533,33 @@ fn lift_branching_to_async(
 
     match expr.kind {
         TypedExprKind::Match { subject, arms } => {
-            let new_arms: Vec<TypedMatchArm> = arms.into_iter().map(|arm| {
-                let arm_span = arm.span.clone();
-                let new_body = lift_body(*arm.body);
-                TypedMatchArm {
-                    pattern: arm.pattern,
-                    guard: arm.guard,
-                    body: Box::new(new_body),
-                    span: arm_span,
-                }
-            }).collect();
+            let new_arms: Vec<TypedMatchArm> = arms
+                .into_iter()
+                .map(|arm| {
+                    let arm_span = arm.span.clone();
+                    let new_body = lift_body(*arm.body);
+                    TypedMatchArm {
+                        pattern: arm.pattern,
+                        guard: arm.guard,
+                        body: Box::new(new_body),
+                        span: arm_span,
+                    }
+                })
+                .collect();
             TypedExpr {
-                kind: TypedExprKind::Match { subject, arms: new_arms },
+                kind: TypedExprKind::Match {
+                    subject,
+                    arms: new_arms,
+                },
                 ty: async_inner_ty,
                 span,
             }
         }
-        TypedExprKind::If { condition, then_branch, else_branch } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             let new_then = Box::new(lift_body(*then_branch));
             // If there's no else: the original expression's value type is Unit
             // (only when else is omitted). Synthesize `else => succeed(())`.
@@ -1168,7 +1571,11 @@ fn lift_branching_to_async(
                         ty: Type::Unit,
                         span: span.clone(),
                     };
-                    Some(Box::new(wrap_in_succeed(unit_expr, &async_inner_ty, &inner_succeed_opt)))
+                    Some(Box::new(wrap_in_succeed(
+                        unit_expr,
+                        &async_inner_ty,
+                        &inner_succeed_opt,
+                    )))
                 }
             };
             TypedExpr {
@@ -1197,12 +1604,14 @@ fn build_while_loop_call(
 ) -> TypedExpr {
     let async_template = outer_awaitable_context(return_type, succeed_method);
     let async_unit_ty = super::awaitable::rebind(async_template, Type::Unit);
-    let succeed_unit = synth_awaitable_method(
-        "succeed", async_unit_ty.clone(), Type::Unit,
-        vec![],
-    );
+    let succeed_unit = synth_awaitable_method("succeed", async_unit_ty.clone(), Type::Unit, vec![]);
     let body_as_async = if contains_await(&body) {
-        desugar_body(body, &async_unit_ty, &Some(succeed_unit.clone()), function_name)
+        desugar_body(
+            body,
+            &async_unit_ty,
+            &Some(succeed_unit.clone()),
+            function_name,
+        )
     } else {
         wrap_in_succeed(body, &async_unit_ty, &Some(succeed_unit))
     };
@@ -1230,7 +1639,9 @@ fn build_while_loop_call(
     let source_location_mn = MangledName::for_type(&source_location_fqn);
     let trace = build_source_location(&span, function_name, &source_location_mn);
     let awaitable_fqn = Fqn::from_dotted("standard.prelude.Awaitable").unwrap();
-    let block_args = super::awaitable::method("whileLoop", async_unit_ty.clone(), Type::Unit, vec![]).method_type_params;
+    let block_args =
+        super::awaitable::method("whileLoop", async_unit_ty.clone(), Type::Unit, vec![])
+            .method_type_params;
     TypedExpr {
         kind: TypedExprKind::ImplFunctionCall {
             trait_fqn: awaitable_fqn,
@@ -1247,6 +1658,10 @@ fn build_while_loop_call(
 
 /// Build `Awaitable<bind_ty>.andThen(operand, (bind_name: bind_ty) => continuation, trace)`.
 /// The continuation must itself be Async-valued (typed as `return_type`).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the compiler context parameters explicit at this call boundary."
+)]
 fn build_and_then(
     operand: TypedExpr,
     bind_name: VarName,
@@ -1257,13 +1672,26 @@ fn build_and_then(
     function_name: &str,
     span: Span,
 ) -> TypedExpr {
-    build_and_then_typed(operand, bind_name, bind_ty, continuation, return_type, succeed_method, function_name, span)
+    build_and_then_typed(
+        operand,
+        bind_name,
+        bind_ty,
+        continuation,
+        return_type,
+        succeed_method,
+        function_name,
+        span,
+    )
 }
 
 /// Like `build_and_then` but with an explicit `result_type` for the closure's
 /// success type and the andThen call's result. Used when chaining into a
 /// continuation typed differently from the outer function's return type
 /// (e.g., inside `lower_expr_to_async` where the chain produces `Async<inner_ty, E>`).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the compiler context parameters explicit at this call boundary."
+)]
 fn build_and_then_typed(
     operand: TypedExpr,
     bind_name: VarName,
@@ -1298,10 +1726,15 @@ fn build_and_then_typed(
     };
 
     let awaitable_fqn = Fqn::from_dotted("standard.prelude.Awaitable").unwrap();
-    let result_success = super::awaitable::success_type(async_template).expect("checked Awaitable context");
+    let result_success =
+        super::awaitable::success_type(async_template).expect("checked Awaitable context");
     let method_type_params = super::awaitable::method(
-        "andThen", async_bound_ty.clone(), bind_ty.clone(), vec![result_success],
-    ).method_type_params;
+        "andThen",
+        async_bound_ty.clone(),
+        bind_ty.clone(),
+        vec![result_success],
+    )
+    .method_type_params;
 
     TypedExpr {
         kind: TypedExprKind::ImplFunctionCall {
@@ -1327,10 +1760,7 @@ fn synth_unit_succeed(
 ) -> TypedExpr {
     let async_template = outer_awaitable_context(return_type, succeed_method);
     let async_unit_ty = super::awaitable::rebind(async_template, Type::Unit);
-    let unit_succeed = synth_awaitable_method(
-        "succeed", async_unit_ty.clone(), Type::Unit,
-        vec![],
-    );
+    let unit_succeed = synth_awaitable_method("succeed", async_unit_ty.clone(), Type::Unit, vec![]);
     let unit_expr = TypedExpr {
         kind: TypedExprKind::UnitLiteral,
         ty: Type::Unit,
@@ -1348,7 +1778,10 @@ fn outer_awaitable_context<'a>(
     if super::awaitable::success_type(return_type).is_some() {
         return return_type;
     }
-    &succeed_method.as_ref().expect("checked Awaitable context").for_type
+    &succeed_method
+        .as_ref()
+        .expect("checked Awaitable context")
+        .for_type
 }
 
 /// Check if a statement is a bare `await expr` (the await IS the entire statement).
@@ -1447,7 +1880,11 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
             )
         }
 
-        TypedExprKind::FunctionCall { name, args, type_params } => {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => {
             let mut new_args = Vec::new();
             let mut found_data = None;
             for arg in args {
@@ -1462,14 +1899,23 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
             (
                 found_data,
                 TypedExpr {
-                    kind: TypedExprKind::FunctionCall { name, args: new_args, type_params },
+                    kind: TypedExprKind::FunctionCall {
+                        name,
+                        args: new_args,
+                        type_params,
+                    },
                     ty: expr.ty,
                     span: expr.span,
                 },
             )
         }
 
-        TypedExprKind::EnumCreate { fqn, variant_name, args, type_params } => {
+        TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => {
             let mut new_args = Vec::new();
             let mut found_data = None;
             for arg in args {
@@ -1484,14 +1930,24 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
             (
                 found_data,
                 TypedExpr {
-                    kind: TypedExprKind::EnumCreate { fqn, variant_name, args: new_args, type_params },
+                    kind: TypedExprKind::EnumCreate {
+                        fqn,
+                        variant_name,
+                        args: new_args,
+                        type_params,
+                    },
                     ty: expr.ty,
                     span: expr.span,
                 },
             )
         }
 
-        TypedExprKind::FieldAccess { object, field_name, field_index, boxed } => {
+        TypedExprKind::FieldAccess {
+            object,
+            field_name,
+            field_index,
+            boxed,
+        } => {
             let (data, new_object) = extract_first_await(*object);
             (
                 data,
@@ -1509,160 +1965,289 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
         }
 
         // --- Single-child structural recursion ---
-
         TypedExprKind::NewtypeCreate { value } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::NewtypeCreate { value: Box::new(new_value) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::NewtypeCreate {
+                        value: Box::new(new_value),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::NewtypeValue { value } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::NewtypeValue { value: Box::new(new_value) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::NewtypeValue {
+                        value: Box::new(new_value),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::BoxToAny { inner } => {
             let (data, new_inner) = extract_first_await(*inner);
-            (data, TypedExpr {
-                kind: TypedExprKind::BoxToAny { inner: Box::new(new_inner) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::BoxToAny {
+                        inner: Box::new(new_inner),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::TypeTest { value, target_type } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::TypeTest { value: Box::new(new_value), target_type },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::TypeTest {
+                        value: Box::new(new_value),
+                        target_type,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::TypeCast { value, target_type } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::TypeCast { value: Box::new(new_value), target_type },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::TypeCast {
+                        value: Box::new(new_value),
+                        target_type,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::Return { value, return_type } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::Return { value: Box::new(new_value), return_type },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::Return {
+                        value: Box::new(new_value),
+                        return_type,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::Panic { message } => {
             let (data, new_msg) = extract_first_await(*message);
-            (data, TypedExpr {
-                kind: TypedExprKind::Panic { message: Box::new(new_msg) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::Panic {
+                        message: Box::new(new_msg),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::Assert { condition, message } => {
             let (data, new_cond) = extract_first_await(*condition);
             if data.is_some() {
-                return (data, TypedExpr {
-                    kind: TypedExprKind::Assert { condition: Box::new(new_cond), message },
-                    ty: expr.ty,
-                    span: expr.span,
-                });
+                return (
+                    data,
+                    TypedExpr {
+                        kind: TypedExprKind::Assert {
+                            condition: Box::new(new_cond),
+                            message,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
             }
             match message {
                 Some(msg) => {
                     let (data, new_msg) = extract_first_await(*msg);
-                    (data, TypedExpr {
-                        kind: TypedExprKind::Assert { condition: Box::new(new_cond), message: Some(Box::new(new_msg)) },
+                    (
+                        data,
+                        TypedExpr {
+                            kind: TypedExprKind::Assert {
+                                condition: Box::new(new_cond),
+                                message: Some(Box::new(new_msg)),
+                            },
+                            ty: expr.ty,
+                            span: expr.span,
+                        },
+                    )
+                }
+                None => (
+                    None,
+                    TypedExpr {
+                        kind: TypedExprKind::Assert {
+                            condition: Box::new(new_cond),
+                            message: None,
+                        },
                         ty: expr.ty,
                         span: expr.span,
-                    })
-                }
-                None => (None, TypedExpr {
-                    kind: TypedExprKind::Assert { condition: Box::new(new_cond), message: None },
-                    ty: expr.ty,
-                    span: expr.span,
-                }),
+                    },
+                ),
             }
         }
 
-        TypedExprKind::MethodRef { object, method_name, type_params } => {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => {
             let (data, new_object) = extract_first_await(*object);
-            (data, TypedExpr {
-                kind: TypedExprKind::MethodRef { object: Box::new(new_object), method_name, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::MethodRef {
+                        object: Box::new(new_object),
+                        method_name,
+                        type_params,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => {
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        } => {
             let (data, new_inner) = extract_first_await(*inner);
-            (data, TypedExpr {
-                kind: TypedExprKind::InterfaceObjectCoerce { inner: Box::new(new_inner), interface_mangled_name, concrete_type, vtable_methods },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::InterfaceObjectCoerce {
+                        inner: Box::new(new_inner),
+                        interface_mangled_name,
+                        concrete_type,
+                        vtable_methods,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::TemplateInterfaceObjectCoerce { inner, traits, concrete_type } => {
+        TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner,
+            traits,
+            concrete_type,
+        } => {
             let (data, new_inner) = extract_first_await(*inner);
-            (data, TypedExpr {
-                kind: TypedExprKind::TemplateInterfaceObjectCoerce { inner: Box::new(new_inner), traits, concrete_type },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::TemplateInterfaceObjectCoerce {
+                        inner: Box::new(new_inner),
+                        traits,
+                        concrete_type,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
         TypedExprKind::InterfaceObjectUpcast { inner } => {
             let (data, new_inner) = extract_first_await(*inner);
-            (data, TypedExpr {
-                kind: TypedExprKind::InterfaceObjectUpcast { inner: Box::new(new_inner) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::InterfaceObjectUpcast {
+                        inner: Box::new(new_inner),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::Assign { name, target_ty, boxed, value } => {
+        TypedExprKind::Assign {
+            name,
+            target_ty,
+            boxed,
+            value,
+        } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::Assign { name, target_ty, boxed, value: Box::new(new_value) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::Assign {
+                        name,
+                        target_ty,
+                        boxed,
+                        value: Box::new(new_value),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::GlobalAssign { name, type_params, value } => {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::GlobalAssign { name, type_params, value: Box::new(new_value) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::GlobalAssign {
+                        name,
+                        type_params,
+                        value: Box::new(new_value),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => {
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => {
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::LetDestructure { pattern, var_ty, value: Box::new(new_value) },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::LetDestructure {
+                        pattern,
+                        var_ty,
+                        value: Box::new(new_value),
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         // --- Multi-child in-order recursion ---
-
         TypedExprKind::Block(stmts) => {
             let mut new_stmts = Vec::with_capacity(stmts.len());
             let mut found = None;
@@ -1675,11 +2260,14 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::Block(new_stmts),
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::Block(new_stmts),
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::ArrayLiteral { elements } => {
@@ -1694,11 +2282,16 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ArrayLiteral { elements: new_elements },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ArrayLiteral {
+                        elements: new_elements,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         // Tuples evaluate their elements left-to-right with no short-circuit,
@@ -1716,11 +2309,16 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::TupleLiteral { elements: new_elements },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::TupleLiteral {
+                        elements: new_elements,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::IntrinsicCall { intrinsic, args } => {
@@ -1735,14 +2333,27 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::IntrinsicCall { intrinsic, args: new_args },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::IntrinsicCall {
+                        intrinsic,
+                        args: new_args,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => {
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args,
+            method_type_params,
+        } => {
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
             for arg in args {
@@ -1754,14 +2365,30 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args: new_args, method_type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ImplFunctionCall {
+                        trait_fqn,
+                        trait_type_params,
+                        for_type,
+                        method_name,
+                        args: new_args,
+                        method_type_params,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => {
+        TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args,
+            type_params,
+        } => {
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
             for arg in args {
@@ -1773,14 +2400,27 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args: new_args, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ExtFunctionCall {
+                        ext_fqn,
+                        for_type,
+                        method_name,
+                        args: new_args,
+                        type_params,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => {
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
             for arg in args {
@@ -1792,14 +2432,24 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ClassNew { mangled_name, args: new_args, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ClassNew {
+                        mangled_name,
+                        args: new_args,
+                        type_params,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::ClassSuperCall { method_mangled, args } => {
+        TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args,
+        } => {
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
             for arg in args {
@@ -1811,14 +2461,24 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ClassSuperCall { method_mangled, args: new_args },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ClassSuperCall {
+                        method_mangled,
+                        args: new_args,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => {
             let mut new_fields = Vec::with_capacity(fields.len());
             let mut found = None;
             for f in fields {
@@ -1830,21 +2490,34 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ClassStructCreate { target_mangled_name, fields: new_fields, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ClassStructCreate {
+                        target_mangled_name,
+                        fields: new_fields,
+                        type_params,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         TypedExprKind::ClosureCall { callee, args } => {
             let (data, new_callee) = extract_first_await(*callee);
             if data.is_some() {
-                return (data, TypedExpr {
-                    kind: TypedExprKind::ClosureCall { callee: Box::new(new_callee), args },
-                    ty: expr.ty,
-                    span: expr.span,
-                });
+                return (
+                    data,
+                    TypedExpr {
+                        kind: TypedExprKind::ClosureCall {
+                            callee: Box::new(new_callee),
+                            args,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
             }
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
@@ -1857,21 +2530,42 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ClosureCall { callee: Box::new(new_callee), args: new_args },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ClosureCall {
+                        callee: Box::new(new_callee),
+                        args: new_args,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver, args } => {
+        TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver,
+            args,
+        } => {
             let (data, new_receiver) = extract_first_await(*receiver);
             if data.is_some() {
-                return (data, TypedExpr {
-                    kind: TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver: Box::new(new_receiver), args },
-                    ty: expr.ty,
-                    span: expr.span,
-                });
+                return (
+                    data,
+                    TypedExpr {
+                        kind: TypedExprKind::InterfaceObjectMethodCall {
+                            interface_mangled_name,
+                            method_name,
+                            member_name,
+                            receiver: Box::new(new_receiver),
+                            args,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
             }
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
@@ -1884,22 +2578,73 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver: Box::new(new_receiver), args: new_args },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::InterfaceObjectMethodCall {
+                        interface_mangled_name,
+                        method_name,
+                        member_name,
+                        receiver: Box::new(new_receiver),
+                        args: new_args,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => {
             let (data, new_object) = extract_first_await(*object);
             if data.is_some() {
-                return (data, TypedExpr {
-                    kind: TypedExprKind::ClassVirtualCall { object: Box::new(new_object), vtable_slot, args },
+                return (
+                    data,
+                    TypedExpr {
+                        kind: TypedExprKind::ClassVirtualCall {
+                            object: Box::new(new_object),
+                            vtable_slot,
+                            args,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
+            }
+            let mut new_args = Vec::with_capacity(args.len());
+            let mut found = None;
+            for arg in args {
+                if found.is_some() {
+                    new_args.push(arg);
+                } else {
+                    let (d, na) = extract_first_await(arg);
+                    new_args.push(na);
+                    found = d;
+                }
+            }
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::ClassVirtualCall {
+                        object: Box::new(new_object),
+                        vtable_slot,
+                        args: new_args,
+                    },
                     ty: expr.ty,
                     span: expr.span,
-                });
-            }
+                },
+            )
+        }
+
+        TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => {
             let mut new_args = Vec::with_capacity(args.len());
             let mut found = None;
             for arg in args {
@@ -1911,33 +2656,26 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::ClassVirtualCall { object: Box::new(new_object), vtable_slot, args: new_args },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::EnumVariantRecordCreate {
+                        fqn,
+                        variant_name,
+                        args: new_args,
+                        type_params,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
-        TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, args, type_params } => {
-            let mut new_args = Vec::with_capacity(args.len());
-            let mut found = None;
-            for arg in args {
-                if found.is_some() {
-                    new_args.push(arg);
-                } else {
-                    let (d, na) = extract_first_await(arg);
-                    new_args.push(na);
-                    found = d;
-                }
-            }
-            (found, TypedExpr {
-                kind: TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, args: new_args, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
-        }
-
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => {
             let mut new_fields = Vec::with_capacity(fields.len());
             let mut found = None;
             for (name, field_expr) in fields {
@@ -1949,21 +2687,41 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::RecordCreate { fqn, fields: new_fields, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
-        }
-
-        TypedExprKind::RecordWith { object, fqn, overrides, type_params } => {
-            let (data, new_object) = extract_first_await(*object);
-            if data.is_some() {
-                return (data, TypedExpr {
-                    kind: TypedExprKind::RecordWith { object: Box::new(new_object), fqn, overrides, type_params },
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::RecordCreate {
+                        fqn,
+                        fields: new_fields,
+                        type_params,
+                    },
                     ty: expr.ty,
                     span: expr.span,
-                });
+                },
+            )
+        }
+
+        TypedExprKind::RecordWith {
+            object,
+            fqn,
+            overrides,
+            type_params,
+        } => {
+            let (data, new_object) = extract_first_await(*object);
+            if data.is_some() {
+                return (
+                    data,
+                    TypedExpr {
+                        kind: TypedExprKind::RecordWith {
+                            object: Box::new(new_object),
+                            fqn,
+                            overrides,
+                            type_params,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
             }
             let mut new_overrides = Vec::with_capacity(overrides.len());
             let mut found = None;
@@ -1976,28 +2734,60 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
                     found = d;
                 }
             }
-            (found, TypedExpr {
-                kind: TypedExprKind::RecordWith { object: Box::new(new_object), fqn, overrides: new_overrides, type_params },
-                ty: expr.ty,
-                span: expr.span,
-            })
-        }
-
-        TypedExprKind::FieldAssign { object, field_name, field_index, value, boxed } => {
-            let (data, new_object) = extract_first_await(*object);
-            if data.is_some() {
-                return (data, TypedExpr {
-                    kind: TypedExprKind::FieldAssign { object: Box::new(new_object), field_name, field_index, value, boxed },
+            (
+                found,
+                TypedExpr {
+                    kind: TypedExprKind::RecordWith {
+                        object: Box::new(new_object),
+                        fqn,
+                        overrides: new_overrides,
+                        type_params,
+                    },
                     ty: expr.ty,
                     span: expr.span,
-                });
+                },
+            )
+        }
+
+        TypedExprKind::FieldAssign {
+            object,
+            field_name,
+            field_index,
+            value,
+            boxed,
+        } => {
+            let (data, new_object) = extract_first_await(*object);
+            if data.is_some() {
+                return (
+                    data,
+                    TypedExpr {
+                        kind: TypedExprKind::FieldAssign {
+                            object: Box::new(new_object),
+                            field_name,
+                            field_index,
+                            value,
+                            boxed,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
             }
             let (data, new_value) = extract_first_await(*value);
-            (data, TypedExpr {
-                kind: TypedExprKind::FieldAssign { object: Box::new(new_object), field_name, field_index, value: Box::new(new_value), boxed },
-                ty: expr.ty,
-                span: expr.span,
-            })
+            (
+                data,
+                TypedExpr {
+                    kind: TypedExprKind::FieldAssign {
+                        object: Box::new(new_object),
+                        field_name,
+                        field_index,
+                        value: Box::new(new_value),
+                        boxed,
+                    },
+                    ty: expr.ty,
+                    span: expr.span,
+                },
+            )
         }
 
         // Nested control-flow (`If`/`Match`/`While`) that itself contains an
@@ -2010,14 +2800,23 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
         // the catch-all and stays inline (so a later await in evaluation order
         // is still found). Top-level `If`/`Match` never reach here — they are
         // handled directly in `lower_expr_to_async` before `extract_first_await`.
-        TypedExprKind::If { condition, then_branch, else_branch }
-            if contains_await(&condition)
-                || contains_await(&then_branch)
-                || else_branch.as_ref().is_some_and(|e| contains_await(e))
-                || is_resource_use_result(&then_branch)
-                || else_branch.as_ref().is_some_and(|branch| is_resource_use_result(branch)) =>
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } if contains_await(&condition)
+            || contains_await(&then_branch)
+            || else_branch.as_ref().is_some_and(|e| contains_await(e))
+            || is_resource_use_result(&then_branch)
+            || else_branch
+                .as_ref()
+                .is_some_and(|branch| is_resource_use_result(branch)) =>
         {
-            let kind = TypedExprKind::If { condition, then_branch, else_branch };
+            let kind = TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            };
             hoist_control_flow(kind, expr.ty, expr.span)
         }
 
@@ -2051,13 +2850,20 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
 fn hoist_control_flow(kind: TypedExprKind, ty: Type, span: Span) -> (Option<AwaitData>, TypedExpr) {
     let var_name = fresh_await_var();
     let data = AwaitData {
-        operand: TypedExpr { kind, ty: ty.clone(), span: span.clone() },
+        operand: TypedExpr {
+            kind,
+            ty: ty.clone(),
+            span: span.clone(),
+        },
         inner_type: ty.clone(),
         var_name: Some(var_name.clone()),
         needs_lift: true,
     };
     let var_ref = TypedExpr {
-        kind: TypedExprKind::VarRef { name: var_name, boxed: false },
+        kind: TypedExprKind::VarRef {
+            name: var_name,
+            boxed: false,
+        },
         ty,
         span,
     };
@@ -2075,9 +2881,11 @@ fn lift_control_flow_to_async(
 ) -> TypedExpr {
     if matches!(expr.kind, TypedExprKind::While { .. }) {
         let (condition, body, span) = match expr {
-            TypedExpr { kind: TypedExprKind::While { condition, body }, span, .. } => {
-                (*condition, *body, span)
-            }
+            TypedExpr {
+                kind: TypedExprKind::While { condition, body },
+                span,
+                ..
+            } => (*condition, *body, span),
             _ => unreachable!(),
         };
         // Same restriction as the statement-level `while` lowering: an await in
@@ -2090,7 +2898,14 @@ fn lift_control_flow_to_async(
                 span.file, span.line, span.column,
             );
         }
-        build_while_loop_call(condition, body, return_type, succeed_method, function_name, span)
+        build_while_loop_call(
+            condition,
+            body,
+            return_type,
+            succeed_method,
+            function_name,
+            span,
+        )
     } else {
         lift_branching_to_async(expr, inner_ty, return_type, succeed_method, function_name)
     }
@@ -2139,8 +2954,7 @@ fn contains_await(expr: &TypedExpr) -> bool {
         | TypedExprKind::ClassNew { args, .. } => args.iter().any(contains_await),
         TypedExprKind::Panic { message } => contains_await(message),
         TypedExprKind::Assert { condition, message } => {
-            contains_await(condition)
-                || message.as_ref().is_some_and(|m| contains_await(m))
+            contains_await(condition) || message.as_ref().is_some_and(|m| contains_await(m))
         }
         TypedExprKind::FieldAccess { object, .. }
         | TypedExprKind::NewtypeCreate { value: object }
@@ -2150,9 +2964,7 @@ fn contains_await(expr: &TypedExpr) -> bool {
         | TypedExprKind::TypeCast { value: object, .. }
         | TypedExprKind::Return { value: object, .. }
         | TypedExprKind::MethodRef { object, .. } => contains_await(object),
-        TypedExprKind::RecordCreate { fields, .. } => {
-            fields.iter().any(|(_, e)| contains_await(e))
-        }
+        TypedExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| contains_await(e)),
         TypedExprKind::TupleLiteral { elements } => elements.iter().any(contains_await),
         TypedExprKind::Match { subject, arms } => {
             contains_await(subject)
@@ -2173,12 +2985,14 @@ fn contains_await(expr: &TypedExpr) -> bool {
             contains_await(callee) || args.iter().any(contains_await)
         }
         TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. }
-        | TypedExprKind::ClassVirtualCall { object: receiver, args, .. } => {
-            contains_await(receiver) || args.iter().any(contains_await)
-        }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
-            contains_await(object) || overrides.iter().any(|(_, _, e)| contains_await(e))
-        }
+        | TypedExprKind::ClassVirtualCall {
+            object: receiver,
+            args,
+            ..
+        } => contains_await(receiver) || args.iter().any(contains_await),
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => contains_await(object) || overrides.iter().any(|(_, _, e)| contains_await(e)),
         TypedExprKind::ArrayLiteral { elements } => elements.iter().any(contains_await),
         TypedExprKind::LetDestructure { value, .. } => contains_await(value),
         TypedExprKind::GlobalAssign { value, .. } => contains_await(value),
@@ -2218,7 +3032,6 @@ fn contains_await(expr: &TypedExpr) -> bool {
         }
         TypedExprKind::ImplFunctionCall { args, .. }
         | TypedExprKind::ExtFunctionCall { args, .. } => args.iter().any(contains_await),
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => false,
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => false,
     }
 }

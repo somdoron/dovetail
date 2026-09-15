@@ -23,7 +23,8 @@ pub fn collect_enum_type_defs(
                     package: package_path.clone(),
                     symbol: SymbolName(e.name.value.clone()),
                 };
-                if let Some(info) = registry.lookup_enum_type(&fqn, package_path, &e.name.span.file) {
+                if let Some(info) = registry.lookup_enum_type(&fqn, package_path, &e.name.span.file)
+                {
                     // Use the base mangled name (no type args) as the key.
                     // For non-generic enums this is the only entry.
                     // For generic enums this is the template entry.

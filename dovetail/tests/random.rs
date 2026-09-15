@@ -9,7 +9,10 @@ use tempfile::tempdir;
 
 /// Get the workspace root (repo root).
 fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
 }
 
 /// Build a workspace that includes wasi + a test app, then run it.
@@ -28,17 +31,11 @@ fn build_and_run_random_app(app_source: &str) {
             ResolvedProject {
                 resolved_identity: None,
                 name: ProjectName("wasi".to_string()),
-                root_package: PackagePath(vec![
-                    "standard".to_string(),
-                    "wasi".to_string(),
-                ]),
+                root_package: PackagePath(vec!["standard".to_string(), "wasi".to_string()]),
                 depends: vec![],
                 packages: vec![
                     ResolvedPackage {
-                        path: PackagePath(vec![
-                            "standard".to_string(),
-                            "wasi".to_string(),
-                        ]),
+                        path: PackagePath(vec!["standard".to_string(), "wasi".to_string()]),
                         source_dir: root.join("wasi").join("src"),
                     },
                     ResolvedPackage {
@@ -52,32 +49,37 @@ fn build_and_run_random_app(app_source: &str) {
                 ],
                 project_dir: root.join("wasi"),
                 main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+                resources: vec![],
+                macros: vec![],
+                components: vec![],
             },
             ResolvedProject {
                 resolved_identity: None,
                 name: ProjectName("testapp".to_string()),
                 root_package: PackagePath(vec!["testapp".to_string()]),
-                depends: vec![
-                    ProjectName("wasi".to_string()),
-                ],
+                depends: vec![ProjectName("wasi".to_string())],
                 packages: vec![ResolvedPackage {
                     path: PackagePath(vec!["testapp".to_string()]),
                     source_dir: app_src,
                 }],
                 project_dir: dir.path().join("testapp"),
                 main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+                resources: vec![],
+                macros: vec![],
+                components: vec![],
             },
         ],
         workspace_root: dir.path().to_path_buf(),
     };
 
-    let result = dovetail::build_workspace(&workspace, Some("testapp"), dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        Some("testapp"),
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
 
     if result.diagnostics.has_errors() {
         let errors: Vec<String> = result
@@ -112,7 +114,8 @@ fn build_and_run_random_app(app_source: &str) {
 
 #[test]
 fn test_random_int64() {
-    build_and_run_random_app(r#"
+    build_and_run_random_app(
+        r#"
 package testapp
 
 import standard.wasi.random.Random
@@ -122,12 +125,14 @@ function main(): Unit =
     let b = Random.int64()
     assert a + 0i64 == a
     assert b + 0i64 == b
-"#);
+"#,
+    );
 }
 
 #[test]
 fn test_random_bytes_length() {
-    build_and_run_random_app(r#"
+    build_and_run_random_app(
+        r#"
 package testapp
 
 import standard.wasi.random.Random
@@ -135,12 +140,14 @@ import standard.wasi.random.Random
 function main(): Unit =
     let bytes = Random.bytes(10i64)
     assert bytes.length == 10
-"#);
+"#,
+    );
 }
 
 #[test]
 fn test_random_bytes_empty() {
-    build_and_run_random_app(r#"
+    build_and_run_random_app(
+        r#"
 package testapp
 
 import standard.wasi.random.Random
@@ -148,5 +155,6 @@ import standard.wasi.random.Random
 function main(): Unit =
     let bytes = Random.bytes(0i64)
     assert bytes.length == 0
-"#);
+"#,
+    );
 }

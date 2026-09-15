@@ -4,9 +4,8 @@ use crate::common::types::{Fqn, MangledName, SymbolName, TypeParamName, Variance
 use crate::parser::ast::{ClassDecl, ClassMember, TypeExpr};
 
 use crate::typechecker::registry::{
-    ClassBodyMemberDef, ClassFieldInfo, ClassLetBindingDef, ClassTypeSignature,
-    ConstructorParam, FunctionSignature, TraitSignature,
-    GenericClassMethodDef, GenericClassStaticGlobalDef,
+    ClassBodyMemberDef, ClassFieldInfo, ClassLetBindingDef, ClassTypeSignature, ConstructorParam,
+    FunctionSignature, GenericClassMethodDef, GenericClassStaticGlobalDef, TraitSignature,
 };
 use crate::typechecker::types::{TraitBounds, Type};
 
@@ -35,11 +34,8 @@ impl Collector<'_> {
                 .iter()
                 .map(|tp| TypeParamName(tp.name.value.clone()))
                 .collect();
-            let type_param_variances: Vec<Variance> = class
-                .type_params
-                .iter()
-                .map(|tp| tp.variance)
-                .collect();
+            let type_param_variances: Vec<Variance> =
+                class.type_params.iter().map(|tp| tp.variance).collect();
             let trait_bounds = self.resolve_trait_bounds(&class.where_clause, &type_params);
 
             // Pass 0 exists so that declarations can refer to each other regardless
@@ -60,10 +56,8 @@ impl Collector<'_> {
                 .iter()
                 .map(|p| {
                     let type_params_map = Type::type_param_map(&type_params, &trait_bounds);
-                    let ty = self.resolve_type_expr_with_type_params(
-                        &p.type_annotation,
-                        &type_params_map,
-                    );
+                    let ty = self
+                        .resolve_type_expr_with_type_params(&p.type_annotation, &type_params_map);
                     ConstructorParam {
                         name: p.name.value.clone(),
                         ty,
@@ -101,7 +95,7 @@ impl Collector<'_> {
                     parent_type_expr: None,
                     extends_args_ast: vec![],
                     trait_impls: vec![],
-                default_supplied_members: Default::default(),
+                    default_supplied_members: Default::default(),
                 },
             );
         }
@@ -177,7 +171,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &class.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         let is_generic = !class.type_params.is_empty();
@@ -189,11 +184,8 @@ impl Collector<'_> {
             .map(|tp| TypeParamName(tp.name.value.clone()))
             .collect();
 
-        let type_param_variances: Vec<Variance> = class
-            .type_params
-            .iter()
-            .map(|tp| tp.variance)
-            .collect();
+        let type_param_variances: Vec<Variance> =
+            class.type_params.iter().map(|tp| tp.variance).collect();
 
         let trait_bounds = if is_generic {
             self.resolve_trait_bounds(&class.where_clause, &type_params)
@@ -289,13 +281,15 @@ impl Collector<'_> {
                                 package: self.package_path.clone(),
                             },
                         );
-                        body_member_defs.push(ClassBodyMemberDef::StaticLetBinding(ClassLetBindingDef {
-                            name: lb.name.value.clone(),
-                            resolved_type: resolved,
-                            body: lb.value.clone(),
-                            visibility: lb.visibility,
-                            mutable: lb.mutable,
-                        }));
+                        body_member_defs.push(ClassBodyMemberDef::StaticLetBinding(
+                            ClassLetBindingDef {
+                                name: lb.name.value.clone(),
+                                resolved_type: resolved,
+                                body: lb.value.clone(),
+                                visibility: lb.visibility,
+                                mutable: lb.mutable,
+                            },
+                        ));
                     } else {
                         // Non-generic class: register as a concrete global with FQN ClassName.fieldName
                         let global_fqn = Fqn {
@@ -350,15 +344,10 @@ impl Collector<'_> {
                 ClassMember::LetBinding(lb) => {
                     if is_generic && lb.visibility != Visibility::Private {
                         // Non-private let bindings on generic classes: resolve type at collect time.
-                        let local_refs: Vec<(&str, &Type)> = locals
-                            .iter()
-                            .map(|(n, t)| (n.as_str(), t))
-                            .collect();
+                        let local_refs: Vec<(&str, &Type)> =
+                            locals.iter().map(|(n, t)| (n.as_str(), t)).collect();
                         let ty = if let Some(ref type_ann) = lb.type_annotation {
-                            self.resolve_type_expr_with_type_params(
-                                type_ann,
-                                &type_params_map,
-                            )
+                            self.resolve_type_expr_with_type_params(type_ann, &type_params_map)
                         } else if let Some(inferred) = self.try_infer_expr_type_with_locals(
                             &lb.value,
                             &class.name.span.file,
@@ -404,10 +393,8 @@ impl Collector<'_> {
                         }));
                     } else if lb.visibility != Visibility::Private {
                         // Non-private let bindings: resolve type at collect time.
-                        let local_refs: Vec<(&str, &Type)> = locals
-                            .iter()
-                            .map(|(n, t)| (n.as_str(), t))
-                            .collect();
+                        let local_refs: Vec<(&str, &Type)> =
+                            locals.iter().map(|(n, t)| (n.as_str(), t)).collect();
                         let ty = if let Some(ref type_ann) = lb.type_annotation {
                             self.resolve_type_expr(type_ann)
                         } else if let Some(inferred) = self.try_infer_expr_type_with_locals(
@@ -434,10 +421,7 @@ impl Collector<'_> {
                     }
                 }
                 ClassMember::Method(func) => {
-                    let is_instance = func
-                        .params
-                        .first()
-                        .is_some_and(|p| p.name.value == "self");
+                    let is_instance = func.params.first().is_some_and(|p| p.name.value == "self");
 
                     let method_has_own_type_params = !func.type_params.is_empty();
 
@@ -451,11 +435,16 @@ impl Collector<'_> {
                             .map(|tp| TypeParamName(tp.value.clone()))
                             .collect();
 
-                        let all_method_type_params: Vec<_> = type_params.iter()
-                            .chain(method_type_params.iter()).cloned().collect();
+                        let all_method_type_params: Vec<_> = type_params
+                            .iter()
+                            .chain(method_type_params.iter())
+                            .cloned()
+                            .collect();
                         let method_bounds = self.resolve_method_trait_bounds(
-                            &func.where_clause, &all_method_type_params,
-                            &method_type_params, &trait_bounds,
+                            &func.where_clause,
+                            &all_method_type_params,
+                            &method_type_params,
+                            &trait_bounds,
                         );
                         let mut merged_bounds = trait_bounds.clone();
                         merged_bounds.merge(&method_bounds);
@@ -554,20 +543,14 @@ impl Collector<'_> {
 
                         let method_name = SymbolName(func.name.value.clone());
                         if is_instance {
-                            instance_methods
-                                .entry(method_name)
-                                .or_default()
-                                .push(sig);
+                            instance_methods.entry(method_name).or_default().push(sig);
                         } else {
                             static_methods.entry(method_name).or_default().push(sig);
                         }
                     }
                 }
                 ClassMember::Property(prop) => {
-                    let is_instance = prop
-                        .params
-                        .first()
-                        .is_some_and(|p| p.name.value == "self");
+                    let is_instance = prop.params.first().is_some_and(|p| p.name.value == "self");
 
                     let prop_has_own_type_params = !prop.type_params.is_empty();
 
@@ -580,8 +563,7 @@ impl Collector<'_> {
 
                         let mut combined_type_params_map = type_params_map.clone();
                         if prop_has_own_type_params {
-                            let method_bounds =
-                                self.resolve_trait_bounds(&[], &method_type_params);
+                            let method_bounds = self.resolve_trait_bounds(&[], &method_type_params);
                             let method_tp_map =
                                 Type::type_param_map(&method_type_params, &method_bounds);
                             combined_type_params_map.extend(method_tp_map);
@@ -589,8 +571,7 @@ impl Collector<'_> {
 
                         let mut merged_bounds = trait_bounds.clone();
                         if prop_has_own_type_params {
-                            let method_bounds =
-                                self.resolve_trait_bounds(&[], &method_type_params);
+                            let method_bounds = self.resolve_trait_bounds(&[], &method_type_params);
                             merged_bounds.merge(&method_bounds);
                         }
 
@@ -675,10 +656,7 @@ impl Collector<'_> {
 
                         let prop_name = SymbolName(prop.name.value.clone());
                         if is_instance {
-                            instance_methods
-                                .entry(prop_name)
-                                .or_default()
-                                .push(sig);
+                            instance_methods.entry(prop_name).or_default().push(sig);
                         } else {
                             static_methods.entry(prop_name).or_default().push(sig);
                         }
@@ -704,9 +682,9 @@ impl Collector<'_> {
                     };
                     match &parent_ty {
                         Type::Class(parent_fqn, _)
-                        | Type::GenericClass { fqn: parent_fqn, .. } => {
-                            Some(parent_fqn.clone())
-                        }
+                        | Type::GenericClass {
+                            fqn: parent_fqn, ..
+                        } => Some(parent_fqn.clone()),
                         Type::Error => None,
                         _ => {
                             self.diagnostics.error(
@@ -745,7 +723,11 @@ impl Collector<'_> {
             }
         });
         let extends_args_ast = if is_generic {
-            class.extends.as_ref().map(|ext| ext.super_args.clone()).unwrap_or_default()
+            class
+                .extends
+                .as_ref()
+                .map(|ext| ext.super_args.clone())
+                .unwrap_or_default()
         } else {
             vec![]
         };
@@ -798,7 +780,10 @@ impl Collector<'_> {
     /// (either directly, via inheritance, or as abstract declarations),
     /// then register implement blocks.
     fn collect_class_implements(&mut self, class: &ClassDecl, class_fqn: &Fqn) {
-        let class_sig = match self.package_registry.lookup_class_type(class_fqn, &self.package_path) {
+        let class_sig = match self
+            .package_registry
+            .lookup_class_type(class_fqn, &self.package_path)
+        {
             Some(sig) => sig.clone(),
             None => return,
         };
@@ -848,7 +833,10 @@ impl Collector<'_> {
         };
 
         if crate::typechecker::types::is_tuple_constraint(&trait_fqn) {
-            self.diagnostics.error(trait_name.span.clone(), "Tuple is a built-in structural constraint and cannot be implemented");
+            self.diagnostics.error(
+                trait_name.span.clone(),
+                "Tuple is a built-in structural constraint and cannot be implemented",
+            );
             return;
         }
 
@@ -892,7 +880,11 @@ impl Collector<'_> {
             .map(|te| self.resolve_type_expr(te))
             .collect();
 
-        if self.class_trait_applications_require_overloads(class_fqn, &trait_sig, &resolved_trait_type_args) {
+        if self.class_trait_applications_require_overloads(
+            class_fqn,
+            &trait_sig,
+            &resolved_trait_type_args,
+        ) {
             self.diagnostics.error(trait_name.span.clone(), format!(
                 "class '{}' cannot implement different applications of trait '{}' that require overloaded members; use separate implementing types",
                 class.name.value, trait_name.value,
@@ -909,7 +901,8 @@ impl Collector<'_> {
 
         // Defaulted trait members the class omits: (name, params, return, is_property).
         // (member, params, return type, is_property, supplying trait)
-        let mut synthesized_default_members: Vec<(String, Vec<(String, Type)>, Type, bool, Option<Fqn>)> = Vec::new();
+        type SynthesizedDefaultMember = (String, Vec<(String, Type)>, Type, bool, Option<Fqn>);
+        let mut synthesized_default_members: Vec<SynthesizedDefaultMember> = Vec::new();
 
         // Substitute Self → class_type and trait type params → concrete types
         #[allow(clippy::type_complexity)]
@@ -919,7 +912,13 @@ impl Collector<'_> {
             .map(|m| {
                 let mut member_substitution = trait_subst.clone();
                 for parameter in &m.type_params {
-                    member_substitution.insert(parameter.clone(), Type::TypeVariable(TypeParamName(format!("$method${}", parameter.0)), vec![]));
+                    member_substitution.insert(
+                        parameter.clone(),
+                        Type::TypeVariable(
+                            TypeParamName(format!("$method${}", parameter.0)),
+                            vec![],
+                        ),
+                    );
                 }
                 member_substitution.insert(TypeParamName("Self".to_string()), class_type.clone());
                 let params: Vec<(String, Type)> = m
@@ -931,7 +930,8 @@ impl Collector<'_> {
                         (name.clone(), ty)
                     })
                     .collect();
-                let return_type = substitute_trait_type_params(&m.return_type, &member_substitution);
+                let return_type =
+                    substitute_trait_type_params(&m.return_type, &member_substitution);
                 let return_type = substitute_self(&return_type, class_type);
                 (m.name.clone(), params, return_type)
             })
@@ -940,7 +940,9 @@ impl Collector<'_> {
         // Match class methods to trait requirements
         let mut matched_trait_methods = std::collections::BTreeSet::new();
 
-        for ((trait_method_name, trait_params, trait_return_type), trait_method) in substituted_methods.iter().zip(&trait_sig.methods) {
+        for ((trait_method_name, trait_params, trait_return_type), trait_method) in
+            substituted_methods.iter().zip(&trait_sig.methods)
+        {
             let method_name = SymbolName(trait_method_name.clone());
 
             // Only ONE default body can back a class member: the class's
@@ -955,41 +957,55 @@ impl Collector<'_> {
             let this_default_source = trait_method.default_source.clone();
             // Already queued in THIS clause (both applications of one
             // declaration are processed before any registration happens).
-            if let Some((_, _, _, _, queued_src)) = synthesized_default_members
-                .iter()
-                .find(|(name, parameters, _, _, _)| name == trait_method_name && parameters == trait_params)
+            if let Some((_, _, _, _, queued_src)) =
+                synthesized_default_members
+                    .iter()
+                    .find(|(name, parameters, _, _, _)| {
+                        name == trait_method_name && parameters == trait_params
+                    })
+                && *queued_src == this_default_source
             {
-                if *queued_src == this_default_source {
-                    matched_trait_methods.insert(trait_method_name.clone());
-                    continue;
-                }
+                matched_trait_methods.insert(trait_method_name.clone());
+                continue;
             }
             // Already supplied by an earlier `implements` clause. Same
             // source application → one declaration reached twice, already satisfied
             // (`class_sig` here is a snapshot taken before the clause loop,
             // so the lookup below would not see it).
-            let recorded = if trait_sig.methods.iter().filter(|method| method.name == *trait_method_name).count() > 1 {
+            let recorded = if trait_sig
+                .methods
+                .iter()
+                .filter(|method| method.name == *trait_method_name)
+                .count()
+                > 1
+            {
                 None
             } else {
-                self.package_registry.get_class_type(class_fqn)
-                    .and_then(|sig| sig.default_supplied_members.get(&method_name)).cloned()
+                self.package_registry
+                    .get_class_type(class_fqn)
+                    .and_then(|sig| sig.default_supplied_members.get(&method_name))
+                    .cloned()
             };
-            if let Some(recorded_src) = &recorded {
-                if Some(recorded_src) == this_default_source.as_ref() {
-                    if self.class_default_application_conflicts(
-                        class_fqn, &method_name, recorded_src, &trait_fqn, &resolved_trait_type_args,
-                    ) {
-                        self.diagnostics.error(
+            if let Some(recorded_src) = &recorded
+                && Some(recorded_src) == this_default_source.as_ref()
+            {
+                if self.class_default_application_conflicts(
+                    class_fqn,
+                    &method_name,
+                    recorded_src,
+                    &trait_fqn,
+                    &resolved_trait_type_args,
+                ) {
+                    self.diagnostics.error(
                             trait_name.span.clone(),
                             format!(
                                 "class '{}' inherits default implementations of '{}' from different applications of trait '{}'; define '{}' in the class to choose one",
                                 class.name.value, trait_method_name, recorded_src.symbol, trait_method_name,
                             ),
                         );
-                    }
-                    matched_trait_methods.insert(trait_method_name.clone());
-                    continue;
                 }
+                matched_trait_methods.insert(trait_method_name.clone());
+                continue;
             }
             if let Some(other_trait) = recorded
                 .filter(|src| Some(src) != this_default_source.as_ref())
@@ -1029,10 +1045,18 @@ impl Collector<'_> {
 
             let found_sig = found_sig.filter(|_| trait_method.type_params.is_empty());
 
-            let own_parameters = trait_method.type_params.iter()
-                .map(|name| TypeParamName(format!("$method${}", name.0))).collect::<Vec<_>>();
+            let own_parameters = trait_method
+                .type_params
+                .iter()
+                .map(|name| TypeParamName(format!("$method${}", name.0)))
+                .collect::<Vec<_>>();
             let generic_found = self.has_matching_generic_method_in_class(
-                class_sig, &method_name, trait_params, trait_return_type, &own_parameters, false,
+                class_sig,
+                &method_name,
+                trait_params,
+                trait_return_type,
+                &own_parameters,
+                false,
             );
             if found_sig.is_some() || generic_found {
                 matched_trait_methods.insert(trait_method_name.clone());
@@ -1084,7 +1108,8 @@ impl Collector<'_> {
                     (name.clone(), ty)
                 })
                 .collect();
-            let prop_return_type = substitute_trait_type_params(&trait_prop.return_type, &trait_subst);
+            let prop_return_type =
+                substitute_trait_type_params(&trait_prop.return_type, &trait_subst);
             let prop_return_type = substitute_self(&prop_return_type, class_type);
 
             let prop_name = SymbolName(trait_prop.name.clone());
@@ -1130,24 +1155,31 @@ impl Collector<'_> {
                         .iter()
                         .find(|p| p.name == trait_prop.name)
                         .and_then(|p| p.default_source.clone());
-                    if let Some(source) = &this_default_source {
-                        if self.class_default_application_conflicts(
-                            class_fqn, &prop_name, source, &trait_fqn, &resolved_trait_type_args,
-                        ) {
-                            self.diagnostics.error(
+                    if let Some(source) = &this_default_source
+                        && self.class_default_application_conflicts(
+                            class_fqn,
+                            &prop_name,
+                            source,
+                            &trait_fqn,
+                            &resolved_trait_type_args,
+                        )
+                    {
+                        self.diagnostics.error(
                                 trait_name.span.clone(),
                                 format!(
                                     "class '{}' inherits default implementations of '{}' from different applications of trait '{}'; define '{}' in the class to choose one",
                                     class.name.value, trait_prop.name, source.symbol, trait_prop.name,
                                 ),
                             );
-                            continue;
-                        }
+                        continue;
                     }
                     if let Some(other_trait) = self
                         .package_registry
                         .get_class_type(class_fqn)
-                        .and_then(|sig| sig.default_supplied_members.get(&SymbolName(trait_prop.name.clone())))
+                        .and_then(|sig| {
+                            sig.default_supplied_members
+                                .get(&SymbolName(trait_prop.name.clone()))
+                        })
                         .filter(|src| Some(*src) != this_default_source.as_ref())
                         .map(|src| src.symbol.0.clone())
                     {
@@ -1183,7 +1215,9 @@ impl Collector<'_> {
         // Register synthesized class-method signatures for defaulted members —
         // downstream dispatch/vtable resolution finds them by name; the bodies
         // are materialized from the default templates at monomorphize.
-        for (member_name, params, return_type, is_property, _from_trait) in synthesized_default_members {
+        for (member_name, params, return_type, is_property, _from_trait) in
+            synthesized_default_members
+        {
             // A defaulted STATIC trait member must not be registered as an
             // instance method: downstream dispatch would hand it a receiver
             // and materialization would emit a self-taking body for a static
@@ -1220,11 +1254,8 @@ impl Collector<'_> {
                 is_abstract_method: false,
             };
             let member_sym = SymbolName(member_name);
-            self.package_registry.add_class_instance_method(
-                class_fqn,
-                member_sym.clone(),
-                sig,
-            );
+            self.package_registry
+                .add_class_instance_method(class_fqn, member_sym.clone(), sig);
             if let Some(src) = _from_trait {
                 self.package_registry
                     .note_default_supplied_member(class_fqn, member_sym, src);
@@ -1232,12 +1263,16 @@ impl Collector<'_> {
         }
 
         // Check for duplicate trait impl before registering
-        let merged_has_dup = self
-            .dependency_registry
-            .has_trait_impl_with_args(&trait_fqn, class_fqn, &resolved_trait_type_args);
-        let pkg_has_dup = self
-            .package_registry
-            .has_trait_impl_with_args(&trait_fqn, class_fqn, &resolved_trait_type_args);
+        let merged_has_dup = self.dependency_registry.has_trait_impl_with_args(
+            &trait_fqn,
+            class_fqn,
+            &resolved_trait_type_args,
+        );
+        let pkg_has_dup = self.package_registry.has_trait_impl_with_args(
+            &trait_fqn,
+            class_fqn,
+            &resolved_trait_type_args,
+        );
 
         if merged_has_dup || pkg_has_dup {
             self.diagnostics.error(
@@ -1248,7 +1283,11 @@ impl Collector<'_> {
                 ),
             );
         } else {
-            self.package_registry.add_class_trait_impl(class_fqn, trait_fqn.clone(), resolved_trait_type_args.clone());
+            self.package_registry.add_class_trait_impl(
+                class_fqn,
+                trait_fqn.clone(),
+                resolved_trait_type_args.clone(),
+            );
         }
     }
 
@@ -1260,21 +1299,47 @@ impl Collector<'_> {
         trait_sig: &TraitSignature,
         trait_args: &[Type],
     ) -> bool {
-        let Some(class_sig) = self.package_registry.get_class_type(class_fqn) else { return false };
-        let current: BTreeMap<_, _> = trait_sig.type_params.iter().cloned().zip(trait_args.iter().cloned()).collect();
-        class_sig.trait_impls.iter().any(|(prior_trait, prior_args)| {
-            if *prior_trait != trait_sig.fqn || prior_args == trait_args {
-                return false;
-            }
-            let prior: BTreeMap<_, _> = trait_sig.type_params.iter().cloned().zip(prior_args.iter().cloned()).collect();
-            let differs = |params: &[(String, Type)], ret: &Type| {
-                params.iter().map(|(_, ty)| ty).chain(std::iter::once(ret)).any(|ty| {
-                    substitute_trait_type_params(ty, &prior) != substitute_trait_type_params(ty, &current)
-                })
-            };
-            trait_sig.methods.iter().any(|method| differs(&method.params, &method.return_type))
-                || trait_sig.properties.iter().any(|property| differs(&property.params, &property.return_type))
-        })
+        let Some(class_sig) = self.package_registry.get_class_type(class_fqn) else {
+            return false;
+        };
+        let current: BTreeMap<_, _> = trait_sig
+            .type_params
+            .iter()
+            .cloned()
+            .zip(trait_args.iter().cloned())
+            .collect();
+        class_sig
+            .trait_impls
+            .iter()
+            .any(|(prior_trait, prior_args)| {
+                if *prior_trait != trait_sig.fqn || prior_args == trait_args {
+                    return false;
+                }
+                let prior: BTreeMap<_, _> = trait_sig
+                    .type_params
+                    .iter()
+                    .cloned()
+                    .zip(prior_args.iter().cloned())
+                    .collect();
+                let differs = |params: &[(String, Type)], ret: &Type| {
+                    params
+                        .iter()
+                        .map(|(_, ty)| ty)
+                        .chain(std::iter::once(ret))
+                        .any(|ty| {
+                            substitute_trait_type_params(ty, &prior)
+                                != substitute_trait_type_params(ty, &current)
+                        })
+                };
+                trait_sig
+                    .methods
+                    .iter()
+                    .any(|method| differs(&method.params, &method.return_type))
+                    || trait_sig
+                        .properties
+                        .iter()
+                        .any(|property| differs(&property.params, &property.return_type))
+            })
     }
 
     /// The same default declaration can have different bodies/signatures after
@@ -1288,7 +1353,9 @@ impl Collector<'_> {
         trait_fqn: &Fqn,
         trait_args: &[Type],
     ) -> bool {
-        let Some(class_sig) = self.package_registry.get_class_type(class_fqn) else { return false };
+        let Some(class_sig) = self.package_registry.get_class_type(class_fqn) else {
+            return false;
+        };
         if class_sig.default_supplied_members.get(member) != Some(source) {
             return false;
         }
@@ -1296,19 +1363,31 @@ impl Collector<'_> {
             if fqn == source {
                 Some(args.to_vec())
             } else {
-                self.package_registry.super_closure_args(fqn, args, source)
-                    .or_else(|| self.dependency_registry.super_closure_args(fqn, args, source))
+                self.package_registry
+                    .super_closure_args(fqn, args, source)
+                    .or_else(|| {
+                        self.dependency_registry
+                            .super_closure_args(fqn, args, source)
+                    })
             }
         };
         let current_args = source_args(trait_fqn, trait_args);
         class_sig.trait_impls.iter().any(|(prior_fqn, prior_args)| {
-            let Some(prior_sig) = self.package_registry.get_trait(prior_fqn)
-                .or_else(|| self.dependency_registry.get_trait(prior_fqn)) else { return false };
-            let supplies_member = prior_sig.methods.iter().any(|m| {
-                m.name == member.0 && m.default_source.as_ref() == Some(source)
-            }) || prior_sig.properties.iter().any(|p| {
-                p.name == member.0 && p.default_source.as_ref() == Some(source)
-            });
+            let Some(prior_sig) = self
+                .package_registry
+                .get_trait(prior_fqn)
+                .or_else(|| self.dependency_registry.get_trait(prior_fqn))
+            else {
+                return false;
+            };
+            let supplies_member = prior_sig
+                .methods
+                .iter()
+                .any(|m| m.name == member.0 && m.default_source.as_ref() == Some(source))
+                || prior_sig
+                    .properties
+                    .iter()
+                    .any(|p| p.name == member.0 && p.default_source.as_ref() == Some(source));
             supplies_member && source_args(prior_fqn, prior_args) != current_args
         })
     }
@@ -1333,7 +1412,9 @@ impl Collector<'_> {
         };
         if let Some(overloads) = table.get(method_name) {
             for sig in overloads {
-                if sig.is_property == is_property && self.method_signature_matches(sig, trait_params, trait_return_type) {
+                if sig.is_property == is_property
+                    && self.method_signature_matches(sig, trait_params, trait_return_type)
+                {
                     return Some(sig.clone());
                 }
             }
@@ -1355,10 +1436,15 @@ impl Collector<'_> {
             let parent_sig = self
                 .package_registry
                 .lookup_class_type(parent_fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_class_type(parent_fqn, &self.package_path))?;
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_class_type(parent_fqn, &self.package_path)
+                })?;
             if let Some(overloads) = parent_sig.instance_methods.get(method_name) {
                 for sig in overloads {
-                    if sig.is_property == is_property && self.method_signature_matches(sig, trait_params, trait_return_type) {
+                    if sig.is_property == is_property
+                        && self.method_signature_matches(sig, trait_params, trait_return_type)
+                    {
                         return Some(sig.clone());
                     }
                 }
@@ -1380,20 +1466,22 @@ impl Collector<'_> {
         if sig.params.len() != trait_params.len() {
             return false;
         }
-        for (i, ((_, sig_ty), (_, trait_ty))) in sig.params.iter().zip(trait_params.iter()).enumerate() {
+        for (i, ((_, sig_ty), (_, trait_ty))) in
+            sig.params.iter().zip(trait_params.iter()).enumerate()
+        {
             if *sig_ty == *trait_ty {
                 continue;
             }
             // For `self` parameter (index 0), allow class hierarchy match:
             // the actual method may take a parent type while the trait expects the child type.
-            if i == 0 {
-                if let (Type::Class(sig_fqn, _), Type::Class(trait_fqn, _)) = (sig_ty, trait_ty) {
-                    if self.package_registry.class_is_subtype(trait_fqn, sig_fqn)
-                        || self.dependency_registry.class_is_subtype(trait_fqn, sig_fqn)
-                    {
-                        continue;
-                    }
-                }
+            if i == 0
+                && let (Type::Class(sig_fqn, _), Type::Class(trait_fqn, _)) = (sig_ty, trait_ty)
+                && (self.package_registry.class_is_subtype(trait_fqn, sig_fqn)
+                    || self
+                        .dependency_registry
+                        .class_is_subtype(trait_fqn, sig_fqn))
+            {
+                continue;
             }
             return false;
         }
@@ -1404,7 +1492,10 @@ impl Collector<'_> {
     /// Registers implement blocks with TypeParameter placeholders
     /// in `for_type`, matching the pattern used by `collect_generic_implement` for generic impl blocks.
     fn collect_generic_class_implements(&mut self, class: &ClassDecl, class_fqn: &Fqn) {
-        let class_sig = match self.package_registry.lookup_class_type(class_fqn, &self.package_path) {
+        let class_sig = match self
+            .package_registry
+            .lookup_class_type(class_fqn, &self.package_path)
+        {
             Some(sig) => sig.clone(),
             None => return,
         };
@@ -1482,7 +1573,10 @@ impl Collector<'_> {
         };
 
         if crate::typechecker::types::is_tuple_constraint(&trait_fqn) {
-            self.diagnostics.error(trait_name.span.clone(), "Tuple is a built-in structural constraint and cannot be implemented");
+            self.diagnostics.error(
+                trait_name.span.clone(),
+                "Tuple is a built-in structural constraint and cannot be implemented",
+            );
             return;
         }
 
@@ -1508,7 +1602,11 @@ impl Collector<'_> {
             .map(|te| self.resolve_type_expr_with_type_params(te, type_params_map))
             .collect();
 
-        if self.class_trait_applications_require_overloads(class_fqn, &trait_sig, &resolved_trait_type_args) {
+        if self.class_trait_applications_require_overloads(
+            class_fqn,
+            &trait_sig,
+            &resolved_trait_type_args,
+        ) {
             self.diagnostics.error(trait_name.span.clone(), format!(
                 "class '{}' cannot implement different applications of trait '{}' that require overloaded members; use separate implementing types",
                 class.name.value, trait_name.value,
@@ -1532,7 +1630,13 @@ impl Collector<'_> {
             .map(|m| {
                 let mut member_substitution = trait_subst.clone();
                 for parameter in &m.type_params {
-                    member_substitution.insert(parameter.clone(), Type::TypeVariable(TypeParamName(format!("$method${}", parameter.0)), vec![]));
+                    member_substitution.insert(
+                        parameter.clone(),
+                        Type::TypeVariable(
+                            TypeParamName(format!("$method${}", parameter.0)),
+                            vec![],
+                        ),
+                    );
                 }
                 member_substitution.insert(TypeParamName("Self".to_string()), for_type.clone());
                 let params: Vec<(String, Type)> = m
@@ -1544,13 +1648,16 @@ impl Collector<'_> {
                         (name.clone(), ty)
                     })
                     .collect();
-                let return_type = substitute_trait_type_params(&m.return_type, &member_substitution);
+                let return_type =
+                    substitute_trait_type_params(&m.return_type, &member_substitution);
                 let return_type = substitute_self(&return_type, for_type);
                 (m.name.clone(), params, return_type)
             })
             .collect();
 
-        for ((trait_method_name, trait_params, trait_return_type), trait_method) in substituted_methods.iter().zip(&trait_sig.methods) {
+        for ((trait_method_name, trait_params, trait_return_type), trait_method) in
+            substituted_methods.iter().zip(&trait_sig.methods)
+        {
             let method_name = SymbolName(trait_method_name.clone());
 
             // Search generic_instance_methods (all methods on generic classes are stored here)
@@ -1559,7 +1666,11 @@ impl Collector<'_> {
                 &method_name,
                 trait_params,
                 trait_return_type,
-                &trait_method.type_params.iter().map(|name| TypeParamName(format!("$method${}", name.0))).collect::<Vec<_>>(),
+                &trait_method
+                    .type_params
+                    .iter()
+                    .map(|name| TypeParamName(format!("$method${}", name.0)))
+                    .collect::<Vec<_>>(),
                 false,
             );
 
@@ -1596,7 +1707,8 @@ impl Collector<'_> {
                     (name.clone(), ty)
                 })
                 .collect();
-            let prop_return_type = substitute_trait_type_params(&trait_prop.return_type, &trait_subst);
+            let prop_return_type =
+                substitute_trait_type_params(&trait_prop.return_type, &trait_subst);
             let prop_return_type = substitute_self(&prop_return_type, for_type);
 
             let prop_name = SymbolName(trait_prop.name.clone());
@@ -1631,7 +1743,8 @@ impl Collector<'_> {
             }
         }
 
-        self.package_registry.add_class_trait_impl(class_fqn, trait_fqn, resolved_trait_type_args);
+        self.package_registry
+            .add_class_trait_impl(class_fqn, trait_fqn, resolved_trait_type_args);
     }
 
     /// Find a matching method in generic_instance_methods that matches the trait requirement.
@@ -1647,27 +1760,46 @@ impl Collector<'_> {
     ) -> bool {
         if let Some(defs) = class_sig.generic_instance_methods.get(method_name) {
             for def in defs {
-                if def.is_property != is_property || def.method_type_params.len() != method_type_params.len() {
+                if def.is_property != is_property
+                    || def.method_type_params.len() != method_type_params.len()
+                {
                     continue;
                 }
-                let substitution: BTreeMap<_, _> = method_type_params.iter().cloned()
-                    .zip(def.method_type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![]))).collect();
+                let substitution: BTreeMap<_, _> = method_type_params
+                    .iter()
+                    .cloned()
+                    .zip(
+                        def.method_type_params
+                            .iter()
+                            .map(|name| Type::TypeVariable(name.clone(), vec![])),
+                    )
+                    .collect();
                 // Check param count
                 if def.params.len() != trait_params.len() {
                     continue;
                 }
                 // Check param types match structurally (both contain TypeParameters)
-                let params_match = def
-                    .params
-                    .iter()
-                    .zip(trait_params.iter())
-                    .all(|((_, def_ty), (_, trait_ty))| *def_ty == substitute_trait_type_params(trait_ty, &substitution));
+                let params_match = def.params.iter().zip(trait_params.iter()).all(
+                    |((_, def_ty), (_, trait_ty))| {
+                        *def_ty == substitute_trait_type_params(trait_ty, &substitution)
+                    },
+                );
 
-                if params_match && def.return_type == substitute_trait_type_params(trait_return_type, &substitution) {
+                if params_match
+                    && def.return_type
+                        == substitute_trait_type_params(trait_return_type, &substitution)
+                {
                     return true;
                 }
             }
         }
-        self.has_inherited_trait_member(class_sig, method_name, trait_params, trait_return_type, method_type_params, is_property)
+        self.has_inherited_trait_member(
+            class_sig,
+            method_name,
+            trait_params,
+            trait_return_type,
+            method_type_params,
+            is_property,
+        )
     }
 }

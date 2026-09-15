@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use wasmtime::component::{Component, Linker};
 use wasmtime::Store;
+use wasmtime::component::{Component, Linker};
 use wasmtime_wasi::{DirPerms, FilePerms, WasiCtxBuilder};
 
 use crate::p3::State;
@@ -66,7 +66,10 @@ impl EnvPermissions {
             if key.is_empty() {
                 return Err(format!("--env: empty key in '{raw}'"));
             }
-            if let Some(existing) = variables.iter_mut().find(|(existing_key, _)| existing_key == key) {
+            if let Some(existing) = variables
+                .iter_mut()
+                .find(|(existing_key, _)| existing_key == key)
+            {
                 existing.1 = value.to_owned();
             } else {
                 variables.push((key.to_owned(), value.to_owned()));
@@ -147,7 +150,10 @@ pub fn run_component(
         builder
             .preopened_dir(host_path, &guest_mount, DirPerms::all(), FilePerms::all())
             .map_err(|e| RunError {
-                message: format!("--allow-path {}: failed to preopen: {e}", host_path.display()),
+                message: format!(
+                    "--allow-path {}: failed to preopen: {e}",
+                    host_path.display()
+                ),
             })?;
     }
 

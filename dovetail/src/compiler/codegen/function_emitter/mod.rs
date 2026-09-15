@@ -1,8 +1,8 @@
-mod runtime_types;
 mod expressions;
 mod intrinsics;
-mod readonly_slice;
 mod match_expression;
+mod readonly_slice;
+mod runtime_types;
 mod wasi_marshaling;
 mod wit_marshaling;
 
@@ -105,7 +105,11 @@ impl<'a> FunctionEmitter<'a> {
     /// *WASM* layout: `slot_params` (the erased vtable slot signature) when this is a vtable method,
     /// else the concrete param types. A vtable method's body rebinds any partially-erased param to a
     /// concrete shadow values via `emit_param_coerce_prologue`.
-    pub fn new(params: &[TypedParam], slot_params: Option<&[crate::typechecker::types::Type]>, codegen: &'a Codegen<'a>) -> Self {
+    pub fn new(
+        params: &[TypedParam],
+        slot_params: Option<&[crate::typechecker::types::Type]>,
+        codegen: &'a Codegen<'a>,
+    ) -> Self {
         let mut emitter = Self {
             next_local_index: 0,
             locals: Vec::new(),
@@ -275,15 +279,25 @@ impl<'a> FunctionEmitter<'a> {
 
     /// Test a dynamic value without trapping on malformed bounded views.
     pub(super) fn emit_runtime_type_test(&mut self, target: &crate::typechecker::types::Type) {
-        if self.emit_reified_type_test(target) { return; }
-        if self.codegen.slice_offsets(target).is_empty() {
-            let index = self.codegen.wasm_type_index_for_any_cast(target);
-            self.instruction(Instruction::RefTestNonNull(wasm_encoder::HeapType::Concrete(index)));
+        if self.emit_reified_type_test(target) {
             return;
         }
-        let (instrs, temps) = self.codegen.tuple_slice_test_instrs(target, self.next_local_index);
-        for ty in temps { self.add_local(ty); }
-        for instruction in instrs { self.instruction(instruction); }
+        if self.codegen.slice_offsets(target).is_empty() {
+            let index = self.codegen.wasm_type_index_for_any_cast(target);
+            self.instruction(Instruction::RefTestNonNull(
+                wasm_encoder::HeapType::Concrete(index),
+            ));
+            return;
+        }
+        let (instrs, temps) = self
+            .codegen
+            .tuple_slice_test_instrs(target, self.next_local_index);
+        for ty in temps {
+            self.add_local(ty);
+        }
+        for instruction in instrs {
+            self.instruction(instruction);
+        }
     }
 
     /// Reassemble a flattened `[i64, i64]` (lo, hi) on top of the stack into a boxed
@@ -337,7 +351,9 @@ impl<'a> FunctionEmitter<'a> {
         if self.codegen.is_tuple(ty) {
             self.emit_rebox_tuple(ty);
         } else {
-            self.instruction(Instruction::StructNew(self.codegen.mut_box_type_index_for(ty)));
+            self.instruction(Instruction::StructNew(
+                self.codegen.mut_box_type_index_for(ty),
+            ));
         }
     }
 
@@ -351,12 +367,15 @@ impl<'a> FunctionEmitter<'a> {
             self.emit_unbox_uint128();
         } else {
             let box_idx = self.codegen.mut_box_type_index_for(ty);
-            self.instruction(Instruction::StructGet { struct_type_index: box_idx, field_index: 0 });
+            self.instruction(Instruction::StructGet {
+                struct_type_index: box_idx,
+                field_index: 0,
+            });
             // The shared `$MutBox` stores `anyref`; cast back to the concrete ref type.
-            if box_idx == super::MUT_BOX_REF_TYPE_INDEX {
-                if let ValType::Ref(rt) = self.codegen.single_val_type(ty) {
-                    self.instruction(Instruction::RefCastNonNull(rt.heap_type));
-                }
+            if box_idx == super::MUT_BOX_REF_TYPE_INDEX
+                && let ValType::Ref(rt) = self.codegen.single_val_type(ty)
+            {
+                self.instruction(Instruction::RefCastNonNull(rt.heap_type));
             }
         }
     }
@@ -375,7 +394,10 @@ impl<'a> FunctionEmitter<'a> {
                 self.instruction(Instruction::LocalGet(box_local));
                 self.instruction(Instruction::LocalGet(base + k as u32));
                 self.emit_box_to_any(leaf);
-                self.instruction(Instruction::StructSet { struct_type_index: box_idx, field_index: k as u32 });
+                self.instruction(Instruction::StructSet {
+                    struct_type_index: box_idx,
+                    field_index: k as u32,
+                });
             }
         } else if self.codegen.is_uint128(ty) {
             // The `$Uint128` mut-box has two raw `i64` fields; set them in place (no boxing).
@@ -385,7 +407,10 @@ impl<'a> FunctionEmitter<'a> {
             for k in 0..valtypes.len() as u32 {
                 self.instruction(Instruction::LocalGet(box_local));
                 self.instruction(Instruction::LocalGet(base + k));
-                self.instruction(Instruction::StructSet { struct_type_index: box_idx, field_index: k });
+                self.instruction(Instruction::StructSet {
+                    struct_type_index: box_idx,
+                    field_index: k,
+                });
             }
         } else {
             // Spill the single value, then set the box's field (box ref must sit below it).
@@ -393,7 +418,10 @@ impl<'a> FunctionEmitter<'a> {
             self.instruction(Instruction::LocalSet(tmp));
             self.instruction(Instruction::LocalGet(box_local));
             self.instruction(Instruction::LocalGet(tmp));
-            self.instruction(Instruction::StructSet { struct_type_index: box_idx, field_index: 0 });
+            self.instruction(Instruction::StructSet {
+                struct_type_index: box_idx,
+                field_index: 0,
+            });
         }
     }
 
@@ -477,7 +505,11 @@ impl<'a> FunctionEmitter<'a> {
     /// - `from` is a single erased `anyref`: cast it back to `to` (`emit_cast_back_from_any`).
     /// - both are tuples of equal arity: recurse element-by-element (handles width-changing nested
     ///   cases, e.g. a concrete sub-tuple boxed into a type-parameter element).
-    pub fn coerce_value(&mut self, from_ty: &crate::typechecker::types::Type, to_ty: &crate::typechecker::types::Type) {
+    pub fn coerce_value(
+        &mut self,
+        from_ty: &crate::typechecker::types::Type,
+        to_ty: &crate::typechecker::types::Type,
+    ) {
         let from_vts = self.codegen.type_to_valtypes(from_ty);
         let to_vts = self.codegen.type_to_valtypes(to_ty);
         if from_vts == to_vts {
@@ -524,61 +556,75 @@ impl<'a> FunctionEmitter<'a> {
         // wrapper re-boxes its concrete return into the interface here ("Self
         // is observed as the interface type"). The (concrete, interface)
         // vtable global exists because this wrapper exists.
-        if let crate::typechecker::types::Type::InterfaceObject { mangled_name, .. } = to_ty {
-            if !matches!(from_ty, crate::typechecker::types::Type::InterfaceObject { .. }) {
-                // Box every shape — primitives box, references upcast free,
-                // and flattened tuple returns rebox into their `(ref $Tuple)`.
-                self.emit_box_to_any(from_ty);
-                let type_key = super::instance_key(from_ty);
-                // Direct global first — a re-boxed super object is
-                // a direct-super context — but ONLY when the type directly
-                // implements the SAME super application this wrapper's group
-                // backs (the coercion pass authorizes those pairs). The
-                // base key is application-erased, so an unrelated direct
-                // coercion of a different application must not hijack a via
-                // wrapper's re-box. Keep the application's full group key.
-                let direct_key = match self.self_return_group_key.as_ref() {
-                    Some(k) if k.0.contains("$via$") => self
-                        .codegen
-                        .direct_rebox_authorized
-                        .get(&(type_key.clone(), k.clone())),
-                    Some(k) => Some(k),
-                    None => Some(mangled_name),
-                };
-                let direct = direct_key.and_then(|key| {
-                    self.codegen
-                        .vtable_global_indices
-                        .get(&(type_key.clone(), key.clone()))
-                        .copied()
-                        .filter(|&idx| idx != u32::MAX)
-                });
-                let via = self.self_return_group_key.as_ref().and_then(|group_key| {
-                    self.codegen
-                        .vtable_global_indices
-                        .get(&(type_key.clone(), group_key.clone()))
-                        .copied()
-                        .filter(|&idx| idx != u32::MAX)
-                });
-                let vtable_global = direct.or(via).unwrap_or_else(|| {
+        if let crate::typechecker::types::Type::InterfaceObject { mangled_name, .. } = to_ty
+            && !matches!(
+                from_ty,
+                crate::typechecker::types::Type::InterfaceObject { .. }
+            )
+        {
+            // Box every shape — primitives box, references upcast free,
+            // and flattened tuple returns rebox into their `(ref $Tuple)`.
+            self.emit_box_to_any(from_ty);
+            let type_key = super::instance_key(from_ty);
+            // Direct global first — a re-boxed super object is
+            // a direct-super context — but ONLY when the type directly
+            // implements the SAME super application this wrapper's group
+            // backs (the coercion pass authorizes those pairs). The
+            // base key is application-erased, so an unrelated direct
+            // coercion of a different application must not hijack a via
+            // wrapper's re-box. Keep the application's full group key.
+            let direct_key = match self.self_return_group_key.as_ref() {
+                Some(k) if k.0.contains("$via$") => self
+                    .codegen
+                    .direct_rebox_authorized
+                    .get(&(type_key.clone(), k.clone())),
+                Some(k) => Some(k),
+                None => Some(mangled_name),
+            };
+            let direct = direct_key.and_then(|key| {
+                self.codegen
+                    .vtable_global_indices
+                    .get(&(type_key.clone(), key.clone()))
+                    .copied()
+                    .filter(|&idx| idx != u32::MAX)
+            });
+            let via = self.self_return_group_key.as_ref().and_then(|group_key| {
+                self.codegen
+                    .vtable_global_indices
+                    .get(&(type_key.clone(), group_key.clone()))
+                    .copied()
+                    .filter(|&idx| idx != u32::MAX)
+            });
+            let vtable_global = direct.or(via).unwrap_or_else(|| {
                     panic!("missing vtable global for Self-return re-box: type={type_key} interface={mangled_name}")
                 });
-                self.instruction(Instruction::GlobalGet(vtable_global));
-                let traitobj_type = self.codegen.interface_object_type_indices[mangled_name];
-                self.instruction(Instruction::StructNew(traitobj_type));
-                return;
-            }
+            self.instruction(Instruction::GlobalGet(vtable_global));
+            let traitobj_type = self.codegen.interface_object_type_indices[mangled_name];
+            self.instruction(Instruction::StructNew(traitobj_type));
+            return;
         }
         // Both are tuples of equal arity (the only remaining structural mismatch).
-        let from_elems = self.codegen.resolve_tuple(from_ty)
-            .unwrap_or_else(|| panic!("coerce_value: {from_ty} !~ {to_ty}")).0.to_vec();
-        let to_elems = self.codegen.resolve_tuple(to_ty)
-            .unwrap_or_else(|| panic!("coerce_value: {from_ty} !~ {to_ty}")).0.to_vec();
+        let from_elems = self
+            .codegen
+            .resolve_tuple(from_ty)
+            .unwrap_or_else(|| panic!("coerce_value: {from_ty} !~ {to_ty}"))
+            .0
+            .to_vec();
+        let to_elems = self
+            .codegen
+            .resolve_tuple(to_ty)
+            .unwrap_or_else(|| panic!("coerce_value: {from_ty} !~ {to_ty}"))
+            .0
+            .to_vec();
         debug_assert_eq!(from_elems.len(), to_elems.len());
         let base = self.add_value_locals(&from_vts);
         self.store_value(base, &from_vts);
         for i in 0..from_elems.len() {
             let (start, width) = self.codegen.tuple_elem_offset(&from_elems, i);
-            self.load_value(base + start, &from_vts[start as usize..(start + width) as usize]);
+            self.load_value(
+                base + start,
+                &from_vts[start as usize..(start + width) as usize],
+            );
             self.coerce_value(&from_elems[i], &to_elems[i]);
         }
     }
@@ -587,12 +633,18 @@ impl<'a> FunctionEmitter<'a> {
     /// whose slot layout differs from its concrete layout (a type-parameter scalar, or a tuple with
     /// type-parameter leaves) to a concrete shadow values via `coerce_value`. A no-op for fully-concrete
     /// params, which already arrive in their exact layout.
-    pub fn emit_param_coerce_prologue(&mut self, slot_params: &[crate::typechecker::types::Type], concrete_params: &[TypedParam]) {
+    pub fn emit_param_coerce_prologue(
+        &mut self,
+        slot_params: &[crate::typechecker::types::Type],
+        concrete_params: &[TypedParam],
+    ) {
         for (i, concrete) in concrete_params.iter().enumerate() {
             if i == 0 {
                 continue; // self — handled by emit_self_cast_prologue
             }
-            let Some(slot_ty) = slot_params.get(i) else { continue };
+            let Some(slot_ty) = slot_params.get(i) else {
+                continue;
+            };
             let from_vts = self.codegen.type_to_valtypes(slot_ty);
             let to_vts = self.codegen.type_to_valtypes(&concrete.ty);
             if from_vts == to_vts {
@@ -618,7 +670,10 @@ impl<'a> FunctionEmitter<'a> {
     pub fn emit_interface_object_wrapper(
         &mut self,
         self_concrete_ty: &crate::typechecker::types::Type,
-        params: &[(crate::typechecker::types::Type, crate::typechecker::types::Type)],
+        params: &[(
+            crate::typechecker::types::Type,
+            crate::typechecker::types::Type,
+        )],
         impl_func_idx: u32,
         concrete_return: &crate::typechecker::types::Type,
         slot_return: &crate::typechecker::types::Type,
@@ -658,10 +713,7 @@ impl<'a> FunctionEmitter<'a> {
     /// the declared closure params, also arriving as anyref; their names are NOT bound here —
     /// `emit_closure_param_prologue` casts each one back to its declared type and binds the
     /// name to the shadow local.
-    pub fn new_for_closure(
-        params: &[TypedClosureParam],
-        codegen: &'a Codegen<'a>,
-    ) -> Self {
+    pub fn new_for_closure(params: &[TypedClosureParam], codegen: &'a Codegen<'a>) -> Self {
         let mut emitter = Self {
             next_local_index: 0,
             locals: Vec::new(),
@@ -878,11 +930,7 @@ impl<'a> FunctionEmitter<'a> {
 
     /// Emit prologue code for a lifted closure: cast env param to concrete struct,
     /// extract captures into named locals.
-    pub fn emit_closure_env_prologue(
-        &mut self,
-        env_type_index: u32,
-        captures: &[CapturedVar],
-    ) {
+    pub fn emit_closure_env_prologue(&mut self, env_type_index: u32, captures: &[CapturedVar]) {
         let env_ref_type = ValType::Ref(wasm_encoder::RefType {
             nullable: false,
             heap_type: wasm_encoder::HeapType::Concrete(env_type_index),

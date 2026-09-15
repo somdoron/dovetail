@@ -22,7 +22,10 @@ pub(super) struct Bail;
 pub(super) enum Ctor {
     /// An enum variant, tuple-form or record-form — both flatten to one
     /// positional payload list.
-    Variant { name: String, index: u32 },
+    Variant {
+        name: String,
+        index: u32,
+    },
     /// The single constructor of a record, tuple, or newtype.
     Single,
     /// A `case x: C` type test. Only a constructor when the column is a sealed
@@ -267,9 +270,7 @@ impl<'a> PatCx<'a> {
                 Err(_) => CtorSet::Unknown,
             },
             Type::Tuple(..) => CtorSet::Finite(vec![Ctor::Single]),
-            Type::Newtype(..) | Type::GenericNewtype { .. } => {
-                CtorSet::Finite(vec![Ctor::Single])
-            }
+            Type::Newtype(..) | Type::GenericNewtype { .. } => CtorSet::Finite(vec![Ctor::Single]),
             Type::Class(..) | Type::GenericClass { .. } => match self.sealed_class_fqn(ty) {
                 Some(fqn) => {
                     let leaves = self.sealed_leaves(&fqn);
@@ -279,7 +280,15 @@ impl<'a> PatCx<'a> {
                         // case for a value that cannot exist.
                         CtorSet::Unknown
                     } else {
-                        CtorSet::Finite(leaves.iter().filter_map(|leaf|super::class_regions::ClassRegion::new(self.registry,leaf,ty)).map(Ctor::ClassLeaf).collect())
+                        CtorSet::Finite(
+                            leaves
+                                .iter()
+                                .filter_map(|leaf| {
+                                    super::class_regions::ClassRegion::new(self.registry, leaf, ty)
+                                })
+                                .map(Ctor::ClassLeaf)
+                                .collect(),
+                        )
                     }
                 }
                 // Non-sealed classes stay open: only a wildcard covers them.
@@ -293,19 +302,28 @@ impl<'a> PatCx<'a> {
     }
 
     pub(super) fn partitioned_ctor_set(&self, ty: &Type, patterns: &[Ctor]) -> CtorSet {
-        let CtorSet::Finite(cases) = self.ctor_set(ty) else { return self.ctor_set(ty); };
+        let CtorSet::Finite(cases) = self.ctor_set(ty) else {
+            return self.ctor_set(ty);
+        };
         let mut out = Vec::new();
         for case in cases {
             if let Ctor::ClassLeaf(region) = case {
                 let mut regions = vec![region];
                 for pattern in patterns {
                     if let Ctor::ClassTest(target) = pattern {
-                        regions = regions.into_iter().flat_map(|r|r.split(self.registry,target)).collect();
-                        if regions.len() > 1024 { return CtorSet::Opaque; }
+                        regions = regions
+                            .into_iter()
+                            .flat_map(|r| r.split(self.registry, target))
+                            .collect();
+                        if regions.len() > 1024 {
+                            return CtorSet::Opaque;
+                        }
                     }
                 }
                 out.extend(regions.into_iter().map(Ctor::ClassLeaf));
-            } else { out.push(case); }
+            } else {
+                out.push(case);
+            }
         }
         CtorSet::Finite(out)
     }
@@ -345,11 +363,15 @@ impl<'a> PatCx<'a> {
             TypedPattern::Wildcard | TypedPattern::Variable(..) => Ok(Pat::Wild),
 
             TypedPattern::TypeAnnotated { ty: annot, .. } => {
-                if ty.is_any() || ty.is_class_type()
+                if ty.is_any()
+                    || ty.is_class_type()
                     || (matches!(ty, Type::GenericRecord { .. } | Type::GenericEnum { .. })
                         && !crate::typechecker::subtyping::is_subtype(self.registry, ty, annot))
                 {
-                    Ok(Pat::Ctor { ctor: Ctor::ClassTest(annot.clone()), fields: vec![] })
+                    Ok(Pat::Ctor {
+                        ctor: Ctor::ClassTest(annot.clone()),
+                        fields: vec![],
+                    })
                 } else {
                     Ok(Pat::Wild)
                 }

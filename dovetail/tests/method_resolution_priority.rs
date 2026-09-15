@@ -259,7 +259,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous property 'p'") && e.contains("'Alpha'") && e.contains("'Beta'")),
+        errors.iter().any(|e| e.contains("ambiguous property 'p'")
+            && e.contains("'Alpha'")
+            && e.contains("'Beta'")),
         "cross-trait property ambiguity must be reported, got: {:?}",
         errors
     );

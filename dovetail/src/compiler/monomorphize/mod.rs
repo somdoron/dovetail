@@ -1,17 +1,16 @@
-mod class_method_bounds;
 mod class_constructors;
+mod class_method_bounds;
 mod extension_blocks;
 mod implement_blocks;
 pub(crate) mod substitute;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::common::types::TypeParamName;
 use crate::common::types::{Fqn, MangledName};
 use crate::typechecker::registry::Registry;
-use crate::common::types::TypeParamName;
 use crate::typechecker::types::{
-    Type, TypeDef, TypedExpr, TypedExprKind,
-    TypedImplementBlock, TypedModule,
+    Type, TypeDef, TypedExpr, TypedExprKind, TypedImplementBlock, TypedModule,
 };
 
 /// Cross-pass specialization must terminate even for polymorphic recursion that
@@ -33,7 +32,10 @@ impl SpecializationRounds {
         if self.0 > MAX_SPECIALIZATION_ROUNDS {
             return Err(SpecializationError {
                 span: function.span.clone(),
-                message: format!("specialization limit exceeded after {MAX_SPECIALIZATION_ROUNDS} rounds while instantiating '{}'; recursive generic calls may keep growing their argument types", function.source_name),
+                message: format!(
+                    "specialization limit exceeded after {MAX_SPECIALIZATION_ROUNDS} rounds while instantiating '{}'; recursive generic calls may keep growing their argument types",
+                    function.source_name
+                ),
             });
         }
         Ok(())
@@ -44,7 +46,9 @@ impl SpecializationRounds {
         module: &TypedModule,
         previous_names: &BTreeSet<MangledName>,
     ) -> Result<(), SpecializationError> {
-        if let Some((_, function)) = module.functions.iter()
+        if let Some((_, function)) = module
+            .functions
+            .iter()
             .find(|(name, _)| !previous_names.contains(*name))
         {
             self.advance(function)?;
@@ -53,7 +57,10 @@ impl SpecializationRounds {
     }
 }
 
-pub fn monomorphize(mut module: TypedModule, registry: &Registry) -> Result<TypedModule, SpecializationError> {
+pub fn monomorphize(
+    mut module: TypedModule,
+    registry: &Registry,
+) -> Result<TypedModule, SpecializationError> {
     let normalization = crate::typechecker::associated_types::NormalizationScope::install(registry);
     implement_blocks::inject_default_members(&mut module, registry);
     implement_blocks::materialize_class_default_members(&mut module, registry);
@@ -102,9 +109,13 @@ pub fn monomorphize(mut module: TypedModule, registry: &Registry) -> Result<Type
     extension_blocks::resolve_ext_calls(&mut module)?;
     ensure_class_method_functions(&mut module, registry);
     settle_specializations(&mut module, registry)?;
-    module.function_templates.extend(module.functions.iter()
-        .filter(|(_, function)| !function.type_params.is_empty())
-        .map(|(name, function)| (name.clone(), function.clone())));
+    module.function_templates.extend(
+        module
+            .functions
+            .iter()
+            .filter(|(_, function)| !function.type_params.is_empty())
+            .map(|(name, function)| (name.clone(), function.clone())),
+    );
 
     // Strip generic function templates — codegen only emits monomorphized instances; template
     // bodies still carry `TypeParameter` types. Generic Record/Enum/Class TypeDefs remain — they
@@ -124,33 +135,63 @@ pub fn monomorphize(mut module: TypedModule, registry: &Registry) -> Result<Type
         match td {
             TypeDef::Record(r) if !r.fqn.package.0.is_empty() => {
                 let expected = MangledName::for_type(&r.fqn);
-                assert_eq!(key, &expected, "Record TypeDef keyed by {:?}, expected erased {:?}", key, expected);
-                assert_eq!(&r.mangled_name, &expected, "Record mangled_name mismatch for {:?}", r.fqn);
+                assert_eq!(
+                    key, &expected,
+                    "Record TypeDef keyed by {:?}, expected erased {:?}",
+                    key, expected
+                );
+                assert_eq!(
+                    &r.mangled_name, &expected,
+                    "Record mangled_name mismatch for {:?}",
+                    r.fqn
+                );
             }
             TypeDef::Enum(e) => {
                 let expected = MangledName::for_type(&e.fqn);
-                assert_eq!(key, &expected, "Enum TypeDef keyed by {:?}, expected erased {:?}", key, expected);
-                assert_eq!(&e.mangled_name, &expected, "Enum mangled_name mismatch for {:?}", e.fqn);
+                assert_eq!(
+                    key, &expected,
+                    "Enum TypeDef keyed by {:?}, expected erased {:?}",
+                    key, expected
+                );
+                assert_eq!(
+                    &e.mangled_name, &expected,
+                    "Enum mangled_name mismatch for {:?}",
+                    e.fqn
+                );
             }
             TypeDef::Class(c) => {
                 let expected = MangledName::for_type(&c.fqn);
-                assert_eq!(key, &expected, "Class TypeDef keyed by {:?}, expected erased {:?}", key, expected);
-                assert_eq!(&c.mangled_name, &expected, "Class mangled_name mismatch for {:?}", c.fqn);
+                assert_eq!(
+                    key, &expected,
+                    "Class TypeDef keyed by {:?}, expected erased {:?}",
+                    key, expected
+                );
+                assert_eq!(
+                    &c.mangled_name, &expected,
+                    "Class mangled_name mismatch for {:?}",
+                    c.fqn
+                );
             }
             _ => {}
         }
     }
 
-    if let Some(message) = normalization.errors().into_iter().next() {
-        if let Some(function) = module.functions.values().next() {
-            return Err(SpecializationError { span: function.span.clone(), message });
-        }
+    if let Some(message) = normalization.errors().into_iter().next()
+        && let Some(function) = module.functions.values().next()
+    {
+        return Err(SpecializationError {
+            span: function.span.clone(),
+            message,
+        });
     }
     Ok(module)
 }
 
 /// Implementations and generic helpers can introduce one another recursively.
-fn settle_specializations(module: &mut TypedModule, registry: &Registry) -> Result<(), SpecializationError> {
+fn settle_specializations(
+    module: &mut TypedModule,
+    registry: &Registry,
+) -> Result<(), SpecializationError> {
     let mut rounds = SpecializationRounds::default();
     loop {
         let previous_names: BTreeSet<_> = module.functions.keys().cloned().collect();
@@ -160,14 +201,19 @@ fn settle_specializations(module: &mut TypedModule, registry: &Registry) -> Resu
         let instances = discover_generic_class_instances(module);
         instantiate_generic_classes(module, registry, &instances);
         ensure_class_method_functions(module, registry);
-        if module.functions.len() == previous_names.len() { return Ok(()); }
+        if module.functions.len() == previous_names.len() {
+            return Ok(());
+        }
         rounds.advance_for_new_functions(module, &previous_names)?;
     }
 }
 
 /// Re-collect templates and resolve template-named calls in all function bodies.
 /// Called after instantiate_generic_classes to handle template calls in class method bodies.
-fn resolve_all_template_function_calls(module: &mut TypedModule, registry: &Registry) -> Result<(), SpecializationError> {
+fn resolve_all_template_function_calls(
+    module: &mut TypedModule,
+    registry: &Registry,
+) -> Result<(), SpecializationError> {
     let templates: BTreeMap<MangledName, TypedFunction> = module
         .functions
         .iter()
@@ -250,7 +296,11 @@ fn upcast_to_ancestor(ty: &Type, target: &MangledName, ancestry: &ClassAncestry)
     for _ in 0..64 {
         let (mangled, type_params): (MangledName, Vec<Type>) = match &current {
             Type::Class(_, mn) => (mn.clone(), vec![]),
-            Type::GenericClass { mangled_name, type_args, .. } => (
+            Type::GenericClass {
+                mangled_name,
+                type_args,
+                ..
+            } => (
                 mangled_name.clone(),
                 type_args.iter().map(|(_, t)| t.clone()).collect(),
             ),
@@ -310,23 +360,53 @@ fn resolve_template_function_calls(
 
         // Scan all function bodies for template-named calls and create concrete copies
         for func in module.functions.values() {
-            collect_template_calls(&func.body, templates, ancestry, &module.functions, &mut new_functions);
+            collect_template_calls(
+                &func.body,
+                templates,
+                ancestry,
+                &module.functions,
+                &mut new_functions,
+            );
         }
         for global in module.globals.values() {
-            collect_template_calls(&global.initializer, templates, ancestry, &module.functions, &mut new_functions);
+            collect_template_calls(
+                &global.initializer,
+                templates,
+                ancestry,
+                &module.functions,
+                &mut new_functions,
+            );
         }
         for test in &module.tests {
-            collect_template_calls(&test.body, templates, ancestry, &module.functions, &mut new_functions);
+            collect_template_calls(
+                &test.body,
+                templates,
+                ancestry,
+                &module.functions,
+                &mut new_functions,
+            );
         }
         // Scan class initializers and extends_args
         for type_def in module.types.values() {
             if let TypeDef::Class(cls) = type_def {
                 for stmt in &cls.initializer {
-                    collect_template_calls(stmt, templates, ancestry, &module.functions, &mut new_functions);
+                    collect_template_calls(
+                        stmt,
+                        templates,
+                        ancestry,
+                        &module.functions,
+                        &mut new_functions,
+                    );
                 }
                 if let Some(ref extends_args) = cls.extends_args {
                     for arg in extends_args {
-                        collect_template_calls(arg, templates, ancestry, &module.functions, &mut new_functions);
+                        collect_template_calls(
+                            arg,
+                            templates,
+                            ancestry,
+                            &module.functions,
+                            &mut new_functions,
+                        );
                     }
                 }
             }
@@ -378,7 +458,11 @@ fn collect_template_calls(
 ) {
     use crate::common::types::TypeParamName;
     match &expr.kind {
-        TypedExprKind::FunctionCall { name, type_params, args } => {
+        TypedExprKind::FunctionCall {
+            name,
+            type_params,
+            args,
+        } => {
             if let Some(template) = templates.get(name) {
                 let derived_type_args = if !type_params.is_empty() {
                     // Explicit type_params from generic call resolution
@@ -405,7 +489,9 @@ fn collect_template_calls(
                             .map(|(tp, t)| (tp.clone(), t.clone()))
                             .collect();
                         let concrete = substitute::substitute_types_in_function(
-                            template, &sub, concrete_name.clone(),
+                            template,
+                            &sub,
+                            concrete_name.clone(),
                         );
                         new_functions.insert(concrete_name, concrete);
                     }
@@ -438,7 +524,9 @@ fn collect_template_calls(
                             .map(|(tp, t)| (tp.clone(), t.clone()))
                             .collect();
                         let concrete = substitute::substitute_types_in_function(
-                            template, &sub, concrete_name.clone(),
+                            template,
+                            &sub,
+                            concrete_name.clone(),
                         );
                         new_functions.insert(concrete_name, concrete);
                     }
@@ -516,7 +604,11 @@ fn rewrite_template_calls_in_place(
     // Clone expr.ty before mutable match for FunctionRef derivation
     let expr_ty = expr.ty.clone();
     match &mut expr.kind {
-        TypedExprKind::FunctionCall { name, type_params, args } => {
+        TypedExprKind::FunctionCall {
+            name,
+            type_params,
+            args,
+        } => {
             if let Some(template) = templates.get(&*name) {
                 if !type_params.is_empty()
                     && !type_params.iter().any(|t| t.contains_type_parameter())
@@ -538,10 +630,11 @@ fn rewrite_template_calls_in_place(
                 {
                     *name = name.clone().with_type_args(type_params);
                     *type_params = vec![];
-                } else if type_params.is_empty() {
-                    if let Some(derived) = derive_type_args_from_function_ref(template, &expr_ty, ancestry) {
-                        *name = name.clone().with_type_args(&derived);
-                    }
+                } else if type_params.is_empty()
+                    && let Some(derived) =
+                        derive_type_args_from_function_ref(template, &expr_ty, ancestry)
+                {
+                    *name = name.clone().with_type_args(&derived);
                 }
             }
         }
@@ -557,7 +650,11 @@ fn rewrite_template_calls_in_place(
 /// Uses discovered class instances from AST walking.
 /// Creates concrete ClassTypeDef (with substituted fields, initializer, etc.) and
 /// concrete method functions from template method TypedFunctions.
-fn instantiate_generic_classes(module: &mut TypedModule, registry: &Registry, instances: &BTreeMap<MangledName, (Fqn, Vec<Type>)>) {
+fn instantiate_generic_classes(
+    module: &mut TypedModule,
+    registry: &Registry,
+    instances: &BTreeMap<MangledName, (Fqn, Vec<Type>)>,
+) {
     use crate::typechecker::types::{ClassTypeDef, TypeDef};
 
     if instances.is_empty() {
@@ -569,10 +666,10 @@ fn instantiate_generic_classes(module: &mut TypedModule, registry: &Registry, in
         .types
         .iter()
         .filter_map(|(name, td)| {
-            if let TypeDef::Class(cls) = td {
-                if !cls.type_params.is_empty() {
-                    return Some((name.clone(), cls.clone()));
-                }
+            if let TypeDef::Class(cls) = td
+                && !cls.type_params.is_empty()
+            {
+                return Some((name.clone(), cls.clone()));
             }
             None
         })
@@ -619,7 +716,14 @@ fn instantiate_generic_classes(module: &mut TypedModule, registry: &Registry, in
             .zip(type_args.iter())
             .map(|(tp, t)| (tp.clone(), t.clone()))
             .collect();
-        create_concrete_class_methods(registry, template, &func_templates, &sub, &module.functions, &mut new_functions);
+        create_concrete_class_methods(
+            registry,
+            template,
+            &func_templates,
+            &sub,
+            &module.functions,
+            &mut new_functions,
+        );
 
         // No per-instantiation ClassTypeDef is created — under full erasure, the canonical
         // ClassTypeDef from collect (keyed by MangledName::for_type(fqn)) is shared by every
@@ -650,12 +754,16 @@ fn fixup_class_parent_fields(module: &mut TypedModule) {
                 {
                     if let Some(ref parent_mn) = cls.parent_mangled_name {
                         // Check if parent exists and child is missing parent fields
-                        if let Some(TypeDef::Class(parent_cls)) = module.types.get(parent_mn) {
-                            if !parent_cls.fields.is_empty()
-                                && !cls.fields.iter().any(|f| parent_cls.fields.iter().any(|pf| pf.name == f.name && pf.declared_by == f.declared_by))
-                            {
-                                return Some((mn.clone(), parent_mn.clone()));
-                            }
+                        if let Some(TypeDef::Class(parent_cls)) = module.types.get(parent_mn)
+                            && !parent_cls.fields.is_empty()
+                            && !cls.fields.iter().any(|f| {
+                                parent_cls
+                                    .fields
+                                    .iter()
+                                    .any(|pf| pf.name == f.name && pf.declared_by == f.declared_by)
+                            })
+                        {
+                            return Some((mn.clone(), parent_mn.clone()));
                         }
                     }
                 }
@@ -739,10 +847,10 @@ fn ensure_class_method_functions(module: &mut TypedModule, registry: &Registry) 
         .types
         .iter()
         .filter_map(|(name, td)| {
-            if let TypeDef::Class(cls) = td {
-                if !cls.type_params.is_empty() {
-                    return Some((name.clone(), cls.clone()));
-                }
+            if let TypeDef::Class(cls) = td
+                && !cls.type_params.is_empty()
+            {
+                return Some((name.clone(), cls.clone()));
             }
             None
         })
@@ -766,7 +874,10 @@ fn ensure_class_method_functions(module: &mut TypedModule, registry: &Registry) 
         // handled by the template-based path below and skipped here.
         for slot in &cls.vtable_methods {
             if slot.impl_type_params.is_empty()
-                || slot.impl_type_params.iter().any(|t| t.contains_type_parameter())
+                || slot
+                    .impl_type_params
+                    .iter()
+                    .any(|t| t.contains_type_parameter())
             {
                 continue;
             }
@@ -775,8 +886,12 @@ fn ensure_class_method_functions(module: &mut TypedModule, registry: &Registry) 
                 Some(f) => f,
                 None => continue,
             };
-            let concrete_mn = template_method_mn.clone().with_type_args(&slot.impl_type_params);
-            if module.functions.contains_key(&concrete_mn) || new_functions.contains_key(&concrete_mn) {
+            let concrete_mn = template_method_mn
+                .clone()
+                .with_type_args(&slot.impl_type_params);
+            if module.functions.contains_key(&concrete_mn)
+                || new_functions.contains_key(&concrete_mn)
+            {
                 continue;
             }
             let sub: BTreeMap<TypeParamName, Type> = tmpl_func
@@ -785,7 +900,13 @@ fn ensure_class_method_functions(module: &mut TypedModule, registry: &Registry) 
                 .cloned()
                 .zip(slot.impl_type_params.iter().cloned())
                 .collect();
-            let concrete = class_method_bounds::specialize_vtable_method(registry, slot, tmpl_func, &sub, concrete_mn.clone());
+            let concrete = class_method_bounds::specialize_vtable_method(
+                registry,
+                slot,
+                tmpl_func,
+                &sub,
+                concrete_mn.clone(),
+            );
             new_functions.insert(concrete_mn, concrete);
         }
         // Check if any vtable method is missing. The slot's concrete mangled name is
@@ -813,12 +934,18 @@ fn ensure_class_method_functions(module: &mut TypedModule, registry: &Registry) 
             continue;
         }
         // Extract type args by matching template constructor params against concrete ones
-        if template.type_params.is_empty() || template.constructor_params.len() != cls.constructor_params.len() {
+        if template.type_params.is_empty()
+            || template.constructor_params.len() != cls.constructor_params.len()
+        {
             continue;
         }
         // Build substitution by unifying template param types with concrete param types
         let mut sub: BTreeMap<TypeParamName, Type> = BTreeMap::new();
-        for (tmpl_param, conc_param) in template.constructor_params.iter().zip(cls.constructor_params.iter()) {
+        for (tmpl_param, conc_param) in template
+            .constructor_params
+            .iter()
+            .zip(cls.constructor_params.iter())
+        {
             extract_type_param_mapping(&tmpl_param.ty, &conc_param.ty, &mut sub);
         }
         // Also try from fields
@@ -828,30 +955,67 @@ fn ensure_class_method_functions(module: &mut TypedModule, registry: &Registry) 
         if sub.len() != template.type_params.len() {
             continue;
         }
-        let type_args: Vec<Type> = template.type_params.iter()
+        let type_args: Vec<Type> = template
+            .type_params
+            .iter()
             .filter_map(|tp| sub.get(tp).cloned())
             .collect();
         if type_args.len() != template.type_params.len() {
             continue;
         }
-        create_concrete_class_methods(registry, template, &func_templates, &sub, &module.functions, &mut new_functions);
+        create_concrete_class_methods(
+            registry,
+            template,
+            &func_templates,
+            &sub,
+            &module.functions,
+            &mut new_functions,
+        );
     }
 
     module.functions.extend(new_functions);
 }
 
 /// Extract type parameter → concrete type mappings by unifying a template type with a concrete type.
-fn extract_type_param_mapping(template_ty: &Type, concrete_ty: &Type, sub: &mut BTreeMap<TypeParamName, Type>) {
+fn extract_type_param_mapping(
+    template_ty: &Type,
+    concrete_ty: &Type,
+    sub: &mut BTreeMap<TypeParamName, Type>,
+) {
     match (template_ty, concrete_ty) {
-        (Type::TypeVariable(name, _) | Type::GenericParam(name, _, _), _) if !concrete_ty.contains_type_parameter() => {
-            sub.entry(TypeParamName(name.to_string())).or_insert_with(|| concrete_ty.clone());
+        (Type::TypeVariable(name, _) | Type::GenericParam(name, _, _), _)
+            if !concrete_ty.contains_type_parameter() =>
+        {
+            sub.entry(TypeParamName(name.to_string()))
+                .or_insert_with(|| concrete_ty.clone());
         }
         (Type::Array(t_elem), Type::Array(c_elem)) => {
             extract_type_param_mapping(t_elem, c_elem, sub);
         }
-        (Type::GenericClass { type_args: t_args, .. }, Type::GenericClass { type_args: c_args, .. })
-        | (Type::GenericRecord { type_args: t_args, .. }, Type::GenericRecord { type_args: c_args, .. })
-        | (Type::GenericEnum { type_args: t_args, .. }, Type::GenericEnum { type_args: c_args, .. }) => {
+        (
+            Type::GenericClass {
+                type_args: t_args, ..
+            },
+            Type::GenericClass {
+                type_args: c_args, ..
+            },
+        )
+        | (
+            Type::GenericRecord {
+                type_args: t_args, ..
+            },
+            Type::GenericRecord {
+                type_args: c_args, ..
+            },
+        )
+        | (
+            Type::GenericEnum {
+                type_args: t_args, ..
+            },
+            Type::GenericEnum {
+                type_args: c_args, ..
+            },
+        ) => {
             for ((_, t), (_, c)) in t_args.iter().zip(c_args.iter()) {
                 extract_type_param_mapping(t, c, sub);
             }
@@ -883,17 +1047,30 @@ fn create_concrete_class_methods(
             // Inherited slots express the ancestor's arguments in the child's
             // parameter space. Specialize the ancestor using that binding,
             // rather than assuming its parameter names and order match ours.
-            let implementation_args: Vec<_> = slot.impl_type_params.iter()
-                .map(|argument| substitute::apply_type_substitution(argument, sub)).collect();
-            let implementation_sub = tmpl_func.type_params.iter().cloned()
-                .zip(implementation_args.iter().cloned()).collect();
-            let concrete_method_mn = template_method_mn.clone().with_type_args(&implementation_args);
+            let implementation_args: Vec<_> = slot
+                .impl_type_params
+                .iter()
+                .map(|argument| substitute::apply_type_substitution(argument, sub))
+                .collect();
+            let implementation_sub = tmpl_func
+                .type_params
+                .iter()
+                .cloned()
+                .zip(implementation_args.iter().cloned())
+                .collect();
+            let concrete_method_mn = template_method_mn
+                .clone()
+                .with_type_args(&implementation_args);
 
             if !existing_functions.contains_key(&concrete_method_mn)
                 && !new_functions.contains_key(&concrete_method_mn)
             {
                 let concrete = class_method_bounds::specialize_vtable_method(
-                    registry, slot, tmpl_func, &implementation_sub, concrete_method_mn.clone(),
+                    registry,
+                    slot,
+                    tmpl_func,
+                    &implementation_sub,
+                    concrete_method_mn.clone(),
                 );
                 new_functions.insert(concrete_method_mn, concrete);
             }
@@ -905,23 +1082,32 @@ fn create_concrete_class_methods(
 /// After resolve_impl_calls creates concrete functions via substitution, those may contain
 /// ClassNew nodes for generic classes
 /// (because they were only referenced inside template bodies during inference).
-fn discover_generic_class_instances(module: &TypedModule) -> BTreeMap<MangledName, (Fqn, Vec<Type>)> {
+fn discover_generic_class_instances(
+    module: &TypedModule,
+) -> BTreeMap<MangledName, (Fqn, Vec<Type>)> {
     let mut discovered: BTreeMap<MangledName, (Fqn, Vec<Type>)> = BTreeMap::new();
 
-    fn collect_from_expr(expr: &TypedExpr, discovered: &mut BTreeMap<MangledName, (Fqn, Vec<Type>)>) {
+    fn collect_from_expr(
+        expr: &TypedExpr,
+        discovered: &mut BTreeMap<MangledName, (Fqn, Vec<Type>)>,
+    ) {
         // Check if the expression type is a GenericClass
-        if let Type::GenericClass { fqn, type_args, .. } = &expr.ty {
-            if !type_args.iter().any(|(_, t)| t.contains_type_parameter()) {
-                let plain_args: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                // Synthetic per-instantiation key — types share an erased mangled name,
-                // but methods are still monomorphized per type-arg combination.
-                let key = MangledName::for_function(fqn, &plain_args);
-                discovered.entry(key).or_insert_with(|| (fqn.clone(), plain_args));
-            }
+        if let Type::GenericClass { fqn, type_args, .. } = &expr.ty
+            && !type_args.iter().any(|(_, t)| t.contains_type_parameter())
+        {
+            let plain_args: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
+            // Synthetic per-instantiation key — types share an erased mangled name,
+            // but methods are still monomorphized per type-arg combination.
+            let key = MangledName::for_function(fqn, &plain_args);
+            discovered
+                .entry(key)
+                .or_insert_with(|| (fqn.clone(), plain_args));
         }
         // Recurse into sub-expressions
         match &expr.kind {
-            TypedExprKind::Block(exprs) => exprs.iter().for_each(|e| collect_from_expr(e, discovered)),
+            TypedExprKind::Block(exprs) => {
+                exprs.iter().for_each(|e| collect_from_expr(e, discovered))
+            }
             TypedExprKind::FunctionCall { args, .. }
             | TypedExprKind::IntrinsicCall { args, .. }
             | TypedExprKind::ClassNew { args, .. }
@@ -936,26 +1122,43 @@ fn discover_generic_class_instances(module: &TypedModule) -> BTreeMap<MangledNam
                 args.iter().for_each(|a| collect_from_expr(a, discovered));
                 // Also handle receiver/callee/object in these variants
                 match &expr.kind {
-                    TypedExprKind::ClosureCall { callee, .. } => collect_from_expr(callee, discovered),
-                    TypedExprKind::ClassVirtualCall { object, .. } => collect_from_expr(object, discovered),
-                    TypedExprKind::InterfaceObjectMethodCall { receiver, .. } => collect_from_expr(receiver, discovered),
+                    TypedExprKind::ClosureCall { callee, .. } => {
+                        collect_from_expr(callee, discovered)
+                    }
+                    TypedExprKind::ClassVirtualCall { object, .. } => {
+                        collect_from_expr(object, discovered)
+                    }
+                    TypedExprKind::InterfaceObjectMethodCall { receiver, .. } => {
+                        collect_from_expr(receiver, discovered)
+                    }
                     _ => {}
                 }
             }
-            TypedExprKind::If { condition, then_branch, else_branch } => {
+            TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 collect_from_expr(condition, discovered);
                 collect_from_expr(then_branch, discovered);
-                if let Some(e) = else_branch { collect_from_expr(e, discovered); }
+                if let Some(e) = else_branch {
+                    collect_from_expr(e, discovered);
+                }
             }
             TypedExprKind::While { condition, body } => {
                 collect_from_expr(condition, discovered);
                 collect_from_expr(body, discovered);
             }
-            TypedExprKind::Let { value, .. } | TypedExprKind::Assign { value, .. }
-            | TypedExprKind::NewtypeCreate { value, .. } | TypedExprKind::NewtypeValue { value, .. }
-            | TypedExprKind::TypeCast { value, .. } | TypedExprKind::TypeTest { value, .. }
-            | TypedExprKind::BoxToAny { inner: value } | TypedExprKind::Panic { message: value }
-            | TypedExprKind::Return { value, .. } | TypedExprKind::GlobalAssign { value, .. }
+            TypedExprKind::Let { value, .. }
+            | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::NewtypeCreate { value, .. }
+            | TypedExprKind::NewtypeValue { value, .. }
+            | TypedExprKind::TypeCast { value, .. }
+            | TypedExprKind::TypeTest { value, .. }
+            | TypedExprKind::BoxToAny { inner: value }
+            | TypedExprKind::Panic { message: value }
+            | TypedExprKind::Return { value, .. }
+            | TypedExprKind::GlobalAssign { value, .. }
             | TypedExprKind::UnaryOp { operand: value, .. } => collect_from_expr(value, discovered),
             TypedExprKind::BinaryOp { left, right, .. } => {
                 collect_from_expr(left, discovered);
@@ -971,29 +1174,43 @@ fn discover_generic_class_instances(module: &TypedModule) -> BTreeMap<MangledNam
             TypedExprKind::Match { subject, arms } => {
                 collect_from_expr(subject, discovered);
                 for arm in arms {
-                    if let Some(g) = &arm.guard { collect_from_expr(g, discovered); }
+                    if let Some(g) = &arm.guard {
+                        collect_from_expr(g, discovered);
+                    }
                     collect_from_expr(&arm.body, discovered);
                 }
             }
             TypedExprKind::Closure { body, .. } => collect_from_expr(body, discovered),
             TypedExprKind::Assert { condition, message } => {
                 collect_from_expr(condition, discovered);
-                if let Some(m) = message { collect_from_expr(m, discovered); }
+                if let Some(m) = message {
+                    collect_from_expr(m, discovered);
+                }
             }
             TypedExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields { collect_from_expr(e, discovered); }
+                for (_, e) in fields {
+                    collect_from_expr(e, discovered);
+                }
             }
             TypedExprKind::TupleLiteral { elements } => {
-                for e in elements { collect_from_expr(e, discovered); }
+                for e in elements {
+                    collect_from_expr(e, discovered);
+                }
             }
-            TypedExprKind::RecordWith { object, overrides, .. } => {
+            TypedExprKind::RecordWith {
+                object, overrides, ..
+            } => {
                 collect_from_expr(object, discovered);
-                for (_, _, e) in overrides { collect_from_expr(e, discovered); }
+                for (_, _, e) in overrides {
+                    collect_from_expr(e, discovered);
+                }
             }
             TypedExprKind::LetDestructure { value, .. } => collect_from_expr(value, discovered),
             TypedExprKind::InterfaceObjectCoerce { inner, .. }
             | TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. }
-            | TypedExprKind::InterfaceObjectUpcast { inner } => collect_from_expr(inner, discovered),
+            | TypedExprKind::InterfaceObjectUpcast { inner } => {
+                collect_from_expr(inner, discovered)
+            }
             TypedExprKind::ImplFunctionCall { args, .. } => {
                 args.iter().for_each(|a| collect_from_expr(a, discovered));
             }
@@ -1014,32 +1231,49 @@ fn discover_generic_class_instances(module: &TypedModule) -> BTreeMap<MangledNam
     }
 
     fn collect_from_type(ty: &Type, discovered: &mut BTreeMap<MangledName, (Fqn, Vec<Type>)>) {
-        if let Type::GenericClass { fqn, type_args, .. } = ty {
-            if !type_args.iter().any(|(_, t)| t.contains_type_parameter()) {
-                let plain_args: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                let key = MangledName::for_function(fqn, &plain_args);
-                discovered.entry(key).or_insert_with(|| (fqn.clone(), plain_args));
-            }
+        if let Type::GenericClass { fqn, type_args, .. } = ty
+            && !type_args.iter().any(|(_, t)| t.contains_type_parameter())
+        {
+            let plain_args: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
+            let key = MangledName::for_function(fqn, &plain_args);
+            discovered
+                .entry(key)
+                .or_insert_with(|| (fqn.clone(), plain_args));
         }
         // Recurse into type arguments
         match ty {
-            Type::Array(inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => {
+            Type::Array(inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => {
                 collect_from_type(inner, discovered);
             }
             Type::Function(params, ret) => {
-                for p in params { collect_from_type(p, discovered); }
+                for p in params {
+                    collect_from_type(p, discovered);
+                }
                 collect_from_type(ret, discovered);
             }
             Type::GenericClass { type_args, .. } => {
-                for (_, t) in type_args { collect_from_type(t, discovered); }
+                for (_, t) in type_args {
+                    collect_from_type(t, discovered);
+                }
             }
             Type::TupleProjection(receiver, _) => collect_from_type(receiver, discovered),
             Type::AssociatedProjection(projection) => {
-                for ty in projection.types() { collect_from_type(ty, discovered); }
+                for ty in projection.types() {
+                    collect_from_type(ty, discovered);
+                }
             }
-            Type::TupleExtend(left, right) => { collect_from_type(left, discovered); collect_from_type(right, discovered); }
+            Type::TupleExtend(left, right) => {
+                collect_from_type(left, discovered);
+                collect_from_type(right, discovered);
+            }
             Type::Tuple(elems, _) => {
-                for e in elems { collect_from_type(e, discovered); }
+                for e in elems {
+                    collect_from_type(e, discovered);
+                }
             }
             _ => {}
         }
@@ -1089,33 +1323,63 @@ pub(crate) fn visit_expr_children(expr: &TypedExpr, mut f: impl FnMut(&TypedExpr
         TypedExprKind::Let { value, .. } => f(value),
         TypedExprKind::FunctionCall { args, .. } => args.iter().for_each(&mut f),
         TypedExprKind::IntrinsicCall { args, .. } => args.iter().for_each(&mut f),
-        TypedExprKind::If { condition, then_branch, else_branch } => {
-            f(condition); f(then_branch);
-            if let Some(e) = else_branch { f(e); }
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            f(condition);
+            f(then_branch);
+            if let Some(e) = else_branch {
+                f(e);
+            }
         }
-        TypedExprKind::While { condition, body } => { f(condition); f(body); }
-        TypedExprKind::BinaryOp { left, right, .. } => { f(left); f(right); }
+        TypedExprKind::While { condition, body } => {
+            f(condition);
+            f(body);
+        }
+        TypedExprKind::BinaryOp { left, right, .. } => {
+            f(left);
+            f(right);
+        }
         TypedExprKind::UnaryOp { operand, .. } => f(operand),
         TypedExprKind::Assign { value, .. } => f(value),
         TypedExprKind::Match { subject, arms } => {
             f(subject);
-            for arm in arms { f(&arm.body); if let Some(g) = &arm.guard { f(g); } }
+            for arm in arms {
+                f(&arm.body);
+                if let Some(g) = &arm.guard {
+                    f(g);
+                }
+            }
         }
         TypedExprKind::Closure { body, .. } => f(body),
-        TypedExprKind::ClosureCall { callee, args } => { f(callee); args.iter().for_each(&mut f); }
+        TypedExprKind::ClosureCall { callee, args } => {
+            f(callee);
+            args.iter().for_each(&mut f);
+        }
         TypedExprKind::Return { value, .. } => f(value),
         TypedExprKind::Panic { message } => f(message),
         TypedExprKind::Assert { condition, message } => {
-            f(condition); if let Some(m) = message { f(m); }
+            f(condition);
+            if let Some(m) = message {
+                f(m);
+            }
         }
         TypedExprKind::ImplFunctionCall { args, .. } => args.iter().for_each(&mut f),
         TypedExprKind::RecordCreate { fields, .. } => fields.iter().for_each(|(_, e)| f(e)),
         TypedExprKind::TupleLiteral { elements } => elements.iter().for_each(&mut f),
         TypedExprKind::EnumCreate { args, .. } => args.iter().for_each(&mut f),
         TypedExprKind::FieldAccess { object, .. } => f(object),
-        TypedExprKind::FieldAssign { object, value, .. } => { f(object); f(value); }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
-            f(object); overrides.iter().for_each(|(_, _, e)| f(e));
+        TypedExprKind::FieldAssign { object, value, .. } => {
+            f(object);
+            f(value);
+        }
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => {
+            f(object);
+            overrides.iter().for_each(|(_, _, e)| f(e));
         }
         TypedExprKind::ArrayLiteral { elements } => elements.iter().for_each(&mut f),
         TypedExprKind::EnumVariantRecordCreate { args, .. } => args.iter().for_each(&mut f),
@@ -1123,13 +1387,15 @@ pub(crate) fn visit_expr_children(expr: &TypedExpr, mut f: impl FnMut(&TypedExpr
         | TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. }
         | TypedExprKind::InterfaceObjectUpcast { inner } => f(inner),
         TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
-            f(receiver); args.iter().for_each(&mut f);
+            f(receiver);
+            args.iter().for_each(&mut f);
         }
         TypedExprKind::MethodRef { object, .. } => f(object),
         TypedExprKind::ClassNew { args, .. } => args.iter().for_each(&mut f),
         TypedExprKind::ClassStructCreate { fields, .. } => fields.iter().for_each(&mut f),
         TypedExprKind::ClassVirtualCall { object, args, .. } => {
-            f(object); args.iter().for_each(&mut f);
+            f(object);
+            args.iter().for_each(&mut f);
         }
         TypedExprKind::ClassSuperCall { args, .. } => args.iter().for_each(&mut f),
         TypedExprKind::NewtypeCreate { value } => f(value),
@@ -1152,33 +1418,63 @@ fn visit_expr_children_mut(expr: &mut TypedExpr, mut f: impl FnMut(&mut TypedExp
         TypedExprKind::Let { value, .. } => f(value),
         TypedExprKind::FunctionCall { args, .. } => args.iter_mut().for_each(&mut f),
         TypedExprKind::IntrinsicCall { args, .. } => args.iter_mut().for_each(&mut f),
-        TypedExprKind::If { condition, then_branch, else_branch } => {
-            f(condition); f(then_branch);
-            if let Some(e) = else_branch { f(e); }
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            f(condition);
+            f(then_branch);
+            if let Some(e) = else_branch {
+                f(e);
+            }
         }
-        TypedExprKind::While { condition, body } => { f(condition); f(body); }
-        TypedExprKind::BinaryOp { left, right, .. } => { f(left); f(right); }
+        TypedExprKind::While { condition, body } => {
+            f(condition);
+            f(body);
+        }
+        TypedExprKind::BinaryOp { left, right, .. } => {
+            f(left);
+            f(right);
+        }
         TypedExprKind::UnaryOp { operand, .. } => f(operand),
         TypedExprKind::Assign { value, .. } => f(value),
         TypedExprKind::Match { subject, arms } => {
             f(subject);
-            for arm in arms { f(&mut arm.body); if let Some(g) = &mut arm.guard { f(g); } }
+            for arm in arms {
+                f(&mut arm.body);
+                if let Some(g) = &mut arm.guard {
+                    f(g);
+                }
+            }
         }
         TypedExprKind::Closure { body, .. } => f(body),
-        TypedExprKind::ClosureCall { callee, args } => { f(callee); args.iter_mut().for_each(&mut f); }
+        TypedExprKind::ClosureCall { callee, args } => {
+            f(callee);
+            args.iter_mut().for_each(&mut f);
+        }
         TypedExprKind::Return { value, .. } => f(value),
         TypedExprKind::Panic { message } => f(message),
         TypedExprKind::Assert { condition, message } => {
-            f(condition); if let Some(m) = message { f(m); }
+            f(condition);
+            if let Some(m) = message {
+                f(m);
+            }
         }
         TypedExprKind::ImplFunctionCall { args, .. } => args.iter_mut().for_each(&mut f),
         TypedExprKind::RecordCreate { fields, .. } => fields.iter_mut().for_each(|(_, e)| f(e)),
         TypedExprKind::TupleLiteral { elements } => elements.iter_mut().for_each(&mut f),
         TypedExprKind::EnumCreate { args, .. } => args.iter_mut().for_each(&mut f),
         TypedExprKind::FieldAccess { object, .. } => f(object),
-        TypedExprKind::FieldAssign { object, value, .. } => { f(object); f(value); }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
-            f(object); overrides.iter_mut().for_each(|(_, _, e)| f(e));
+        TypedExprKind::FieldAssign { object, value, .. } => {
+            f(object);
+            f(value);
+        }
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => {
+            f(object);
+            overrides.iter_mut().for_each(|(_, _, e)| f(e));
         }
         TypedExprKind::ArrayLiteral { elements } => elements.iter_mut().for_each(&mut f),
         TypedExprKind::EnumVariantRecordCreate { args, .. } => args.iter_mut().for_each(&mut f),
@@ -1186,13 +1482,15 @@ fn visit_expr_children_mut(expr: &mut TypedExpr, mut f: impl FnMut(&mut TypedExp
         | TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. }
         | TypedExprKind::InterfaceObjectUpcast { inner } => f(inner),
         TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
-            f(receiver); args.iter_mut().for_each(&mut f);
+            f(receiver);
+            args.iter_mut().for_each(&mut f);
         }
         TypedExprKind::MethodRef { object, .. } => f(object),
         TypedExprKind::ClassNew { args, .. } => args.iter_mut().for_each(&mut f),
         TypedExprKind::ClassStructCreate { fields, .. } => fields.iter_mut().for_each(&mut f),
         TypedExprKind::ClassVirtualCall { object, args, .. } => {
-            f(object); args.iter_mut().for_each(&mut f);
+            f(object);
+            args.iter_mut().for_each(&mut f);
         }
         TypedExprKind::ClassSuperCall { args, .. } => args.iter_mut().for_each(&mut f),
         TypedExprKind::NewtypeCreate { value } => f(value),
@@ -1207,7 +1505,10 @@ fn visit_expr_children_mut(expr: &mut TypedExpr, mut f: impl FnMut(&mut TypedExp
     }
 }
 
-pub fn ensure_vtable_functions(module: &mut TypedModule, registry: &Registry) -> Result<(), SpecializationError> {
+pub fn ensure_vtable_functions(
+    module: &mut TypedModule,
+    registry: &Registry,
+) -> Result<(), SpecializationError> {
     let mut rounds = SpecializationRounds::default();
     loop {
         let previous_names: BTreeSet<_> = module.functions.keys().cloned().collect();
@@ -1227,13 +1528,19 @@ pub fn ensure_vtable_functions(module: &mut TypedModule, registry: &Registry) ->
 
 fn materialize_vtable_functions(module: &mut TypedModule) {
     let impl_blocks = module.implement_blocks.clone();
-    let existing: std::collections::BTreeSet<MangledName> = module.functions.keys().cloned().collect();
+    let existing: std::collections::BTreeSet<MangledName> =
+        module.functions.keys().cloned().collect();
     let mut new_functions: BTreeMap<MangledName, TypedFunction> = BTreeMap::new();
     for func in module.functions.values() {
         ensure_vtable_functions_in_expr(&func.body, &impl_blocks, &mut new_functions, &existing);
     }
     for global in module.globals.values() {
-        ensure_vtable_functions_in_expr(&global.initializer, &impl_blocks, &mut new_functions, &existing);
+        ensure_vtable_functions_in_expr(
+            &global.initializer,
+            &impl_blocks,
+            &mut new_functions,
+            &existing,
+        );
     }
     for test in &module.tests {
         ensure_vtable_functions_in_expr(&test.body, &impl_blocks, &mut new_functions, &existing);
@@ -1270,11 +1577,25 @@ fn ensure_vtable_functions_in_expr(
     existing: &std::collections::BTreeSet<MangledName>,
 ) {
     match &expr.kind {
-        TypedExprKind::InterfaceObjectCoerce { inner, concrete_type, vtable_methods, .. } => {
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            concrete_type,
+            vtable_methods,
+            ..
+        } => {
             for (_component_mn, entries) in vtable_methods {
                 for (_member_name, vtable_impl_mangled, vtable_type_args) in entries {
-                    if !existing.contains(vtable_impl_mangled) && !new_functions.contains_key(vtable_impl_mangled) {
-                        implement_blocks::ensure_vtable_method_function(vtable_impl_mangled, concrete_type, vtable_type_args, impl_blocks, new_functions, existing);
+                    if !existing.contains(vtable_impl_mangled)
+                        && !new_functions.contains_key(vtable_impl_mangled)
+                    {
+                        implement_blocks::ensure_vtable_method_function(
+                            vtable_impl_mangled,
+                            concrete_type,
+                            vtable_type_args,
+                            impl_blocks,
+                            new_functions,
+                            existing,
+                        );
                     }
                 }
             }
@@ -1284,40 +1605,62 @@ fn ensure_vtable_functions_in_expr(
             ensure_vtable_functions_in_expr(inner, impl_blocks, new_functions, existing);
         }
         TypedExprKind::Block(exprs) => {
-            for e in exprs { ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing); }
+            for e in exprs {
+                ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing);
+            }
         }
         TypedExprKind::Let { value, .. } | TypedExprKind::Assign { value, .. } => {
             ensure_vtable_functions_in_expr(value, impl_blocks, new_functions, existing);
         }
-        TypedExprKind::If { condition, then_branch, else_branch, .. } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             ensure_vtable_functions_in_expr(condition, impl_blocks, new_functions, existing);
             ensure_vtable_functions_in_expr(then_branch, impl_blocks, new_functions, existing);
-            if let Some(e) = else_branch { ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing); }
+            if let Some(e) = else_branch {
+                ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing);
+            }
         }
-        TypedExprKind::FunctionCall { args, .. } | TypedExprKind::IntrinsicCall { args, .. }
-        | TypedExprKind::ClassNew { args, .. } | TypedExprKind::ClassVirtualCall { args, .. }
-        | TypedExprKind::ClassSuperCall { args, .. } | TypedExprKind::ClosureCall { args, .. }
+        TypedExprKind::FunctionCall { args, .. }
+        | TypedExprKind::IntrinsicCall { args, .. }
+        | TypedExprKind::ClassNew { args, .. }
+        | TypedExprKind::ClassVirtualCall { args, .. }
+        | TypedExprKind::ClassSuperCall { args, .. }
+        | TypedExprKind::ClosureCall { args, .. }
         | TypedExprKind::InterfaceObjectMethodCall { args, .. }
         | TypedExprKind::ExtFunctionCall { args, .. } => {
-            for a in args { ensure_vtable_functions_in_expr(a, impl_blocks, new_functions, existing); }
+            for a in args {
+                ensure_vtable_functions_in_expr(a, impl_blocks, new_functions, existing);
+            }
         }
         TypedExprKind::Match { subject, arms, .. } => {
             ensure_vtable_functions_in_expr(subject, impl_blocks, new_functions, existing);
             for arm in arms {
                 ensure_vtable_functions_in_expr(&arm.body, impl_blocks, new_functions, existing);
-                if let Some(g) = &arm.guard { ensure_vtable_functions_in_expr(g, impl_blocks, new_functions, existing); }
+                if let Some(g) = &arm.guard {
+                    ensure_vtable_functions_in_expr(g, impl_blocks, new_functions, existing);
+                }
             }
         }
-        TypedExprKind::Closure { body, .. } | TypedExprKind::Return { value: body, .. }
-        | TypedExprKind::BoxToAny { inner: body, .. } | TypedExprKind::TypeTest { value: body, .. }
-        | TypedExprKind::TypeCast { value: body, .. } | TypedExprKind::Panic { message: body, .. }
-        | TypedExprKind::NewtypeCreate { value: body, .. } | TypedExprKind::NewtypeValue { value: body, .. }
+        TypedExprKind::Closure { body, .. }
+        | TypedExprKind::Return { value: body, .. }
+        | TypedExprKind::BoxToAny { inner: body, .. }
+        | TypedExprKind::TypeTest { value: body, .. }
+        | TypedExprKind::TypeCast { value: body, .. }
+        | TypedExprKind::Panic { message: body, .. }
+        | TypedExprKind::NewtypeCreate { value: body, .. }
+        | TypedExprKind::NewtypeValue { value: body, .. }
         | TypedExprKind::TemplateInterfaceObjectCoerce { inner: body, .. } => {
             ensure_vtable_functions_in_expr(body, impl_blocks, new_functions, existing);
         }
         TypedExprKind::Assert { condition, message } => {
             ensure_vtable_functions_in_expr(condition, impl_blocks, new_functions, existing);
-            if let Some(m) = message { ensure_vtable_functions_in_expr(m, impl_blocks, new_functions, existing); }
+            if let Some(m) = message {
+                ensure_vtable_functions_in_expr(m, impl_blocks, new_functions, existing);
+            }
         }
         TypedExprKind::While { condition, body } => {
             ensure_vtable_functions_in_expr(condition, impl_blocks, new_functions, existing);
@@ -1337,23 +1680,38 @@ fn ensure_vtable_functions_in_expr(
             ensure_vtable_functions_in_expr(value, impl_blocks, new_functions, existing);
         }
         TypedExprKind::ArrayLiteral { elements, .. } => {
-            for e in elements { ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing); }
+            for e in elements {
+                ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing);
+            }
         }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => {
             ensure_vtable_functions_in_expr(object, impl_blocks, new_functions, existing);
-            for (_, _, e) in overrides { ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing); }
+            for (_, _, e) in overrides {
+                ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing);
+            }
         }
         TypedExprKind::ClassStructCreate { fields, .. } => {
-            for f in fields { ensure_vtable_functions_in_expr(f, impl_blocks, new_functions, existing); }
+            for f in fields {
+                ensure_vtable_functions_in_expr(f, impl_blocks, new_functions, existing);
+            }
         }
         TypedExprKind::RecordCreate { fields, .. } => {
-            for (_, e) in fields { ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing); }
+            for (_, e) in fields {
+                ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing);
+            }
         }
         TypedExprKind::TupleLiteral { elements } => {
-            for e in elements { ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing); }
+            for e in elements {
+                ensure_vtable_functions_in_expr(e, impl_blocks, new_functions, existing);
+            }
         }
-        TypedExprKind::EnumCreate { args, .. } | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
-            for a in args { ensure_vtable_functions_in_expr(a, impl_blocks, new_functions, existing); }
+        TypedExprKind::EnumCreate { args, .. }
+        | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
+            for a in args {
+                ensure_vtable_functions_in_expr(a, impl_blocks, new_functions, existing);
+            }
         }
         _ => {}
     }

@@ -111,7 +111,10 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations of trait 'Show'") && e.contains("Box<Int32>")),
+        errors.iter().any(
+            |e| e.contains("overlapping implementations of trait 'Show'")
+                && e.contains("Box<Int32>")
+        ),
         "expected overlap error naming the witness, got: {:?}",
         errors
     );
@@ -141,7 +144,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations of trait 'Show'")),
+        errors
+            .iter()
+            .any(|e| e.contains("overlapping implementations of trait 'Show'")),
         "expected overlap error for two blankets, got: {:?}",
         errors
     );
@@ -208,7 +213,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations of trait 'Show'")),
+        errors
+            .iter()
+            .any(|e| e.contains("overlapping implementations of trait 'Show'")),
         "bounds must not disprove overlap (conservative rule), got: {:?}",
         errors
     );
@@ -337,7 +344,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations")),
+        errors
+            .iter()
+            .any(|e| e.contains("overlapping implementations")),
         "both blocks apply to Box<List<Int32>> at Tr3<List<Int32>, Int32, List<Int32>>, got: {:?}",
         errors
     );
@@ -365,7 +374,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations")),
+        errors
+            .iter()
+            .any(|e| e.contains("overlapping implementations")),
         "a generic and a concrete interface-object for_type overlap, got: {:?}",
         errors
     );
@@ -390,7 +401,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations") && e.contains("(String, Int32)")),
+        errors
+            .iter()
+            .any(|e| e.contains("overlapping implementations") && e.contains("(String, Int32)")),
         "the witness must render the SUBSTITUTED tuple, got: {:?}",
         errors
     );
@@ -418,7 +431,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("overlapping implementations") && e.contains("Producer<Int32>")),
+        errors
+            .iter()
+            .any(|e| e.contains("overlapping implementations") && e.contains("Producer<Int32>")),
         "the witness must render the SUBSTITUTED interface application, got: {:?}",
         errors
     );

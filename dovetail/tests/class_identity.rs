@@ -195,9 +195,12 @@ fn unsupported_intrinsic_function_values_report_errors_instead_of_panicking() {
     ] {
         let source = format!("package identity\nfunction main(): Unit =\n    {binding}\n    ()\n");
         let errors = common::compile_expecting_errors(&source);
-        assert!(errors.iter().any(|message| {
-            message.contains("intrinsic") && message.contains("wrap the call in a lambda")
-        }), "missing intrinsic function-value diagnostic: {errors:?}");
+        assert!(
+            errors.iter().any(|message| {
+                message.contains("intrinsic") && message.contains("wrap the call in a lambda")
+            }),
+            "missing intrinsic function-value diagnostic: {errors:?}"
+        );
     }
     common::compile_and_run(
         r#"

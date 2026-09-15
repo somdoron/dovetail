@@ -434,7 +434,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|error| error.contains("does not implement trait")),
+        errors
+            .iter()
+            .any(|error| error.contains("does not implement trait")),
         "{errors:?}"
     );
 }

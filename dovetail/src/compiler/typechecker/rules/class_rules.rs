@@ -31,7 +31,8 @@ pub fn check_class_rules(
                 let Some(class_fqn) = Fqn::from_dotted(&class_fqn_str) else {
                     continue;
                 };
-                let Some(class_sig) = package_registry.lookup_class_type(&class_fqn, package_path) else {
+                let Some(class_sig) = package_registry.lookup_class_type(&class_fqn, package_path)
+                else {
                     continue;
                 };
 
@@ -61,96 +62,92 @@ pub fn check_class_rules(
 
                 // 2. Per-method checks
                 for member in &class.body {
-                    if let ClassMember::Method(func) = member {
-                        if func.is_abstract {
-                            // a. abstract method in non-abstract class → error
-                            if !class.is_abstract {
-                                diagnostics.error(
+                    if let ClassMember::Method(func) = member
+                        && func.is_abstract
+                    {
+                        // a. abstract method in non-abstract class → error
+                        if !class.is_abstract {
+                            diagnostics.error(
                                     func.name.span.clone(),
                                     format!(
                                         "abstract method '{}' cannot be declared in non-abstract class '{}'",
                                         func.name.value, class.name.value
                                     ),
                                 );
-                            }
-                            // b. abstract static method (no self) → error
-                            let is_instance = func
-                                .params
-                                .first()
-                                .is_some_and(|p| p.name.value == "self");
-                            if !is_instance {
-                                diagnostics.error(
+                        }
+                        // b. abstract static method (no self) → error
+                        let is_instance =
+                            func.params.first().is_some_and(|p| p.name.value == "self");
+                        if !is_instance {
+                            diagnostics.error(
                                     func.name.span.clone(),
                                     format!(
                                         "abstract method '{}' must be an instance method (must have 'self' parameter)",
                                         func.name.value
                                     ),
                                 );
-                            }
-                            // c. abstract + final → error
-                            if func.is_final {
-                                diagnostics.error(
-                                    func.name.span.clone(),
-                                    format!(
-                                        "method '{}' cannot be both abstract and final",
-                                        func.name.value
-                                    ),
-                                );
-                            }
-                            // d. abstract + override → error
-                            if func.is_override {
-                                diagnostics.error(
-                                    func.name.span.clone(),
-                                    format!(
-                                        "method '{}' cannot be both abstract and override",
-                                        func.name.value
-                                    ),
-                                );
-                            }
+                        }
+                        // c. abstract + final → error
+                        if func.is_final {
+                            diagnostics.error(
+                                func.name.span.clone(),
+                                format!(
+                                    "method '{}' cannot be both abstract and final",
+                                    func.name.value
+                                ),
+                            );
+                        }
+                        // d. abstract + override → error
+                        if func.is_override {
+                            diagnostics.error(
+                                func.name.span.clone(),
+                                format!(
+                                    "method '{}' cannot be both abstract and override",
+                                    func.name.value
+                                ),
+                            );
                         }
                     }
-                    if let ClassMember::Property(prop) = member {
-                        if prop.is_abstract {
-                            if !class.is_abstract {
-                                diagnostics.error(
+                    if let ClassMember::Property(prop) = member
+                        && prop.is_abstract
+                    {
+                        if !class.is_abstract {
+                            diagnostics.error(
                                     prop.name.span.clone(),
                                     format!(
                                         "abstract property '{}' cannot be declared in non-abstract class '{}'",
                                         prop.name.value, class.name.value
                                     ),
                                 );
-                            }
-                            let is_instance = prop
-                                .params
-                                .first()
-                                .is_some_and(|p| p.name.value == "self");
-                            if !is_instance {
-                                diagnostics.error(
+                        }
+                        let is_instance =
+                            prop.params.first().is_some_and(|p| p.name.value == "self");
+                        if !is_instance {
+                            diagnostics.error(
                                     prop.name.span.clone(),
                                     format!(
                                         "abstract property '{}' must be an instance property (must have 'self' parameter)",
                                         prop.name.value
                                     ),
                                 );
-                            }
-                            if prop.is_final {
-                                diagnostics.error(
-                                    prop.name.span.clone(),
-                                    format!(
-                                        "property '{}' cannot be both abstract and final",
-                                        prop.name.value
-                                    ),
-                                );
-                            }
-                            if prop.is_override {
-                                diagnostics.error(
-                                    prop.name.span.clone(),
-                                    format!(
-                                        "property '{}' cannot be both abstract and override",
-                                        prop.name.value
-                                    ),
-                                );
-                            }
+                        }
+                        if prop.is_final {
+                            diagnostics.error(
+                                prop.name.span.clone(),
+                                format!(
+                                    "property '{}' cannot be both abstract and final",
+                                    prop.name.value
+                                ),
+                            );
+                        }
+                        if prop.is_override {
+                            diagnostics.error(
+                                prop.name.span.clone(),
+                                format!(
+                                    "property '{}' cannot be both abstract and override",
+                                    prop.name.value
+                                ),
+                            );
                         }
                     }
                 }
@@ -160,7 +157,8 @@ pub fn check_class_rules(
                 let Some(ref parent_fqn) = class_sig.parent_class else {
                     continue;
                 };
-                let Some(parent_sig) = package_registry.lookup_class_type(parent_fqn, package_path) else {
+                let Some(parent_sig) = package_registry.lookup_class_type(parent_fqn, package_path)
+                else {
                     continue;
                 };
                 let ext = class.extends.as_ref().unwrap();
@@ -231,23 +229,24 @@ pub fn check_class_rules(
                 // Walk the full ancestor chain (not just the immediate parent)
                 for member in &class.body {
                     // Get name, is_override, is_abstract, is_property for both methods and properties
-                    let (member_name, member_span, is_override, is_abstract_member, is_property) = match member {
-                        ClassMember::Method(func) => (
-                            func.name.value.clone(),
-                            func.name.span.clone(),
-                            func.is_override,
-                            func.is_abstract,
-                            false,
-                        ),
-                        ClassMember::Property(prop) => (
-                            prop.name.value.clone(),
-                            prop.name.span.clone(),
-                            prop.is_override,
-                            prop.is_abstract,
-                            true,
-                        ),
-                        _ => continue,
-                    };
+                    let (member_name, member_span, is_override, is_abstract_member, is_property) =
+                        match member {
+                            ClassMember::Method(func) => (
+                                func.name.value.clone(),
+                                func.name.span.clone(),
+                                func.is_override,
+                                func.is_abstract,
+                                false,
+                            ),
+                            ClassMember::Property(prop) => (
+                                prop.name.value.clone(),
+                                prop.name.span.clone(),
+                                prop.is_override,
+                                prop.is_abstract,
+                                true,
+                            ),
+                            _ => continue,
+                        };
 
                     let method_name = SymbolName(member_name.clone());
                     let kind_label = if is_property { "property" } else { "method" };
@@ -257,7 +256,9 @@ pub fn check_class_rules(
                     let mut ancestor_method_is_final = false;
                     let mut walk = Some(parent_fqn.clone());
                     while let Some(ref anc_fqn) = walk {
-                        if let Some(anc_sig) = package_registry.lookup_class_type(anc_fqn, package_path) {
+                        if let Some(anc_sig) =
+                            package_registry.lookup_class_type(anc_fqn, package_path)
+                        {
                             if let Some(overloads) = anc_sig.instance_methods.get(&method_name) {
                                 ancestor_has_method = true;
                                 if overloads.iter().any(|s| s.is_final_method) {
@@ -266,8 +267,7 @@ pub fn check_class_rules(
                                 break;
                             }
                             // Also check generic_instance_methods for generic classes
-                            if let Some(defs) = anc_sig.generic_instance_methods.get(&method_name)
-                            {
+                            if let Some(defs) = anc_sig.generic_instance_methods.get(&method_name) {
                                 ancestor_has_method = true;
                                 if defs.iter().any(|d| d.is_final_method) {
                                     ancestor_method_is_final = true;

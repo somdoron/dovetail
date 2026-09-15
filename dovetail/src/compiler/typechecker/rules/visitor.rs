@@ -100,36 +100,20 @@ pub fn walk_expr<V: TypedExprVisitor + ?Sized>(
         TypedExprKind::Match { .. } => visitor.visit_match(expr, diagnostics),
         TypedExprKind::Let { .. } => visitor.visit_let(expr, diagnostics),
         TypedExprKind::Assign { .. } => visitor.visit_assign(expr, diagnostics),
-        TypedExprKind::FunctionCall { .. } => {
-            visitor.visit_function_call(expr, diagnostics)
-        }
+        TypedExprKind::FunctionCall { .. } => visitor.visit_function_call(expr, diagnostics),
         TypedExprKind::Panic { .. } => visitor.visit_panic(expr, diagnostics),
         TypedExprKind::Assert { .. } => visitor.visit_assert(expr, diagnostics),
-        TypedExprKind::RecordCreate { .. } => {
-            visitor.visit_record_create(expr, diagnostics)
-        }
-        TypedExprKind::TupleLiteral { .. } => {
-            visitor.visit_tuple_literal(expr, diagnostics)
-        }
-        TypedExprKind::EnumCreate { .. } => {
-            visitor.visit_enum_create(expr, diagnostics)
-        }
-        TypedExprKind::FieldAccess { .. } => {
-            visitor.visit_field_access(expr, diagnostics)
-        }
+        TypedExprKind::RecordCreate { .. } => visitor.visit_record_create(expr, diagnostics),
+        TypedExprKind::TupleLiteral { .. } => visitor.visit_tuple_literal(expr, diagnostics),
+        TypedExprKind::EnumCreate { .. } => visitor.visit_enum_create(expr, diagnostics),
+        TypedExprKind::FieldAccess { .. } => visitor.visit_field_access(expr, diagnostics),
         TypedExprKind::FieldAssign { object, value, .. } => {
             visitor.visit_expr(object, diagnostics);
             visitor.visit_expr(value, diagnostics);
         }
-        TypedExprKind::RecordWith { .. } => {
-            visitor.visit_record_with(expr, diagnostics)
-        }
-        TypedExprKind::NewtypeCreate { .. } => {
-            visitor.visit_newtype_create(expr, diagnostics)
-        }
-        TypedExprKind::NewtypeValue { .. } => {
-            visitor.visit_newtype_value(expr, diagnostics)
-        }
+        TypedExprKind::RecordWith { .. } => visitor.visit_record_with(expr, diagnostics),
+        TypedExprKind::NewtypeCreate { .. } => visitor.visit_newtype_create(expr, diagnostics),
+        TypedExprKind::NewtypeValue { .. } => visitor.visit_newtype_value(expr, diagnostics),
         // Leaf nodes — no sub-expressions
         TypedExprKind::UnitLiteral
         | TypedExprKind::BoolLiteral(_)
@@ -227,8 +211,7 @@ pub fn walk_expr<V: TypedExprVisitor + ?Sized>(
                 visitor.visit_expr(arg, diagnostics);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
     }
 }
 
@@ -331,9 +314,7 @@ fn walk_pattern<V: TypedExprVisitor + ?Sized>(
                 walk_pattern(visitor, sub_pat, diagnostics);
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for field in field_patterns {
                 walk_pattern(visitor, &field.pattern, diagnostics);
             }
@@ -608,7 +589,10 @@ pub trait ExprVisitor {
     }
 
     fn visit_slice_index(&mut self, expr: &Expr, diagnostics: &mut Diagnostics) {
-        if let Expr::SliceIndex { object, start, end, .. } = expr {
+        if let Expr::SliceIndex {
+            object, start, end, ..
+        } = expr
+        {
             self.visit_expr(object, diagnostics);
             for bound in start.iter().chain(end.iter()) {
                 self.visit_expr(bound, diagnostics);
@@ -691,7 +675,12 @@ pub fn walk_untyped_expr<V: ExprVisitor + ?Sized>(
         | Expr::Use { operand, .. } => {
             visitor.visit_expr(operand, diagnostics);
         }
-        Expr::For { iterable, body, pattern, .. } => {
+        Expr::For {
+            iterable,
+            body,
+            pattern,
+            ..
+        } => {
             visitor.visit_pattern(pattern, diagnostics);
             visitor.visit_expr(iterable, diagnostics);
             visitor.visit_expr(body, diagnostics);
@@ -806,7 +795,10 @@ pub fn walk_untyped_while<V: ExprVisitor + ?Sized>(
     expr: &Expr,
     diagnostics: &mut Diagnostics,
 ) {
-    if let Expr::While { condition, body, .. } = expr {
+    if let Expr::While {
+        condition, body, ..
+    } = expr
+    {
         visitor.visit_expr(condition, diagnostics);
         visitor.visit_expr(body, diagnostics);
     }

@@ -197,7 +197,9 @@ fn mp_build_and_run(project: &ResolvedProject, workspace_root: &std::path::Path)
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
 
     if result.diagnostics.has_errors() {
@@ -230,7 +232,9 @@ fn mp_build_expecting_errors(
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     result
         .diagnostics
@@ -269,9 +273,9 @@ fn make_two_package_project(
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     (dir, project)
@@ -474,7 +478,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("no function") || e.contains("no static method") || e.contains("undefined variable")),
+        errors.iter().any(|e| e.contains("no function")
+            || e.contains("no static method")
+            || e.contains("undefined variable")),
         "expected error for calling instance method via Type.method(), got: {:?}",
         errors
     );
@@ -645,7 +651,9 @@ function main(): Unit = assert Math.triple(7) == 21
     );
     let errors = mp_build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("no function") || e.contains("no member") || e.contains("undefined variable")),
+        errors.iter().any(|e| e.contains("no function")
+            || e.contains("no member")
+            || e.contains("undefined variable")),
         "expected error for accessing internal member cross-package, got: {:?}",
         errors
     );
@@ -689,9 +697,9 @@ fn make_single_package_two_files(
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     (dir, project)
@@ -717,7 +725,9 @@ function main(): Unit =
     );
     let errors = mp_build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("no function") || e.contains("no member") || e.contains("undefined variable")),
+        errors.iter().any(|e| e.contains("no function")
+            || e.contains("no member")
+            || e.contains("undefined variable")),
         "expected error for accessing private function cross-file, got: {:?}",
         errors
     );
@@ -743,7 +753,9 @@ function main(): Unit =
     );
     let errors = mp_build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("no member") || e.contains("undefined variable")),
+        errors
+            .iter()
+            .any(|e| e.contains("no member") || e.contains("undefined variable")),
         "expected error for accessing private global cross-file, got: {:?}",
         errors
     );
@@ -769,7 +781,9 @@ function main(): Unit =
     );
     let errors = mp_build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("no member") || e.contains("undefined variable")),
+        errors
+            .iter()
+            .any(|e| e.contains("no member") || e.contains("undefined variable")),
         "expected error for accessing private property cross-file, got: {:?}",
         errors
     );
@@ -800,7 +814,8 @@ function main(): Unit =
     );
     let errors = mp_build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("no") && (e.contains("method") || e.contains("field") || e.contains("function"))),
+        errors.iter().any(|e| e.contains("no")
+            && (e.contains("method") || e.contains("field") || e.contains("function"))),
         "expected error for accessing private instance method cross-file, got: {:?}",
         errors
     );
@@ -1545,7 +1560,9 @@ function main(): Unit = Box<Int32>.tag = 99
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot assign to immutable global")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot assign to immutable global")),
         "expected immutable global error, got: {:?}",
         errors
     );
@@ -1564,7 +1581,9 @@ function main(): Unit = Config.maxSize = 200
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot assign to immutable global")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot assign to immutable global")),
         "expected immutable global error, got: {:?}",
         errors
     );
@@ -1625,7 +1644,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("references type parameter")),
+        errors
+            .iter()
+            .any(|e| e.contains("references type parameter")),
         "expected type-parameter rejection, got: {:?}",
         errors
     );
@@ -1707,7 +1728,8 @@ function main(): Unit =
 
 #[test]
 fn test_module_for_trait_typechecks() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Marker
@@ -1717,7 +1739,8 @@ module Marker =
 
 function main(): Unit =
     assert Marker.staticHelper() == 42
-"#)
+"#,
+    )
     .expect("module for trait typechecks");
 }
 

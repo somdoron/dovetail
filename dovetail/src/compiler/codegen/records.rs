@@ -12,7 +12,9 @@ use super::Codegen;
 /// never holds a `$Tuple_N` ref for a concrete tuple field — it splices the leaves directly.
 pub fn build_record_subtype(rec: &RecordTypeDef, codegen: &Codegen) -> SubType {
     let mut fields: Vec<FieldType> = Vec::new();
-    if codegen.id_prefix(&rec.mangled_name) != 0 { fields.push(super::runtime_types::id_field()); }
+    if codegen.id_prefix(&rec.mangled_name) != 0 {
+        fields.push(super::runtime_types::id_field());
+    }
 
     for (_, ty) in &rec.fields {
         for val_type in codegen.type_to_valtypes(ty) {

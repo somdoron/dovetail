@@ -5,23 +5,96 @@ use wasm_encoder::{BlockType, Instruction, ValType};
 use crate::typechecker::types::{IntrinsicKind, Type, TypedExpr};
 
 use super::super::p3_imports::{
-    FUNC_P3_FILESYSTEM_PREOPENS_GET_DIRECTORIES,
+    FUNC_P3_CLI_ENVIRONMENT_GET_ARGUMENTS, FUNC_P3_CLI_ENVIRONMENT_GET_ENVIRONMENT,
+    FUNC_P3_CLI_ENVIRONMENT_GET_INITIAL_CWD, FUNC_P3_CLI_EXIT_EXIT,
+    FUNC_P3_CLI_STDERR_ASYNC_FUTURE_READ_1_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_FUTURE_CANCEL_READ_1_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_STREAM_CANCEL_WRITE_0_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_STREAM_NEW_0_WRITE_VIA_STREAM, FUNC_P3_CLI_STDERR_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDIN_ASYNC_FUTURE_READ_1_READ_VIA_STREAM,
+    FUNC_P3_CLI_STDIN_ASYNC_STREAM_READ_0_READ_VIA_STREAM,
+    FUNC_P3_CLI_STDIN_FUTURE_CANCEL_READ_1_READ_VIA_STREAM,
+    FUNC_P3_CLI_STDIN_FUTURE_DROP_READABLE_1_READ_VIA_STREAM, FUNC_P3_CLI_STDIN_READ_VIA_STREAM,
+    FUNC_P3_CLI_STDIN_STREAM_CANCEL_READ_0_READ_VIA_STREAM,
+    FUNC_P3_CLI_STDIN_STREAM_DROP_READABLE_0_READ_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_ASYNC_FUTURE_READ_1_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_FUTURE_CANCEL_READ_1_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_STREAM_CANCEL_WRITE_0_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_STREAM_NEW_0_WRITE_VIA_STREAM, FUNC_P3_CLI_STDOUT_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_TERMINAL_STDERR_GET_TERMINAL_STDERR, FUNC_P3_CLI_TERMINAL_STDIN_GET_TERMINAL_STDIN,
+    FUNC_P3_CLI_TERMINAL_STDOUT_GET_TERMINAL_STDOUT, FUNC_P3_CLOCKS_MONOTONIC_CLOCK_ASYNC_WAIT_FOR,
+    FUNC_P3_CLOCKS_MONOTONIC_CLOCK_ASYNC_WAIT_UNTIL, FUNC_P3_CLOCKS_MONOTONIC_CLOCK_NOW,
+    FUNC_P3_CLOCKS_SYSTEM_CLOCK_NOW, FUNC_P3_FILESYSTEM_PREOPENS_GET_DIRECTORIES,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_ADVISE,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_CREATE_DIRECTORY_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_FLAGS,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_TYPE,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_IS_SAME_OBJECT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_LINK_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_OPEN_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_READLINK_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_REMOVE_DIRECTORY_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_RENAME_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_SIZE,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYMLINK_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC_DATA,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_UNLINK_FILE_AT,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_READ_0_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_READ_0_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_WRITE_0_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_WRITE_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_DROP_DESCRIPTOR,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_CANCEL_READ_0_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_CANCEL_READ_0_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_CANCEL_WRITE_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_DROP_READABLE_0_METHOD_DESCRIPTOR_READ_DIRECTORY,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_DROP_READABLE_0_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_DROP_WRITABLE_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_NEW_0_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
+    FUNC_P3_FILESYSTEM_TYPES_STREAM_NEW_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
+    FUNC_P3_RANDOM_RANDOM_GET_RANDOM_BYTES, FUNC_P3_RANDOM_RANDOM_GET_RANDOM_U64,
+    FUNC_P3_ROOT_SUBTASK_CANCEL, FUNC_P3_ROOT_SUBTASK_DROP, FUNC_P3_ROOT_WAITABLE_JOIN,
+    FUNC_P3_ROOT_WAITABLE_SET_DROP, FUNC_P3_ROOT_WAITABLE_SET_NEW, FUNC_P3_ROOT_WAITABLE_SET_WAIT,
+    FUNC_P3_SOCKETS_IP_NAME_LOOKUP_ASYNC_RESOLVE_ADDRESSES,
     FUNC_P3_SOCKETS_TYPES_ASYNC_FUTURE_READ_1_METHOD_TCP_SOCKET_RECEIVE,
     FUNC_P3_SOCKETS_TYPES_ASYNC_FUTURE_READ_1_METHOD_TCP_SOCKET_SEND,
-    FUNC_P3_SOCKETS_TYPES_FUTURE_CANCEL_READ_1_METHOD_TCP_SOCKET_RECEIVE,
-    FUNC_P3_SOCKETS_TYPES_FUTURE_CANCEL_READ_1_METHOD_TCP_SOCKET_SEND,
     FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_TCP_SOCKET_CONNECT,
+    FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_UDP_SOCKET_RECEIVE,
+    FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_UDP_SOCKET_SEND,
     FUNC_P3_SOCKETS_TYPES_ASYNC_STREAM_READ_0_METHOD_TCP_SOCKET_LISTEN,
     FUNC_P3_SOCKETS_TYPES_ASYNC_STREAM_READ_0_METHOD_TCP_SOCKET_RECEIVE,
     FUNC_P3_SOCKETS_TYPES_ASYNC_STREAM_WRITE_0_METHOD_TCP_SOCKET_SEND,
+    FUNC_P3_SOCKETS_TYPES_DROP_TCP_SOCKET, FUNC_P3_SOCKETS_TYPES_DROP_UDP_SOCKET,
+    FUNC_P3_SOCKETS_TYPES_FUTURE_CANCEL_READ_1_METHOD_TCP_SOCKET_RECEIVE,
+    FUNC_P3_SOCKETS_TYPES_FUTURE_CANCEL_READ_1_METHOD_TCP_SOCKET_SEND,
     FUNC_P3_SOCKETS_TYPES_FUTURE_DROP_READABLE_1_METHOD_TCP_SOCKET_RECEIVE,
     FUNC_P3_SOCKETS_TYPES_FUTURE_DROP_READABLE_1_METHOD_TCP_SOCKET_SEND,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_BIND,
-    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_LOCAL_ADDRESS,
-    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_REMOTE_ADDRESS,
-    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_LISTEN,
-    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_RECEIVE,
-    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SEND,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_ADDRESS_FAMILY,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_HOP_LIMIT,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_IS_LISTENING,
@@ -29,8 +102,12 @@ use super::super::p3_imports::{
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_KEEP_ALIVE_ENABLED,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_KEEP_ALIVE_IDLE_TIME,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_KEEP_ALIVE_INTERVAL,
+    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_LOCAL_ADDRESS,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_RECEIVE_BUFFER_SIZE,
+    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_REMOTE_ADDRESS,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_GET_SEND_BUFFER_SIZE,
+    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_LISTEN,
+    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_RECEIVE, FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SEND,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SET_HOP_LIMIT,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SET_KEEP_ALIVE_COUNT,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SET_KEEP_ALIVE_ENABLED,
@@ -39,22 +116,8 @@ use super::super::p3_imports::{
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SET_LISTEN_BACKLOG_SIZE,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SET_RECEIVE_BUFFER_SIZE,
     FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SET_SEND_BUFFER_SIZE,
-    FUNC_P3_SOCKETS_TYPES_STATIC_TCP_SOCKET_CREATE,
-    FUNC_P3_SOCKETS_TYPES_STREAM_CANCEL_READ_0_METHOD_TCP_SOCKET_LISTEN,
-    FUNC_P3_SOCKETS_TYPES_STREAM_CANCEL_READ_0_METHOD_TCP_SOCKET_RECEIVE,
-    FUNC_P3_SOCKETS_TYPES_STREAM_CANCEL_WRITE_0_METHOD_TCP_SOCKET_SEND,
-    FUNC_P3_SOCKETS_TYPES_STREAM_DROP_READABLE_0_METHOD_TCP_SOCKET_LISTEN,
-    FUNC_P3_SOCKETS_TYPES_STREAM_DROP_READABLE_0_METHOD_TCP_SOCKET_RECEIVE,
-    FUNC_P3_SOCKETS_TYPES_STREAM_DROP_WRITABLE_0_METHOD_TCP_SOCKET_SEND,
-    FUNC_P3_SOCKETS_TYPES_STREAM_NEW_0_METHOD_TCP_SOCKET_SEND,
-    FUNC_P3_SOCKETS_TYPES_DROP_TCP_SOCKET,
-    FUNC_P3_SOCKETS_IP_NAME_LOOKUP_ASYNC_RESOLVE_ADDRESSES,
-    FUNC_P3_SOCKETS_TYPES_STATIC_UDP_SOCKET_CREATE,
-    FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_BIND,
-    FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_CONNECT,
+    FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_BIND, FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_CONNECT,
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_DISCONNECT,
-    FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_UDP_SOCKET_SEND,
-    FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_UDP_SOCKET_RECEIVE,
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_GET_ADDRESS_FAMILY,
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_GET_LOCAL_ADDRESS,
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_GET_RECEIVE_BUFFER_SIZE,
@@ -64,82 +127,14 @@ use super::super::p3_imports::{
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_SET_RECEIVE_BUFFER_SIZE,
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_SET_SEND_BUFFER_SIZE,
     FUNC_P3_SOCKETS_TYPES_METHOD_UDP_SOCKET_SET_UNICAST_HOP_LIMIT,
-    FUNC_P3_SOCKETS_TYPES_DROP_UDP_SOCKET,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_NEW_0_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_FUTURE_READ_1_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_CANCEL_READ_1_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_ADVISE,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_READLINK_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_READ_0_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_DROP_READABLE_0_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_CREATE_DIRECTORY_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_FLAGS,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_TYPE,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_IS_SAME_OBJECT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_LINK_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_RENAME_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_SIZE,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYMLINK_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC_DATA,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_OPEN_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_REMOVE_DIRECTORY_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_UNLINK_FILE_AT,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_READ_0_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_WRITE_0_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_ASYNC_STREAM_WRITE_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_DROP_DESCRIPTOR,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_FUTURE_DROP_READABLE_1_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_APPEND_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_CANCEL_READ_0_METHOD_DESCRIPTOR_READ_DIRECTORY,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_CANCEL_READ_0_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_CANCEL_WRITE_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_DROP_READABLE_0_METHOD_DESCRIPTOR_READ_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_DROP_WRITABLE_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_FILESYSTEM_TYPES_STREAM_NEW_0_METHOD_DESCRIPTOR_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_ENVIRONMENT_GET_ARGUMENTS, FUNC_P3_CLI_ENVIRONMENT_GET_ENVIRONMENT,
-    FUNC_P3_CLI_ENVIRONMENT_GET_INITIAL_CWD, FUNC_P3_CLI_EXIT_EXIT,
-    FUNC_P3_CLI_STDIN_ASYNC_FUTURE_READ_1_READ_VIA_STREAM,
-    FUNC_P3_CLI_STDIN_ASYNC_STREAM_READ_0_READ_VIA_STREAM,
-    FUNC_P3_CLI_STDIN_FUTURE_CANCEL_READ_1_READ_VIA_STREAM,
-    FUNC_P3_CLI_STDIN_FUTURE_DROP_READABLE_1_READ_VIA_STREAM,
-    FUNC_P3_CLI_STDIN_STREAM_CANCEL_READ_0_READ_VIA_STREAM,
-    FUNC_P3_CLI_STDIN_READ_VIA_STREAM, FUNC_P3_CLI_STDIN_STREAM_DROP_READABLE_0_READ_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_WRITE_VIA_STREAM, FUNC_P3_CLI_STDOUT_STREAM_NEW_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_STREAM_CANCEL_WRITE_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_ASYNC_FUTURE_READ_1_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_FUTURE_CANCEL_READ_1_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDERR_WRITE_VIA_STREAM, FUNC_P3_CLI_STDERR_STREAM_NEW_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDERR_STREAM_CANCEL_WRITE_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDERR_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDERR_ASYNC_FUTURE_READ_1_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDERR_FUTURE_CANCEL_READ_1_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_TERMINAL_STDERR_GET_TERMINAL_STDERR, FUNC_P3_CLI_TERMINAL_STDIN_GET_TERMINAL_STDIN,
-    FUNC_P3_CLI_TERMINAL_STDOUT_GET_TERMINAL_STDOUT,
-    FUNC_P3_CLOCKS_MONOTONIC_CLOCK_ASYNC_WAIT_FOR, FUNC_P3_CLOCKS_MONOTONIC_CLOCK_ASYNC_WAIT_UNTIL,
-    FUNC_P3_CLOCKS_MONOTONIC_CLOCK_NOW, FUNC_P3_CLOCKS_SYSTEM_CLOCK_NOW,
-    FUNC_P3_RANDOM_RANDOM_GET_RANDOM_BYTES, FUNC_P3_RANDOM_RANDOM_GET_RANDOM_U64,
-    FUNC_P3_ROOT_SUBTASK_CANCEL, FUNC_P3_ROOT_SUBTASK_DROP, FUNC_P3_ROOT_WAITABLE_JOIN,
-    FUNC_P3_ROOT_WAITABLE_SET_DROP, FUNC_P3_ROOT_WAITABLE_SET_NEW, FUNC_P3_ROOT_WAITABLE_SET_WAIT,
+    FUNC_P3_SOCKETS_TYPES_STATIC_TCP_SOCKET_CREATE, FUNC_P3_SOCKETS_TYPES_STATIC_UDP_SOCKET_CREATE,
+    FUNC_P3_SOCKETS_TYPES_STREAM_CANCEL_READ_0_METHOD_TCP_SOCKET_LISTEN,
+    FUNC_P3_SOCKETS_TYPES_STREAM_CANCEL_READ_0_METHOD_TCP_SOCKET_RECEIVE,
+    FUNC_P3_SOCKETS_TYPES_STREAM_CANCEL_WRITE_0_METHOD_TCP_SOCKET_SEND,
+    FUNC_P3_SOCKETS_TYPES_STREAM_DROP_READABLE_0_METHOD_TCP_SOCKET_LISTEN,
+    FUNC_P3_SOCKETS_TYPES_STREAM_DROP_READABLE_0_METHOD_TCP_SOCKET_RECEIVE,
+    FUNC_P3_SOCKETS_TYPES_STREAM_DROP_WRITABLE_0_METHOD_TCP_SOCKET_SEND,
+    FUNC_P3_SOCKETS_TYPES_STREAM_NEW_0_METHOD_TCP_SOCKET_SEND,
 };
 use super::wasi_marshaling::{DESCRIPTOR_TYPE_OTHER_DISC, WasiScalar};
 use super::{ExprContext, FunctionEmitter};
@@ -148,7 +143,10 @@ impl FunctionEmitter<'_> {
     fn emit_identity_hash(&mut self, value: &TypedExpr) {
         use super::super::GLOBAL_IDENTITY_HASH_COUNTER;
         let class_name = match &value.ty {
-            Type::Class(_, name) | Type::GenericClass { mangled_name: name, .. } => name,
+            Type::Class(_, name)
+            | Type::GenericClass {
+                mangled_name: name, ..
+            } => name,
             _ => unreachable!("identity hash must be specialized to a class"),
         };
         let class_index = self.codegen.type_indices[class_name];
@@ -215,7 +213,9 @@ impl FunctionEmitter<'_> {
         ctx: ExprContext,
     ) {
         match intrinsic {
-            IntrinsicKind::TupleProjection(_) => unreachable!("tuple projection must be resolved before emission"),
+            IntrinsicKind::TupleProjection(_) => {
+                unreachable!("tuple projection must be resolved before emission")
+            }
             IntrinsicKind::BinaryOperator(op) => {
                 let binary = TypedExpr {
                     kind: crate::typechecker::types::TypedExprKind::BinaryOp {
@@ -649,7 +649,9 @@ impl FunctionEmitter<'_> {
 
             // --- IO intrinsics ---
             IntrinsicKind::P3ThreadYield => {
-                self.instruction(Instruction::Call(crate::codegen::p3_imports::FUNC_P3_ROOT_THREAD_YIELD));
+                self.instruction(Instruction::Call(
+                    crate::codegen::p3_imports::FUNC_P3_ROOT_THREAD_YIELD,
+                ));
                 self.instruction(Instruction::Drop);
                 if ctx == ExprContext::Value {
                     self.instruction(Instruction::I32Const(0));
@@ -689,7 +691,9 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::LocalGet(evtbuf));
                 self.instruction(Instruction::I64Const(0));
                 self.instruction(Instruction::I64Store(wasm_encoder::MemArg {
-                    offset: 0, align: 2, memory_index: 0,
+                    offset: 0,
+                    align: 2,
+                    memory_index: 0,
                 }));
                 self.emit_expr(&args[0], ExprContext::Value); // set (self)
                 self.instruction(Instruction::LocalGet(evtbuf));
@@ -954,7 +958,6 @@ impl FunctionEmitter<'_> {
             }
 
             // ── WASI p3 filesystem (wave 1) ──
-
             IntrinsicKind::P3FsOpenAtStart => {
                 // open-at has 6 flat params (> MAX_FLAT_ASYNC_PARAMS), so the
                 // async-lowered core sig is (params-ptr, retptr) -> status with
@@ -985,14 +988,22 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::LocalSet(tmp));
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(tmp));
-                self.instruction(Instruction::I32Store(wasm_encoder::MemArg { offset: 4, align: 2, memory_index: 0 }));
+                self.instruction(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: 4,
+                    align: 2,
+                    memory_index: 0,
+                }));
                 self.emit_p3_store_string(pblock, 8, &args[2]);
                 self.emit_expr(&args[3], ExprContext::Value);
                 self.wasi_fs_open_flags_to_bitmask(&args[3].ty);
                 self.instruction(Instruction::LocalSet(tmp));
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(tmp));
-                self.instruction(Instruction::I32Store(wasm_encoder::MemArg { offset: 16, align: 2, memory_index: 0 }));
+                self.instruction(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: 16,
+                    align: 2,
+                    memory_index: 0,
+                }));
                 self.emit_expr(&args[4], ExprContext::Value);
                 self.wasi_fs_file_flags_to_bitmask(&args[4].ty);
                 // One byte, at 17. The i32 store of open-flags just above cleared
@@ -1007,7 +1018,9 @@ impl FunctionEmitter<'_> {
                 }));
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_OPEN_AT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_OPEN_AT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1027,7 +1040,9 @@ impl FunctionEmitter<'_> {
                 let retptr = self.emit_p3_pinned_retptr(112);
                 self.emit_expr(&args[0], ExprContext::Value); // self
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1059,7 +1074,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[1], ExprContext::Value);
                 let str_local = self.add_local(ValType::Ref(wasm_encoder::RefType {
                     nullable: false,
-                    heap_type: wasm_encoder::HeapType::Concrete(super::super::STRING_STRUCT_TYPE_INDEX),
+                    heap_type: wasm_encoder::HeapType::Concrete(
+                        super::super::STRING_STRUCT_TYPE_INDEX,
+                    ),
                 }));
                 self.instruction(Instruction::LocalSet(str_local));
                 let (str_ptr, str_len) = self.wasi_marshal_string_to_memory(str_local);
@@ -1085,7 +1102,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[0], ExprContext::Value); // self
                 self.emit_expr(&args[1], ExprContext::Value); // offset i64
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_VIA_STREAM));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_VIA_STREAM,
+                ));
                 self.wasi_i32_load(retptr, 0);
                 self.wasi_i32_load(retptr, 4);
                 let mn = expr.ty.mangled_name();
@@ -1204,13 +1223,18 @@ impl FunctionEmitter<'_> {
             }
 
             // ── WASI p3 filesystem (wave 2) ──
-
             IntrinsicKind::P3FsStatAtStart | IntrinsicKind::P3FsMetadataHashAtStart => {
                 // (self, path-flags, path_ptr, path_len, retptr) -> status
                 let (func, retsize) = if matches!(intrinsic, IntrinsicKind::P3FsStatAtStart) {
-                    (FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT_AT, 112)
+                    (
+                        FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_STAT_AT,
+                        112,
+                    )
                 } else {
-                    (FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH_AT, 24)
+                    (
+                        FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH_AT,
+                        24,
+                    )
                 };
                 let retptr = self.emit_p3_pinned_retptr(retsize);
                 self.emit_expr(&args[0], ExprContext::Value); // self
@@ -1219,7 +1243,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[2], ExprContext::Value);
                 let str_local = self.add_local(ValType::Ref(wasm_encoder::RefType {
                     nullable: false,
-                    heap_type: wasm_encoder::HeapType::Concrete(super::super::STRING_STRUCT_TYPE_INDEX),
+                    heap_type: wasm_encoder::HeapType::Concrete(
+                        super::super::STRING_STRUCT_TYPE_INDEX,
+                    ),
                 }));
                 self.instruction(Instruction::LocalSet(str_local));
                 let (str_ptr, str_len) = self.wasi_marshal_string_to_memory(str_local);
@@ -1237,7 +1263,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[0], ExprContext::Value);
                 self.emit_expr(&args[1], ExprContext::Value); // i64
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_SIZE));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_SIZE,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1249,10 +1277,18 @@ impl FunctionEmitter<'_> {
             | IntrinsicKind::P3FsMetadataHashStart => {
                 // (self, retptr) -> status
                 let func = match intrinsic {
-                    IntrinsicKind::P3FsSyncStart => FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC,
-                    IntrinsicKind::P3FsSyncDataStart => FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC_DATA,
-                    IntrinsicKind::P3FsGetFlagsStart => FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_FLAGS,
-                    IntrinsicKind::P3FsGetTypeStart => FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_TYPE,
+                    IntrinsicKind::P3FsSyncStart => {
+                        FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC
+                    }
+                    IntrinsicKind::P3FsSyncDataStart => {
+                        FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYNC_DATA
+                    }
+                    IntrinsicKind::P3FsGetFlagsStart => {
+                        FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_FLAGS
+                    }
+                    IntrinsicKind::P3FsGetTypeStart => {
+                        FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_GET_TYPE
+                    }
                     _ => FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_METADATA_HASH,
                 };
                 let retptr = self.emit_p3_pinned_retptr(24);
@@ -1272,7 +1308,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[3], ExprContext::Value); // FileAdvice enum
                 self.wasi_fs_enum_to_disc(&args[3].ty);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_ADVISE));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_ADVISE,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1283,7 +1321,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[0], ExprContext::Value);
                 self.emit_expr(&args[1], ExprContext::Value);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_IS_SAME_OBJECT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_IS_SAME_OBJECT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1353,7 +1393,9 @@ impl FunctionEmitter<'_> {
                 self.emit_p3_store_string(pblock, 12, &args[2]);
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYMLINK_AT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SYMLINK_AT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1369,7 +1411,9 @@ impl FunctionEmitter<'_> {
                 self.emit_p3_store_string(pblock, 16, &args[3]);
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_RENAME_AT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_RENAME_AT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1386,19 +1430,24 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::LocalSet(tmp));
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(tmp));
-                self.instruction(Instruction::I32Store(wasm_encoder::MemArg { offset: 4, align: 2, memory_index: 0 }));
+                self.instruction(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: 4,
+                    align: 2,
+                    memory_index: 0,
+                }));
                 self.emit_p3_store_string(pblock, 8, &args[2]);
                 self.emit_p3_store_field(pblock, 16, tmp, &args[3]);
                 self.emit_p3_store_string(pblock, 20, &args[4]);
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_LINK_AT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_LINK_AT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
 
             // ── WASI p3 filesystem (wave 3) ──
-
             IntrinsicKind::P3FsReadlinkAtStart => {
                 // (self, path_ptr, path_len, retptr) -> status
                 let retptr = self.emit_p3_pinned_retptr(24);
@@ -1406,14 +1455,18 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[1], ExprContext::Value);
                 let str_local = self.add_local(ValType::Ref(wasm_encoder::RefType {
                     nullable: false,
-                    heap_type: wasm_encoder::HeapType::Concrete(super::super::STRING_STRUCT_TYPE_INDEX),
+                    heap_type: wasm_encoder::HeapType::Concrete(
+                        super::super::STRING_STRUCT_TYPE_INDEX,
+                    ),
                 }));
                 self.instruction(Instruction::LocalSet(str_local));
                 let (str_ptr, str_len) = self.wasi_marshal_string_to_memory(str_local);
                 self.instruction(Instruction::LocalGet(str_ptr));
                 self.instruction(Instruction::LocalGet(str_len));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_READLINK_AT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_READLINK_AT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1449,7 +1502,9 @@ impl FunctionEmitter<'_> {
                 self.emit_p3_store_new_timestamp(pblock, 32, &args[2]);
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1466,13 +1521,19 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::LocalSet(tmp));
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(tmp));
-                self.instruction(Instruction::I32Store(wasm_encoder::MemArg { offset: 4, align: 2, memory_index: 0 }));
+                self.instruction(Instruction::I32Store(wasm_encoder::MemArg {
+                    offset: 4,
+                    align: 2,
+                    memory_index: 0,
+                }));
                 self.emit_p3_store_string(pblock, 8, &args[2]);
                 self.emit_p3_store_new_timestamp(pblock, 16, &args[3]);
                 self.emit_p3_store_new_timestamp(pblock, 40, &args[4]);
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES_AT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_ASYNC_METHOD_DESCRIPTOR_SET_TIMES_AT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1482,7 +1543,9 @@ impl FunctionEmitter<'_> {
                 let retptr = self.wasi_bump_alloc(8);
                 self.emit_expr(&args[0], ExprContext::Value);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_DIRECTORY));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_TYPES_METHOD_DESCRIPTOR_READ_DIRECTORY,
+                ));
                 self.wasi_i32_load(retptr, 0);
                 self.wasi_i32_load(retptr, 4);
                 let mn = expr.ty.mangled_name();
@@ -1573,14 +1636,15 @@ impl FunctionEmitter<'_> {
             }
 
             // ── WASI p3 TCP ──
-
             IntrinsicKind::P3TcpCreate => {
                 // [static]tcp-socket.create(family-disc, retptr) -> ()
                 let retptr = self.wasi_bump_alloc(24);
                 self.emit_expr(&args[0], ExprContext::Value);
                 self.wasi_fs_enum_to_disc(&args[0].ty);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_STATIC_TCP_SOCKET_CREATE));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_SOCKETS_TYPES_STATIC_TCP_SOCKET_CREATE,
+                ));
                 self.wasi_construct_result_i32_network_error(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1593,7 +1657,9 @@ impl FunctionEmitter<'_> {
                 let sa_mn = Self::extract_socket_address_mn(&args[1].ty);
                 self.wasi_marshal_socket_address_flat(&sa_mn);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_BIND));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_BIND,
+                ));
                 self.wasi_construct_result_unit_network_error(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1607,7 +1673,9 @@ impl FunctionEmitter<'_> {
                 self.emit_p3_store_socket_address(pblock, 4, &args[1]);
                 self.instruction(Instruction::LocalGet(pblock));
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_TCP_SOCKET_CONNECT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_SOCKETS_TYPES_ASYNC_METHOD_TCP_SOCKET_CONNECT,
+                ));
                 self.emit_p3_pack_async_call(retptr);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1625,7 +1693,9 @@ impl FunctionEmitter<'_> {
                 let retptr = self.wasi_bump_alloc(24);
                 self.emit_expr(&args[0], ExprContext::Value);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_LISTEN));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_LISTEN,
+                ));
                 self.wasi_construct_result_i32_network_error(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -1670,7 +1740,9 @@ impl FunctionEmitter<'_> {
                     self.emit_expr(&args[0], ExprContext::Value);
                     self.instruction(Instruction::LocalGet(pair));
                     self.instruction(Instruction::I32WrapI64);
-                    self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SEND));
+                    self.instruction(Instruction::Call(
+                        FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_SEND,
+                    ));
                     let future = self.add_local(ValType::I32);
                     self.instruction(Instruction::LocalSet(future));
                     self.instruction(Instruction::LocalGet(pair));
@@ -1683,7 +1755,9 @@ impl FunctionEmitter<'_> {
                     let retptr = self.wasi_bump_alloc(8);
                     self.emit_expr(&args[0], ExprContext::Value);
                     self.instruction(Instruction::LocalGet(retptr));
-                    self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_RECEIVE));
+                    self.instruction(Instruction::Call(
+                        FUNC_P3_SOCKETS_TYPES_METHOD_TCP_SOCKET_RECEIVE,
+                    ));
                     self.wasi_i32_load(retptr, 0);
                     self.wasi_i32_load(retptr, 4);
                 }
@@ -1961,7 +2035,9 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(&args[0], ExprContext::Value);
                 self.wasi_fs_enum_to_disc(&args[0].ty);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_SOCKETS_TYPES_STATIC_UDP_SOCKET_CREATE));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_SOCKETS_TYPES_STATIC_UDP_SOCKET_CREATE,
+                ));
                 self.wasi_construct_result_i32_network_error(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -2346,13 +2422,14 @@ impl FunctionEmitter<'_> {
             }
 
             // --- CLI intrinsics (Phase 8) ---
-
             IntrinsicKind::CliTerminalStdin => {
                 // get-terminal-stdin(retptr) -> ()
                 // retptr (8 bytes): disc @0 (0=None, 1=Some), handle @4
                 let retptr = self.wasi_bump_alloc(8);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_CLI_TERMINAL_STDIN_GET_TERMINAL_STDIN));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_CLI_TERMINAL_STDIN_GET_TERMINAL_STDIN,
+                ));
                 self.wasi_construct_option_i32(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -2360,7 +2437,9 @@ impl FunctionEmitter<'_> {
             IntrinsicKind::CliTerminalStdout => {
                 let retptr = self.wasi_bump_alloc(8);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_CLI_TERMINAL_STDOUT_GET_TERMINAL_STDOUT));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_CLI_TERMINAL_STDOUT_GET_TERMINAL_STDOUT,
+                ));
                 self.wasi_construct_option_i32(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -2368,7 +2447,9 @@ impl FunctionEmitter<'_> {
             IntrinsicKind::CliTerminalStderr => {
                 let retptr = self.wasi_bump_alloc(8);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_CLI_TERMINAL_STDERR_GET_TERMINAL_STDERR));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_CLI_TERMINAL_STDERR_GET_TERMINAL_STDERR,
+                ));
                 self.wasi_construct_option_i32(retptr, &expr.ty);
                 self.drop_if_statement(ctx, &expr.ty);
             }
@@ -2623,7 +2704,9 @@ impl FunctionEmitter<'_> {
                 // Each element in linear memory: (descriptor_handle i32, string_ptr i32, string_len i32) = 12 bytes
                 let retptr = self.wasi_bump_alloc(8);
                 self.instruction(Instruction::LocalGet(retptr));
-                self.instruction(Instruction::Call(FUNC_P3_FILESYSTEM_PREOPENS_GET_DIRECTORIES));
+                self.instruction(Instruction::Call(
+                    FUNC_P3_FILESYSTEM_PREOPENS_GET_DIRECTORIES,
+                ));
 
                 let list_ptr = self.add_local(ValType::I32);
                 let list_len = self.add_local(ValType::I32);
@@ -2756,7 +2839,10 @@ impl FunctionEmitter<'_> {
                 self.drop_if_statement(ctx, &expr.ty);
             }
 
-            IntrinsicKind::ResourceBytes { resource_name, declaring_root } => {
+            IntrinsicKind::ResourceBytes {
+                resource_name,
+                declaring_root,
+            } => {
                 // Embedded resource: produce an `Array<Uint8>` from the
                 // passive WASM data segment that was pre-allocated for this
                 // resource at codegen-init time. Codegen looked it up by
@@ -2781,8 +2867,7 @@ impl FunctionEmitter<'_> {
                     .get(&key)
                     .copied()
                     .unwrap_or(0);
-                let array_type_index =
-                    self.codegen.array_type_index(&Type::Uint8);
+                let array_type_index = self.codegen.array_type_index(&Type::Uint8);
                 self.instruction(Instruction::I32Const(0));
                 self.instruction(Instruction::I32Const(byte_len as i32));
                 self.instruction(Instruction::ArrayNewData {

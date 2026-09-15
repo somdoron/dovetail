@@ -30,11 +30,8 @@ impl Collector<'_> {
                 .iter()
                 .map(|tp| TypeParamName(tp.name.value.clone()))
                 .collect();
-            let type_param_variances: Vec<Variance> = decl
-                .type_params
-                .iter()
-                .map(|tp| tp.variance)
-                .collect();
+            let type_param_variances: Vec<Variance> =
+                decl.type_params.iter().map(|tp| tp.variance).collect();
             self.package_registry.register_enum_type(
                 fqn,
                 EnumTypeSignature {
@@ -68,7 +65,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &decl.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         // Resolve variant payload types and check for duplicate variant names
@@ -111,7 +109,11 @@ impl Collector<'_> {
                 }
             };
             if let Some(doc) = &variant.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), variant.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    variant.name.value.clone(),
+                    doc.clone(),
+                );
             }
             variants.push((variant.name.value.clone(), payload));
         }
@@ -207,11 +209,16 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &decl.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
         for variant in &decl.variants {
             if let Some(doc) = &variant.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), variant.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    variant.name.value.clone(),
+                    doc.clone(),
+                );
             }
         }
 

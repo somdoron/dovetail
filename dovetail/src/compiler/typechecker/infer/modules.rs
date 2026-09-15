@@ -3,8 +3,8 @@ use crate::parser::ast::{Expr, ModuleDecl};
 
 use crate::typechecker::types::{Type, TypedFunction, TypedParam};
 
-use super::types::SymbolKind;
 use super::Inference;
+use super::types::SymbolKind;
 
 impl Inference<'_> {
     /// Infer types for all members in a module declaration.
@@ -24,10 +24,10 @@ impl Inference<'_> {
             }
             for property in &module.properties {
                 if property.type_params.is_empty() {
-                    if let Some(body) = &property.body {
-                        if matches!(body, Expr::Intrinsic(_)) {
-                            continue;
-                        }
+                    if let Some(body) = &property.body
+                        && matches!(body, Expr::Intrinsic(_))
+                    {
+                        continue;
                     }
                     self.infer_module_property(property, &module_name);
                 } else {
@@ -75,10 +75,10 @@ impl Inference<'_> {
                 self.current_type_params = method_context;
             }
             for property in &module.properties {
-                if let Some(body) = &property.body {
-                    if matches!(body, Expr::Intrinsic(_)) {
-                        continue;
-                    }
+                if let Some(body) = &property.body
+                    && matches!(body, Expr::Intrinsic(_))
+                {
+                    continue;
                 }
                 self.infer_module_property_template(property, &module_name, &module_type_params);
             }
@@ -185,7 +185,8 @@ impl Inference<'_> {
 
         // For async functions, body returns T (inner value), not the full Awaitable<T>
         let body_expected_type = if func.is_async {
-            self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+            self.resolve_awaitable_value_type(&return_type)
+                .unwrap_or(return_type.clone())
         } else {
             return_type.clone()
         };
@@ -223,8 +224,10 @@ impl Inference<'_> {
             self.current_type_params.remove(tp);
         }
         // Restore module type params to their pre-function-where-clause state
-        let module_type_param_map =
-            self.type_param_map(module_type_params, &crate::typechecker::types::TraitBounds::empty());
+        let module_type_param_map = self.type_param_map(
+            module_type_params,
+            &crate::typechecker::types::TraitBounds::empty(),
+        );
         // Re-lookup the module trait bounds for restoring
         let module_fqn = Fqn {
             package: self.package_path.clone(),
@@ -310,8 +313,7 @@ impl Inference<'_> {
         self.check_assignable(body.span.clone(), &return_type, &body.ty);
 
         // Build module-qualified FQN
-        let qualified_symbol =
-            SymbolName(format!("{}.{}", module_name, property.name.value));
+        let qualified_symbol = SymbolName(format!("{}.{}", module_name, property.name.value));
         let fqn = Fqn {
             package: self.package_path.clone(),
             symbol: qualified_symbol,
@@ -406,8 +408,7 @@ impl Inference<'_> {
         }
 
         // Build module-qualified FQN
-        let qualified_symbol =
-            SymbolName(format!("{}.{}", module_name, property.name.value));
+        let qualified_symbol = SymbolName(format!("{}.{}", module_name, property.name.value));
         let fqn = Fqn {
             package: self.package_path.clone(),
             symbol: qualified_symbol,

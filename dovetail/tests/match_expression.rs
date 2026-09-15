@@ -331,7 +331,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type mismatch in type-annotated pattern")),
+        errors
+            .iter()
+            .any(|e| e.contains("type mismatch in type-annotated pattern")),
         "expected type-annotated pattern mismatch error, got: {:?}",
         errors
     );
@@ -451,7 +453,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type mismatch in type-annotated pattern")),
+        errors
+            .iter()
+            .any(|e| e.contains("type mismatch in type-annotated pattern")),
         "expected type-annotated pattern mismatch for unreachable String arm, got: {:?}",
         errors
     );

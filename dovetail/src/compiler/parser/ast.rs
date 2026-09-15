@@ -4,26 +4,26 @@ use crate::common::types::{Fqn, PackagePath, Variance, Visibility};
 /// Binary operators.
 #[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
-    Add,        // +
-    Concat,     // ++
+    Add,         // +
+    Concat,      // ++
     TupleExtend, // ~
-    Sub,        // -
-    Mul,        // *
-    Div,        // /
-    Rem,        // %
-    Eq,         // ==
-    Ne,         // !=
-    Lt,         // <
-    Gt,         // >
-    Le,         // <=
-    Ge,         // >=
-    BitAnd,     // &
-    BitOr,      // |
-    BitXor,     // ^
-    Shl,        // <<
-    Shr,        // >>
-    LogicalAnd, // &&
-    LogicalOr,  // ||
+    Sub,         // -
+    Mul,         // *
+    Div,         // /
+    Rem,         // %
+    Eq,          // ==
+    Ne,          // !=
+    Lt,          // <
+    Gt,          // >
+    Le,          // <=
+    Ge,          // >=
+    BitAnd,      // &
+    BitOr,       // |
+    BitXor,      // ^
+    Shl,         // <<
+    Shr,         // >>
+    LogicalAnd,  // &&
+    LogicalOr,   // ||
 }
 
 impl std::fmt::Display for BinOp {
@@ -121,9 +121,18 @@ pub enum Declaration {
 /// An attribute on a test declaration: `@skip`, `@panics("msg")`, `@timeout(1000)`
 #[derive(serde::Serialize, Debug)]
 pub enum TestAttribute {
-    Skip { reason: Option<Spanned<String>>, span: Span },
-    Panics { message: Option<Spanned<String>>, span: Span },
-    Timeout { millis: Spanned<String>, span: Span },
+    Skip {
+        reason: Option<Spanned<String>>,
+        span: Span,
+    },
+    Panics {
+        message: Option<Spanned<String>>,
+        span: Span,
+    },
+    Timeout {
+        millis: Spanned<String>,
+        span: Span,
+    },
 }
 
 /// A derive attribute on a record or enum declaration: `@derive(Equatable)`.

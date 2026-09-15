@@ -80,7 +80,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &decl.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         let expanded_type = self.resolve_type_expr(&decl.type_expr);
@@ -115,7 +116,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &decl.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         let type_params: Vec<TypeParamName> = decl

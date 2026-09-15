@@ -911,7 +911,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type mismatch in record pattern")),
+        errors
+            .iter()
+            .any(|e| e.contains("type mismatch in record pattern")),
         "expected type mismatch in record pattern, got: {:?}",
         errors
     );

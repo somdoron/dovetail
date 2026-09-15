@@ -98,7 +98,10 @@ impl Lexer {
                 }
                 '/' if self.cursor.peek_at(1) == Some('/') => {
                     self.skip_line_comment();
-                    if self.capture_source { self.source_comments.push(source_start..self.cursor.byte_offset()); }
+                    if self.capture_source {
+                        self.source_comments
+                            .push(source_start..self.cursor.byte_offset());
+                    }
                 }
                 '/' => {
                     let tok = self.make_token(TokenKind::Slash, "/");
@@ -352,7 +355,9 @@ impl Lexer {
             }
             if self.capture_source {
                 let range = source_start..self.cursor.byte_offset();
-                for token in &mut tokens[token_start..] { token.source_range = Some(range.clone()); }
+                for token in &mut tokens[token_start..] {
+                    token.source_range = Some(range.clone());
+                }
             }
         }
 
@@ -452,8 +457,7 @@ impl Lexer {
         let start_col = prefix_span.column;
         let process_escapes = true;
 
-        let multiline =
-            self.cursor.peek_at(1) == Some('"') && self.cursor.peek_at(2) == Some('"');
+        let multiline = self.cursor.peek_at(1) == Some('"') && self.cursor.peek_at(2) == Some('"');
         if multiline {
             self.cursor.advance();
             self.cursor.advance();
@@ -514,13 +518,7 @@ impl Lexer {
         }
 
         let end_col = self.cursor.column().saturating_sub(1).max(start_col);
-        let span = Span::new(
-            file,
-            start_line,
-            start_col,
-            self.cursor.line(),
-            end_col,
-        );
+        let span = Span::new(file, start_line, start_col, self.cursor.line(), end_col);
         Token::with_literal(
             span,
             PrefixedLiteralData {
@@ -633,8 +631,7 @@ impl Lexer {
                 let close_col = self.cursor.column();
                 self.cursor.advance(); // consume '}'
 
-                let mut sub_lexer =
-                    Lexer::new_at(&expr_text, file.clone(), open_line, open_col);
+                let mut sub_lexer = Lexer::new_at(&expr_text, file.clone(), open_line, open_col);
                 let mut tokens = sub_lexer.tokenize();
                 if tokens.last().is_some_and(|t| t.kind == TokenKind::Eof) {
                     tokens.pop();
@@ -1012,7 +1009,10 @@ impl Lexer {
             }
         }
 
-        if self.capture_source { self.source_interpolations.push(source_start..self.cursor.byte_offset()); }
+        if self.capture_source {
+            self.source_interpolations
+                .push(source_start..self.cursor.byte_offset());
+        }
         expr_text
     }
 
@@ -1033,10 +1033,10 @@ impl Lexer {
         }
 
         // If single Text part, return a single StringLiteral (unchanged behavior)
-        if parts.len() == 1 {
-            if let InterpolationPart::Text(s) = &parts[0] {
-                return vec![Token::new(TokenKind::StringLiteral, span, s.clone())];
-            }
+        if parts.len() == 1
+            && let InterpolationPart::Text(s) = &parts[0]
+        {
+            return vec![Token::new(TokenKind::StringLiteral, span, s.clone())];
         }
 
         let mut tokens = Vec::new();
@@ -1447,17 +1447,17 @@ impl Lexer {
         file: FilePath,
     ) -> Token {
         // Check for integer suffix: i8, i16, i32, i64, u8, u16, u32, u64
-        if let Some(ch) = self.cursor.peek() {
-            if ch == 'i' || ch == 'u' {
-                text.push(ch);
-                self.cursor.advance();
-                while let Some(d) = self.cursor.peek() {
-                    if d.is_ascii_digit() {
-                        text.push(d);
-                        self.cursor.advance();
-                    } else {
-                        break;
-                    }
+        if let Some(ch) = self.cursor.peek()
+            && (ch == 'i' || ch == 'u')
+        {
+            text.push(ch);
+            self.cursor.advance();
+            while let Some(d) = self.cursor.peek() {
+                if d.is_ascii_digit() {
+                    text.push(d);
+                    self.cursor.advance();
+                } else {
+                    break;
                 }
             }
         }
@@ -2258,13 +2258,19 @@ mod tests {
     fn test_four_slashes_is_regular_comment() {
         let tokens = lex("////not a doc comment\nx");
         // //// is a regular comment, should be skipped
-        assert_eq!(kinds(&tokens), vec![TokenKind::Newline, TokenKind::Ident, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![TokenKind::Newline, TokenKind::Ident, TokenKind::Eof]
+        );
     }
 
     #[test]
     fn test_regular_comment_still_skipped() {
         let tokens = lex("// regular\nx");
-        assert_eq!(kinds(&tokens), vec![TokenKind::Newline, TokenKind::Ident, TokenKind::Eof]);
+        assert_eq!(
+            kinds(&tokens),
+            vec![TokenKind::Newline, TokenKind::Ident, TokenKind::Eof]
+        );
     }
 
     #[test]
@@ -2278,7 +2284,10 @@ mod tests {
     fn test_attach_doc_comments_single() {
         let tokens = lex("/// A function\nfunction");
         let tokens = attach_doc_comments(tokens);
-        let func = tokens.iter().find(|t| t.kind == TokenKind::Function).unwrap();
+        let func = tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Function)
+            .unwrap();
         assert_eq!(func.doc_comment.as_deref(), Some("A function"));
     }
 
@@ -2286,7 +2295,10 @@ mod tests {
     fn test_attach_doc_comments_multiline() {
         let tokens = lex("/// Line 1\n/// Line 2\nfunction");
         let tokens = attach_doc_comments(tokens);
-        let func = tokens.iter().find(|t| t.kind == TokenKind::Function).unwrap();
+        let func = tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Function)
+            .unwrap();
         assert_eq!(func.doc_comment.as_deref(), Some("Line 1\nLine 2"));
     }
 
@@ -2301,7 +2313,10 @@ mod tests {
     fn test_no_doc_comment_means_none() {
         let tokens = lex("function");
         let tokens = attach_doc_comments(tokens);
-        let func = tokens.iter().find(|t| t.kind == TokenKind::Function).unwrap();
+        let func = tokens
+            .iter()
+            .find(|t| t.kind == TokenKind::Function)
+            .unwrap();
         assert!(func.doc_comment.is_none());
     }
 
@@ -2352,7 +2367,10 @@ mod tests {
         let data = prefixed(source);
         match &data.parts[0] {
             LiteralPart::Value { tokens, .. } => {
-                assert_eq!(kinds(tokens), vec![TokenKind::Ident, TokenKind::Dot, TokenKind::Ident]);
+                assert_eq!(
+                    kinds(tokens),
+                    vec![TokenKind::Ident, TokenKind::Dot, TokenKind::Ident]
+                );
                 let a_col = source.find("a.b").unwrap() as u32 + 1;
                 assert_eq!(tokens[0].span.column, a_col);
                 assert_eq!(tokens[1].span.column, a_col + 1);
@@ -2373,7 +2391,10 @@ mod tests {
             .expect("expected a spread part");
         match spread {
             LiteralPart::Spread { tokens, .. } => {
-                assert_eq!(kinds(tokens), vec![TokenKind::Ident, TokenKind::Dot, TokenKind::Ident]);
+                assert_eq!(
+                    kinds(tokens),
+                    vec![TokenKind::Ident, TokenKind::Dot, TokenKind::Ident]
+                );
             }
             _ => unreachable!(),
         }
@@ -2423,7 +2444,11 @@ mod tests {
     #[test]
     fn prefixed_literal_reports_unterminated() {
         let (_, diagnostics) = lex_with_diagnostics(r#"sql"abc"#);
-        assert!(diagnostics.iter().any(|d| d.message.contains("unterminated")));
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("unterminated"))
+        );
     }
 
     #[test]
@@ -2441,17 +2466,31 @@ mod tests {
     #[test]
     fn a_space_before_the_quote_is_not_a_prefixed_literal() {
         let tokens = lex(r#"test "name""#);
-        assert_eq!(kinds(&tokens)[..2], [TokenKind::Ident, TokenKind::StringLiteral]);
+        assert_eq!(
+            kinds(&tokens)[..2],
+            [TokenKind::Ident, TokenKind::StringLiteral]
+        );
     }
 
     #[test]
     fn plus_plus_lexes_as_one_token() {
-        assert_eq!(kinds(&lex("a ++ b"))[..3], [TokenKind::Ident, TokenKind::PlusPlus, TokenKind::Ident]);
+        assert_eq!(
+            kinds(&lex("a ++ b"))[..3],
+            [TokenKind::Ident, TokenKind::PlusPlus, TokenKind::Ident]
+        );
         // A single `+` is unaffected, and `+ +` stays two tokens.
-        assert_eq!(kinds(&lex("a + b"))[..3], [TokenKind::Ident, TokenKind::Plus, TokenKind::Ident]);
+        assert_eq!(
+            kinds(&lex("a + b"))[..3],
+            [TokenKind::Ident, TokenKind::Plus, TokenKind::Ident]
+        );
         assert_eq!(
             kinds(&lex("a + +b"))[..4],
-            [TokenKind::Ident, TokenKind::Plus, TokenKind::Plus, TokenKind::Ident]
+            [
+                TokenKind::Ident,
+                TokenKind::Plus,
+                TokenKind::Plus,
+                TokenKind::Ident
+            ]
         );
     }
 
@@ -2461,23 +2500,28 @@ mod tests {
         // own exclusion — otherwise `test"name" = ...` would silently become a
         // prefixed literal instead of a test declaration.
         let tokens = lex(r#"test"name" = ()"#);
-        assert_eq!(kinds(&tokens)[..2], [TokenKind::Ident, TokenKind::StringLiteral]);
+        assert_eq!(
+            kinds(&tokens)[..2],
+            [TokenKind::Ident, TokenKind::StringLiteral]
+        );
     }
 
     #[test]
     fn a_keyword_before_the_quote_is_not_a_prefixed_literal() {
         let tokens = lex(r#"case"x""#);
-        assert_eq!(kinds(&tokens)[..2], [TokenKind::Case, TokenKind::StringLiteral]);
+        assert_eq!(
+            kinds(&tokens)[..2],
+            [TokenKind::Case, TokenKind::StringLiteral]
+        );
     }
 
     #[test]
     fn spread_in_a_plain_string_is_rejected_with_a_hint() {
         let (_, diagnostics) = lex_with_diagnostics(r#""IN ($..ids)""#);
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.message.contains("only allowed in a prefixed string literal"))
-        );
+        assert!(diagnostics.iter().any(|d| {
+            d.message
+                .contains("only allowed in a prefixed string literal")
+        }));
     }
 
     #[test]

@@ -13,17 +13,13 @@ use crate::typechecker::types::{
 /// After this pass, no `Try` nodes remain in the typed AST.
 pub fn desugar_try_expressions(module: &mut TypedModule) {
     for func in module.functions.values_mut() {
-        func.body = walk_expr(
-            std::mem::replace(&mut func.body, dummy_expr()),
-        );
+        func.body = walk_expr(std::mem::replace(&mut func.body, dummy_expr()));
     }
     for func in module.default_templates.values_mut() {
         func.body = walk_expr(std::mem::replace(&mut func.body, dummy_expr()));
     }
     for global in module.globals.values_mut() {
-        global.initializer = walk_expr(
-            std::mem::replace(&mut global.initializer, dummy_expr()),
-        );
+        global.initializer = walk_expr(std::mem::replace(&mut global.initializer, dummy_expr()));
     }
     for test in module.tests.iter_mut() {
         test.body = walk_expr(std::mem::replace(&mut test.body, dummy_expr()));
@@ -63,11 +59,18 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             from_method,
         } => {
             let operand = walk_expr(*operand);
-            return desugar_try(operand, unwrap_method, unwrap_return_type, return_type, from_method, ty, span);
+            return desugar_try(
+                operand,
+                unwrap_method,
+                unwrap_return_type,
+                return_type,
+                from_method,
+                ty,
+                span,
+            );
         }
 
         // === Recursive (same pattern as variance_cast.rs) ===
-
         TypedExprKind::Block(exprs) => {
             TypedExprKind::Block(exprs.into_iter().map(walk_expr).collect())
         }
@@ -107,13 +110,21 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             value: Box::new(walk_expr(*value)),
         },
 
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
             name,
             type_params,
             value: Box::new(walk_expr(*value)),
         },
 
-        TypedExprKind::FunctionCall { name, args, type_params } => TypedExprKind::FunctionCall {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => TypedExprKind::FunctionCall {
             name,
             args: args.into_iter().map(walk_expr).collect(),
             type_params,
@@ -156,7 +167,11 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
                 .collect(),
         },
 
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
             fqn,
             type_params,
             fields: fields
@@ -302,22 +317,37 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             receiver: Box::new(walk_expr(*receiver)),
             args: args.into_iter().map(walk_expr).collect(),
         },
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
             mangled_name,
             type_params,
             args: args.into_iter().map(walk_expr).collect(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
             fields: fields.into_iter().map(walk_expr).collect(),
         },
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => TypedExprKind::ClassVirtualCall {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => TypedExprKind::ClassVirtualCall {
             object: Box::new(walk_expr(*object)),
             vtable_slot,
             args: args.into_iter().map(walk_expr).collect(),
         },
-        TypedExprKind::ClassSuperCall { method_mangled, args } => TypedExprKind::ClassSuperCall {
+        TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args,
+        } => TypedExprKind::ClassSuperCall {
             method_mangled,
             args: args.into_iter().map(walk_expr).collect(),
         },
@@ -325,7 +355,11 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             value: Box::new(walk_expr(*value)),
             return_type,
         },
-        TypedExprKind::Closure { params, body, captures } => TypedExprKind::Closure {
+        TypedExprKind::Closure {
+            params,
+            body,
+            captures,
+        } => TypedExprKind::Closure {
             params,
             body: Box::new(walk_expr(*body)),
             captures,
@@ -334,13 +368,23 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             callee: Box::new(walk_expr(*callee)),
             args: args.into_iter().map(walk_expr).collect(),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(walk_expr(*object)),
             method_name,
             type_params,
         },
 
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => TypedExprKind::Await {
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
             operand: Box::new(walk_expr(*operand)),
             return_type,
             and_then_method,
@@ -348,16 +392,28 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             source_location_mn,
         },
 
-        TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => TypedExprKind::Use {
+        TypedExprKind::Use {
+            operand,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
+        } => TypedExprKind::Use {
             operand: Box::new(walk_expr(*operand)),
-            inner_type, source_error, target_error, from_method,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
         },
 
         TypedExprKind::ForLoop { .. } => {
             unreachable!("ForLoop nodes should be desugared before desugar_try pass")
         }
 
-        TypedExprKind::AsyncBlock { body, succeed_method } => TypedExprKind::AsyncBlock {
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => TypedExprKind::AsyncBlock {
             body: Box::new(walk_expr(*body)),
             succeed_method,
         },
@@ -385,7 +441,14 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
         | TypedExprKind::Continue
         | TypedExprKind::BoxToAny { .. }) => kind,
 
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
             trait_fqn,
             trait_type_params,
             for_type,
@@ -394,7 +457,13 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             method_type_params,
         },
         kind @ TypedExprKind::ImplFunctionRef { .. } => kind,
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
+        TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
             ext_fqn,
             for_type,
             method_name,

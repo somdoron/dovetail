@@ -4,11 +4,8 @@ mod async_loops;
 mod classes;
 mod closures;
 mod enums;
-mod expressions;
 mod exact_number;
-mod negation;
-mod slices;
-mod indexing;
+mod expressions;
 mod extensions;
 mod function_expressions;
 mod functions;
@@ -20,28 +17,36 @@ mod generic_records;
 pub(crate) mod generics;
 mod globals;
 mod implements;
-mod trait_defaults;
+mod indexing;
 mod match_expression;
 mod method_contracts;
-mod prefixed_literal;
 mod modules;
+mod negation;
+mod prefixed_literal;
 mod record_expressions;
 mod record_payloads;
 mod records;
+mod slices;
 mod test_decls;
+mod trait_defaults;
 mod traits;
-mod use_continuations;
 pub(crate) mod type_param_substitution;
 pub(crate) mod types;
+mod use_continuations;
 
 use crate::common::diagnostics::Diagnostics;
 use crate::common::span::FilePath;
-use crate::common::types::{Fqn, MangledName, PackagePath, SymbolName, TypeParamName, VarName, Visibility};
+use crate::common::types::{
+    Fqn, MangledName, PackagePath, SymbolName, TypeParamName, VarName, Visibility,
+};
 use crate::parser::ast::{Declaration, SourceFile};
 
 use crate::typechecker::imports::{ImportScope, PackageImportScopes};
 use crate::typechecker::registry::Registry;
-use crate::typechecker::types::{ClassFieldDef, Type, TypeDef, TypeReference, TypedExpr, TypedExprKind, TypedExtensionBlock, TypedFunction, TypedGlobal, TypedImplementBlock, TypedModule, TypedTest};
+use crate::typechecker::types::{
+    ClassFieldDef, Type, TypeDef, TypeReference, TypedExpr, TypedExprKind, TypedExtensionBlock,
+    TypedFunction, TypedGlobal, TypedImplementBlock, TypedModule, TypedTest,
+};
 
 /// Result of resolving a generic function call.
 pub(super) enum ResolvedFunction {
@@ -229,11 +234,12 @@ impl<'a> Inference<'a> {
             .iter()
             .map(|tp| {
                 self.type_param_counter += 1;
-                let bounds: Vec<crate::typechecker::types::TraitBound> = trait_bounds
-                    .get(tp)
-                    .cloned()
-                    .unwrap_or_default();
-                (tp.0.clone(), Type::GenericParam(tp.clone(), bounds, self.type_param_counter))
+                let bounds: Vec<crate::typechecker::types::TraitBound> =
+                    trait_bounds.get(tp).cloned().unwrap_or_default();
+                (
+                    tp.0.clone(),
+                    Type::GenericParam(tp.clone(), bounds, self.type_param_counter),
+                )
             })
             .collect()
     }
@@ -248,7 +254,12 @@ impl<'a> Inference<'a> {
 
     /// Check whether a function/global signature is accessible from the current context.
     /// Uses the declaring package (from the containing module/type FQN) for Internal checks.
-    pub(super) fn is_member_visible(&self, visibility: Visibility, member_package: &PackagePath, source_file: &FilePath) -> bool {
+    pub(super) fn is_member_visible(
+        &self,
+        visibility: Visibility,
+        member_package: &PackagePath,
+        source_file: &FilePath,
+    ) -> bool {
         match visibility {
             Visibility::Public | Visibility::Protected => true,
             Visibility::Internal => *member_package == self.package_path,
@@ -319,7 +330,12 @@ impl<'a> Inference<'a> {
     /// For async functions, wrap the inferred body in an `AsyncBlock` node
     /// carrying the resolved `succeed` method from the Awaitable trait impl.
     /// For non-async functions, returns the body unchanged.
-    pub(super) fn wrap_async_body(&mut self, body: TypedExpr, return_type: &Type, is_async: bool) -> TypedExpr {
+    pub(super) fn wrap_async_body(
+        &mut self,
+        body: TypedExpr,
+        return_type: &Type,
+        is_async: bool,
+    ) -> TypedExpr {
         if !is_async {
             return body;
         }
@@ -348,10 +364,21 @@ impl<'a> Inference<'a> {
     }
 }
 
-pub(crate) fn class_trait_virtual_slot(registry: &Registry, receiver: &Type, trait_fqn: &Fqn, trait_parameters: &[Type], member: &SymbolName) -> Option<u32> {
+pub(crate) fn class_trait_virtual_slot(
+    registry: &Registry,
+    receiver: &Type,
+    trait_fqn: &Fqn,
+    trait_parameters: &[Type],
+    member: &SymbolName,
+) -> Option<u32> {
     let mut diagnostics = Diagnostics::new();
-    let inference = Inference::new(trait_fqn.package.clone(), FilePath::from("<specialization>"), registry,
-        &EMPTY_IMPORT_SCOPE, &mut diagnostics);
+    let inference = Inference::new(
+        trait_fqn.package.clone(),
+        FilePath::from("<specialization>"),
+        registry,
+        &EMPTY_IMPORT_SCOPE,
+        &mut diagnostics,
+    );
     inference.trait_virtual_slot(receiver, trait_fqn, trait_parameters, member)
 }
 
@@ -365,10 +392,15 @@ pub(crate) fn generic_bounds_satisfied(
 ) -> bool {
     let mut diagnostics = Diagnostics::new();
     let inference = Inference::new(
-        package.clone(), FilePath::from("<specialization>"), registry,
-        &EMPTY_IMPORT_SCOPE, &mut diagnostics,
+        package.clone(),
+        FilePath::from("<specialization>"),
+        registry,
+        &EMPTY_IMPORT_SCOPE,
+        &mut diagnostics,
     );
-    inference.unsatisfied_trait_bounds(bounds, parameters, arguments).is_empty()
+    inference
+        .unsatisfied_trait_bounds(bounds, parameters, arguments)
+        .is_empty()
 }
 
 /// Complete operand-selected implementation parameters and validate their bounds.
@@ -460,7 +492,9 @@ pub fn infer(
     types.extend(class_type_defs);
 
     for message in normalization.errors() {
-        if let Some(file) = files.first() { diagnostics.error(file.package.span.clone(), message); }
+        if let Some(file) = files.first() {
+            diagnostics.error(file.package.span.clone(), message);
+        }
     }
 
     // Collect function signature types from the entire typed module

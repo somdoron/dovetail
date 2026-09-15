@@ -14,11 +14,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::common::types::Fqn;
-use crate::typechecker::registry::{TraitSignature, TraitSuperRef, canonical_method_signature, instantiate_trait_method, same_method_parameters};
+use crate::typechecker::registry::{
+    TraitSignature, TraitSuperRef, canonical_method_signature, instantiate_trait_method,
+    same_method_parameters,
+};
 use crate::typechecker::types::Type;
 
-use super::implements::substitute_trait_type_params;
 use super::Collector;
+use super::implements::substitute_trait_type_params;
 
 /// The outcome of comparing a trait's own member against an inherited member
 /// with the same name — the appendix §1.2 rules.
@@ -40,7 +43,11 @@ enum MergeOutcome {
 }
 
 fn param_types(params: &[(String, Type)]) -> Vec<&Type> {
-    params.iter().filter(|(n, _)| n != "self").map(|(_, t)| t).collect()
+    params
+        .iter()
+        .filter(|(n, _)| n != "self")
+        .map(|(_, t)| t)
+        .collect()
 }
 
 fn takes_self(params: &[(String, Type)]) -> bool {
@@ -89,12 +96,7 @@ impl Collector<'_> {
         }
     }
 
-    fn flatten_one(
-        &mut self,
-        fqn: &Fqn,
-        visiting: &mut Vec<Fqn>,
-        done: &mut BTreeSet<Fqn>,
-    ) {
+    fn flatten_one(&mut self, fqn: &Fqn, visiting: &mut Vec<Fqn>, done: &mut BTreeSet<Fqn>) {
         if done.contains(fqn) {
             return;
         }
@@ -107,10 +109,7 @@ impl Collector<'_> {
                 .map(|f| format!("'{}'", f.symbol))
                 .chain(std::iter::once(format!("'{}'", fqn.symbol)))
                 .collect();
-            let span = self
-                .package_registry
-                .get_trait(fqn)
-                .map(|t| t.span.clone());
+            let span = self.package_registry.get_trait(fqn).map(|t| t.span.clone());
             if let Some(span) = span {
                 self.diagnostics.error(
                     span,
@@ -158,14 +157,18 @@ impl Collector<'_> {
         let mut closure: Vec<(Fqn, Vec<Type>)> = Vec::new();
         let mut closure_conflicts: BTreeSet<Fqn> = BTreeSet::new();
         let mut inherited_methods: Vec<crate::typechecker::registry::TraitMethodSig> = Vec::new();
-        let mut inherited_properties: Vec<crate::typechecker::registry::TraitPropertySig> = Vec::new();
+        let mut inherited_properties: Vec<crate::typechecker::registry::TraitPropertySig> =
+            Vec::new();
         let mut inherited_assocs: Vec<crate::typechecker::registry::AssociatedTypeSig> = Vec::new();
 
         for super_ref in &sig.supers {
             let Some(super_sig) = self
                 .package_registry
                 .lookup_trait(&super_ref.fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_trait(&super_ref.fqn, &self.package_path))
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_trait(&super_ref.fqn, &self.package_path)
+                })
                 .cloned()
             else {
                 continue;
@@ -193,22 +196,31 @@ impl Collector<'_> {
                 .collect();
 
             // Closure: the direct super plus its (already substituted) closure.
-            let mut add_closure_entry = |entry_fqn: &Fqn, entry_args: Vec<Type>, diagnostics: &mut crate::common::diagnostics::Diagnostics| {
-                if let Some((_, existing_args)) = closure.iter().find(|(f, _)| f == entry_fqn) {
-                    if *existing_args != entry_args && closure_conflicts.insert(entry_fqn.clone()) {
-                        diagnostics.error(
+            let mut add_closure_entry =
+                |entry_fqn: &Fqn,
+                 entry_args: Vec<Type>,
+                 diagnostics: &mut crate::common::diagnostics::Diagnostics| {
+                    if let Some((_, existing_args)) = closure.iter().find(|(f, _)| f == entry_fqn) {
+                        if *existing_args != entry_args
+                            && closure_conflicts.insert(entry_fqn.clone())
+                        {
+                            diagnostics.error(
                             super_ref.span.clone(),
                             format!(
                                 "trait '{}' is inherited more than once with conflicting type arguments",
                                 entry_fqn.symbol,
                             ),
                         );
+                        }
+                        return;
                     }
-                    return;
-                }
-                closure.push((entry_fqn.clone(), entry_args));
-            };
-            add_closure_entry(&super_ref.fqn, super_ref.type_args.clone(), self.diagnostics);
+                    closure.push((entry_fqn.clone(), entry_args));
+                };
+            add_closure_entry(
+                &super_ref.fqn,
+                super_ref.type_args.clone(),
+                self.diagnostics,
+            );
             for (closure_fqn, closure_args) in &super_sig.super_closure {
                 let substituted: Vec<Type> = closure_args
                     .iter()
@@ -222,7 +234,9 @@ impl Collector<'_> {
                 let (origin_fqn, origin_args) = match &m.origin {
                     Some((f, args)) => (
                         f.clone(),
-                        args.iter().map(|t| substitute_trait_type_params(t, &sub)).collect(),
+                        args.iter()
+                            .map(|t| substitute_trait_type_params(t, &sub))
+                            .collect(),
                     ),
                     None => (super_ref.fqn.clone(), super_ref.type_args.clone()),
                 };
@@ -235,7 +249,9 @@ impl Collector<'_> {
                 let (origin_fqn, origin_args) = match &p.origin {
                     Some((f, args)) => (
                         f.clone(),
-                        args.iter().map(|t| substitute_trait_type_params(t, &sub)).collect(),
+                        args.iter()
+                            .map(|t| substitute_trait_type_params(t, &sub))
+                            .collect(),
                     ),
                     None => (super_ref.fqn.clone(), super_ref.type_args.clone()),
                 };
@@ -256,7 +272,9 @@ impl Collector<'_> {
                 let (origin_fqn, origin_args) = match &a.origin {
                     Some((f, args)) => (
                         f.clone(),
-                        args.iter().map(|t| substitute_trait_type_params(t, &sub)).collect(),
+                        args.iter()
+                            .map(|t| substitute_trait_type_params(t, &sub))
+                            .collect(),
                     ),
                     None => (super_ref.fqn.clone(), super_ref.type_args.clone()),
                 };
@@ -271,7 +289,12 @@ impl Collector<'_> {
 
         // Merge inherited members against own declarations (§1.2) and against
         // each other (diamond dedupe / cross-super conflicts).
-        self.merge_inherited(&mut sig, inherited_methods, inherited_properties, inherited_assocs);
+        self.merge_inherited(
+            &mut sig,
+            inherited_methods,
+            inherited_properties,
+            inherited_assocs,
+        );
         sig.super_closure = closure;
         self.package_registry.replace_trait(fqn.clone(), sig);
         done.insert(fqn.clone());
@@ -291,7 +314,11 @@ impl Collector<'_> {
                 .iter()
                 .find(|a| a.origin.is_none() && a.name == inherited.name)
             {
-                let origin = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let origin = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 self.diagnostics.error(
                     own.span.clone(),
                     format!(
@@ -309,8 +336,16 @@ impl Collector<'_> {
                 if existing.origin == inherited.origin {
                     continue; // diamond — one copy suffices
                 }
-                let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let a = existing
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
+                let b = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 self.diagnostics.error(
                     inherited.span.clone(),
                     format!(
@@ -331,7 +366,11 @@ impl Collector<'_> {
                 .position(|m| m.origin.is_none() && m.name == inherited.name)
             {
                 let own = &sig.methods[own_pos];
-                let origin_name = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let origin_name = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 let (own_params, own_result) = canonical_method_signature(own);
                 let (inherited_params, inherited_result) = canonical_method_signature(&inherited);
                 let outcome = if own.type_params.len() != inherited.type_params.len()
@@ -340,8 +379,11 @@ impl Collector<'_> {
                     MergeOutcome::Distinct
                 } else {
                     merge_own_member(
-                        &own_params, &own_result, own.default_source.is_some(),
-                        &inherited_params, &inherited_result,
+                        &own_params,
+                        &own_result,
+                        own.default_source.is_some(),
+                        &inherited_params,
+                        &inherited_result,
                     )
                 };
                 match outcome {
@@ -387,8 +429,16 @@ impl Collector<'_> {
                 }
             }
             // vs own properties (members share one namespace)
-            if sig.properties.iter().any(|p| p.origin.is_none() && p.name == inherited.name) {
-                let origin_name = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+            if sig
+                .properties
+                .iter()
+                .any(|p| p.origin.is_none() && p.name == inherited.name)
+            {
+                let origin_name = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 self.diagnostics.error(
                     sig.span.clone(),
                     format!(
@@ -404,8 +454,16 @@ impl Collector<'_> {
                 .iter()
                 .find(|p| p.origin.is_some() && p.name == inherited.name)
             {
-                let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let a = existing
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
+                let b = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 self.diagnostics.error(
                     inherited.span.clone(),
                     format!(
@@ -419,13 +477,23 @@ impl Collector<'_> {
             if let Some(existing_pos) = sig
                 .methods
                 .iter()
-                .position(|m| m.origin.is_some() && m.name == inherited.name
-                    && m.origin == inherited.origin)
-                .or_else(|| sig.methods.iter().position(|m| m.origin.is_some()
-                    && m.name == inherited.name && same_method_parameters(m, &inherited)))
-                .or_else(|| sig.methods.iter().position(|m| m.origin.is_some()
-                    && m.name == inherited.name
-                    && takes_self(&m.params) != takes_self(&inherited.params)))
+                .position(|m| {
+                    m.origin.is_some() && m.name == inherited.name && m.origin == inherited.origin
+                })
+                .or_else(|| {
+                    sig.methods.iter().position(|m| {
+                        m.origin.is_some()
+                            && m.name == inherited.name
+                            && same_method_parameters(m, &inherited)
+                    })
+                })
+                .or_else(|| {
+                    sig.methods.iter().position(|m| {
+                        m.origin.is_some()
+                            && m.name == inherited.name
+                            && takes_self(&m.params) != takes_self(&inherited.params)
+                    })
+                })
             {
                 let existing = &sig.methods[existing_pos];
                 if existing.origin == inherited.origin {
@@ -451,8 +519,16 @@ impl Collector<'_> {
                                     inherited.default_source.clone();
                             }
                             (true, true) => {
-                                let a = existing.default_source.as_ref().map(|f| f.symbol.0.clone()).unwrap_or_default();
-                                let b = inherited.default_source.as_ref().map(|f| f.symbol.0.clone()).unwrap_or_default();
+                                let a = existing
+                                    .default_source
+                                    .as_ref()
+                                    .map(|f| f.symbol.0.clone())
+                                    .unwrap_or_default();
+                                let b = inherited
+                                    .default_source
+                                    .as_ref()
+                                    .map(|f| f.symbol.0.clone())
+                                    .unwrap_or_default();
                                 self.diagnostics.error(
                                     inherited.span.clone(),
                                     format!(
@@ -480,14 +556,23 @@ impl Collector<'_> {
                 // THIS trait disambiguates (absorbed here).
                 if takes_self(&existing.params) == takes_self(&inherited.params)
                     && same_method_parameters(existing, &inherited)
-                    && canonical_method_signature(existing).1 == canonical_method_signature(&inherited).1
+                    && canonical_method_signature(existing).1
+                        == canonical_method_signature(&inherited).1
                 {
                     if existing.default_source.as_ref() == Some(&sig.fqn) {
                         continue; // this trait's own override covers both
                     }
                     if existing.default_source != inherited.default_source {
-                        let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                        let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                        let a = existing
+                            .origin
+                            .as_ref()
+                            .map(|(f, _)| f.symbol.0.clone())
+                            .unwrap_or_default();
+                        let b = inherited
+                            .origin
+                            .as_ref()
+                            .map(|(f, _)| f.symbol.0.clone())
+                            .unwrap_or_default();
                         self.diagnostics.error(
                             inherited.span.clone(),
                             format!(
@@ -499,11 +584,20 @@ impl Collector<'_> {
                     }
                 }
                 let existing = &sig.methods[existing_pos];
-                let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let a = existing
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
+                let b = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 if takes_self(&existing.params) == takes_self(&inherited.params)
                     && same_method_parameters(existing, &inherited)
-                    && canonical_method_signature(existing).1 != canonical_method_signature(&inherited).1
+                    && canonical_method_signature(existing).1
+                        != canonical_method_signature(&inherited).1
                 {
                     self.diagnostics.error(
                         inherited.span.clone(),
@@ -530,7 +624,6 @@ impl Collector<'_> {
                     );
                     continue;
                 }
-
             }
             sig.methods.push(inherited);
         }
@@ -542,10 +635,17 @@ impl Collector<'_> {
                 .position(|p| p.origin.is_none() && p.name == inherited.name)
             {
                 let own = &sig.properties[own_pos];
-                let origin_name = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let origin_name = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 match merge_own_member(
-                    &own.params, &own.return_type, own.default_source.is_some(),
-                    &inherited.params, &inherited.return_type,
+                    &own.params,
+                    &own.return_type,
+                    own.default_source.is_some(),
+                    &inherited.params,
+                    &inherited.return_type,
                 ) {
                     MergeOutcome::Override => {
                         sig.properties[own_pos].origin = inherited.origin.clone();
@@ -584,8 +684,16 @@ impl Collector<'_> {
                     MergeOutcome::Distinct => {}
                 }
             }
-            if sig.methods.iter().any(|m| m.origin.is_none() && m.name == inherited.name) {
-                let origin_name = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+            if sig
+                .methods
+                .iter()
+                .any(|m| m.origin.is_none() && m.name == inherited.name)
+            {
+                let origin_name = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 self.diagnostics.error(
                     sig.span.clone(),
                     format!(
@@ -601,8 +709,16 @@ impl Collector<'_> {
                 .iter()
                 .find(|m| m.origin.is_some() && m.name == inherited.name)
             {
-                let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                let a = existing
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
+                let b = inherited
+                    .origin
+                    .as_ref()
+                    .map(|(f, _)| f.symbol.0.clone())
+                    .unwrap_or_default();
                 self.diagnostics.error(
                     inherited.span.clone(),
                     format!(
@@ -638,8 +754,16 @@ impl Collector<'_> {
                                     inherited.default_source.clone();
                             }
                             (true, true) => {
-                                let a = existing.default_source.as_ref().map(|f| f.symbol.0.clone()).unwrap_or_default();
-                                let b = inherited.default_source.as_ref().map(|f| f.symbol.0.clone()).unwrap_or_default();
+                                let a = existing
+                                    .default_source
+                                    .as_ref()
+                                    .map(|f| f.symbol.0.clone())
+                                    .unwrap_or_default();
+                                let b = inherited
+                                    .default_source
+                                    .as_ref()
+                                    .map(|f| f.symbol.0.clone())
+                                    .unwrap_or_default();
                                 self.diagnostics.error(
                                     inherited.span.clone(),
                                     format!(
@@ -664,8 +788,16 @@ impl Collector<'_> {
                 // with two entries that name-keyed lookups resolve
                 // first-wins (and impl-completeness would accept only one).
                 if takes_self(&existing.params) != takes_self(&inherited.params) {
-                    let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                    let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                    let a = existing
+                        .origin
+                        .as_ref()
+                        .map(|(f, _)| f.symbol.0.clone())
+                        .unwrap_or_default();
+                    let b = inherited
+                        .origin
+                        .as_ref()
+                        .map(|(f, _)| f.symbol.0.clone())
+                        .unwrap_or_default();
                     self.diagnostics.error(
                         inherited.span.clone(),
                         format!(
@@ -680,8 +812,16 @@ impl Collector<'_> {
                         continue;
                     }
                     if existing.default_source != inherited.default_source {
-                        let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                        let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                        let a = existing
+                            .origin
+                            .as_ref()
+                            .map(|(f, _)| f.symbol.0.clone())
+                            .unwrap_or_default();
+                        let b = inherited
+                            .origin
+                            .as_ref()
+                            .map(|(f, _)| f.symbol.0.clone())
+                            .unwrap_or_default();
                         self.diagnostics.error(
                             inherited.span.clone(),
                             format!(
@@ -694,8 +834,16 @@ impl Collector<'_> {
                 }
                 let existing = &sig.properties[existing_pos];
                 if existing.return_type != inherited.return_type {
-                    let a = existing.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
-                    let b = inherited.origin.as_ref().map(|(f, _)| f.symbol.0.clone()).unwrap_or_default();
+                    let a = existing
+                        .origin
+                        .as_ref()
+                        .map(|(f, _)| f.symbol.0.clone())
+                        .unwrap_or_default();
+                    let b = inherited
+                        .origin
+                        .as_ref()
+                        .map(|(f, _)| f.symbol.0.clone())
+                        .unwrap_or_default();
                     self.diagnostics.error(
                         inherited.span.clone(),
                         format!(

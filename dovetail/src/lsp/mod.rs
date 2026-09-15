@@ -51,10 +51,10 @@ impl LogLevel {
     /// Determine the log level from CLI verbose flag and DOVETAIL_LSP_LOG env var.
     /// CLI --verbose overrides to Debug. Env var takes precedence if set.
     fn resolve(verbose: bool) -> Self {
-        if let Ok(val) = std::env::var("DOVETAIL_LSP_LOG") {
-            if let Some(level) = Self::from_env(&val) {
-                return level;
-            }
+        if let Ok(val) = std::env::var("DOVETAIL_LSP_LOG")
+            && let Some(level) = Self::from_env(&val)
+        {
+            return level;
         }
         if verbose { Self::Debug } else { Self::Warn }
     }
@@ -307,11 +307,11 @@ impl LanguageServer for DovetailLanguageServer {
         );
 
         // Extract workspace root
-        if let Some(root_uri) = params.root_uri {
-            if let Ok(path) = root_uri.to_file_path() {
-                let mut root = self.state.workspace_root.write().unwrap();
-                *root = Some(state::physical_path(&path));
-            }
+        if let Some(root_uri) = params.root_uri
+            && let Ok(path) = root_uri.to_file_path()
+        {
+            let mut root = self.state.workspace_root.write().unwrap();
+            *root = Some(state::physical_path(&path));
         }
 
         // Emit prelude sources to disk for goto-definition
@@ -374,7 +374,9 @@ impl LanguageServer for DovetailLanguageServer {
                             .read()
                             .unwrap()
                             .as_ref()
-                            .map(|root| format!("{}/{{Dovetail.toml,Dovetail.lock}}", root.display()))
+                            .map(|root| {
+                                format!("{}/{{Dovetail.toml,Dovetail.lock}}", root.display())
+                            })
                             .unwrap_or_else(|| "{Dovetail.toml,Dovetail.lock}".into()),
                     ),
                     kind: None,
@@ -1043,10 +1045,10 @@ impl LanguageServer for DovetailLanguageServer {
         // Organize imports code action (always available)
         {
             let scope_info = self.state.get_import_scope_for_file(uri);
-            if let Some((_, source_file, _)) = scope_info {
-                if let Some(action) = code_actions::organize_imports_action(&source_file, uri) {
-                    actions.push(action);
-                }
+            if let Some((_, source_file, _)) = scope_info
+                && let Some(action) = code_actions::organize_imports_action(&source_file, uri)
+            {
+                actions.push(action);
             }
         }
 
@@ -1553,13 +1555,12 @@ impl DovetailLanguageServer {
             None => {
                 // Fall back to text-based analysis: check if the text before the dot
                 // is an enum type, module, or package name.
-                if let Some(ident) = self.get_identifier_before_dot(uri, pos) {
-                    if let Some((ref scope, _, ref pkg_path)) = scope_info {
-                        let items =
-                            completion::qualified_dot_completion(&ident, reg, scope, pkg_path);
-                        if !items.is_empty() {
-                            return Ok(Some(CompletionResponse::Array(items)));
-                        }
+                if let Some(ident) = self.get_identifier_before_dot(uri, pos)
+                    && let Some((ref scope, _, ref pkg_path)) = scope_info
+                {
+                    let items = completion::qualified_dot_completion(&ident, reg, scope, pkg_path);
+                    if !items.is_empty() {
+                        return Ok(Some(CompletionResponse::Array(items)));
                     }
                 }
                 return Ok(None);
@@ -1759,7 +1760,8 @@ fn uri_to_file_path(uri: &Url, workspace_root: &std::path::Path) -> String {
             if relative.starts_with(std::path::Path::new(".dovetail").join("generated")) {
                 // Generated binding spans use portable separators, while ordinary
                 // source spans retain the platform spelling used by discovery.
-                relative.components()
+                relative
+                    .components()
                     .map(|part| part.as_os_str().to_string_lossy())
                     .collect::<Vec<_>>()
                     .join("/")

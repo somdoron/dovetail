@@ -275,9 +275,7 @@ fn collect_strings_from_pattern(pattern: &TypedPattern, strings: &mut Vec<String
                 collect_strings_from_pattern(sub_pat, strings);
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for field in field_patterns {
                 collect_strings_from_pattern(&field.pattern, strings);
             }

@@ -181,19 +181,35 @@ fn class_receiver(class: &ClassTypeSignature, parameters: &BTreeMap<String, Type
 
 fn has_member_kind_conflict(class: &ClassTypeSignature, candidate: &SuppliedDefault) -> bool {
     let expected = &candidate.definition;
-    let generic_conflict = class.generic_instance_methods.get(&candidate.name)
-        .into_iter().flatten().any(|member| {
-            if member.is_property == expected.is_property { return false; }
+    let generic_conflict = class
+        .generic_instance_methods
+        .get(&candidate.name)
+        .into_iter()
+        .flatten()
+        .any(|member| {
+            if member.is_property == expected.is_property {
+                return false;
+            }
             let mut expected = expected.clone();
             expected.is_property = member.is_property;
             generic_signature_matches(member, &expected)
         });
-    generic_conflict || (expected.method_type_params.is_empty()
-        && class.instance_methods.get(&candidate.name).into_iter().flatten().any(|member| {
-            member.is_property != expected.is_property && member.params.len() == expected.params.len()
-                && member.params.iter().zip(&expected.params).all(|((_, actual), (_, expected))|
-                    crate::typechecker::subtyping::identical(actual, expected))
-        }))
+    generic_conflict
+        || (expected.method_type_params.is_empty()
+            && class
+                .instance_methods
+                .get(&candidate.name)
+                .into_iter()
+                .flatten()
+                .any(|member| {
+                    member.is_property != expected.is_property
+                        && member.params.len() == expected.params.len()
+                        && member.params.iter().zip(&expected.params).all(
+                            |((_, actual), (_, expected))| {
+                                crate::typechecker::subtyping::identical(actual, expected)
+                            },
+                        )
+                }))
 }
 
 fn has_explicit_member(class: &ClassTypeSignature, candidate: &SuppliedDefault) -> bool {

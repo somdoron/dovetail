@@ -23,7 +23,9 @@ pub fn collect_record_type_defs(
                     package: package_path.clone(),
                     symbol: SymbolName(rec.name.value.clone()),
                 };
-                if let Some(info) = registry.lookup_record_type(&fqn, package_path, &rec.name.span.file) {
+                if let Some(info) =
+                    registry.lookup_record_type(&fqn, package_path, &rec.name.span.file)
+                {
                     // Use the base mangled name (no type args) as the key.
                     // For non-generic records this is the only entry.
                     // For generic records this is the template entry.

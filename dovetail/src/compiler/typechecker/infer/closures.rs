@@ -55,25 +55,24 @@ impl Inference<'_> {
                 None => {
                     self.diagnostics.error(
                         span.clone(),
-                        "async closure requires expected type context to determine return type".to_string(),
+                        "async closure requires expected type context to determine return type"
+                            .to_string(),
                     );
                     (None, None)
                 }
-                Some(ret_ty) => {
-                    match self.resolve_awaitable_value_type(ret_ty) {
-                        Some(inner_ty) => (Some(inner_ty), Some(ret_ty.clone())),
-                        None => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                format!(
-                                    "async closure return type '{}' does not implement Awaitable",
-                                    ret_ty
-                                ),
-                            );
-                            (None, None)
-                        }
+                Some(ret_ty) => match self.resolve_awaitable_value_type(ret_ty) {
+                    Some(inner_ty) => (Some(inner_ty), Some(ret_ty.clone())),
+                    None => {
+                        self.diagnostics.error(
+                            span.clone(),
+                            format!(
+                                "async closure return type '{}' does not implement Awaitable",
+                                ret_ty
+                            ),
+                        );
+                        (None, None)
                     }
-                }
+                },
             }
         } else {
             (None, None)
@@ -83,7 +82,8 @@ impl Inference<'_> {
         // return type. Keep known input context while inferring the body result.
         let has_unresolved_ret = expected_ret_type.as_ref().is_some_and(|ret| {
             ret.contains_type_variable()
-                || self.unresolved_method_type_params
+                || self
+                    .unresolved_method_type_params
                     .iter()
                     .any(|n| ret.contains_type_parameter_named(n))
         });
@@ -104,22 +104,22 @@ impl Inference<'_> {
         };
 
         // Validate param count if we have expected types
-        if let Some(ref expected_params) = expected_param_types {
-            if expected_params.len() != params.len() {
-                self.diagnostics.error(
-                    span.clone(),
-                    format!(
-                        "closure has {} parameters, but expected type has {}",
-                        params.len(),
-                        expected_params.len()
-                    ),
-                );
-                return TypedExpr {
-                    kind: TypedExprKind::UnitLiteral,
-                    ty: Type::Error,
-                    span: span.clone(),
-                };
-            }
+        if let Some(ref expected_params) = expected_param_types
+            && expected_params.len() != params.len()
+        {
+            self.diagnostics.error(
+                span.clone(),
+                format!(
+                    "closure has {} parameters, but expected type has {}",
+                    params.len(),
+                    expected_params.len()
+                ),
+            );
+            return TypedExpr {
+                kind: TypedExprKind::UnitLiteral,
+                ty: Type::Error,
+                span: span.clone(),
+            };
         }
 
         // Resolve each param type: annotation > expected > error
@@ -128,18 +128,20 @@ impl Inference<'_> {
         // Skip expected param types that contain unresolved method type params.
         let mut typed_params = Vec::new();
         let mut param_types = Vec::new();
-        let mut destructure_patterns: Vec<(crate::parser::ast::Pattern, Type, crate::common::span::Span)> = Vec::new();
+        let mut destructure_patterns: Vec<(
+            crate::parser::ast::Pattern,
+            Type,
+            crate::common::span::Span,
+        )> = Vec::new();
         let mut synthetic_counter = 0u32;
         for (i, param) in params.iter().enumerate() {
-            let expected_ty = expected_param_types
-                .as_ref()
-                .map(|p| &p[i])
-                .filter(|t| {
-                    !t.contains_type_variable()
-                        && !self.unresolved_method_type_params
-                            .iter()
-                            .any(|n| t.contains_type_parameter_named(n))
-                });
+            let expected_ty = expected_param_types.as_ref().map(|p| &p[i]).filter(|t| {
+                !t.contains_type_variable()
+                    && !self
+                        .unresolved_method_type_params
+                        .iter()
+                        .any(|n| t.contains_type_parameter_named(n))
+            });
             match &param.kind {
                 ClosureParamKind::Name(name) => {
                     let ty = match (&param.type_annotation, expected_ty) {
@@ -211,8 +213,7 @@ impl Inference<'_> {
 
         // Process destructure patterns: infer patterns and define bindings in scope
         let mut destructure_stmts: Vec<TypedExpr> = Vec::new();
-        let mut destructure_idx = 0usize;
-        for (pattern, ty, pat_span) in &destructure_patterns {
+        for (destructure_idx, (pattern, ty, pat_span)) in destructure_patterns.iter().enumerate() {
             let typed_pattern = match ty {
                 Type::Tuple(elem_types, mn) => {
                     self.infer_tuple_destructure_pattern(pattern, elem_types, mn, ty, pat_span)
@@ -235,7 +236,6 @@ impl Inference<'_> {
                 .filter(|p| p.name.0.starts_with("__destructured_"))
                 .nth(destructure_idx)
                 .unwrap();
-            destructure_idx += 1;
             destructure_stmts.push(TypedExpr {
                 kind: TypedExprKind::LetDestructure {
                     pattern: typed_pattern,
@@ -258,44 +258,43 @@ impl Inference<'_> {
         // use a two-pass approach:
         //   1. Dry run: infer body to determine return type and bind U. Discard result.
         //   2. Real run: re-infer body with concrete types so await nodes get correct methods.
-        let (body_expected_type_override, awaitable_ret_type) =
-            if is_async && has_unresolved_ret {
-                if let (Some(body_exp), Some(awaitable_ty)) =
-                    (body_expected_type_override, awaitable_ret_type)
-                {
-                    // --- Dry run ---
-                    self.push_scope();
-                    for tp in &typed_params {
-                        self.define_variable(tp.name.clone(), tp.ty.clone(), false);
-                    }
-                    let saved_expected = self.expected_type.take();
-                    let prev_async_return = self.async_return_type.take();
-                    self.expected_type = Some(body_exp.clone());
-                    self.async_return_type = Some(awaitable_ty.clone());
-                    let dry_body = self.infer_expr(body);
-                    let body_return_type = dry_body.ty.clone();
-                    self.async_return_type = prev_async_return;
-                    self.expected_type = saved_expected;
-                    self.pop_scope();
-
-                    // Bind type variables from body return type
-                    let concrete_awaitable = if !body_return_type.is_error() {
-                        let mut sub = TypeParamSubstitution::new();
-                        sub.unify(&body_exp, &body_return_type);
-                        apply_substitution(&sub, &awaitable_ty)
-                    } else {
-                        awaitable_ty
-                    };
-
-                    // Compute concrete inner type for the real pass
-                    let concrete_inner = self.resolve_awaitable_value_type(&concrete_awaitable);
-                    (concrete_inner, Some(concrete_awaitable))
-                } else {
-                    (None, None)
-                }
-            } else {
+        let (body_expected_type_override, awaitable_ret_type) = if is_async && has_unresolved_ret {
+            if let (Some(body_exp), Some(awaitable_ty)) =
                 (body_expected_type_override, awaitable_ret_type)
-            };
+            {
+                // --- Dry run ---
+                self.push_scope();
+                for tp in &typed_params {
+                    self.define_variable(tp.name.clone(), tp.ty.clone(), false);
+                }
+                let saved_expected = self.expected_type.take();
+                let prev_async_return = self.async_return_type.take();
+                self.expected_type = Some(body_exp.clone());
+                self.async_return_type = Some(awaitable_ty.clone());
+                let dry_body = self.infer_expr(body);
+                let body_return_type = dry_body.ty.clone();
+                self.async_return_type = prev_async_return;
+                self.expected_type = saved_expected;
+                self.pop_scope();
+
+                // Bind type variables from body return type
+                let concrete_awaitable = if !body_return_type.is_error() {
+                    let mut sub = TypeParamSubstitution::new();
+                    sub.unify(&body_exp, &body_return_type);
+                    apply_substitution(&sub, &awaitable_ty)
+                } else {
+                    awaitable_ty
+                };
+
+                // Compute concrete inner type for the real pass
+                let concrete_inner = self.resolve_awaitable_value_type(&concrete_awaitable);
+                (concrete_inner, Some(concrete_awaitable))
+            } else {
+                (None, None)
+            }
+        } else {
+            (body_expected_type_override, awaitable_ret_type)
+        };
 
         // --- Real pass (or only pass when types are already concrete) ---
 
@@ -336,20 +335,19 @@ impl Inference<'_> {
         } else {
             &expected_ret_type
         };
-        if let Some(expected_ret) = check_expected {
-            if !body_return_type.is_error()
-                && !expected_ret.contains_error()
-                && !has_unresolved_ret
-                && !self.is_assignable(expected_ret, &body_return_type)
-            {
-                self.diagnostics.error(
-                    span.clone(),
-                    format!(
-                        "closure return type '{}' is not assignable to expected return type '{}'",
-                        body_return_type, expected_ret
-                    ),
-                );
-            }
+        if let Some(expected_ret) = check_expected
+            && !body_return_type.is_error()
+            && !expected_ret.contains_error()
+            && !has_unresolved_ret
+            && !self.is_assignable(expected_ret, &body_return_type)
+        {
+            self.diagnostics.error(
+                span.clone(),
+                format!(
+                    "closure return type '{}' is not assignable to expected return type '{}'",
+                    body_return_type, expected_ret
+                ),
+            );
         }
 
         self.pop_scope();
@@ -369,20 +367,18 @@ impl Inference<'_> {
         };
 
         // For async closures, wrap body in AsyncBlock and use Awaitable return type
-        if is_async {
-            if let Some(ref awaitable_ty) = awaitable_ret_type {
-                let wrapped_body = self.wrap_async_body(final_body, awaitable_ty, true);
-                let fn_type = Type::Function(param_types, Box::new(awaitable_ty.clone()));
-                return TypedExpr {
-                    kind: TypedExprKind::Closure {
-                        params: typed_params,
-                        body: Box::new(wrapped_body),
-                        captures: Vec::new(),
-                    },
-                    ty: fn_type,
-                    span: span.clone(),
-                };
-            }
+        if is_async && let Some(ref awaitable_ty) = awaitable_ret_type {
+            let wrapped_body = self.wrap_async_body(final_body, awaitable_ty, true);
+            let fn_type = Type::Function(param_types, Box::new(awaitable_ty.clone()));
+            return TypedExpr {
+                kind: TypedExprKind::Closure {
+                    params: typed_params,
+                    body: Box::new(wrapped_body),
+                    captures: Vec::new(),
+                },
+                ty: fn_type,
+                span: span.clone(),
+            };
         }
 
         // Widen the closure's return type to the expected one when the body is

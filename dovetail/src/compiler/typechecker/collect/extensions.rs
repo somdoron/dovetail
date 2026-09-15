@@ -88,7 +88,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &ext.doc_comment {
-            self.package_registry.register_doc_comment(ext_fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(ext_fqn.clone(), doc.clone());
         }
 
         let mut methods = Vec::new();
@@ -103,13 +104,16 @@ impl Collector<'_> {
                 .collect();
 
             // Resolve method-level trait bounds from where clause
-            let all_method_type_params: Vec<TypeParamName> = type_params.iter()
+            let all_method_type_params: Vec<TypeParamName> = type_params
+                .iter()
                 .chain(method_type_params.iter())
                 .cloned()
                 .collect();
             let mut method_trait_bounds = self.resolve_method_trait_bounds(
-                &method.where_clause, &all_method_type_params,
-                &method_type_params, ext_trait_bounds,
+                &method.where_clause,
+                &all_method_type_params,
+                &method_type_params,
+                ext_trait_bounds,
             );
             method_trait_bounds.merge(ext_trait_bounds);
 
@@ -170,10 +174,8 @@ impl Collector<'_> {
                 .params
                 .iter()
                 .map(|p| {
-                    let ty = self.resolve_type_expr_with_type_params(
-                        &p.type_annotation,
-                        type_params_map,
-                    );
+                    let ty = self
+                        .resolve_type_expr_with_type_params(&p.type_annotation, type_params_map);
                     (p.name.value.clone(), ty)
                 })
                 .collect();
@@ -199,7 +201,10 @@ impl Collector<'_> {
         if self
             .package_registry
             .lookup_trait(&ext_fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_trait(&ext_fqn, &self.package_path))
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_trait(&ext_fqn, &self.package_path)
+            })
             .is_some()
         {
             // A trait claims the `Name.member(...)` explicit-call form, so an
@@ -212,7 +217,10 @@ impl Collector<'_> {
                 ),
             );
         }
-        if self.package_registry.has_extension_block_for_type(&ext_fqn, for_type) {
+        if self
+            .package_registry
+            .has_extension_block_for_type(&ext_fqn, for_type)
+        {
             self.diagnostics.error(
                 ext.name.span.clone(),
                 format!(
@@ -223,17 +231,18 @@ impl Collector<'_> {
             return;
         }
 
-        self.package_registry.register_extension_block(ExtensionBlockSignature {
-            ext_fqn,
-            for_type: for_type.clone(),
-            type_params: type_params.to_vec(),
-            trait_bounds: ext_trait_bounds.clone(),
-            methods,
-            properties,
-            span: ext.name.span.clone(),
-            source_file: ext.name.span.file.clone(),
-            package: self.package_path.clone(),
-        });
+        self.package_registry
+            .register_extension_block(ExtensionBlockSignature {
+                ext_fqn,
+                for_type: for_type.clone(),
+                type_params: type_params.to_vec(),
+                trait_bounds: ext_trait_bounds.clone(),
+                methods,
+                properties,
+                span: ext.name.span.clone(),
+                source_file: ext.name.span.file.clone(),
+                package: self.package_path.clone(),
+            });
     }
 
     /// Validate that the extension's where clause covers all trait bounds
@@ -255,7 +264,10 @@ impl Collector<'_> {
         let record_sig = self
             .package_registry
             .lookup_generic_record_by_fqn(fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_generic_record_by_fqn(fqn, &self.package_path));
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_generic_record_by_fqn(fqn, &self.package_path)
+            });
         let record_sig = match record_sig {
             Some(sig) => sig.clone(),
             None => return,
@@ -283,19 +295,23 @@ impl Collector<'_> {
             let ext_bounds = ext_trait_bounds.get(ext_tp_name);
             for required_bound in required_bounds {
                 let covered = ext_bounds
-                    .map(|bounds| bounds.iter().any(|bound| match (required_bound, bound) {
-                        (TraitBound::IsClass, TraitBound::IsClass) => true,
-                        (TraitBound::IsClass, TraitBound::Named(actual)) => {
-                            actual.is_class_bound()
-                        }
-                        (TraitBound::Named(required), TraitBound::Named(actual)) => {
-                            actual.trait_fqn == required.trait_fqn
-                        }
-                        _ => false,
-                    }))
+                    .map(|bounds| {
+                        bounds.iter().any(|bound| match (required_bound, bound) {
+                            (TraitBound::IsClass, TraitBound::IsClass) => true,
+                            (TraitBound::IsClass, TraitBound::Named(actual)) => {
+                                actual.is_class_bound()
+                            }
+                            (TraitBound::Named(required), TraitBound::Named(actual)) => {
+                                actual.trait_fqn == required.trait_fqn
+                            }
+                            _ => false,
+                        })
+                    })
                     .unwrap_or(false);
                 if !covered {
-                    let trait_name = required_bound.named().map_or("class", |b| b.trait_fqn.symbol.0.as_str());
+                    let trait_name = required_bound
+                        .named()
+                        .map_or("class", |b| b.trait_fqn.symbol.0.as_str());
                     self.diagnostics.error(
                         ext.name.span.clone(),
                         format!(
@@ -321,7 +337,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &ext.doc_comment {
-            self.package_registry.register_doc_comment(ext_fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(ext_fqn.clone(), doc.clone());
         }
 
         let mut methods = Vec::new();
@@ -401,7 +418,10 @@ impl Collector<'_> {
         if self
             .package_registry
             .lookup_trait(&ext_fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_trait(&ext_fqn, &self.package_path))
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_trait(&ext_fqn, &self.package_path)
+            })
             .is_some()
         {
             // A trait claims the `Name.member(...)` explicit-call form, so an
@@ -414,7 +434,10 @@ impl Collector<'_> {
                 ),
             );
         }
-        if self.package_registry.has_extension_block_for_type(&ext_fqn, for_type) {
+        if self
+            .package_registry
+            .has_extension_block_for_type(&ext_fqn, for_type)
+        {
             self.diagnostics.error(
                 ext.name.span.clone(),
                 format!(
@@ -425,16 +448,17 @@ impl Collector<'_> {
             return;
         }
 
-        self.package_registry.register_extension_block(ExtensionBlockSignature {
-            ext_fqn,
-            for_type: for_type.clone(),
-            type_params: vec![],
-            trait_bounds: TraitBounds::empty(),
-            methods,
-            properties,
-            span: ext.name.span.clone(),
-            source_file: ext.name.span.file.clone(),
-            package: self.package_path.clone(),
-        });
+        self.package_registry
+            .register_extension_block(ExtensionBlockSignature {
+                ext_fqn,
+                for_type: for_type.clone(),
+                type_params: vec![],
+                trait_bounds: TraitBounds::empty(),
+                methods,
+                properties,
+                span: ext.name.span.clone(),
+                source_file: ext.name.span.file.clone(),
+                package: self.package_path.clone(),
+            });
     }
 }

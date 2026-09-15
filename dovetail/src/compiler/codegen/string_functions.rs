@@ -1,16 +1,16 @@
 use wasm_encoder::{BlockType, Function, Instruction, RefType, ValType};
 
 use super::p3_imports::{
-    FUNC_P3_CLI_STDERR_STREAM_NEW_0_WRITE_VIA_STREAM, FUNC_P3_CLI_STDERR_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDERR_FUTURE_DROP_READABLE_1_WRITE_VIA_STREAM, FUNC_P3_CLI_STDERR_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_STREAM_NEW_0_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_FUTURE_DROP_READABLE_1_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDERR_STREAM_NEW_0_WRITE_VIA_STREAM, FUNC_P3_CLI_STDERR_WRITE_VIA_STREAM,
     FUNC_P3_CLI_STDOUT_ASYNC_STREAM_WRITE_0_WRITE_VIA_STREAM,
-    FUNC_P3_CLI_STDOUT_FUTURE_DROP_READABLE_1_WRITE_VIA_STREAM, FUNC_P3_CLI_STDOUT_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_FUTURE_DROP_READABLE_1_WRITE_VIA_STREAM,
+    FUNC_P3_CLI_STDOUT_STREAM_NEW_0_WRITE_VIA_STREAM, FUNC_P3_CLI_STDOUT_WRITE_VIA_STREAM,
     FUNC_P3_ROOT_WAITABLE_JOIN, FUNC_P3_ROOT_WAITABLE_SET_NEW, FUNC_P3_ROOT_WAITABLE_SET_WAIT,
 };
 use super::{
-    GLOBAL_FLUSH_SET, GLOBAL_STDERR_WRITABLE,
-    GLOBAL_STDOUT_WRITABLE, STRING_STRUCT_TYPE_INDEX,
+    GLOBAL_FLUSH_SET, GLOBAL_STDERR_WRITABLE, GLOBAL_STDOUT_WRITABLE, STRING_STRUCT_TYPE_INDEX,
     U8_BACKING_TYPE_INDEX,
 };
 
@@ -37,11 +37,17 @@ pub(super) fn generate_string_eq() -> Function {
 
     // Extract backing arrays
     f.instruction(&Instruction::LocalGet(str_a));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(arr_a));
 
     f.instruction(&Instruction::LocalGet(str_b));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(arr_b));
 
     // Fast path: compare lengths
@@ -153,20 +159,32 @@ pub(super) fn generate_string_concat() -> Function {
 
     // Extract backing arrays
     f.instruction(&Instruction::LocalGet(str_a));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(arr_a));
 
     f.instruction(&Instruction::LocalGet(str_b));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(arr_b));
 
     // Extract UTF-8 metadata
     f.instruction(&Instruction::LocalGet(str_a));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 1,
+    });
     f.instruction(&Instruction::LocalSet(utf8_a));
 
     f.instruction(&Instruction::LocalGet(str_b));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 1,
+    });
     f.instruction(&Instruction::LocalSet(utf8_b));
 
     // len_a = arr_a.len
@@ -265,11 +283,17 @@ pub(super) fn generate_string_cmp() -> Function {
 
     // Extract backing arrays
     f.instruction(&Instruction::LocalGet(str_a));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(arr_a));
 
     f.instruction(&Instruction::LocalGet(str_b));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(arr_b));
 
     // len_a = arr_a.len
@@ -995,7 +1019,9 @@ fn generate_write_string_to_stream(
         }));
     }
 
-    emit_flush_write(&mut f, target, ptr, byte_len, extra, evtbuf, wptr, wlen, tmp, pair);
+    emit_flush_write(
+        &mut f, target, ptr, byte_len, extra, evtbuf, wptr, wlen, tmp, pair,
+    );
 
     // The write has fully drained by here, so the buffer is dead.
     f.instruction(&Instruction::LocalGet(ptr));
@@ -1053,11 +1079,17 @@ pub(super) fn generate_string_get_char() -> Function {
 
     // Extract backing and utf8_field
     f.instruction(&Instruction::LocalGet(s));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 0 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 0,
+    });
     f.instruction(&Instruction::LocalSet(backing));
 
     f.instruction(&Instruction::LocalGet(s));
-    f.instruction(&Instruction::StructGet { struct_type_index: STRING_STRUCT_TYPE_INDEX, field_index: 1 });
+    f.instruction(&Instruction::StructGet {
+        struct_type_index: STRING_STRUCT_TYPE_INDEX,
+        field_index: 1,
+    });
     f.instruction(&Instruction::LocalSet(utf8_field));
 
     // utf8_len = utf8_field & 0x7FFFFFFF
@@ -1414,7 +1446,18 @@ pub(super) fn generate_panic_with_message(pinned_alloc: u32) -> Function {
 
     // Flush "Panic: " + message + newline (7 + byte_len + 1 bytes at ptr)
     // to stderr, then trap.
-    emit_flush_write(&mut f, &STDERR_TARGET, ptr, byte_len, 8, evtbuf, wptr, wlen, tmp, pair);
+    emit_flush_write(
+        &mut f,
+        &STDERR_TARGET,
+        ptr,
+        byte_len,
+        8,
+        evtbuf,
+        wptr,
+        wlen,
+        tmp,
+        pair,
+    );
 
     // Trap
     f.instruction(&Instruction::Unreachable);

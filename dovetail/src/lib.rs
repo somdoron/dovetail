@@ -11,11 +11,11 @@ pub mod test_runner;
 
 // Re-export compiler sub-modules and pipeline at crate root for convenience
 pub use compiler::{
-    capture, codegen, coerce, coerce_byname, desugar, layout, lexer, macros, monomorphize, parser,
-    typechecker,
+    BuildMode, CompileResult, ProjectResult, TestExportInfo, WorkspaceResult, build_project,
+    build_workspace, check, compile, compile_for_test, compile_for_test_with_derives,
+    prelude_sources,
 };
 pub use compiler::{
-    BuildMode, CompileResult, ProjectResult, TestExportInfo, WorkspaceResult,
-    build_project, build_workspace, check, compile, compile_for_test,
-    compile_for_test_with_derives, prelude_sources,
+    capture, codegen, coerce, coerce_byname, desugar, layout, lexer, macros, monomorphize, parser,
+    typechecker,
 };

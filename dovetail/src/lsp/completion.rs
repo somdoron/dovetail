@@ -101,7 +101,14 @@ pub fn scope_completion(
     }
 
     // Same-package types (records, enums, classes, traits, newtypes, type aliases)
-    add_type_completions(registry, file_package, &prefix_lower, "1", &mut seen, &mut items);
+    add_type_completions(
+        registry,
+        file_package,
+        &prefix_lower,
+        "1",
+        &mut seen,
+        &mut items,
+    );
 
     // Imported symbols
     for import in &import_scope.imports {
@@ -123,8 +130,15 @@ pub fn scope_completion(
                 } else if registry.get_class_type(fqn).is_some() {
                     (CompletionItemKind::CLASS, Some(format!("class {name}")))
                 } else if let Some(trait_sig) = registry.get_trait(fqn) {
-                    let keyword = if trait_sig.is_interface { "interface" } else { "trait" };
-                    (CompletionItemKind::INTERFACE, Some(format!("{keyword} {name}")))
+                    let keyword = if trait_sig.is_interface {
+                        "interface"
+                    } else {
+                        "trait"
+                    };
+                    (
+                        CompletionItemKind::INTERFACE,
+                        Some(format!("{keyword} {name}")),
+                    )
                 } else {
                     (CompletionItemKind::VALUE, None)
                 }
@@ -164,7 +178,14 @@ pub fn scope_completion(
             });
         }
 
-        add_type_completions(registry, &prelude_pkg, &prefix_lower, "3", &mut seen, &mut items);
+        add_type_completions(
+            registry,
+            &prelude_pkg,
+            &prefix_lower,
+            "3",
+            &mut seen,
+            &mut items,
+        );
     }
 
     items
@@ -202,44 +223,45 @@ pub fn dot_completion(
             add_class_members(fqn, registry, &mut items);
         }
         Type::Newtype(fqn, _) => {
-            if let Some(sig) = registry.get_newtype_type(fqn) {
-                if !sig.inner_private {
-                    items.push(CompletionItem {
-                        label: "value".to_string(),
-                        kind: Some(CompletionItemKind::PROPERTY),
-                        detail: Some(format!("{}", sig.inner_type)),
-                        sort_text: Some("0value".to_string()),
-                        ..Default::default()
-                    });
-                }
+            if let Some(sig) = registry.get_newtype_type(fqn)
+                && !sig.inner_private
+            {
+                items.push(CompletionItem {
+                    label: "value".to_string(),
+                    kind: Some(CompletionItemKind::PROPERTY),
+                    detail: Some(format!("{}", sig.inner_type)),
+                    sort_text: Some("0value".to_string()),
+                    ..Default::default()
+                });
             }
         }
         Type::InterfaceObject { traits, .. } => {
             for component in traits {
-            if let Some(trait_sig) = registry.get_trait(&component.trait_fqn) {
-                for method in &trait_sig.methods {
-                    let detail = format_trait_method_detail(&method.params, &method.return_type);
-                    let snippet = make_method_snippet(&method.name, &method.params);
-                    items.push(CompletionItem {
-                        label: method.name.clone(),
-                        kind: Some(CompletionItemKind::METHOD),
-                        detail: Some(detail),
-                        sort_text: Some(format!("0{}", method.name)),
-                        insert_text: Some(snippet),
-                        insert_text_format: Some(InsertTextFormat::SNIPPET),
-                        ..Default::default()
-                    });
+                if let Some(trait_sig) = registry.get_trait(&component.trait_fqn) {
+                    for method in &trait_sig.methods {
+                        let detail =
+                            format_trait_method_detail(&method.params, &method.return_type);
+                        let snippet = make_method_snippet(&method.name, &method.params);
+                        items.push(CompletionItem {
+                            label: method.name.clone(),
+                            kind: Some(CompletionItemKind::METHOD),
+                            detail: Some(detail),
+                            sort_text: Some(format!("0{}", method.name)),
+                            insert_text: Some(snippet),
+                            insert_text_format: Some(InsertTextFormat::SNIPPET),
+                            ..Default::default()
+                        });
+                    }
+                    for prop in &trait_sig.properties {
+                        items.push(CompletionItem {
+                            label: prop.name.clone(),
+                            kind: Some(CompletionItemKind::PROPERTY),
+                            detail: Some(format!("{}", prop.return_type)),
+                            sort_text: Some(format!("0{}", prop.name)),
+                            ..Default::default()
+                        });
+                    }
                 }
-                for prop in &trait_sig.properties {
-                    items.push(CompletionItem {
-                        label: prop.name.clone(),
-                        kind: Some(CompletionItemKind::PROPERTY),
-                        detail: Some(format!("{}", prop.return_type)),
-                        sort_text: Some(format!("0{}", prop.name)),
-                        ..Default::default()
-                    });
-                }
-            }
             }
         }
         _ => {}
@@ -280,7 +302,10 @@ pub fn dot_completion(
             items.push(CompletionItem {
                 label: method.name.0.clone(),
                 kind: Some(CompletionItemKind::METHOD),
-                detail: Some(format_trait_method_detail(&method.params, &method.return_type)),
+                detail: Some(format_trait_method_detail(
+                    &method.params,
+                    &method.return_type,
+                )),
                 sort_text: Some(format!("2{}", method.name.0)),
                 insert_text: Some(snippet),
                 insert_text_format: Some(InsertTextFormat::SNIPPET),
@@ -377,9 +402,10 @@ fn enum_variant_completions(
         };
         let (insert_text, insert_text_format) = match payload {
             VariantPayload::None => (None, None),
-            VariantPayload::Tuple(_) => {
-                (Some(format!("{variant_name}($1)")), Some(InsertTextFormat::SNIPPET))
-            }
+            VariantPayload::Tuple(_) => (
+                Some(format!("{variant_name}($1)")),
+                Some(InsertTextFormat::SNIPPET),
+            ),
             VariantPayload::Record(_) => (None, None),
         };
         items.push(CompletionItem {
@@ -440,10 +466,7 @@ fn module_member_completions(
 }
 
 /// Generate completions for all public symbols in a package (for package imports like `import a.utils as u`).
-fn package_dot_completion(
-    package: &PackagePath,
-    registry: &Registry,
-) -> Vec<CompletionItem> {
+fn package_dot_completion(package: &PackagePath, registry: &Registry) -> Vec<CompletionItem> {
     let mut items = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -545,7 +568,13 @@ pub fn auto_import_completions(
     }
 
     // Types (records, enums, classes, traits, newtypes)
-    add_auto_import_types(registry, &prefix_lower, visible_names, import_insert_position, &mut items);
+    add_auto_import_types(
+        registry,
+        &prefix_lower,
+        visible_names,
+        import_insert_position,
+        &mut items,
+    );
 
     // Limit results
     items.truncate(50);
@@ -780,11 +809,7 @@ fn add_auto_import_types(
     }
 }
 
-fn add_class_members(
-    class_fqn: &Fqn,
-    registry: &Registry,
-    items: &mut Vec<CompletionItem>,
-) {
+fn add_class_members(class_fqn: &Fqn, registry: &Registry, items: &mut Vec<CompletionItem>) {
     let mut current_fqn = Some(class_fqn.clone());
     let mut seen = BTreeSet::new();
 

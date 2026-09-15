@@ -1,13 +1,15 @@
 use crate::common::span::{Span, Spanned};
 use crate::common::types::{
-    Fqn, MangledName, PackagePath, SymbolName, InterfaceMemberName, VarName,
-    Visibility,
+    Fqn, InterfaceMemberName, MangledName, PackagePath, SymbolName, VarName, Visibility,
 };
 use crate::parser::ast::{BinOp, Expr, TypeExpr, UnaryOp};
 
-use crate::typechecker::registry::{ExtMethodSignature, ExtensionBlockSignature, FunctionSignature, VariantPayload};
+use crate::typechecker::registry::{
+    ExtMethodSignature, ExtensionBlockSignature, FunctionSignature, VariantPayload,
+};
 use crate::typechecker::types::{
-    IntrinsicKind, ResolvedImplMethod, NamedTraitBound, TraitBound, InterfaceComponent, Type, TypeDef, TypedExpr, TypedExprKind, TypedMatchArm, TypedPattern,
+    InterfaceComponent, IntrinsicKind, NamedTraitBound, ResolvedImplMethod, TraitBound, Type,
+    TypeDef, TypedExpr, TypedExprKind, TypedMatchArm, TypedPattern,
 };
 
 use super::Inference;
@@ -167,7 +169,11 @@ impl Inference<'_> {
                 if *op == BinOp::TupleExtend {
                     let ty = Type::tuple_extend(typed_left.ty.clone(), typed_right.ty.clone());
                     return crate::typechecker::tuple_extension::lower(TypedExpr {
-                        kind: TypedExprKind::BinaryOp { op: *op, left: Box::new(typed_left), right: Box::new(typed_right) },
+                        kind: TypedExprKind::BinaryOp {
+                            op: *op,
+                            left: Box::new(typed_left),
+                            right: Box::new(typed_right),
+                        },
                         ty,
                         span: span.clone(),
                     });
@@ -262,10 +268,10 @@ impl Inference<'_> {
                 // If the block's expected type is async-shaped (`Async<_, E>`),
                 // expose its E to nested `use` expressions for From auto-conversion.
                 let saved_wrapped_err = self.block_wrapped_error.clone();
-                if let Some(exp) = &saved_expected {
-                    if let Some(err) = self.resolve_awaitable_error_type(exp) {
-                        self.block_wrapped_error = Some(err);
-                    }
+                if let Some(exp) = &saved_expected
+                    && let Some(err) = self.resolve_awaitable_error_type(exp)
+                {
+                    self.block_wrapped_error = Some(err);
                 }
                 let len = block.expressions.len();
                 let typed_exprs: Vec<TypedExpr> = block
@@ -385,9 +391,14 @@ impl Inference<'_> {
                         ty: binding.ty,
                         span: span.clone(),
                     }
-                } else if let Some((mangled, ty, _mutable, global_type_args)) = self.lookup_global(name) {
+                } else if let Some((mangled, ty, _mutable, global_type_args)) =
+                    self.lookup_global(name)
+                {
                     TypedExpr {
-                        kind: TypedExprKind::GlobalRef { name: mangled, type_params: global_type_args },
+                        kind: TypedExprKind::GlobalRef {
+                            name: mangled,
+                            type_params: global_type_args,
+                        },
                         ty,
                         span: span.clone(),
                     }
@@ -447,9 +458,12 @@ impl Inference<'_> {
                             ty: Type::Error,
                             span: span.clone(),
                         },
-                        _ => {
-                            self.infer_trait_index(typed_object, typed_index, Some(typed_value), span)
-                        }
+                        _ => self.infer_trait_index(
+                            typed_object,
+                            typed_index,
+                            Some(typed_value),
+                            span,
+                        ),
                     };
                 }
 
@@ -466,46 +480,46 @@ impl Inference<'_> {
                         if let Some(module_info) = self.resolve_module_name(name).cloned() {
                             let member_sym = SymbolName(field.value.clone());
                             // Check concrete globals (only for non-generic access)
-                            if object_type_params.is_empty() {
-                                if let Some(sig) = module_info.globals.get(&member_sym) {
-                                    if sig.visibility == Visibility::Private
-                                        && sig.source_file != self.current_file
-                                    {
-                                        self.diagnostics.error(
-                                            span.clone(),
-                                            format!(
-                                                "no member '{}' found in module '{}'",
-                                                field.value, name
-                                            ),
-                                        );
-                                    } else if !sig.mutable {
-                                        self.diagnostics.error(
-                                            span.clone(),
-                                            format!(
-                                                "cannot assign to immutable global '{}.{}'",
-                                                name, field.value
-                                            ),
-                                        );
-                                    }
-                                    let prev_expected = self.expected_type.take();
-                                    self.expected_type = Some(sig.ty.clone());
-                                    let typed_value = self.infer_expr(value);
-                                    self.expected_type = prev_expected;
-                                    self.check_assignable(
-                                        typed_value.span.clone(),
-                                        &sig.ty,
-                                        &typed_value.ty,
+                            if object_type_params.is_empty()
+                                && let Some(sig) = module_info.globals.get(&member_sym)
+                            {
+                                if sig.visibility == Visibility::Private
+                                    && sig.source_file != self.current_file
+                                {
+                                    self.diagnostics.error(
+                                        span.clone(),
+                                        format!(
+                                            "no member '{}' found in module '{}'",
+                                            field.value, name
+                                        ),
                                     );
-                                    return TypedExpr {
-                                        kind: TypedExprKind::GlobalAssign {
-                                            name: sig.mangled_name.clone(),
-                                            type_params: vec![],
-                                            value: Box::new(typed_value),
-                                        },
-                                        ty: Type::Unit,
-                                        span: span.clone(),
-                                    };
+                                } else if !sig.mutable {
+                                    self.diagnostics.error(
+                                        span.clone(),
+                                        format!(
+                                            "cannot assign to immutable global '{}.{}'",
+                                            name, field.value
+                                        ),
+                                    );
                                 }
+                                let prev_expected = self.expected_type.take();
+                                self.expected_type = Some(sig.ty.clone());
+                                let typed_value = self.infer_expr(value);
+                                self.expected_type = prev_expected;
+                                self.check_assignable(
+                                    typed_value.span.clone(),
+                                    &sig.ty,
+                                    &typed_value.ty,
+                                );
+                                return TypedExpr {
+                                    kind: TypedExprKind::GlobalAssign {
+                                        name: sig.mangled_name.clone(),
+                                        type_params: vec![],
+                                        value: Box::new(typed_value),
+                                    },
+                                    ty: Type::Unit,
+                                    span: span.clone(),
+                                };
                             }
                             // Check generic globals (with explicit type args or bidirectional inference)
                             if let Some((mangled, ty, mutable, global_type_args)) = self
@@ -546,16 +560,25 @@ impl Inference<'_> {
                         }
 
                         // Try class static global assignment: ClassName.field = value
-                        if let Some(Type::Class(class_fqn, _) | Type::GenericClass { fqn: class_fqn, .. })
-                            = self.resolve_type_name(name, &[], span)
+                        if let Some(
+                            Type::Class(class_fqn, _) | Type::GenericClass { fqn: class_fqn, .. },
+                        ) = self.resolve_type_name(name, &[], span)
                         {
                             let global_fqn = Fqn {
                                 package: class_fqn.package.clone(),
                                 symbol: SymbolName(format!("{}.{}", class_fqn.symbol, field.value)),
                             };
                             // Concrete static global
-                            if let Some(sig) = self.registry.lookup_global(&global_fqn, &self.package_path, &self.current_file).cloned() {
-                                if !self.check_class_field_visibility(sig.visibility, &class_fqn, span) {
+                            if let Some(sig) = self
+                                .registry
+                                .lookup_global(&global_fqn, &self.package_path, &self.current_file)
+                                .cloned()
+                            {
+                                if !self.check_class_field_visibility(
+                                    sig.visibility,
+                                    &class_fqn,
+                                    span,
+                                ) {
                                     let _typed_value = self.infer_expr(value);
                                     return TypedExpr {
                                         kind: TypedExprKind::UnitLiteral,
@@ -592,9 +615,15 @@ impl Inference<'_> {
                                 };
                             }
                             // Generic static global
-                            if let Some(class_sig) = self.registry.lookup_class_type(&class_fqn, &self.package_path).cloned() {
+                            if let Some(class_sig) = self
+                                .registry
+                                .lookup_class_type(&class_fqn, &self.package_path)
+                                .cloned()
+                            {
                                 let member_sym = SymbolName(field.value.clone());
-                                if let Some(def) = class_sig.generic_static_globals.get(&member_sym).cloned() {
+                                if let Some(def) =
+                                    class_sig.generic_static_globals.get(&member_sym).cloned()
+                                {
                                     let type_args = if !object_type_params.is_empty() {
                                         if object_type_params.len() == def.type_params.len() {
                                             self.resolve_type_args(object_type_params)
@@ -613,14 +642,21 @@ impl Inference<'_> {
                                         };
                                         let effective_fqn = Fqn {
                                             package: class_fqn.package.clone(),
-                                            symbol: SymbolName(format!("{}.{}", class_fqn.symbol, field.value)),
+                                            symbol: SymbolName(format!(
+                                                "{}.{}",
+                                                class_fqn.symbol, field.value
+                                            )),
                                         };
                                         // Statics on generic classes share one storage across all instantiations
                                         // (the rules pass forbids the declared type from referencing the class's
                                         // type parameters, so every `Box<T>.field` resolves to the same global).
                                         let mangled = MangledName::for_global(&effective_fqn);
 
-                                        if !self.check_class_field_visibility(def.visibility, &class_fqn, span) {
+                                        if !self.check_class_field_visibility(
+                                            def.visibility,
+                                            &class_fqn,
+                                            span,
+                                        ) {
                                             let _typed_value = self.infer_expr(value);
                                             return TypedExpr {
                                                 kind: TypedExprKind::UnitLiteral,
@@ -666,12 +702,12 @@ impl Inference<'_> {
                     let typed_object = self.infer_expr(object);
                     let (fqn, class_mangled) = match &typed_object.ty {
                         Type::Class(fqn, _mn) => (fqn.clone(), MangledName::for_type(fqn)),
-                        Type::GenericClass { fqn, mangled_name, .. } => (fqn.clone(), mangled_name.clone()),
+                        Type::GenericClass {
+                            fqn, mangled_name, ..
+                        } => (fqn.clone(), mangled_name.clone()),
                         _ => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                "invalid assignment target".to_string(),
-                            );
+                            self.diagnostics
+                                .error(span.clone(), "invalid assignment target".to_string());
                             let _typed_value = self.infer_expr(value);
                             return TypedExpr {
                                 kind: TypedExprKind::UnitLiteral,
@@ -682,13 +718,21 @@ impl Inference<'_> {
                     };
 
                     // Check typechecking_class first, then ClassTypeDef
-                    let tc_class_fields = self.typechecking_class.as_ref()
-                        .filter(|(mn, _)| *mn == class_mangled || *mn == MangledName::for_type(&fqn))
+                    let tc_class_fields = self
+                        .typechecking_class
+                        .as_ref()
+                        .filter(|(mn, _)| {
+                            *mn == class_mangled || *mn == MangledName::for_type(&fqn)
+                        })
                         .map(|(_, fields)| fields.clone());
 
-                    if fqn.package == self.package_path || matches!(&typed_object.ty, Type::GenericClass { .. }) {
+                    if fqn.package == self.package_path
+                        || matches!(&typed_object.ty, Type::GenericClass { .. })
+                    {
                         let fields = tc_class_fields.or_else(|| {
-                            let cls_lookup = self.class_type_defs.get(&class_mangled)
+                            let cls_lookup = self
+                                .class_type_defs
+                                .get(&class_mangled)
                                 .or_else(|| self.class_type_defs.get(&MangledName::for_type(&fqn)));
                             if let Some(TypeDef::Class(cls)) = cls_lookup {
                                 if cls.type_params.is_empty() {
@@ -705,7 +749,11 @@ impl Inference<'_> {
                             for (idx, f) in fields.iter().enumerate() {
                                 if f.name == field.value {
                                     if !self.is_field_accessible(f.visibility, &f.declared_by) {
-                                        self.check_class_field_visibility(f.visibility, &f.declared_by, span);
+                                        self.check_class_field_visibility(
+                                            f.visibility,
+                                            &f.declared_by,
+                                            span,
+                                        );
                                         return TypedExpr {
                                             kind: TypedExprKind::UnitLiteral,
                                             ty: Type::Error,
@@ -715,14 +763,21 @@ impl Inference<'_> {
                                     if !f.mutable {
                                         self.diagnostics.error(
                                             span.clone(),
-                                            format!("cannot assign to immutable field '{}'", field.value),
+                                            format!(
+                                                "cannot assign to immutable field '{}'",
+                                                field.value
+                                            ),
                                         );
                                     }
                                     let prev_expected = self.expected_type.take();
                                     self.expected_type = Some(f.ty.clone());
                                     let typed_value = self.infer_expr(value);
                                     self.expected_type = prev_expected;
-                                    self.check_assignable(typed_value.span.clone(), &f.ty, &typed_value.ty);
+                                    self.check_assignable(
+                                        typed_value.span.clone(),
+                                        &f.ty,
+                                        &typed_value.ty,
+                                    );
                                     return TypedExpr {
                                         kind: TypedExprKind::FieldAssign {
                                             object: Box::new(typed_object),
@@ -740,11 +795,18 @@ impl Inference<'_> {
                     }
 
                     // Cross-package: use registry
-                    if let Some(class_sig) = self.registry.lookup_class_type(&fqn, &self.package_path).cloned() {
+                    if let Some(class_sig) = self
+                        .registry
+                        .lookup_class_type(&fqn, &self.package_path)
+                        .cloned()
+                    {
                         // Build type param substitution for generic classes
-                        let substitution = if let Type::GenericClass { type_args, .. } = &typed_object.ty {
+                        let substitution = if let Type::GenericClass { type_args, .. } =
+                            &typed_object.ty
+                        {
                             if !class_sig.type_params.is_empty() {
-                                let concrete_types: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
+                                let concrete_types: Vec<Type> =
+                                    type_args.iter().map(|(_, t)| t.clone()).collect();
                                 Some(super::type_param_substitution::TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_types))
                             } else {
                                 None
@@ -752,7 +814,10 @@ impl Inference<'_> {
                         } else {
                             None
                         };
-                        let has_variance = class_sig.type_param_variances.iter().any(|v| *v != crate::common::types::Variance::Invariant);
+                        let has_variance = class_sig
+                            .type_param_variances
+                            .iter()
+                            .any(|v| *v != crate::common::types::Variance::Invariant);
                         for (idx, f) in class_sig.fields.iter().enumerate() {
                             if f.name == field.value {
                                 if !self.check_class_field_visibility(f.visibility, &fqn, span) {
@@ -765,7 +830,10 @@ impl Inference<'_> {
                                 if !f.mutable {
                                     self.diagnostics.error(
                                         span.clone(),
-                                        format!("cannot assign to immutable field '{}'", field.value),
+                                        format!(
+                                            "cannot assign to immutable field '{}'",
+                                            field.value
+                                        ),
                                     );
                                 }
                                 let field_ty = if let Some(ref sub) = substitution {
@@ -778,7 +846,11 @@ impl Inference<'_> {
                                 self.expected_type = Some(field_ty.clone());
                                 let typed_value = self.infer_expr(value);
                                 self.expected_type = prev_expected;
-                                self.check_assignable(typed_value.span.clone(), &field_ty, &typed_value.ty);
+                                self.check_assignable(
+                                    typed_value.span.clone(),
+                                    &field_ty,
+                                    &typed_value.ty,
+                                );
                                 return TypedExpr {
                                     kind: TypedExprKind::FieldAssign {
                                         object: Box::new(typed_object),
@@ -796,7 +868,10 @@ impl Inference<'_> {
 
                     self.diagnostics.error(
                         span.clone(),
-                        format!("no field '{}' found on type {}", field.value, typed_object.ty),
+                        format!(
+                            "no field '{}' found on type {}",
+                            field.value, typed_object.ty
+                        ),
                     );
                     let _typed_value = self.infer_expr(value);
                     return TypedExpr {
@@ -843,7 +918,9 @@ impl Inference<'_> {
                         ty: Type::Unit,
                         span: span.clone(),
                     }
-                } else if let Some((mangled, ty, mutable, global_type_args)) = self.lookup_global(name) {
+                } else if let Some((mangled, ty, mutable, global_type_args)) =
+                    self.lookup_global(name)
+                {
                     // Global variable assignment
                     if !mutable {
                         self.diagnostics.error(
@@ -939,8 +1016,7 @@ impl Inference<'_> {
                         typed_then.ty.clone()
                     } else if self.is_assignable(&typed_else.ty, &typed_then.ty) {
                         typed_else.ty.clone()
-                    } else if let Some(lub) =
-                        self.least_upper_bound(&typed_then.ty, &typed_else.ty)
+                    } else if let Some(lub) = self.least_upper_bound(&typed_then.ty, &typed_else.ty)
                     {
                         lub
                     } else {
@@ -1178,8 +1254,13 @@ impl Inference<'_> {
                 }
             }
 
-            Expr::SliceIndex { object, start, end, inclusive, span } =>
-                self.infer_slice_index(object, start.as_deref(), end.as_deref(), *inclusive, span),
+            Expr::SliceIndex {
+                object,
+                start,
+                end,
+                inclusive,
+                span,
+            } => self.infer_slice_index(object, start.as_deref(), end.as_deref(), *inclusive, span),
 
             Expr::TupleLiteral { elements, span } => self.infer_tuple_literal(elements, span),
 
@@ -1309,8 +1390,11 @@ impl Inference<'_> {
                     }
                     let subject_fqn = typed_inner.ty.try_to_fqn();
                     let target_fqn = target_type.try_to_fqn();
-                    if crate::typechecker::subtyping::is_subtype(self.registry, &typed_inner.ty, &target_type)
-                    {
+                    if crate::typechecker::subtyping::is_subtype(
+                        self.registry,
+                        &typed_inner.ty,
+                        &target_type,
+                    ) {
                         self.diagnostics.error(
                             span.clone(),
                             format!(
@@ -1389,7 +1473,12 @@ impl Inference<'_> {
                         return typed_inner;
                     }
                     let failing = traits.iter().find(|c| {
-                        !self.type_satisfies_trait(&c.trait_fqn, &c.trait_type_args, &typed_inner.ty, 0)
+                        !self.type_satisfies_trait(
+                            &c.trait_fqn,
+                            &c.trait_type_args,
+                            &typed_inner.ty,
+                            0,
+                        )
                     });
                     if failing.is_none() {
                         return TypedExpr {
@@ -1480,8 +1569,11 @@ impl Inference<'_> {
                     }
                     let subject_fqn = typed_inner.ty.try_to_fqn();
                     let target_fqn = target_type.try_to_fqn();
-                    if crate::typechecker::subtyping::is_subtype(self.registry, &typed_inner.ty, &target_type)
-                    {
+                    if crate::typechecker::subtyping::is_subtype(
+                        self.registry,
+                        &typed_inner.ty,
+                        &target_type,
+                    ) {
                         // Subject is already a subtype — no cast needed, just
                         // return the expression with the target type so the user
                         // can control the inferred type.
@@ -1643,13 +1735,16 @@ impl Inference<'_> {
             }
             _ => None,
         };
-        let typed_elements: Vec<TypedExpr> = elements.iter().map(|e| {
-            let saved = self.expected_type.take();
-            self.expected_type = expected_element.clone();
-            let typed = self.infer_expr(e);
-            self.expected_type = saved;
-            typed
-        }).collect();
+        let typed_elements: Vec<TypedExpr> = elements
+            .iter()
+            .map(|e| {
+                let saved = self.expected_type.take();
+                self.expected_type = expected_element.clone();
+                let typed = self.infer_expr(e);
+                self.expected_type = saved;
+                typed
+            })
+            .collect();
 
         // A `::` tail must itself be a list; its element type joins with the rest.
         let mut typed_tail: Option<TypedExpr> = None;
@@ -1722,7 +1817,9 @@ impl Inference<'_> {
                             .unwrap_or_else(|| span.clone());
                         self.diagnostics.error(
                             tail_span,
-                            format!("type mismatch: expected 'List<{prev}>', found 'List<{tail_ty}>'"),
+                            format!(
+                                "type mismatch: expected 'List<{prev}>', found 'List<{tail_ty}>'"
+                            ),
                         );
                         Type::Error
                     }
@@ -1750,7 +1847,8 @@ impl Inference<'_> {
             };
         }
 
-        let list_ty = self.resolve_generic_enum_type(&list_fqn, &list_sig, &[elem_ty.clone()]);
+        let list_ty =
+            self.resolve_generic_enum_type(&list_fqn, &list_sig, std::slice::from_ref(&elem_ty));
 
         // Fold right-to-left into Cons cells, seeded by the tail or by Nil.
         // Every node carries `list_ty` so payload coercion can look up variant
@@ -2013,8 +2111,7 @@ impl Inference<'_> {
                 })
             }
             BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge => {
-                let ordering_fqn =
-                    Fqn::from_dotted("standard.prelude.Ordering").unwrap();
+                let ordering_fqn = Fqn::from_dotted("standard.prelude.Ordering").unwrap();
                 let ordering_type = self
                     .registry
                     .lookup_type_by_fqn(&ordering_fqn)
@@ -2164,7 +2261,9 @@ impl Inference<'_> {
             | Type::GenericEnum { .. }
             | Type::Class(_, _)
             | Type::GenericClass { .. }
-            | Type::Tuple(..) | Type::TupleExtend(..) | Type::TupleProjection(..)
+            | Type::Tuple(..)
+            | Type::TupleExtend(..)
+            | Type::TupleProjection(..)
             | Type::Array(_)
             | Type::Newtype(_, _)
             | Type::GenericNewtype { .. } => {}
@@ -2439,305 +2538,330 @@ impl Inference<'_> {
         span: &Span,
     ) -> TypedExpr {
         // Check for module-qualified access: ModuleName.global or ModuleName.property
-        if let Expr::Identifier(name, _) = object {
-            if let Some(module_info) = self.resolve_module_name(name).cloned() {
-                let member_sym = SymbolName(field.value.clone());
+        if let Expr::Identifier(name, _) = object
+            && let Some(module_info) = self.resolve_module_name(name).cloned()
+        {
+            let member_sym = SymbolName(field.value.clone());
 
-                // Non-generic module path: try concrete globals and properties first
-                if object_type_params.is_empty() {
-                    // Try global
-                    if let Some(sig) = module_info.globals.get(&member_sym) {
-                        if self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file) {
-                            return TypedExpr {
-                                ty: sig.ty.clone(),
-                                kind: TypedExprKind::GlobalRef {
-                                    name: sig.mangled_name.clone(),
-                                    type_params: vec![],
-                                },
-                                span: span.clone(),
-                            };
-                        }
-                    }
-                    // Try function/property
-                    if let Some(overloads) = module_info.functions.get(&member_sym) {
-                        let property = overloads.iter().find(|sig| {
-                            sig.is_property
-                                && sig.params.is_empty()
-                                && self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file)
-                        });
-                        if let Some(prop_sig) = property {
-                            if prop_sig.is_intrinsic {
-                                if let Some(intrinsic) = super::function_expressions::resolve_intrinsic_kind(
-                                    &module_info.fqn,
-                                    &member_sym,
-                                    &prop_sig.return_type,
-                                ) {
-                                    return TypedExpr {
-                                        ty: prop_sig.return_type.clone(),
-                                        kind: TypedExprKind::IntrinsicCall {
-                                            intrinsic,
-                                            args: vec![],
-                                        },
-                                        span: span.clone(),
-                                    };
-                                }
-                            }
-                            return TypedExpr {
-                                ty: prop_sig.return_type.clone(),
-                                kind: TypedExprKind::FunctionCall {
-                                    name: prop_sig.mangled_name.clone(),
-                                    args: vec![],
-                                    type_params: vec![],
-                                },
-                                span: span.clone(),
-                            };
-                        }
-
-                        // Try function reference (Module.func as value)
-                        if let Some(result) = self.try_resolve_overloaded_function_ref(
-                            overloads,
-                            &format!("{}.{}", name, field.value),
-                            span,
-                        ) {
-                            return result;
-                        }
-                    }
-                }
-
-                // Try generic module global (with explicit type args or bidirectional inference)
-                if let Some((mangled, ty, _mutable, global_type_args)) = self.resolve_generic_module_global(
-                    &module_info,
-                    &member_sym,
-                    object_type_params,
-                ) {
-                    return TypedExpr {
-                        ty,
-                        kind: TypedExprKind::GlobalRef { name: mangled, type_params: global_type_args },
-                        span: span.clone(),
-                    };
-                }
-                // Only properties are evaluated by member access. A zero-argument
-                // function must go through function-reference resolution below.
-                let has_generic_property = module_info.generic_members
-                    .lookup_visible(&member_sym, &self.package_path, &self.current_file)
-                    .iter().any(|def| def.is_property);
-                let generic_candidates = if has_generic_property {
-                    self.resolve_generic_module_static_method(
-                        &module_info,
-                        &member_sym,
-                        &[],
-                        object_type_params,
-                        field_type_params,
-                        Some(span),
+            // Non-generic module path: try concrete globals and properties first
+            if object_type_params.is_empty() {
+                // Try global
+                if let Some(sig) = module_info.globals.get(&member_sym)
+                    && self.is_member_visible(
+                        sig.visibility,
+                        &module_info.fqn.package,
+                        &sig.source_file,
                     )
-                } else {
-                    vec![]
-                };
-                if !generic_candidates.is_empty() {
-                    let resolved = &generic_candidates[0];
-                    return match resolved {
-                        super::ResolvedFunction::Regular {
-                            mangled_name,
-                            return_type,
-                            type_args,
-                        } => TypedExpr {
-                            ty: return_type.clone(),
-                            kind: TypedExprKind::FunctionCall {
-                                name: mangled_name.clone(),
-                                args: vec![],
-                                type_params: type_args.clone(),
-                            },
-                            span: span.clone(),
-                        },
-                        _ => unreachable!(),
-                    };
-                }
-                if let Some(reference) = self.try_resolve_generic_module_function_ref(
-                    &module_info, &member_sym, object_type_params, field_type_params, span,
-                ) {
-                    return reference;
-                }
-                // Check if a visible member with this name exists but didn't resolve.
-                // Report helpful error instead of falling through to "no variant in enum".
-                let member_sym_check = SymbolName(field.value.clone());
-                let has_visible_member = module_info.functions.get(&member_sym_check).is_some_and(|overloads| {
-                    overloads.iter().any(|sig| match sig.visibility {
-                        Visibility::Public | Visibility::Protected => true,
-                        Visibility::Internal => module_info.fqn.package == self.package_path,
-                        Visibility::Private => sig.source_file == self.current_file,
-                    })
-                }) || !module_info.generic_members.lookup_visible(
-                    &member_sym_check, &self.package_path, &self.current_file,
-                ).is_empty();
-                if has_visible_member {
-                    self.diagnostics.error(
-                        span.clone(),
-                        format!(
-                            "cannot resolve member '{}.{}'; check type arguments",
-                            name, field.value
-                        ),
-                    );
-                    return TypedExpr {
-                        kind: TypedExprKind::UnitLiteral,
-                        ty: Type::Error,
-                        span: span.clone(),
-                    };
-                }
-                // Member not in module — fall through to extension/other dispatch
-            }
-        }
-
-        // Try to resolve as an enum variant constructor: Enum.Variant (no payload)
-        if let Expr::Identifier(name, _) = object {
-            if let Some(enum_sig) = self.resolve_enum_type(name) {
-                if let Some((_, payload)) =
-                    enum_sig.variants.iter().find(|(v, _)| v == &field.value)
                 {
-                    self.check_private_type_access(
-                        &enum_sig.fqn,
-                        enum_sig.construction_private,
-                        "enum",
-                        span,
-                        "construct",
-                    );
-
-                    match payload {
-                        VariantPayload::Tuple(types) => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                format!(
-                                    "variant '{}.{}' requires {} argument(s)",
-                                    name,
-                                    field.value,
-                                    types.len()
-                                ),
-                            );
-                            return TypedExpr {
-                                kind: TypedExprKind::UnitLiteral,
-                                ty: Type::Error,
-                                span: span.clone(),
-                            };
-                        }
-                        VariantPayload::Record(_) => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                format!(
-                                    "variant '{}.{}' requires record-style construction with {{ }}",
-                                    name, field.value
-                                ),
-                            );
-                            return TypedExpr {
-                                kind: TypedExprKind::UnitLiteral,
-                                ty: Type::Error,
-                                span: span.clone(),
-                            };
-                        }
-                        VariantPayload::None => {}
-                    }
-                    // Handle generic enums
-                    if !enum_sig.type_params.is_empty() {
-                        // Infer type args from:
-                        // 1. Explicit type args on the type (e.g., Async<WaiterId, Never>.MakeWaiter)
-                        // 2. expected_type (bidirectional inference)
-                        // 3. Covariant variance defaults (Never for out params)
-                        let type_args: Vec<Type> = if !object_type_params.is_empty()
-                            && object_type_params.len() == enum_sig.type_params.len()
-                        {
-                            object_type_params
-                                .iter()
-                                .map(|te| self.resolve_type_expr(te))
-                                .collect()
-                        } else {
-                            match &self.expected_type {
-                                Some(Type::GenericEnum {
-                                    fqn: exp_fqn,
-                                    type_args,
-                                    ..
-                                }) if *exp_fqn == enum_sig.fqn => {
-                                    type_args.iter().map(|(_, t)| t.clone()).collect()
-                                }
-                                _ => {
-                                    // Default covariant params to Never
-                                    let sub =
-                                        super::type_param_substitution::TypeParamSubstitution::new();
-                                    match sub.resolve_with_variance_defaults(
-                                        &enum_sig.type_params,
-                                        &enum_sig.type_param_variances,
-                                    ) {
-                                        Some(args) => args,
-                                        None => {
-                                            self.diagnostics.error(
-                                                span.clone(),
-                                                format!(
-                                                    "cannot infer type arguments for generic enum '{}'",
-                                                    name
-                                                ),
-                                            );
-                                            return TypedExpr {
-                                                kind: TypedExprKind::UnitLiteral,
-                                                ty: Type::Error,
-                                                span: span.clone(),
-                                            };
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                        let enum_ty =
-                            self.resolve_generic_enum_type(&enum_sig.fqn, &enum_sig, &type_args);
-                        return TypedExpr {
-                            ty: enum_ty,
-                            kind: TypedExprKind::EnumCreate {
-                                fqn: enum_sig.fqn.clone(),
-                                variant_name: field.value.clone(),
-                                args: vec![],
-                                type_params: type_args.clone(),
-                            },
-                            span: span.clone(),
-                        };
-                    }
-                    let mangled_name = MangledName::for_type(&enum_sig.fqn);
                     return TypedExpr {
-                        ty: Type::Enum(enum_sig.fqn.clone(), mangled_name),
-                        kind: TypedExprKind::EnumCreate {
-                            fqn: enum_sig.fqn.clone(),
-                            variant_name: field.value.clone(),
-                            args: vec![],
+                        ty: sig.ty.clone(),
+                        kind: TypedExprKind::GlobalRef {
+                            name: sig.mangled_name.clone(),
                             type_params: vec![],
                         },
                         span: span.clone(),
                     };
                 }
-                // Variant not found — fall through only if a trait impl
-                // static method/property by this name exists, so that
-                // `EnumName.from` resolves via `From<T> for EnumName`'s
-                // `from` (handled in `try_resolve_static_property` below).
-                // Mirrors the call-site fall-through in
-                // function_expressions.rs:516-520. Without the existence
-                // check, typos like `Color.Vermilion` would lose the
-                // helpful "no variant" diagnostic.
-                let member_sym = SymbolName(field.value.clone());
-                if self.registry.find_impl_method(&enum_sig.fqn, &member_sym).is_empty() {
-                    self.diagnostics.error(
-                        span.clone(),
-                        format!("no variant '{}' in enum '{}'", field.value, name),
-                    );
+                // Try function/property
+                if let Some(overloads) = module_info.functions.get(&member_sym) {
+                    let property = overloads.iter().find(|sig| {
+                        sig.is_property
+                            && sig.params.is_empty()
+                            && self.is_member_visible(
+                                sig.visibility,
+                                &module_info.fqn.package,
+                                &sig.source_file,
+                            )
+                    });
+                    if let Some(prop_sig) = property {
+                        if prop_sig.is_intrinsic
+                            && let Some(intrinsic) =
+                                super::function_expressions::resolve_intrinsic_kind(
+                                    &module_info.fqn,
+                                    &member_sym,
+                                    &prop_sig.return_type,
+                                )
+                        {
+                            return TypedExpr {
+                                ty: prop_sig.return_type.clone(),
+                                kind: TypedExprKind::IntrinsicCall {
+                                    intrinsic,
+                                    args: vec![],
+                                },
+                                span: span.clone(),
+                            };
+                        }
+                        return TypedExpr {
+                            ty: prop_sig.return_type.clone(),
+                            kind: TypedExprKind::FunctionCall {
+                                name: prop_sig.mangled_name.clone(),
+                                args: vec![],
+                                type_params: vec![],
+                            },
+                            span: span.clone(),
+                        };
+                    }
+
+                    // Try function reference (Module.func as value)
+                    if let Some(result) = self.try_resolve_overloaded_function_ref(
+                        overloads,
+                        &format!("{}.{}", name, field.value),
+                        span,
+                    ) {
+                        return result;
+                    }
+                }
+            }
+
+            // Try generic module global (with explicit type args or bidirectional inference)
+            if let Some((mangled, ty, _mutable, global_type_args)) =
+                self.resolve_generic_module_global(&module_info, &member_sym, object_type_params)
+            {
+                return TypedExpr {
+                    ty,
+                    kind: TypedExprKind::GlobalRef {
+                        name: mangled,
+                        type_params: global_type_args,
+                    },
+                    span: span.clone(),
+                };
+            }
+            // Only properties are evaluated by member access. A zero-argument
+            // function must go through function-reference resolution below.
+            let has_generic_property = module_info
+                .generic_members
+                .lookup_visible(&member_sym, &self.package_path, &self.current_file)
+                .iter()
+                .any(|def| def.is_property);
+            let generic_candidates = if has_generic_property {
+                self.resolve_generic_module_static_method(
+                    &module_info,
+                    &member_sym,
+                    &[],
+                    object_type_params,
+                    field_type_params,
+                    Some(span),
+                )
+            } else {
+                vec![]
+            };
+            if !generic_candidates.is_empty() {
+                let resolved = &generic_candidates[0];
+                return match resolved {
+                    super::ResolvedFunction::Regular {
+                        mangled_name,
+                        return_type,
+                        type_args,
+                    } => TypedExpr {
+                        ty: return_type.clone(),
+                        kind: TypedExprKind::FunctionCall {
+                            name: mangled_name.clone(),
+                            args: vec![],
+                            type_params: type_args.clone(),
+                        },
+                        span: span.clone(),
+                    },
+                    _ => unreachable!(),
+                };
+            }
+            if let Some(reference) = self.try_resolve_generic_module_function_ref(
+                &module_info,
+                &member_sym,
+                object_type_params,
+                field_type_params,
+                span,
+            ) {
+                return reference;
+            }
+            // Check if a visible member with this name exists but didn't resolve.
+            // Report helpful error instead of falling through to "no variant in enum".
+            let member_sym_check = SymbolName(field.value.clone());
+            let has_visible_member =
+                module_info
+                    .functions
+                    .get(&member_sym_check)
+                    .is_some_and(|overloads| {
+                        overloads.iter().any(|sig| match sig.visibility {
+                            Visibility::Public | Visibility::Protected => true,
+                            Visibility::Internal => module_info.fqn.package == self.package_path,
+                            Visibility::Private => sig.source_file == self.current_file,
+                        })
+                    })
+                    || !module_info
+                        .generic_members
+                        .lookup_visible(&member_sym_check, &self.package_path, &self.current_file)
+                        .is_empty();
+            if has_visible_member {
+                self.diagnostics.error(
+                    span.clone(),
+                    format!(
+                        "cannot resolve member '{}.{}'; check type arguments",
+                        name, field.value
+                    ),
+                );
+                return TypedExpr {
+                    kind: TypedExprKind::UnitLiteral,
+                    ty: Type::Error,
+                    span: span.clone(),
+                };
+            }
+            // Member not in module — fall through to extension/other dispatch
+        }
+
+        // Try to resolve as an enum variant constructor: Enum.Variant (no payload)
+        if let Expr::Identifier(name, _) = object
+            && let Some(enum_sig) = self.resolve_enum_type(name)
+        {
+            if let Some((_, payload)) = enum_sig.variants.iter().find(|(v, _)| v == &field.value) {
+                self.check_private_type_access(
+                    &enum_sig.fqn,
+                    enum_sig.construction_private,
+                    "enum",
+                    span,
+                    "construct",
+                );
+
+                match payload {
+                    VariantPayload::Tuple(types) => {
+                        self.diagnostics.error(
+                            span.clone(),
+                            format!(
+                                "variant '{}.{}' requires {} argument(s)",
+                                name,
+                                field.value,
+                                types.len()
+                            ),
+                        );
+                        return TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: span.clone(),
+                        };
+                    }
+                    VariantPayload::Record(_) => {
+                        self.diagnostics.error(
+                            span.clone(),
+                            format!(
+                                "variant '{}.{}' requires record-style construction with {{ }}",
+                                name, field.value
+                            ),
+                        );
+                        return TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: span.clone(),
+                        };
+                    }
+                    VariantPayload::None => {}
+                }
+                // Handle generic enums
+                if !enum_sig.type_params.is_empty() {
+                    // Infer type args from:
+                    // 1. Explicit type args on the type (e.g., Async<WaiterId, Never>.MakeWaiter)
+                    // 2. expected_type (bidirectional inference)
+                    // 3. Covariant variance defaults (Never for out params)
+                    let type_args: Vec<Type> = if !object_type_params.is_empty()
+                        && object_type_params.len() == enum_sig.type_params.len()
+                    {
+                        object_type_params
+                            .iter()
+                            .map(|te| self.resolve_type_expr(te))
+                            .collect()
+                    } else {
+                        match &self.expected_type {
+                            Some(Type::GenericEnum {
+                                fqn: exp_fqn,
+                                type_args,
+                                ..
+                            }) if *exp_fqn == enum_sig.fqn => {
+                                type_args.iter().map(|(_, t)| t.clone()).collect()
+                            }
+                            _ => {
+                                // Default covariant params to Never
+                                let sub =
+                                    super::type_param_substitution::TypeParamSubstitution::new();
+                                match sub.resolve_with_variance_defaults(
+                                    &enum_sig.type_params,
+                                    &enum_sig.type_param_variances,
+                                ) {
+                                    Some(args) => args,
+                                    None => {
+                                        self.diagnostics.error(
+                                            span.clone(),
+                                            format!(
+                                                "cannot infer type arguments for generic enum '{}'",
+                                                name
+                                            ),
+                                        );
+                                        return TypedExpr {
+                                            kind: TypedExprKind::UnitLiteral,
+                                            ty: Type::Error,
+                                            span: span.clone(),
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    let enum_ty =
+                        self.resolve_generic_enum_type(&enum_sig.fqn, &enum_sig, &type_args);
                     return TypedExpr {
-                        kind: TypedExprKind::UnitLiteral,
-                        ty: Type::Error,
+                        ty: enum_ty,
+                        kind: TypedExprKind::EnumCreate {
+                            fqn: enum_sig.fqn.clone(),
+                            variant_name: field.value.clone(),
+                            args: vec![],
+                            type_params: type_args.clone(),
+                        },
                         span: span.clone(),
                     };
                 }
+                let mangled_name = MangledName::for_type(&enum_sig.fqn);
+                return TypedExpr {
+                    ty: Type::Enum(enum_sig.fqn.clone(), mangled_name),
+                    kind: TypedExprKind::EnumCreate {
+                        fqn: enum_sig.fqn.clone(),
+                        variant_name: field.value.clone(),
+                        args: vec![],
+                        type_params: vec![],
+                    },
+                    span: span.clone(),
+                };
+            }
+            // Variant not found — fall through only if a trait impl
+            // static method/property by this name exists, so that
+            // `EnumName.from` resolves via `From<T> for EnumName`'s
+            // `from` (handled in `try_resolve_static_property` below).
+            // Mirrors the call-site fall-through in
+            // function_expressions.rs:516-520. Without the existence
+            // check, typos like `Color.Vermilion` would lose the
+            // helpful "no variant" diagnostic.
+            let member_sym = SymbolName(field.value.clone());
+            if self
+                .registry
+                .find_impl_method(&enum_sig.fqn, &member_sym)
+                .is_empty()
+            {
+                self.diagnostics.error(
+                    span.clone(),
+                    format!("no variant '{}' in enum '{}'", field.value, name),
+                );
+                return TypedExpr {
+                    kind: TypedExprKind::UnitLiteral,
+                    ty: Type::Error,
+                    span: span.clone(),
+                };
             }
         }
 
         // Check for static property access: Type.property (before inferring object)
         // This must come before the object_type_params check since generic class
         // static properties may use explicit type args (e.g. Box<Int32>.tag)
-        if let Expr::Identifier(name, _) = object {
-            if let Some(result) = self.try_resolve_static_property(name, field, object_type_params, span) {
-                return result;
-            }
+        if let Expr::Identifier(name, _) = object
+            && let Some(result) =
+                self.try_resolve_static_property(name, field, object_type_params, span)
+        {
+            return result;
         }
 
         // Non-module paths only valid without object type params
@@ -2763,8 +2887,12 @@ impl Inference<'_> {
             if let Some(kind) = projection {
                 let ty = Type::tuple_projection(typed_object.ty.clone(), kind);
                 return crate::typechecker::tuple_extension::lower(TypedExpr {
-                    kind: TypedExprKind::IntrinsicCall { intrinsic: IntrinsicKind::TupleProjection(kind), args: vec![typed_object] },
-                    ty, span: span.clone(),
+                    kind: TypedExprKind::IntrinsicCall {
+                        intrinsic: IntrinsicKind::TupleProjection(kind),
+                        args: vec![typed_object],
+                    },
+                    ty,
+                    span: span.clone(),
                 });
             }
         }
@@ -2799,7 +2927,9 @@ impl Inference<'_> {
                     // Origin identity is the full APPLICATION — fqn AND type
                     // args (see the method-call form of this dedup).
                     let member_origin = |c: &InterfaceComponent| -> Option<(Fqn, Vec<Type>)> {
-                        let sig = self.registry.lookup_trait(&c.trait_fqn, &self.package_path)?;
+                        let sig = self
+                            .registry
+                            .lookup_trait(&c.trait_fqn, &self.package_path)?;
                         let m = sig.properties.iter().find(|p| p.name == field.value)?;
                         Some(match m.origin.as_ref() {
                             Some((f, raw_args)) => {
@@ -2818,21 +2948,25 @@ impl Inference<'_> {
                             None => (c.trait_fqn.clone(), c.trait_type_args.clone()),
                         })
                     };
-                    let origins: Vec<Option<(Fqn, Vec<Type>)>> = declaring.iter().map(|c| member_origin(c)).collect();
-                    if origins.iter().all(|o| o.is_some()) && origins.windows(2).all(|w| w[0] == w[1]) {
+                    let origins: Vec<Option<(Fqn, Vec<Type>)>> =
+                        declaring.iter().map(|c| member_origin(c)).collect();
+                    if origins.iter().all(|o| o.is_some())
+                        && origins.windows(2).all(|w| w[0] == w[1])
+                    {
                         let (origin_fqn, origin_args) = origins[0].clone().unwrap();
-                        if let Some(pos) = declaring
-                            .iter()
-                            .position(|c| c.trait_fqn == origin_fqn && c.trait_type_args == origin_args)
-                        {
+                        if let Some(pos) = declaring.iter().position(|c| {
+                            c.trait_fqn == origin_fqn && c.trait_type_args == origin_args
+                        }) {
                             let chosen = declaring[pos];
                             declaring = vec![chosen];
                         }
                     }
                 }
                 if declaring.len() > 1 {
-                    let names: Vec<String> =
-                        declaring.iter().map(|c| format!("'{}'", c.trait_fqn.symbol)).collect();
+                    let names: Vec<String> = declaring
+                        .iter()
+                        .map(|c| format!("'{}'", c.trait_fqn.symbol))
+                        .collect();
                     self.diagnostics.error(
                         span.clone(),
                         format!(
@@ -2851,14 +2985,21 @@ impl Inference<'_> {
                     let trait_fqn = component.trait_fqn.clone();
                     let trait_type_args = component.trait_type_args.clone();
                     if let Some(result) = self.try_resolve_interface_object_property(
-                        &typed_object, &trait_fqn, &trait_type_args, field, span,
+                        &typed_object,
+                        &trait_fqn,
+                        &trait_type_args,
+                        field,
+                        span,
                     ) {
                         return result;
                     }
                 }
                 // Property not in any component — try concrete pipeline
                 if let Some(result) = self.resolve_concrete_type_property(
-                    &typed_object, field, field_type_params, span,
+                    &typed_object,
+                    field,
+                    field_type_params,
+                    span,
                 ) {
                     return result;
                 }
@@ -2868,11 +3009,16 @@ impl Inference<'_> {
                 if let Some(result) = self.try_resolve_class_field(&typed_object, field, span) {
                     return result;
                 }
-                if let Some(result) = self.try_resolve_class_instance_property(&typed_object, field, span) {
+                if let Some(result) =
+                    self.try_resolve_class_instance_property(&typed_object, field, span)
+                {
                     return result;
                 }
                 if let Some(result) = self.resolve_concrete_type_property(
-                    &typed_object, field, field_type_params, span,
+                    &typed_object,
+                    field,
+                    field_type_params,
+                    span,
                 ) {
                     return result;
                 }
@@ -2881,20 +3027,26 @@ impl Inference<'_> {
             Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) => {
                 let bounds = bounds.clone();
                 if let Some(result) = self.try_resolve_type_param_class_bound_field(
-                    &typed_object, &bounds, field, span,
+                    &typed_object,
+                    &bounds,
+                    field,
+                    span,
                 ) {
                     return result;
                 }
-                if let Some(result) = self.try_resolve_property_from_trait_bounds(
-                    &typed_object, &bounds, field, span,
-                ) {
+                if let Some(result) =
+                    self.try_resolve_property_from_trait_bounds(&typed_object, &bounds, field, span)
+                {
                     return result;
                 }
             }
 
             _ => {
                 if let Some(result) = self.resolve_concrete_type_property(
-                    &typed_object, field, field_type_params, span,
+                    &typed_object,
+                    field,
+                    field_type_params,
+                    span,
                 ) {
                     return result;
                 }
@@ -2940,12 +3092,25 @@ impl Inference<'_> {
             sub.insert(tp.clone(), arg.clone());
         }
         for associated in &trait_sig.associated_types {
-                let parameters = associated.type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![])).collect();
-                if let Some(projection) = crate::typechecker::associated_types::from_bound(
-                    &typed_object.ty, bound, &associated.name, parameters, self.registry,
-                ) { sub.insert(crate::common::types::TypeParamName(associated.name.clone()), projection); }
+            let parameters = associated
+                .type_params
+                .iter()
+                .map(|name| Type::TypeVariable(name.clone(), vec![]))
+                .collect();
+            if let Some(projection) = crate::typechecker::associated_types::from_bound(
+                &typed_object.ty,
+                bound,
+                &associated.name,
+                parameters,
+                self.registry,
+            ) {
+                sub.insert(
+                    crate::common::types::TypeParamName(associated.name.clone()),
+                    projection,
+                );
             }
-            let return_type = apply_substitution(&sub, &prop.return_type);
+        }
+        let return_type = apply_substitution(&sub, &prop.return_type);
         Some(TypedExpr {
             kind: TypedExprKind::ImplFunctionCall {
                 trait_fqn: bound.trait_fqn.clone(),
@@ -2973,7 +3138,9 @@ impl Inference<'_> {
         // trait are distinct bounds.
         let mut matches: Vec<(usize, TypedExpr)> = Vec::new();
         for (bound_idx, bound) in bounds.iter().enumerate() {
-            let Some(bound) = bound.named() else { continue; };
+            let Some(bound) = bound.named() else {
+                continue;
+            };
             let Some(trait_sig) = self
                 .registry
                 .lookup_trait(&bound.trait_fqn, &self.package_path)
@@ -2982,8 +3149,7 @@ impl Inference<'_> {
                 continue;
             };
             let Some(prop) = trait_sig.properties.iter().find(|p| {
-                p.name == field.value
-                    && p.params.first().is_some_and(|(n, _)| n == "self")
+                p.name == field.value && p.params.first().is_some_and(|(n, _)| n == "self")
             }) else {
                 continue;
             };
@@ -2993,10 +3159,23 @@ impl Inference<'_> {
                 sub.insert(tp.clone(), arg.clone());
             }
             for associated in &trait_sig.associated_types {
-                let parameters = associated.type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![])).collect();
+                let parameters = associated
+                    .type_params
+                    .iter()
+                    .map(|name| Type::TypeVariable(name.clone(), vec![]))
+                    .collect();
                 if let Some(projection) = crate::typechecker::associated_types::from_bound(
-                    &typed_object.ty, bound, &associated.name, parameters, self.registry,
-                ) { sub.insert(crate::common::types::TypeParamName(associated.name.clone()), projection); }
+                    &typed_object.ty,
+                    bound,
+                    &associated.name,
+                    parameters,
+                    self.registry,
+                ) {
+                    sub.insert(
+                        crate::common::types::TypeParamName(associated.name.clone()),
+                        projection,
+                    );
+                }
             }
             let return_type = apply_substitution(&sub, &prop.return_type);
             matches.push((
@@ -3064,7 +3243,10 @@ impl Inference<'_> {
         field: &Spanned<String>,
         span: &Span,
     ) -> Option<TypedExpr> {
-        for bound in bounds.iter().filter_map(crate::typechecker::types::TraitBound::named) {
+        for bound in bounds
+            .iter()
+            .filter_map(crate::typechecker::types::TraitBound::named)
+        {
             if bound.kind != crate::typechecker::types::BoundKind::SubtypeOf {
                 continue;
             }
@@ -3129,7 +3311,10 @@ impl Inference<'_> {
         }
         // 3. Generic module-for-type instance property
         if let Some(result) = self.try_resolve_generic_module_instance_property(
-            typed_object, field, field_type_params, span,
+            typed_object,
+            field,
+            field_type_params,
+            span,
         ) {
             return Some(result);
         }
@@ -3164,22 +3349,25 @@ impl Inference<'_> {
             sig.is_property
                 && !sig.params.is_empty()
                 && sig.params[0].0 == "self"
-                && self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file)
+                && self.is_member_visible(
+                    sig.visibility,
+                    &module_info.fqn.package,
+                    &sig.source_file,
+                )
         })?;
 
-        if property.is_intrinsic {
-            if let Some(intrinsic) =
+        if property.is_intrinsic
+            && let Some(intrinsic) =
                 resolve_intrinsic_kind(&type_fqn, &member_sym, &property.return_type)
-            {
-                return Some(TypedExpr {
-                    ty: property.return_type.clone(),
-                    kind: TypedExprKind::IntrinsicCall {
-                        intrinsic,
-                        args: vec![typed_object.clone()],
-                    },
-                    span: span.clone(),
-                });
-            }
+        {
+            return Some(TypedExpr {
+                ty: property.return_type.clone(),
+                kind: TypedExprKind::IntrinsicCall {
+                    intrinsic,
+                    args: vec![typed_object.clone()],
+                },
+                span: span.clone(),
+            });
         }
 
         Some(TypedExpr {
@@ -3334,19 +3522,18 @@ impl Inference<'_> {
                 });
             }
             if let Some((block, method)) = matching_ext.first() {
-                if method.is_intrinsic {
-                    if let Some(intrinsic) =
+                if method.is_intrinsic
+                    && let Some(intrinsic) =
                         resolve_intrinsic_kind(&type_fqn, &prop_name, &method.return_type)
-                    {
-                        return Some(TypedExpr {
-                            ty: method.return_type.clone(),
-                            kind: TypedExprKind::IntrinsicCall {
-                                intrinsic,
-                                args: vec![typed_object.clone()],
-                            },
-                            span: span.clone(),
-                        });
-                    }
+                {
+                    return Some(TypedExpr {
+                        ty: method.return_type.clone(),
+                        kind: TypedExprKind::IntrinsicCall {
+                            intrinsic,
+                            args: vec![typed_object.clone()],
+                        },
+                        span: span.clone(),
+                    });
                 }
                 return Some(TypedExpr {
                     ty: method.return_type.clone(),
@@ -3370,10 +3557,10 @@ impl Inference<'_> {
             let distinct_generic_exts: Vec<&Fqn> = {
                 let mut seen: Vec<&Fqn> = Vec::new();
                 for r in &generic_result {
-                    if let super::ResolvedFunction::ExtMethod { ext_fqn, .. } = r {
-                        if !seen.contains(&ext_fqn) {
-                            seen.push(ext_fqn);
-                        }
+                    if let super::ResolvedFunction::ExtMethod { ext_fqn, .. } = r
+                        && !seen.contains(&ext_fqn)
+                    {
+                        seen.push(ext_fqn);
                     }
                 }
                 seen
@@ -3469,7 +3656,8 @@ impl Inference<'_> {
         // rule. Sibling-instantiation-aware: only blocks whose self param
         // accepts the receiver are candidates; two candidates from DISTINCT
         // traits are ambiguous (appendix §3).
-        let trait_impl_props: Vec<_> = self.registry
+        let trait_impl_props: Vec<_> = self
+            .registry
             .find_impl_method(&type_fqn, &prop_name)
             .into_iter()
             .filter(|(b, m)| {
@@ -3527,9 +3715,7 @@ impl Inference<'_> {
         if distinct_traits.len() > 1 {
             let names: Vec<String> = distinct_traits
                 .iter()
-                .map(|(f, a)| {
-                    format!("'{}'", Self::trait_application_display(f, a))
-                })
+                .map(|(f, a)| format!("'{}'", Self::trait_application_display(f, a)))
                 .collect();
             let suggestion =
                 Self::trait_application_display(distinct_traits[0].0, distinct_traits[0].1);
@@ -3554,19 +3740,18 @@ impl Inference<'_> {
             None => matching,
         };
         if let Some((block, m)) = matching.first() {
-            if m.is_intrinsic {
-                if let Some(intrinsic) =
+            if m.is_intrinsic
+                && let Some(intrinsic) =
                     resolve_intrinsic_kind(&type_fqn, &prop_name, &m.return_type)
-                {
-                    return Some(TypedExpr {
-                        ty: m.return_type.clone(),
-                        kind: TypedExprKind::IntrinsicCall {
-                            intrinsic,
-                            args: vec![typed_object.clone()],
-                        },
-                        span: span.clone(),
-                    });
-                }
+            {
+                return Some(TypedExpr {
+                    ty: m.return_type.clone(),
+                    kind: TypedExprKind::IntrinsicCall {
+                        intrinsic,
+                        args: vec![typed_object.clone()],
+                    },
+                    span: span.clone(),
+                });
             }
             return Some(TypedExpr {
                 ty: m.return_type.clone(),
@@ -3583,12 +3768,19 @@ impl Inference<'_> {
         }
 
         let generic = self.resolve_generic_trait_impl_member(
-            &typed_object.ty, &prop_name, &[], &[], None, Some(true),
+            &typed_object.ty,
+            &prop_name,
+            &[],
+            &[],
+            None,
+            Some(true),
         );
         if !generic.is_empty() {
             return Some(self.resolve_overload(
                 &format!("{}.{}", typed_object.ty, field.value),
-                generic, vec![typed_object.clone()], span,
+                generic,
+                vec![typed_object.clone()],
+                span,
             ));
         }
 
@@ -3607,62 +3799,127 @@ impl Inference<'_> {
         let mut signatures: Vec<Vec<Type>> = Vec::new();
         let mut interface_component = None;
         if let Type::InterfaceObject { traits, .. } = &object.ty {
-            let applications: Vec<_> = traits.iter().filter_map(|component| {
-                let sig = self.registry.lookup_trait(&component.trait_fqn, &self.package_path)?;
-                sig.methods.iter().any(|m| m.name == field.value).then_some((component.trait_fqn.clone(), component.trait_type_args.clone()))
-            }).collect();
+            let applications: Vec<_> = traits
+                .iter()
+                .filter_map(|component| {
+                    let sig = self
+                        .registry
+                        .lookup_trait(&component.trait_fqn, &self.package_path)?;
+                    sig.methods
+                        .iter()
+                        .any(|m| m.name == field.value)
+                        .then_some((
+                            component.trait_fqn.clone(),
+                            component.trait_type_args.clone(),
+                        ))
+                })
+                .collect();
             if applications.is_empty() {
                 return None;
             }
-            let selected = if applications.len() == 1 { Some(0) } else {
-                self.dedup_traits_by_member_origin(&applications, |sig, name| {
-                    sig.methods.iter().find(|m| m.name == name).and_then(|m| m.origin.clone())
-                }, &field.value)
+            let selected = if applications.len() == 1 {
+                Some(0)
+            } else {
+                self.dedup_traits_by_member_origin(
+                    &applications,
+                    |sig, name| {
+                        sig.methods
+                            .iter()
+                            .find(|m| m.name == name)
+                            .and_then(|m| m.origin.clone())
+                    },
+                    &field.value,
+                )
             };
             let Some(index) = selected else {
                 self.diagnostics.error(span.clone(), format!("ambiguous reference to '{}': use an interface-qualified call to disambiguate", field.value));
-                return Some(TypedExpr { kind: TypedExprKind::UnitLiteral, ty: Type::Error, span: span.clone() });
+                return Some(TypedExpr {
+                    kind: TypedExprKind::UnitLiteral,
+                    ty: Type::Error,
+                    span: span.clone(),
+                });
             };
             let (fqn, args) = &applications[index];
             let sig = self.registry.lookup_trait(fqn, &self.package_path)?;
             let method = sig.methods.iter().find(|m| m.name == field.value)?;
-            let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(&sig.type_params, args)
-                .with_self_type(Type::interface_object(fqn.clone(), args.clone()));
-            signatures.push(method.params.iter().skip(1).map(|(_, ty)| apply_substitution(&sub, ty)).collect());
+            let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                &sig.type_params,
+                args,
+            )
+            .with_self_type(Type::interface_object(fqn.clone(), args.clone()));
+            signatures.push(
+                method
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|(_, ty)| apply_substitution(&sub, ty))
+                    .collect(),
+            );
             interface_component = Some((fqn.clone(), args.clone()));
         } else {
             signatures = self.generic_method_ref_parameters(object, &method_name);
         }
         if let Some(Type::Function(expected, _)) = &self.expected_type {
-            signatures.retain(|params| params.len() == expected.len()
-                && params.iter().zip(expected).all(|(p, e)| self.is_assignable(p, e)));
+            signatures.retain(|params| {
+                params.len() == expected.len()
+                    && params
+                        .iter()
+                        .zip(expected)
+                        .all(|(p, e)| self.is_assignable(p, e))
+            });
         }
         let params = signatures.first()?.clone();
         if signatures.len() > 1 {
             self.diagnostics.error(span.clone(), format!("ambiguous reference to '{}': annotate the expected function type or call the member directly", field.value));
-            return Some(TypedExpr { kind: TypedExprKind::UnitLiteral, ty: Type::Error, span: span.clone() });
+            return Some(TypedExpr {
+                kind: TypedExprKind::UnitLiteral,
+                ty: Type::Error,
+                span: span.clone(),
+            });
         }
         let receiver_name = VarName(format!("$bound_receiver_{}_{}", span.line, span.column));
         let receiver = TypedExpr {
-            kind: TypedExprKind::VarRef { name: receiver_name.clone(), boxed: false },
-            ty: object.ty.clone(), span: span.clone(),
+            kind: TypedExprKind::VarRef {
+                name: receiver_name.clone(),
+                boxed: false,
+            },
+            ty: object.ty.clone(),
+            span: span.clone(),
         };
-        let closure_params: Vec<_> = params.iter().enumerate().map(|(i, ty)| {
-            crate::typechecker::types::TypedClosureParam {
-                name: VarName(format!("$bound_arg_{i}")), ty: ty.clone(), span: span.clone(),
-            }
-        }).collect();
-        let args: Vec<_> = closure_params.iter().map(|p| TypedExpr {
-            kind: TypedExprKind::VarRef { name: p.name.clone(), boxed: false },
-            ty: p.ty.clone(), span: span.clone(),
-        }).collect();
+        let closure_params: Vec<_> = params
+            .iter()
+            .enumerate()
+            .map(|(i, ty)| crate::typechecker::types::TypedClosureParam {
+                name: VarName(format!("$bound_arg_{i}")),
+                ty: ty.clone(),
+                span: span.clone(),
+            })
+            .collect();
+        let args: Vec<_> = closure_params
+            .iter()
+            .map(|p| TypedExpr {
+                kind: TypedExprKind::VarRef {
+                    name: p.name.clone(),
+                    boxed: false,
+                },
+                ty: p.ty.clone(),
+                span: span.clone(),
+            })
+            .collect();
         let saved_expected = self.expected_type.take();
         self.expected_type = match &saved_expected {
             Some(Type::Function(_, ret)) => Some((**ret).clone()),
             _ => None,
         };
         let body = if let Some((fqn, type_args)) = interface_component {
-            self.resolve_interface_object_method_call(receiver, &field.value, &fqn, &type_args, args, span)
+            self.resolve_interface_object_method_call(
+                receiver,
+                &field.value,
+                &fqn,
+                &type_args,
+                args,
+                span,
+            )
         } else {
             self.resolve_concrete_type_instance_method(&receiver, field, &args, &[], span)
         };
@@ -3670,15 +3927,30 @@ impl Inference<'_> {
         let body = body?;
         let closure_type = Type::Function(params, Box::new(body.ty.clone()));
         let binding = TypedExpr {
-            kind: TypedExprKind::Let { name: receiver_name, mutable: false, boxed: false,
-                var_ty: object.ty.clone(), value: Box::new(object.clone()) },
-            ty: Type::Unit, span: span.clone(),
+            kind: TypedExprKind::Let {
+                name: receiver_name,
+                mutable: false,
+                boxed: false,
+                var_ty: object.ty.clone(),
+                value: Box::new(object.clone()),
+            },
+            ty: Type::Unit,
+            span: span.clone(),
         };
         let closure = TypedExpr {
-            kind: TypedExprKind::Closure { params: closure_params, body: Box::new(body), captures: Vec::new() },
-            ty: closure_type.clone(), span: span.clone(),
+            kind: TypedExprKind::Closure {
+                params: closure_params,
+                body: Box::new(body),
+                captures: Vec::new(),
+            },
+            ty: closure_type.clone(),
+            span: span.clone(),
         };
-        Some(TypedExpr { kind: TypedExprKind::Block(vec![binding, closure]), ty: closure_type, span: span.clone() })
+        Some(TypedExpr {
+            kind: TypedExprKind::Block(vec![binding, closure]),
+            ty: closure_type,
+            span: span.clone(),
+        })
     }
 
     fn generic_method_ref_parameters(
@@ -3686,54 +3958,125 @@ impl Inference<'_> {
         object: &TypedExpr,
         method_name: &SymbolName,
     ) -> Vec<Vec<Type>> {
-        let Some(fqn) = object.ty.try_to_fqn() else { return Vec::new(); };
-        let extensions: Vec<_> = self.lookup_all_generic_extension_methods(&object.ty, method_name)
-            .into_iter().map(|(block, method)| {
+        let Some(fqn) = object.ty.try_to_fqn() else {
+            return Vec::new();
+        };
+        let extensions: Vec<_> = self
+            .lookup_all_generic_extension_methods(&object.ty, method_name)
+            .into_iter()
+            .map(|(block, method)| {
                 let mut bounds = block.trait_bounds;
                 bounds.merge(&method.trait_bounds);
-                (block.for_type, block.type_params, method.method_type_params, bounds,
-                    method.params, method.return_type, method.is_property, None)
-            }).collect();
-        let implementations: Vec<_> = self.registry.find_impl_method(&fqn, method_name)
+                (
+                    block.for_type,
+                    block.type_params,
+                    method.method_type_params,
+                    bounds,
+                    method.params,
+                    method.return_type,
+                    method.is_property,
+                    None,
+                )
+            })
+            .collect();
+        let implementations: Vec<_> = self
+            .registry
+            .find_impl_method(&fqn, method_name)
             .into_iter()
-            .filter(|(_, method)| method.visibility != Visibility::Private || method.span.file == self.current_file)
+            .filter(|(_, method)| {
+                method.visibility != Visibility::Private || method.span.file == self.current_file
+            })
             .map(|(block, method)| {
                 let mut bounds = block.trait_bounds.clone();
                 bounds.merge(&method.trait_bounds);
-                (block.for_type.clone(), block.type_params.clone(), method.method_type_params.clone(), bounds,
-                    method.params.clone(), method.return_type.clone(), method.is_property,
-                    Some((block.trait_fqn.clone(), block.trait_type_args.clone())))
-            }).collect();
+                (
+                    block.for_type.clone(),
+                    block.type_params.clone(),
+                    method.method_type_params.clone(),
+                    bounds,
+                    method.params.clone(),
+                    method.return_type.clone(),
+                    method.is_property,
+                    Some((block.trait_fqn.clone(), block.trait_type_args.clone())),
+                )
+            })
+            .collect();
         for methods in [extensions, implementations] {
             let mut applicable = Vec::new();
-            for (receiver, block_params, method_params, bounds, params, ret, property, provider) in methods {
-                if property || params.first().is_none_or(|(name, _)| name != "self") { continue; }
+            for (receiver, block_params, method_params, bounds, params, ret, property, provider) in
+                methods
+            {
+                if property || params.first().is_none_or(|(name, _)| name != "self") {
+                    continue;
+                }
                 let mut sub = super::type_param_substitution::TypeParamSubstitution::new();
-                if !sub.unify(&receiver, &object.ty) { continue; }
+                if !sub.unify(&receiver, &object.ty) {
+                    continue;
+                }
                 if let Some(Type::Function(expected_params, expected_ret)) = &self.expected_type {
-                    if expected_params.len() + 1 != params.len() { continue; }
-                    for ((_, param), expected) in params.iter().skip(1).zip(expected_params) { sub.unify(param, expected); }
+                    if expected_params.len() + 1 != params.len() {
+                        continue;
+                    }
+                    for ((_, param), expected) in params.iter().skip(1).zip(expected_params) {
+                        sub.unify(param, expected);
+                    }
                     sub.unify(&ret, expected_ret);
                 }
                 self.infer_associated_bound_types(&bounds, &mut sub);
                 let all_params: Vec<_> = block_params.into_iter().chain(method_params).collect();
-                let Some(args) = sub.resolve_type_params(&all_params) else { continue; };
-                if !self.unsatisfied_trait_bounds(&bounds, &all_params, &args).is_empty() { continue; }
-                let resolved: Vec<_> = params.iter().skip(1).map(|(_, ty)| apply_substitution(&sub, ty)).collect();
-                if let Some(Type::Function(expected, _)) = &self.expected_type {
-                    if !resolved.iter().zip(expected).all(|(p, e)| self.is_assignable(p, e)) { continue; }
+                let Some(args) = sub.resolve_type_params(&all_params) else {
+                    continue;
+                };
+                if !self
+                    .unsatisfied_trait_bounds(&bounds, &all_params, &args)
+                    .is_empty()
+                {
+                    continue;
                 }
-                let provider = provider.map(|(fqn, args)| (fqn, args.iter().map(|arg| apply_substitution(&sub, arg)).collect()));
+                let resolved: Vec<_> = params
+                    .iter()
+                    .skip(1)
+                    .map(|(_, ty)| apply_substitution(&sub, ty))
+                    .collect();
+                if let Some(Type::Function(expected, _)) = &self.expected_type
+                    && !resolved
+                        .iter()
+                        .zip(expected)
+                        .all(|(p, e)| self.is_assignable(p, e))
+                {
+                    continue;
+                }
+                let provider = provider.map(|(fqn, args)| {
+                    (
+                        fqn,
+                        args.iter()
+                            .map(|arg| apply_substitution(&sub, arg))
+                            .collect(),
+                    )
+                });
                 applicable.push((resolved, provider));
             }
-            if applicable.is_empty() { continue; }
-            let providers: Vec<_> = applicable.iter().filter_map(|(_, provider)| provider.clone()).collect();
-            if providers.len() == applicable.len() && providers.len() > 1 {
-                if let Some(kept) = self.dedup_traits_by_member_origin(&providers, |sig, name| {
-                    sig.methods.iter().find(|m| m.name == name).and_then(|m| m.origin.clone())
-                }, &method_name.0) {
-                    return vec![applicable.swap_remove(kept).0];
-                }
+            if applicable.is_empty() {
+                continue;
+            }
+            let providers: Vec<_> = applicable
+                .iter()
+                .filter_map(|(_, provider)| provider.clone())
+                .collect();
+            if providers.len() == applicable.len()
+                && providers.len() > 1
+                && let Some(kept) = self.dedup_traits_by_member_origin(
+                    &providers,
+                    |sig, name| {
+                        sig.methods
+                            .iter()
+                            .find(|m| m.name == name)
+                            .and_then(|m| m.origin.clone())
+                    },
+                    &method_name.0,
+                )
+            {
+                return vec![applicable.swap_remove(kept).0];
             }
             return applicable.into_iter().map(|(params, _)| params).collect();
         }
@@ -3748,7 +4091,12 @@ impl Inference<'_> {
         field: &Spanned<String>,
         span: &Span,
     ) -> Option<TypedExpr> {
-        if typed_object.ty.is_error() || matches!(typed_object.ty, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)) {
+        if typed_object.ty.is_error()
+            || matches!(
+                typed_object.ty,
+                Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)
+            )
+        {
             return None;
         }
 
@@ -3765,24 +4113,32 @@ impl Inference<'_> {
         if let Type::Class(ref class_fqn, _) = typed_object.ty {
             let mut current_fqn = class_fqn.clone();
             loop {
-                if let Some(class_sig) = self.registry.lookup_class_type(&current_fqn, &self.package_path).cloned() {
+                if let Some(class_sig) = self
+                    .registry
+                    .lookup_class_type(&current_fqn, &self.package_path)
+                    .cloned()
+                {
                     if let Some(overloads) = class_sig.instance_methods.get(&method_name) {
                         for sig in overloads {
                             if !sig.is_property
                                 && !sig.is_intrinsic
                                 && !sig.params.is_empty()
                                 && sig.params[0].0 == "self"
-                                && self.is_member_visible(sig.visibility, &current_fqn.package, &sig.source_file)
+                                && self.is_member_visible(
+                                    sig.visibility,
+                                    &current_fqn.package,
+                                    &sig.source_file,
+                                )
                             {
                                 candidates.push(sig.clone());
                             }
                         }
                     }
-                    if candidates.is_empty() {
-                        if let Some(parent) = class_sig.parent_class {
-                            current_fqn = parent;
-                            continue;
-                        }
+                    if candidates.is_empty()
+                        && let Some(parent) = class_sig.parent_class
+                    {
+                        current_fqn = parent;
+                        continue;
                     }
                 }
                 break;
@@ -3790,19 +4146,22 @@ impl Inference<'_> {
         }
 
         // 2. Module-for-type instance methods
-        if candidates.is_empty() {
-            if let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned() {
-                if let Some(overloads) = module_info.functions.get(&method_name) {
-                    for sig in overloads {
-                        if !sig.is_property
-                            && !sig.is_intrinsic
-                            && !sig.params.is_empty()
-                            && sig.params[0].0 == "self"
-                            && self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file)
-                        {
-                            candidates.push(sig.clone());
-                        }
-                    }
+        if candidates.is_empty()
+            && let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned()
+            && let Some(overloads) = module_info.functions.get(&method_name)
+        {
+            for sig in overloads {
+                if !sig.is_property
+                    && !sig.is_intrinsic
+                    && !sig.params.is_empty()
+                    && sig.params[0].0 == "self"
+                    && self.is_member_visible(
+                        sig.visibility,
+                        &module_info.fqn.package,
+                        &sig.source_file,
+                    )
+                {
+                    candidates.push(sig.clone());
                 }
             }
         }
@@ -3829,10 +4188,12 @@ impl Inference<'_> {
             }
         }
 
-        if candidates.is_empty() && ext_block_methods.is_empty() {
-            if let Some(reference) = self.try_resolve_dispatched_method_ref(typed_object, field, span) {
-                return Some(reference);
-            }
+        if candidates.is_empty()
+            && ext_block_methods.is_empty()
+            && let Some(reference) =
+                self.try_resolve_dispatched_method_ref(typed_object, field, span)
+        {
+            return Some(reference);
         }
 
         // 4. Trait impl instance methods. Sibling-instantiation-aware: only
@@ -3883,10 +4244,10 @@ impl Inference<'_> {
                 None
             };
             for (b, m) in impl_results {
-                if let Some((keep_fqn, keep_args)) = &origin_only {
-                    if b.trait_fqn != *keep_fqn || b.trait_type_args != *keep_args {
-                        continue;
-                    }
+                if let Some((keep_fqn, keep_args)) = &origin_only
+                    && (b.trait_fqn != *keep_fqn || b.trait_type_args != *keep_args)
+                {
+                    continue;
                 }
                 if b.type_params.is_empty()
                     && m.method_type_params.is_empty()
@@ -3899,7 +4260,13 @@ impl Inference<'_> {
                 {
                     candidates.push(FunctionSignature {
                         visibility: m.visibility,
-                        mangled_name: crate::typechecker::types::impl_member_mangled_name(&b.trait_fqn, &b.for_type, &b.type_params, &m.dispatch_name, &b.trait_type_args),
+                        mangled_name: crate::typechecker::types::impl_member_mangled_name(
+                            &b.trait_fqn,
+                            &b.for_type,
+                            &b.type_params,
+                            &m.dispatch_name,
+                            &b.trait_type_args,
+                        ),
                         params: m.params.clone(),
                         return_type: m.return_type.clone(),
                         source_file: b.source_file.clone(),
@@ -3938,7 +4305,13 @@ impl Inference<'_> {
         if from_trait_impl {
             let count = candidates.len();
             return self
-                .try_resolve_impl_method_ref(&candidates, typed_object, &type_fqn, &method_name, span)
+                .try_resolve_impl_method_ref(
+                    &candidates,
+                    typed_object,
+                    &type_fqn,
+                    &method_name,
+                    span,
+                )
                 .or_else(|| {
                     if count > 1 {
                         ambiguous_ref(self, count)
@@ -3974,7 +4347,13 @@ impl Inference<'_> {
             &format!("{}.{}", typed_object.ty, field.value),
             span,
         )
-        .or_else(|| if count > 1 { ambiguous_ref(self, count) } else { None })
+        .or_else(|| {
+            if count > 1 {
+                ambiguous_ref(self, count)
+            } else {
+                None
+            }
+        })
     }
 
     /// Given a list of instance method candidates, try to resolve a bound method reference.
@@ -3994,22 +4373,24 @@ impl Inference<'_> {
                     let non_self_params: Vec<_> =
                         sig.params.iter().skip(1).map(|(_, ty)| ty).collect();
                     non_self_params.len() == expected_params.len()
-                        && non_self_params
-                            .iter()
-                            .zip(expected_params.iter())
-                            .all(|(param_ty, exp_ty)| {
+                        && non_self_params.iter().zip(expected_params.iter()).all(
+                            |(param_ty, exp_ty)| {
                                 self.is_assignable(param_ty, exp_ty)
                                     || self.is_assignable(exp_ty, param_ty)
-                            })
+                            },
+                        )
                 })
                 .collect();
 
             if matching.len() == 1 {
                 let sig = matching[0];
-                let non_self_params: Vec<Type> =
-                    sig.params.iter().skip(1).map(|(_, ty)| ty.clone()).collect();
-                let func_ty =
-                    Type::Function(non_self_params, Box::new(sig.return_type.clone()));
+                let non_self_params: Vec<Type> = sig
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|(_, ty)| ty.clone())
+                    .collect();
+                let func_ty = Type::Function(non_self_params, Box::new(sig.return_type.clone()));
                 return Some(TypedExpr {
                     kind: TypedExprKind::MethodRef {
                         object: Box::new(typed_object.clone()),
@@ -4025,8 +4406,12 @@ impl Inference<'_> {
         // Single candidate — infer without expected type
         if candidates.len() == 1 {
             let sig = &candidates[0];
-            let non_self_params: Vec<Type> =
-                sig.params.iter().skip(1).map(|(_, ty)| ty.clone()).collect();
+            let non_self_params: Vec<Type> = sig
+                .params
+                .iter()
+                .skip(1)
+                .map(|(_, ty)| ty.clone())
+                .collect();
             let func_ty = Type::Function(non_self_params, Box::new(sig.return_type.clone()));
             return Some(TypedExpr {
                 kind: TypedExprKind::MethodRef {
@@ -4053,32 +4438,37 @@ impl Inference<'_> {
         display_name: &str,
         span: &Span,
     ) -> Option<TypedExpr> {
-        let make_ext_method_ref = |block: &ExtensionBlockSignature, method: &ExtMethodSignature| -> TypedExpr {
-            let non_self_params: Vec<Type> =
-                method.params.iter().skip(1).map(|(_, ty)| ty.clone()).collect();
-            let func_ty = Type::Function(non_self_params, Box::new(method.return_type.clone()));
-            // A BOUND reference must capture the receiver — emit a MethodRef
-            // to the extension method's concrete mangled function (the
-            // receiver-less ExtFunctionRef node is for unbound `Type.method`
-            // references only).
-            let param_types: Vec<&Type> = method.params.iter().map(|(_, ty)| ty).collect();
-            let mangled = crate::common::types::MangledName::for_named_extension_method(
-                &block.ext_fqn.package,
-                &block.ext_fqn.symbol,
-                method_name,
-                &block.for_type,
-                &param_types,
-            );
-            TypedExpr {
-                kind: TypedExprKind::MethodRef {
-                    object: Box::new(typed_object.clone()),
-                    method_name: mangled,
-                    type_params: vec![],
-                },
-                ty: func_ty,
-                span: span.clone(),
-            }
-        };
+        let make_ext_method_ref =
+            |block: &ExtensionBlockSignature, method: &ExtMethodSignature| -> TypedExpr {
+                let non_self_params: Vec<Type> = method
+                    .params
+                    .iter()
+                    .skip(1)
+                    .map(|(_, ty)| ty.clone())
+                    .collect();
+                let func_ty = Type::Function(non_self_params, Box::new(method.return_type.clone()));
+                // A BOUND reference must capture the receiver — emit a MethodRef
+                // to the extension method's concrete mangled function (the
+                // receiver-less ExtFunctionRef node is for unbound `Type.method`
+                // references only).
+                let param_types: Vec<&Type> = method.params.iter().map(|(_, ty)| ty).collect();
+                let mangled = crate::common::types::MangledName::for_named_extension_method(
+                    &block.ext_fqn.package,
+                    &block.ext_fqn.symbol,
+                    method_name,
+                    &block.for_type,
+                    &param_types,
+                );
+                TypedExpr {
+                    kind: TypedExprKind::MethodRef {
+                        object: Box::new(typed_object.clone()),
+                        method_name: mangled,
+                        type_params: vec![],
+                    },
+                    ty: func_ty,
+                    span: span.clone(),
+                }
+            };
 
         // Try to disambiguate using expected type (compare against non-self params)
         if let Some(Type::Function(expected_params, _)) = &self.expected_type {
@@ -4088,13 +4478,12 @@ impl Inference<'_> {
                     let non_self_params: Vec<_> =
                         method.params.iter().skip(1).map(|(_, ty)| ty).collect();
                     non_self_params.len() == expected_params.len()
-                        && non_self_params
-                            .iter()
-                            .zip(expected_params.iter())
-                            .all(|(param_ty, exp_ty)| {
+                        && non_self_params.iter().zip(expected_params.iter()).all(
+                            |(param_ty, exp_ty)| {
                                 self.is_assignable(param_ty, exp_ty)
                                     || self.is_assignable(exp_ty, param_ty)
-                            })
+                            },
+                        )
                 })
                 .collect();
 
@@ -4129,13 +4518,12 @@ impl Inference<'_> {
                     let non_self_params: Vec<_> =
                         sig.params.iter().skip(1).map(|(_, ty)| ty).collect();
                     non_self_params.len() == expected_params.len()
-                        && non_self_params
-                            .iter()
-                            .zip(expected_params.iter())
-                            .all(|(param_ty, exp_ty)| {
+                        && non_self_params.iter().zip(expected_params.iter()).all(
+                            |(param_ty, exp_ty)| {
                                 self.is_assignable(param_ty, exp_ty)
                                     || self.is_assignable(exp_ty, param_ty)
-                            })
+                            },
+                        )
                 })
                 .collect();
             if matching.len() == 1 {
@@ -4147,8 +4535,12 @@ impl Inference<'_> {
             return None;
         };
 
-        let non_self_params: Vec<Type> =
-            sig.params.iter().skip(1).map(|(_, ty)| ty.clone()).collect();
+        let non_self_params: Vec<Type> = sig
+            .params
+            .iter()
+            .skip(1)
+            .map(|(_, ty)| ty.clone())
+            .collect();
         let func_ty = Type::Function(non_self_params, Box::new(sig.return_type.clone()));
 
         // The selected candidate already carries its block's for_type-aware
@@ -4175,7 +4567,10 @@ impl Inference<'_> {
         field: &crate::common::span::Spanned<String>,
         span: &Span,
     ) -> Option<TypedExpr> {
-        let trait_sig = self.registry.lookup_trait(trait_fqn, &self.package_path)?.clone();
+        let trait_sig = self
+            .registry
+            .lookup_trait(trait_fqn, &self.package_path)?
+            .clone();
 
         // Check properties
         if let Some(prop_sig) = trait_sig.properties.iter().find(|p| p.name == field.value) {
@@ -4185,7 +4580,10 @@ impl Inference<'_> {
             let self_type = match &prop_sig.origin {
                 None => Type::interface_object(trait_fqn.clone(), trait_type_args.to_vec()),
                 Some((origin_fqn, origin_args)) => {
-                    let owner_subst: std::collections::BTreeMap<crate::common::types::TypeParamName, Type> = trait_sig
+                    let owner_subst: std::collections::BTreeMap<
+                        crate::common::types::TypeParamName,
+                        Type,
+                    > = trait_sig
                         .type_params
                         .iter()
                         .cloned()
@@ -4193,7 +4591,12 @@ impl Inference<'_> {
                         .collect();
                     let substituted: Vec<Type> = origin_args
                         .iter()
-                        .map(|t| crate::typechecker::collect::substitute_trait_type_params(t, &owner_subst))
+                        .map(|t| {
+                            crate::typechecker::collect::substitute_trait_type_params(
+                                t,
+                                &owner_subst,
+                            )
+                        })
                         .collect();
                     Type::interface_object(origin_fqn.clone(), substituted)
                 }
@@ -4210,7 +4613,9 @@ impl Inference<'_> {
             // the set key for a single interface) — the ORIGIN trait's key for
             // inherited properties (their slot lives in the nested super vtable).
             let interface_mangled_name = match &prop_sig.origin {
-                Some((origin_fqn, _)) => MangledName::for_interface_object_per_interface(origin_fqn),
+                Some((origin_fqn, _)) => {
+                    MangledName::for_interface_object_per_interface(origin_fqn)
+                }
                 None => MangledName::for_interface_object_per_interface(trait_fqn),
             };
             return Some(TypedExpr {
@@ -4239,7 +4644,9 @@ impl Inference<'_> {
             package: self.package_path.clone(),
             symbol: qualified,
         };
-        let overloads = self.registry.lookup_function(&fqn, &self.package_path, &self.current_file)?;
+        let overloads =
+            self.registry
+                .lookup_function(&fqn, &self.package_path, &self.current_file)?;
         let prop = overloads
             .iter()
             .find(|sig| sig.is_property && sig.params.is_empty())?;
@@ -4286,21 +4693,18 @@ impl Inference<'_> {
                 .iter()
                 .filter(|sig| {
                     sig.params.len() == expected_params.len()
-                        && sig
-                            .params
-                            .iter()
-                            .zip(expected_params.iter())
-                            .all(|((_, param_ty), exp_ty)| {
+                        && sig.params.iter().zip(expected_params.iter()).all(
+                            |((_, param_ty), exp_ty)| {
                                 self.is_assignable(param_ty, exp_ty)
                                     || self.is_assignable(exp_ty, param_ty)
-                            })
+                            },
+                        )
                 })
                 .collect();
 
             if matching.len() == 1 {
                 let sig = matching[0];
-                let param_types: Vec<Type> =
-                    sig.params.iter().map(|(_, ty)| ty.clone()).collect();
+                let param_types: Vec<Type> = sig.params.iter().map(|(_, ty)| ty.clone()).collect();
                 let func_ty = Type::Function(param_types, Box::new(sig.return_type.clone()));
                 return Some(TypedExpr {
                     kind: TypedExprKind::FunctionRef {
@@ -4391,15 +4795,17 @@ impl Inference<'_> {
         expected_ret: &Type,
         span: &Span,
     ) -> Option<TypedExpr> {
-        let generic_defs = self.registry.lookup_generic_function(fqn, &self.package_path)?.to_vec();
+        let generic_defs = self
+            .registry
+            .lookup_generic_function(fqn, &self.package_path)?
+            .to_vec();
         let mut matched = Vec::new();
 
         for def in &generic_defs {
             if def.params.len() != expected_params.len() {
                 continue;
             }
-            let mut substitution =
-                super::type_param_substitution::TypeParamSubstitution::new();
+            let mut substitution = super::type_param_substitution::TypeParamSubstitution::new();
             let mut ok = true;
             for ((_, param_ty), exp_ty) in def.params.iter().zip(expected_params.iter()) {
                 if !substitution.unify(param_ty, exp_ty) {
@@ -4440,7 +4846,10 @@ impl Inference<'_> {
                 .collect();
             let func_ty = Type::Function(concrete_params, Box::new(concrete_ret));
             return Some(TypedExpr {
-                kind: TypedExprKind::FunctionRef { name: mangled, type_params: type_args.clone() },
+                kind: TypedExprKind::FunctionRef {
+                    name: mangled,
+                    type_params: type_args.clone(),
+                },
                 ty: func_ty,
                 span: span.clone(),
             });
@@ -4460,19 +4869,30 @@ impl Inference<'_> {
         span: &Span,
     ) -> Option<TypedExpr> {
         use super::type_param_substitution::TypeParamSubstitution;
-        let defs: Vec<_> = module.generic_members
+        let defs: Vec<_> = module
+            .generic_members
             .lookup_visible(member, &self.package_path, &self.current_file)
-            .into_iter().cloned().collect();
+            .into_iter()
+            .cloned()
+            .collect();
         let mut matches = Vec::new();
         let mut failures = std::collections::BTreeSet::new();
         for def in defs {
             if def.is_property || def.params.first().is_some_and(|p| p.0 == "self") {
                 continue;
             }
-            let params: Vec<_> = def.type_params.iter().chain(&def.method_type_params).cloned().collect();
+            let params: Vec<_> = def
+                .type_params
+                .iter()
+                .chain(&def.method_type_params)
+                .cloned()
+                .collect();
             let mut sub = TypeParamSubstitution::new();
             let mut valid = true;
-            for (names, args) in [(&def.type_params, module_args), (&def.method_type_params, method_args)] {
+            for (names, args) in [
+                (&def.type_params, module_args),
+                (&def.method_type_params, method_args),
+            ] {
                 if args.is_empty() {
                     continue;
                 }
@@ -4491,16 +4911,16 @@ impl Inference<'_> {
             if !valid {
                 continue;
             }
-            if sub.resolve_type_params(&params).is_none() {
-                if let Some(Type::Function(expected_params, expected_ret)) = &self.expected_type {
-                    if expected_params.len() != def.params.len() {
-                        continue;
-                    }
-                    for ((_, ty), expected) in def.params.iter().zip(expected_params) {
-                        valid &= sub.unify(ty, expected);
-                    }
-                    valid &= sub.unify(&def.return_type, expected_ret);
+            if sub.resolve_type_params(&params).is_none()
+                && let Some(Type::Function(expected_params, expected_ret)) = &self.expected_type
+            {
+                if expected_params.len() != def.params.len() {
+                    continue;
                 }
+                for ((_, ty), expected) in def.params.iter().zip(expected_params) {
+                    valid &= sub.unify(ty, expected);
+                }
+                valid &= sub.unify(&def.return_type, expected_ret);
             }
             if !valid {
                 continue;
@@ -4509,13 +4929,16 @@ impl Inference<'_> {
                 continue;
             };
             let function_type = Type::Function(
-                def.params.iter().map(|(_, ty)| apply_substitution(&sub, ty)).collect(),
+                def.params
+                    .iter()
+                    .map(|(_, ty)| apply_substitution(&sub, ty))
+                    .collect(),
                 Box::new(apply_substitution(&sub, &def.return_type)),
             );
-            if let Some(expected @ Type::Function(..)) = &self.expected_type {
-                if !self.is_assignable(expected, &function_type) {
-                    continue;
-                }
+            if let Some(expected @ Type::Function(..)) = &self.expected_type
+                && !self.is_assignable(expected, &function_type)
+            {
+                continue;
             }
             let mut bounds = module.trait_bounds.clone();
             bounds.merge(&def.trait_bounds);
@@ -4567,10 +4990,7 @@ impl Inference<'_> {
         display_name: &str,
         span: &Span,
     ) -> Option<TypedExpr> {
-        let candidates: Vec<_> = overloads
-            .iter()
-            .filter(|sig| !sig.is_property)
-            .collect();
+        let candidates: Vec<_> = overloads.iter().filter(|sig| !sig.is_property).collect();
 
         if candidates.is_empty() {
             return None;
@@ -4582,21 +5002,18 @@ impl Inference<'_> {
                 .iter()
                 .filter(|sig| {
                     sig.params.len() == expected_params.len()
-                        && sig
-                            .params
-                            .iter()
-                            .zip(expected_params.iter())
-                            .all(|((_, param_ty), exp_ty)| {
+                        && sig.params.iter().zip(expected_params.iter()).all(
+                            |((_, param_ty), exp_ty)| {
                                 self.is_assignable(param_ty, exp_ty)
                                     || self.is_assignable(exp_ty, param_ty)
-                            })
+                            },
+                        )
                 })
                 .collect();
 
             if matching.len() == 1 {
                 let sig = matching[0];
-                let param_types: Vec<Type> =
-                    sig.params.iter().map(|(_, ty)| ty.clone()).collect();
+                let param_types: Vec<Type> = sig.params.iter().map(|(_, ty)| ty.clone()).collect();
                 let func_ty = Type::Function(param_types, Box::new(sig.return_type.clone()));
                 return Some(TypedExpr {
                     kind: TypedExprKind::FunctionRef {
@@ -4641,14 +5058,18 @@ impl Inference<'_> {
     ) -> Option<TypedExpr> {
         let candidates: Vec<_> = overloads
             .iter()
-            .filter(|(_, m)| !m.is_property || m.params.first().is_some_and(|(name, _)| name == "self"))
+            .filter(|(_, m)| {
+                !m.is_property || m.params.first().is_some_and(|(name, _)| name == "self")
+            })
             .collect();
 
         if candidates.is_empty() {
             return None;
         }
 
-        let make_ext_ref = |block: &ExtensionBlockSignature, method: &ExtMethodSignature| -> TypedExpr {
+        let make_ext_ref = |block: &ExtensionBlockSignature,
+                            method: &ExtMethodSignature|
+         -> TypedExpr {
             let param_types: Vec<Type> = method.params.iter().map(|(_, ty)| ty.clone()).collect();
             let func_ty = Type::Function(param_types, Box::new(method.return_type.clone()));
             TypedExpr {
@@ -4669,14 +5090,12 @@ impl Inference<'_> {
                 .iter()
                 .filter(|(_, method)| {
                     method.params.len() == expected_params.len()
-                        && method
-                            .params
-                            .iter()
-                            .zip(expected_params.iter())
-                            .all(|((_, param_ty), exp_ty)| {
+                        && method.params.iter().zip(expected_params.iter()).all(
+                            |((_, param_ty), exp_ty)| {
                                 self.is_assignable(param_ty, exp_ty)
                                     || self.is_assignable(exp_ty, param_ty)
-                            })
+                            },
+                        )
                 })
                 .collect();
 
@@ -4769,11 +5188,21 @@ impl Inference<'_> {
         // A GLOBAL with this name and no competing type: the access is a
         // field read on the global's value — bail before `resolve_type_name`
         // diagnoses the name as a type (e.g. a plain trait) while probing.
-        if self.resolve_fqn(type_name, super::types::SymbolKind::Global).is_some()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Record).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Enum).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Class).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Newtype).is_none()
+        if self
+            .resolve_fqn(type_name, super::types::SymbolKind::Global)
+            .is_some()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Record)
+                .is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Enum)
+                .is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Class)
+                .is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Newtype)
+                .is_none()
         {
             return None;
         }
@@ -4784,30 +5213,49 @@ impl Inference<'_> {
         // `resolve_type_name` so a plain trait name isn't diagnosed as
         // "cannot be used as a type" while merely being probed.
         if self.lookup_variable(type_name).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Global).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Record).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Enum).is_none()
-            && self.resolve_fqn(type_name, super::types::SymbolKind::Class).is_none()
-            && self.registry.lookup_module(&crate::common::types::Fqn {
-                package: self.package_path.clone(),
-                symbol: crate::common::types::SymbolName(type_name.to_string()),
-            }).is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Global)
+                .is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Record)
+                .is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Enum)
+                .is_none()
+            && self
+                .resolve_fqn(type_name, super::types::SymbolKind::Class)
+                .is_none()
+            && self
+                .registry
+                .lookup_module(&crate::common::types::Fqn {
+                    package: self.package_path.clone(),
+                    symbol: crate::common::types::SymbolName(type_name.to_string()),
+                })
+                .is_none()
+            && let Some(trait_fqn) = self.resolve_trait_fqn(type_name)
         {
-            if let Some(trait_fqn) = self.resolve_trait_fqn(type_name) {
-                let is_interface = self
-                    .registry
-                    .lookup_trait(&trait_fqn, &self.package_path)
-                    .is_some_and(|sig| sig.is_interface);
-                let declares_static_prop = self
-                    .registry
-                    .lookup_trait(&trait_fqn, &self.package_path)
-                    .is_some_and(|sig| {
-                        sig.properties
-                            .iter()
-                            .any(|p| p.name == field.value && !p.params.iter().any(|(n, _)| n == "self"))
-                    });
-                if declares_static_prop {
-                    let collect_from = |blocks: Vec<&crate::typechecker::registry::ImplBlockSignature>| -> Vec<(crate::common::types::Fqn, Type, Vec<Type>, Type)> {
+            let is_interface = self
+                .registry
+                .lookup_trait(&trait_fqn, &self.package_path)
+                .is_some_and(|sig| sig.is_interface);
+            let declares_static_prop = self
+                .registry
+                .lookup_trait(&trait_fqn, &self.package_path)
+                .is_some_and(|sig| {
+                    sig.properties.iter().any(|p| {
+                        p.name == field.value && !p.params.iter().any(|(n, _)| n == "self")
+                    })
+                });
+            if declares_static_prop {
+                let collect_from = |blocks: Vec<
+                        &crate::typechecker::registry::ImplBlockSignature,
+                    >|
+                     -> Vec<(
+                        crate::common::types::Fqn,
+                        Type,
+                        Vec<Type>,
+                        Type,
+                    )> {
                         blocks
                             .iter()
                             .flat_map(|b| {
@@ -4815,122 +5263,139 @@ impl Inference<'_> {
                                     .iter()
                                     .filter(|m| m.name.0 == field.value && m.params.is_empty())
                                     .map(|m| {
-                                        (b.trait_fqn.clone(), b.for_type.clone(), b.trait_type_args.clone(), m.return_type.clone())
+                                        (
+                                            b.trait_fqn.clone(),
+                                            b.for_type.clone(),
+                                            b.trait_type_args.clone(),
+                                            m.return_type.clone(),
+                                        )
                                     })
                                     .collect::<Vec<_>>()
                             })
                             .collect()
                     };
-                    // `Conv<Int32>.prop` restricts selection to blocks of
-                    // that trait application, both direct and provided —
-                    // mirroring the explicit static-call form.
-                    let required_trait_args: Vec<Type> = explicit_type_args
-                        .iter()
-                        .map(|te| self.resolve_type_expr(te))
-                        .collect();
-                    let direct: Vec<_> = self
+                // `Conv<Int32>.prop` restricts selection to blocks of
+                // that trait application, both direct and provided —
+                // mirroring the explicit static-call form.
+                let required_trait_args: Vec<Type> = explicit_type_args
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te))
+                    .collect();
+                let direct: Vec<_> = self
+                    .registry
+                    .all_implement_blocks()
+                    .iter()
+                    .filter(|b| {
+                        b.trait_fqn == trait_fqn
+                            && b.type_params.is_empty()
+                            && (required_trait_args.is_empty()
+                                || b.trait_type_args == required_trait_args)
+                    })
+                    .collect();
+                let mut matching = collect_from(direct);
+                if matching.is_empty() {
+                    // "B satisfies A everywhere": a sub-trait provider
+                    // block carries the static property inline.
+                    let providers: Vec<_> = self
                         .registry
                         .all_implement_blocks()
                         .iter()
                         .filter(|b| {
-                            b.trait_fqn == trait_fqn
+                            b.trait_fqn != trait_fqn
                                 && b.type_params.is_empty()
-                                && (required_trait_args.is_empty()
-                                    || b.trait_type_args == required_trait_args)
+                                && self
+                                    .registry
+                                    .super_closure_args(
+                                        &b.trait_fqn,
+                                        &b.trait_type_args,
+                                        &trait_fqn,
+                                    )
+                                    .is_some_and(|args| {
+                                        required_trait_args.is_empty()
+                                            || args == required_trait_args
+                                    })
                         })
                         .collect();
-                    let mut matching = collect_from(direct);
-                    if matching.is_empty() {
-                        // "B satisfies A everywhere": a sub-trait provider
-                        // block carries the static property inline.
-                        let providers: Vec<_> = self
-                            .registry
-                            .all_implement_blocks()
-                            .iter()
-                            .filter(|b| {
-                                b.trait_fqn != trait_fqn
-                                    && b.type_params.is_empty()
-                                    && self
-                                        .registry
-                                        .super_closure_args(&b.trait_fqn, &b.trait_type_args, &trait_fqn)
-                                        .is_some_and(|args| {
-                                            required_trait_args.is_empty()
-                                                || args == required_trait_args
-                                        })
-                            })
-                            .collect();
-                        matching = collect_from(providers);
+                    matching = collect_from(providers);
+                }
+                match matching.len() {
+                    1 => {
+                        // Target the selected block's own trait — a
+                        // provider block keeps its identity so sibling
+                        // providers don't collapse at monomorphize.
+                        let (block_trait_fqn, for_type, trait_args, return_type) =
+                            matching.into_iter().next().unwrap();
+                        return Some(TypedExpr {
+                            ty: return_type,
+                            kind: TypedExprKind::ImplFunctionCall {
+                                trait_fqn: block_trait_fqn,
+                                trait_type_params: trait_args,
+                                for_type,
+                                method_name: crate::common::types::SymbolName(field.value.clone()),
+                                args: vec![],
+                                method_type_params: vec![],
+                            },
+                            span: span.clone(),
+                        });
                     }
-                    match matching.len() {
-                        1 => {
-                            // Target the selected block's own trait — a
-                            // provider block keeps its identity so sibling
-                            // providers don't collapse at monomorphize.
-                            let (block_trait_fqn, for_type, trait_args, return_type) = matching.into_iter().next().unwrap();
-                            return Some(TypedExpr {
-                                ty: return_type,
-                                kind: TypedExprKind::ImplFunctionCall {
-                                    trait_fqn: block_trait_fqn,
-                                    trait_type_params: trait_args,
-                                    for_type,
-                                    method_name: crate::common::types::SymbolName(field.value.clone()),
-                                    args: vec![],
-                                    method_type_params: vec![],
-                                },
-                                span: span.clone(),
-                            });
-                        }
-                        0 => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                format!(
-                                    "no implementation of trait '{}' provides a static property '{}'",
-                                    type_name, field.value,
-                                ),
-                            );
-                            return Some(TypedExpr {
-                                kind: TypedExprKind::UnitLiteral,
-                                ty: Type::Error,
-                                span: span.clone(),
-                            });
-                        }
-                        n => {
-                            self.diagnostics.error(
+                    0 => {
+                        self.diagnostics.error(
+                            span.clone(),
+                            format!(
+                                "no implementation of trait '{}' provides a static property '{}'",
+                                type_name, field.value,
+                            ),
+                        );
+                        return Some(TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: span.clone(),
+                        });
+                    }
+                    n => {
+                        self.diagnostics.error(
                                 span.clone(),
                                 format!(
                                     "ambiguous access to '{}.{}': implemented for {} types; access it on a concrete type instead",
                                     type_name, field.value, n,
                                 ),
                             );
-                            return Some(TypedExpr {
-                                kind: TypedExprKind::UnitLiteral,
-                                ty: Type::Error,
-                                span: span.clone(),
-                            });
-                        }
+                        return Some(TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: span.clone(),
+                        });
                     }
-                } else {
-                    self.diagnostics.error(
-                        span.clone(),
-                        if is_interface {
-                            format!("interface '{}' member '{}' requires a receiver", type_name, field.value)
-                        } else {
-                            format!("trait '{}' has no static property '{}'", type_name, field.value)
-                        },
-                    );
-                    return Some(TypedExpr {
-                        kind: TypedExprKind::UnitLiteral,
-                        ty: Type::Error,
-                        span: span.clone(),
-                    });
                 }
-                // Interface without such a static property: fall through — the
-                // interface-object type path may still resolve the member.
+            } else {
+                self.diagnostics.error(
+                    span.clone(),
+                    if is_interface {
+                        format!(
+                            "interface '{}' member '{}' requires a receiver",
+                            type_name, field.value
+                        )
+                    } else {
+                        format!(
+                            "trait '{}' has no static property '{}'",
+                            type_name, field.value
+                        )
+                    },
+                );
+                return Some(TypedExpr {
+                    kind: TypedExprKind::UnitLiteral,
+                    ty: Type::Error,
+                    span: span.clone(),
+                });
             }
+            // Interface without such a static property: fall through — the
+            // interface-object type path may still resolve the member.
         }
 
         // Try class static property first
-        if let Some(result) = self.try_resolve_class_static_property(type_name, field, explicit_type_args, span) {
+        if let Some(result) =
+            self.try_resolve_class_static_property(type_name, field, explicit_type_args, span)
+        {
             return Some(result);
         }
 
@@ -4944,7 +5409,9 @@ impl Inference<'_> {
 
         // Handle type parameter: look up static properties from trait bounds.
         // Produces ImplFunctionCall so monomorphize can resolve after substitution.
-        if let Type::TypeVariable(_tp_name, bounds) | Type::GenericParam(_tp_name, bounds, _) = &resolved_type {
+        if let Type::TypeVariable(_tp_name, bounds) | Type::GenericParam(_tp_name, bounds, _) =
+            &resolved_type
+        {
             let bounds = bounds.clone();
             // Every bound declaring the static property competes: a trait and
             // a sub-trait extending it are ONE declaration (origin wins), and
@@ -4953,7 +5420,7 @@ impl Inference<'_> {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, bound)| {
-                            let bound = bound.named()?;
+                    let bound = bound.named()?;
                     let trait_sig = self
                         .registry
                         .lookup_trait(&bound.trait_fqn, &self.package_path)
@@ -5047,8 +5514,10 @@ impl Inference<'_> {
                 seen
             };
             if distinct_exts.len() > 1 {
-                let names: Vec<String> =
-                    distinct_exts.iter().map(|f| format!("'{}'", f.symbol)).collect();
+                let names: Vec<String> = distinct_exts
+                    .iter()
+                    .map(|f| format!("'{}'", f.symbol))
+                    .collect();
                 self.diagnostics.error(
                     span.clone(),
                     format!(
@@ -5064,19 +5533,18 @@ impl Inference<'_> {
                 });
             }
             let (block, method) = &ext_props[0];
-            if method.is_intrinsic {
-                if let Some(intrinsic) =
+            if method.is_intrinsic
+                && let Some(intrinsic) =
                     resolve_intrinsic_kind(&type_fqn, &prop_name, &method.return_type)
-                {
-                    return Some(TypedExpr {
-                        ty: method.return_type.clone(),
-                        kind: TypedExprKind::IntrinsicCall {
-                            intrinsic,
-                            args: vec![],
-                        },
-                        span: span.clone(),
-                    });
-                }
+            {
+                return Some(TypedExpr {
+                    ty: method.return_type.clone(),
+                    kind: TypedExprKind::IntrinsicCall {
+                        intrinsic,
+                        args: vec![],
+                    },
+                    span: span.clone(),
+                });
             }
             return Some(TypedExpr {
                 ty: method.return_type.clone(),
@@ -5098,9 +5566,13 @@ impl Inference<'_> {
             .collect();
         if !ext_funcs.is_empty() {
             let display = format!("{}.{}", type_name, field.value);
-            if let Some(result) =
-                self.try_resolve_ext_function_ref(&ext_funcs, &resolved_type, &prop_name, &display, span)
-            {
+            if let Some(result) = self.try_resolve_ext_function_ref(
+                &ext_funcs,
+                &resolved_type,
+                &prop_name,
+                &display,
+                span,
+            ) {
                 return Some(result);
             }
         }
@@ -5148,8 +5620,8 @@ impl Inference<'_> {
                 }
                 seen
             };
-            if distinct.len() > 1 {
-                if let Some(kept) = self.dedup_traits_by_member_origin(
+            if distinct.len() > 1
+                && let Some(kept) = self.dedup_traits_by_member_origin(
                     &distinct,
                     |sig, member| {
                         sig.properties
@@ -5158,11 +5630,11 @@ impl Inference<'_> {
                             .and_then(|p| p.origin.clone())
                     },
                     &field.value,
-                ) {
-                    let (keep_fqn, keep_args) = distinct[kept].clone();
-                    trait_impl_props
-                        .retain(|(b, _)| b.trait_fqn == keep_fqn && b.trait_type_args == keep_args);
-                }
+                )
+            {
+                let (keep_fqn, keep_args) = distinct[kept].clone();
+                trait_impl_props
+                    .retain(|(b, _)| b.trait_fqn == keep_fqn && b.trait_type_args == keep_args);
             }
         }
         // Two distinct (trait, application) providers of the same static
@@ -5200,19 +5672,18 @@ impl Inference<'_> {
         }
 
         if let Some((block, m)) = trait_impl_props.first() {
-            if m.is_intrinsic {
-                if let Some(intrinsic) =
+            if m.is_intrinsic
+                && let Some(intrinsic) =
                     resolve_intrinsic_kind(&type_fqn, &prop_name, &m.return_type)
-                {
-                    return Some(TypedExpr {
-                        ty: m.return_type.clone(),
-                        kind: TypedExprKind::IntrinsicCall {
-                            intrinsic,
-                            args: vec![],
-                        },
-                        span: span.clone(),
-                    });
-                }
+            {
+                return Some(TypedExpr {
+                    ty: m.return_type.clone(),
+                    kind: TypedExprKind::IntrinsicCall {
+                        intrinsic,
+                        args: vec![],
+                    },
+                    span: span.clone(),
+                });
             }
             return Some(TypedExpr {
                 ty: m.return_type.clone(),
@@ -5252,8 +5723,8 @@ impl Inference<'_> {
                     }
                     acc
                 });
-            if distinct.len() > 1 {
-                if let Some(kept) = self.dedup_traits_by_member_origin(
+            if distinct.len() > 1
+                && let Some(kept) = self.dedup_traits_by_member_origin(
                     &distinct,
                     |sig, member| {
                         sig.methods
@@ -5262,11 +5733,11 @@ impl Inference<'_> {
                             .and_then(|m| m.origin.clone())
                     },
                     &prop_name.0,
-                ) {
-                    let (keep_fqn, keep_args) = distinct[kept].clone();
-                    trait_impl_funcs
-                        .retain(|(b, _)| b.trait_fqn == keep_fqn && b.trait_type_args == keep_args);
-                }
+                )
+            {
+                let (keep_fqn, keep_args) = distinct[kept].clone();
+                trait_impl_funcs
+                    .retain(|(b, _)| b.trait_fqn == keep_fqn && b.trait_type_args == keep_args);
             }
         }
         if !trait_impl_funcs.is_empty() {
@@ -5319,7 +5790,11 @@ impl Inference<'_> {
                 "ambiguous reference to '{}.{}': {} trait implementations match; annotate the expected function type or use a trait-qualified call",
                 type_name, field.value, trait_impl_funcs.len(),
             ));
-            return Some(TypedExpr { kind: TypedExprKind::UnitLiteral, ty: Type::Error, span: span.clone() });
+            return Some(TypedExpr {
+                kind: TypedExprKind::UnitLiteral,
+                ty: Type::Error,
+                span: span.clone(),
+            });
         }
 
         // 2c. Try generic trait impl static properties (e.g. Array<Int32>.empty())
@@ -5363,10 +5838,10 @@ impl Inference<'_> {
                 None
             };
             for (block, im) in &defs {
-                if let Some((keep_fqn, keep_args)) = &origin_only {
-                    if block.trait_fqn != *keep_fqn || block.trait_type_args != *keep_args {
-                        continue;
-                    }
+                if let Some((keep_fqn, keep_args)) = &origin_only
+                    && (block.trait_fqn != *keep_fqn || block.trait_type_args != *keep_args)
+                {
+                    continue;
                 }
                 if block.type_params.is_empty() && im.method_type_params.is_empty() {
                     continue;
@@ -5389,14 +5864,18 @@ impl Inference<'_> {
                 let mut combined_bounds = block.trait_bounds.clone();
                 combined_bounds.merge(&im.trait_bounds);
                 let bound_span = Span::point(self.current_file.clone(), 1, 1);
-                if !self.check_trait_bounds(&combined_bounds, &block.type_params, &type_args, &bound_span) {
+                if !self.check_trait_bounds(
+                    &combined_bounds,
+                    &block.type_params,
+                    &type_args,
+                    &bound_span,
+                ) {
                     continue;
                 }
-                let block_sub =
-                    super::type_param_substitution::TypeParamSubstitution::from_pairs(
-                        &block.type_params,
-                        &type_args,
-                    );
+                let block_sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                    &block.type_params,
+                    &type_args,
+                );
                 let concrete_trait_type_args: Vec<Type> = block
                     .trait_type_args
                     .iter()
@@ -5431,26 +5910,29 @@ impl Inference<'_> {
         let display = format!("{}.{}", type_name, field.value);
 
         // 3a. Module-for-type instance methods as unbound function references
-        if let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned() {
-            if let Some(overloads) = module_info.functions.get(&prop_name) {
-                let instance_methods: Vec<_> = overloads
-                    .iter()
-                    .filter(|sig| {
-                        !sig.is_property
-                            && !sig.is_intrinsic
-                            && !sig.params.is_empty()
-                            && sig.params[0].0 == "self"
-                            && self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file)
-                    })
-                    .cloned()
-                    .collect();
-                if !instance_methods.is_empty() {
-                    if let Some(result) =
-                        self.try_resolve_overloaded_function_ref(&instance_methods, &display, span)
-                    {
-                        return Some(result);
-                    }
-                }
+        if let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned()
+            && let Some(overloads) = module_info.functions.get(&prop_name)
+        {
+            let instance_methods: Vec<_> = overloads
+                .iter()
+                .filter(|sig| {
+                    !sig.is_property
+                        && !sig.is_intrinsic
+                        && !sig.params.is_empty()
+                        && sig.params[0].0 == "self"
+                        && self.is_member_visible(
+                            sig.visibility,
+                            &module_info.fqn.package,
+                            &sig.source_file,
+                        )
+                })
+                .cloned()
+                .collect();
+            if !instance_methods.is_empty()
+                && let Some(result) =
+                    self.try_resolve_overloaded_function_ref(&instance_methods, &display, span)
+            {
+                return Some(result);
             }
         }
 
@@ -5460,28 +5942,34 @@ impl Inference<'_> {
             .lookup_named_extension_methods(&type_fqn, &prop_name)
             .into_iter()
             .filter(|(_, m)| {
-                !m.is_property
-                    && !m.is_intrinsic
-                    && !m.params.is_empty()
-                    && m.params[0].0 == "self"
+                !m.is_property && !m.is_intrinsic && !m.params.is_empty() && m.params[0].0 == "self"
             })
             .collect();
-        if !ext_instance.is_empty() {
-            if let Some(result) =
-                self.try_resolve_ext_function_ref(&ext_instance, &resolved_type, &prop_name, &display, span)
-            {
-                return Some(result);
-            }
+        if !ext_instance.is_empty()
+            && let Some(result) = self.try_resolve_ext_function_ref(
+                &ext_instance,
+                &resolved_type,
+                &prop_name,
+                &display,
+                span,
+            )
+        {
+            return Some(result);
         }
         // 3c. Trait impl instance methods as unbound function references
-        let instance_blocks: Vec<_> = self.registry
+        let instance_blocks: Vec<_> = self
+            .registry
             .find_impl_method(&type_fqn, &prop_name)
             .into_iter()
             .filter(|(b, m)| {
                 b.type_params.is_empty()
                     && m.method_type_params.is_empty()
                     && !m.is_property
-                    && (!m.is_intrinsic || crate::typechecker::types::primitive_binary_operator(&type_fqn, &m.name.0).is_some())
+                    && (!m.is_intrinsic
+                        || crate::typechecker::types::primitive_binary_operator(
+                            &type_fqn, &m.name.0,
+                        )
+                        .is_some())
                     && !m.params.is_empty()
                     && m.params[0].0 == "self"
                     && (m.visibility != Visibility::Private || m.span.file == self.current_file)
@@ -5527,7 +6015,13 @@ impl Inference<'_> {
             .into_iter()
             .map(|(b, m)| FunctionSignature {
                 visibility: m.visibility,
-                mangled_name: crate::typechecker::types::impl_member_mangled_name(&b.trait_fqn, &b.for_type, &b.type_params, &m.dispatch_name, &b.trait_type_args),
+                mangled_name: crate::typechecker::types::impl_member_mangled_name(
+                    &b.trait_fqn,
+                    &b.for_type,
+                    &b.type_params,
+                    &m.dispatch_name,
+                    &b.trait_type_args,
+                ),
                 params: m.params.clone(),
                 return_type: m.return_type.clone(),
                 source_file: b.source_file.clone(),
@@ -5537,14 +6031,12 @@ impl Inference<'_> {
                 is_abstract_method: false,
             })
             .collect();
-        if !trait_impl_instance.is_empty() {
-            if let Some(result) =
+        if !trait_impl_instance.is_empty()
+            && let Some(result) =
                 self.try_resolve_overloaded_function_ref(&trait_impl_instance, &display, span)
-            {
-                return Some(result);
-            }
+        {
+            return Some(result);
         }
-
 
         None
     }
@@ -5690,7 +6182,13 @@ impl Inference<'_> {
             }
             let resolved = unification.resolve_type_params(&enum_sig.type_params);
             let type_args = match resolved {
-                Some(args) if !args.iter().any(|t| matches!(t, Type::TypeVariable(..) | Type::GenericParam(..))) => args,
+                Some(args)
+                    if !args
+                        .iter()
+                        .any(|t| matches!(t, Type::TypeVariable(..) | Type::GenericParam(..))) =>
+                {
+                    args
+                }
                 _ => {
                     // Fallback: try expected_type
                     match &self.expected_type {
@@ -5755,7 +6253,10 @@ impl Inference<'_> {
 
     fn error_try_expr(&self, operand: TypedExpr, span: &Span) -> TypedExpr {
         let dummy_resolved = ResolvedImplMethod {
-            trait_fqn: Fqn { package: PackagePath(vec![]), symbol: SymbolName(String::new()) },
+            trait_fqn: Fqn {
+                package: PackagePath(vec![]),
+                symbol: SymbolName(String::new()),
+            },
             trait_type_params: vec![],
             for_type: Type::Error,
             method_name: SymbolName(String::new()),
@@ -5793,13 +6294,11 @@ impl Inference<'_> {
 
         let resolved = self.resolve_early_return_impl(&typed_operand.ty, &early_return_fqn);
 
-        let Some((success_type, on_failure_type, unwrap_resolved, unwrap_return_type)) = resolved else {
+        let Some((success_type, on_failure_type, unwrap_resolved, unwrap_return_type)) = resolved
+        else {
             self.diagnostics.error(
                 span.clone(),
-                format!(
-                    "type '{}' does not implement EarlyReturn",
-                    typed_operand.ty
-                ),
+                format!("type '{}' does not implement EarlyReturn", typed_operand.ty),
             );
             return self.error_try_expr(typed_operand, span);
         };
@@ -5836,9 +6335,14 @@ impl Inference<'_> {
                     symbol: SymbolName("From".to_string()),
                 };
                 match self.resolve_trait_impl_method_for_type(
-                    &fn_return_type, &from_fqn, "from", &[&on_failure_type],
+                    &fn_return_type,
+                    &from_fqn,
+                    "from",
+                    &[&on_failure_type],
                 ) {
-                    Some((resolved_from, _)) => { from_method = Some(resolved_from); }
+                    Some((resolved_from, _)) => {
+                        from_method = Some(resolved_from);
+                    }
                     None => {
                         self.diagnostics.error(
                             span.clone(),
@@ -5912,13 +6416,14 @@ impl Inference<'_> {
             return self.error_await_expr(typed_operand, span);
         }
 
-
         // 3. Check operand implements Awaitable, extract T
         let inner_type = match self.resolve_awaitable_value_type_detailed(&typed_operand.ty) {
             super::traits::SugarTraitResolution::Found(ty) => ty,
             super::traits::SugarTraitResolution::Ambiguous(providers) => {
-                let names: Vec<String> =
-                    providers.iter().map(|f| format!("'{}'", f.symbol.0)).collect();
+                let names: Vec<String> = providers
+                    .iter()
+                    .map(|f| format!("'{}'", f.symbol.0))
+                    .collect();
                 self.diagnostics.error(
                     span.clone(),
                     format!(
@@ -5932,10 +6437,7 @@ impl Inference<'_> {
             super::traits::SugarTraitResolution::NotFound => {
                 self.diagnostics.error(
                     span.clone(),
-                    format!(
-                        "type '{}' does not implement Awaitable",
-                        typed_operand.ty
-                    ),
+                    format!("type '{}' does not implement Awaitable", typed_operand.ty),
                 );
                 return self.error_await_expr(typed_operand, span);
             }
@@ -5989,15 +6491,22 @@ impl Inference<'_> {
         // `use` sites, not here).
         let resolved_operand_ty = self.widen_awaitable_context(&typed_operand.ty, &fn_return_type);
 
-        let and_then_closure = Type::Function(vec![inner_type.clone()], Box::new(fn_return_type.clone()));
+        let and_then_closure =
+            Type::Function(vec![inner_type.clone()], Box::new(fn_return_type.clone()));
         let and_then_result = self.resolve_trait_impl_method_for_type(
-            &resolved_operand_ty, &awaitable_fqn, "andThen", &[&and_then_closure, &source_location_type],
+            &resolved_operand_ty,
+            &awaitable_fqn,
+            "andThen",
+            &[&and_then_closure, &source_location_type],
         );
 
         // 6. Resolve map: closure type (T) => FnT, plus SourceLocation arg
         let map_closure = Type::Function(vec![inner_type.clone()], Box::new(fn_inner_type));
         let map_result = self.resolve_trait_impl_method_for_type(
-            &resolved_operand_ty, &awaitable_fqn, "map", &[&map_closure, &source_location_type],
+            &resolved_operand_ty,
+            &awaitable_fqn,
+            "map",
+            &[&map_closure, &source_location_type],
         );
 
         let (and_then_resolved, map_resolved) = match (and_then_result, map_result) {
@@ -6054,8 +6563,10 @@ impl Inference<'_> {
         {
             super::traits::SugarTraitResolution::Found(pair) => pair,
             super::traits::SugarTraitResolution::Ambiguous(providers) => {
-                let names: Vec<String> =
-                    providers.iter().map(|f| format!("'{}'", f.symbol.0)).collect();
+                let names: Vec<String> = providers
+                    .iter()
+                    .map(|f| format!("'{}'", f.symbol.0))
+                    .collect();
                 self.diagnostics.error(
                     span.clone(),
                     format!(
@@ -6092,8 +6603,7 @@ impl Inference<'_> {
 
         // 3. If E != E2 and E != Never, look up From<source> for target.
         let mut from_method = None;
-        let needs_conversion =
-            source_error != target_error && !matches!(source_error, Type::Never);
+        let needs_conversion = source_error != target_error && !matches!(source_error, Type::Never);
         if needs_conversion {
             let from_fqn = Fqn::from_dotted("standard.prelude.From").unwrap();
             match self.resolve_trait_impl_method_for_type(
@@ -6247,9 +6757,11 @@ impl Inference<'_> {
             &[],
             &[],
         ) {
-            super::traits::ImplMethodResolution::Found { resolved, return_type, .. } => {
-                Some((resolved, return_type))
-            }
+            super::traits::ImplMethodResolution::Found {
+                resolved,
+                return_type,
+                ..
+            } => Some((resolved, return_type)),
             super::traits::ImplMethodResolution::Ambiguous => {
                 self.diagnostics.error(
                     span.clone(),
@@ -6268,10 +6780,7 @@ impl Inference<'_> {
             if !already_diagnosed {
                 self.diagnostics.error(
                     span.clone(),
-                    format!(
-                        "type '{}' does not implement Iterable",
-                        iterable_ty
-                    ),
+                    format!("type '{}' does not implement Iterable", iterable_ty),
                 );
             }
             let error_iter_resolved = crate::typechecker::types::ResolvedImplMethod {
@@ -6403,7 +6912,8 @@ impl Inference<'_> {
             _ => {
                 self.diagnostics.error(
                     pattern.span(),
-                    "unsupported pattern in for loop; use a variable, wildcard, or tuple pattern".to_string(),
+                    "unsupported pattern in for loop; use a variable, wildcard, or tuple pattern"
+                        .to_string(),
                 );
                 TypedPattern::Wildcard
             }

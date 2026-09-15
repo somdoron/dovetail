@@ -132,11 +132,7 @@ pub fn discover_and_parse_package_with_overlays(
                 Ok(s) => s,
                 Err(e) => {
                     diagnostics.error(
-                        crate::common::span::Span::point(
-                            std::sync::Arc::from("<discovery>"),
-                            1,
-                            1,
-                        ),
+                        crate::common::span::Span::point(std::sync::Arc::from("<discovery>"), 1, 1),
                         format!("could not read '{}': {}", path.display(), e),
                     );
                     continue;
@@ -166,12 +162,11 @@ fn list_dovetail_files(dir: &Path) -> Result<Vec<std::path::PathBuf>, std::io::E
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if ext == "dove" {
-                    paths.push(path);
-                }
-            }
+        if path.is_file()
+            && let Some(ext) = path.extension()
+            && ext == "dove"
+        {
+            paths.push(path);
         }
     }
     paths.sort();
@@ -230,10 +225,10 @@ fn discover_test_dirs_recursive(
     results: &mut Vec<(PackagePath, PathBuf)>,
 ) {
     // Check if this directory has any .dove files
-    if let Ok(files) = list_dovetail_files(dir) {
-        if !files.is_empty() {
-            results.push((PackagePath(path_segments.to_vec()), dir.to_path_buf()));
-        }
+    if let Ok(files) = list_dovetail_files(dir)
+        && !files.is_empty()
+    {
+        results.push((PackagePath(path_segments.to_vec()), dir.to_path_buf()));
     }
 
     // Recurse into subdirectories
@@ -247,12 +242,12 @@ fn discover_test_dirs_recursive(
             Err(_) => continue,
         };
         let path = entry.path();
-        if path.is_dir() {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                let mut child_segments = path_segments.to_vec();
-                child_segments.push(name.to_string());
-                discover_test_dirs_recursive(&path, &child_segments, results);
-            }
+        if path.is_dir()
+            && let Some(name) = path.file_name().and_then(|n| n.to_str())
+        {
+            let mut child_segments = path_segments.to_vec();
+            child_segments.push(name.to_string());
+            discover_test_dirs_recursive(&path, &child_segments, results);
         }
     }
 }

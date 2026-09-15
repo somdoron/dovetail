@@ -22,6 +22,9 @@ use crate::compiler::typechecker::types::TypedModule;
 use crate::compiler::witgen;
 use crate::manifest::{ResolvedProject, ResolvedWorkspace};
 
+/// Reports completed projects, total projects, and the current project name.
+pub type WorkspaceProgress = dyn Fn(usize, usize, &str) + Send + Sync;
+
 /// Metadata about a test exported from the WASM component.
 #[derive(Debug, Clone)]
 pub struct TestExportInfo {
@@ -66,10 +69,11 @@ pub fn prelude_sources() -> impl Iterator<Item = (&'static str, &'static str)> {
 }
 
 /// Cached prelude output (package path, registry, typed module), compiled once and reused.
-pub(crate) static PRELUDE_OUTPUT: LazyLock<(PackagePath, Registry, TypedModule)> = LazyLock::new(|| {
-    let (package_path, result) = compile_prelude();
-    (package_path, result.registry, result.typed_module)
-});
+pub(crate) static PRELUDE_OUTPUT: LazyLock<(PackagePath, Registry, TypedModule)> =
+    LazyLock::new(|| {
+        let (package_path, result) = compile_prelude();
+        (package_path, result.registry, result.typed_module)
+    });
 
 /// Compile all prelude source files into a single package.
 /// Returns the prelude's package path alongside the typechecker result.
@@ -108,9 +112,7 @@ fn compile_prelude() -> (PackagePath, typechecker::TypeCheckerResult) {
         );
 
         // All prelude files must share the same package declaration
-        let file_pkg = PackagePath(
-            sf.package.path.iter().map(|s| s.value.clone()).collect(),
-        );
+        let file_pkg = PackagePath(sf.package.path.iter().map(|s| s.value.clone()).collect());
         if let Some(ref expected) = package_path {
             assert!(
                 &file_pkg == expected,
@@ -276,17 +278,25 @@ pub fn compile(source: &str, file_path: &str) -> CompileResult {
 
     // 6. Monomorphize
     let merged_registry = base_registry.merge(&tc_result.registry);
-    let Some(mono_module) = prepare_codegen(
-        tc_result.typed_module,
-        &merged_registry,
-        &mut diagnostics,
-    ) else {
-        return CompileResult { wasm: None, diagnostics, test_exports: vec![] };
+    let Some(mono_module) =
+        prepare_codegen(tc_result.typed_module, &merged_registry, &mut diagnostics)
+    else {
+        return CompileResult {
+            wasm: None,
+            diagnostics,
+            test_exports: vec![],
+        };
     };
 
     // 8. Codegen (single-file compile: no component dependencies)
     let empty_universe = witgen::WitImportUniverse::empty();
-    let wasm = match codegen::generate_component(&mono_module, &merged_registry, &[], &empty_universe, &[]) {
+    let wasm = match codegen::generate_component(
+        &mono_module,
+        &merged_registry,
+        &[],
+        &empty_universe,
+        &[],
+    ) {
         Ok(bytes) => Some(bytes),
         Err(e) => {
             diagnostics.error(
@@ -297,7 +307,11 @@ pub fn compile(source: &str, file_path: &str) -> CompileResult {
         }
     };
 
-    CompileResult { wasm, diagnostics, test_exports: vec![] }
+    CompileResult {
+        wasm,
+        diagnostics,
+        test_exports: vec![],
+    }
 }
 
 /// Prepare all concrete functions, including implementations discovered by coercion.
@@ -387,7 +401,11 @@ pub fn check(source: &str, file_path: &str) -> typechecker::TypeCheckerResult {
     );
     result.typed_module.main_function_fqn = main_fqn;
     if let Some(ref fqn) = result.typed_module.main_function_fqn {
-        typechecker::rules::validate_main_signature(&result.typed_module, fqn, &mut result.diagnostics);
+        typechecker::rules::validate_main_signature(
+            &result.typed_module,
+            fqn,
+            &mut result.diagnostics,
+        );
     }
 
     result
@@ -423,31 +441,22 @@ fn load_project_macros(
     use crate::manifest::MacroKind;
     for m in &project.macros {
         match m.kind {
-            MacroKind::Derive => {
-                match std::fs::read_to_string(&m.script_path) {
-                    Ok(source) => {
-                        registry.register_rhai_derive(
-                            macros::MacroFqn::new(m.fqn.clone()),
-                            source,
-                        );
-                    }
-                    Err(e) => {
-                        diagnostics.error(
-                            crate::common::span::Span::point(
-                                FilePath::from("<manifest>"),
-                                0,
-                                0,
-                            ),
-                            format!(
-                                "failed to read macro script `{}` for project `{}`: {}",
-                                m.script_path.display(),
-                                project.name.0,
-                                e
-                            ),
-                        );
-                    }
+            MacroKind::Derive => match std::fs::read_to_string(&m.script_path) {
+                Ok(source) => {
+                    registry.register_rhai_derive(macros::MacroFqn::new(m.fqn.clone()), source);
                 }
-            }
+                Err(e) => {
+                    diagnostics.error(
+                        crate::common::span::Span::point(FilePath::from("<manifest>"), 0, 0),
+                        format!(
+                            "failed to read macro script `{}` for project `{}`: {}",
+                            m.script_path.display(),
+                            project.name.0,
+                            e
+                        ),
+                    );
+                }
+            },
         }
     }
 }
@@ -459,6 +468,10 @@ fn load_project_macros(
 /// `dependency_macros` contains derive macros from transitive dependency projects;
 /// the current project's own macros are added on top (taking precedence on FQN collisions).
 /// `mode` controls codegen, main validation, and test handling.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the compiler context parameters explicit at this call boundary."
+)]
 pub fn build_project(
     project: &ResolvedProject,
     workspace_root: &Path,
@@ -492,10 +505,7 @@ pub fn build_project(
 
     // Skip adding the prelude when the project itself IS the prelude,
     // or when the dependency registry already contains the prelude (avoids duplicate overloads).
-    let is_prelude_project = project
-        .packages
-        .iter()
-        .any(|pkg| &pkg.path == prelude_path);
+    let is_prelude_project = project.packages.iter().any(|pkg| &pkg.path == prelude_path);
     let deps_have_prelude = dependency_registry.has_package(prelude_path);
 
     let mut accumulated_registry = if is_prelude_project || deps_have_prelude {
@@ -535,10 +545,9 @@ pub fn build_project(
                 // Stash on the typed module too so codegen sees it after the
                 // module is handed off (codegen only takes a `TypedModule`,
                 // not a `Registry`).
-                accumulated_module.resources.insert(
-                    (project.root_package.clone(), resource_name.clone()),
-                    bytes,
-                );
+                accumulated_module
+                    .resources
+                    .insert((project.root_package.clone(), resource_name.clone()), bytes);
             }
             Err(e) => {
                 diagnostics.error(
@@ -589,7 +598,10 @@ pub fn build_project(
             &mut accumulated_registry,
             Some(&mut project_registry),
             &mut accumulated_module,
-            Some((workspace_root, &project.generated_sources_dir(workspace_root))),
+            Some((
+                workspace_root,
+                &project.generated_sources_dir(workspace_root),
+            )),
         )
     {
         // Generated bindings must always compile — a failure is an internal
@@ -774,7 +786,9 @@ pub fn build_project(
     }
 
     let test_exports = if mode == BuildMode::Test {
-        accumulated_module.tests.retain(|t| !t.span.file.starts_with("<prelude>/"));
+        accumulated_module
+            .tests
+            .retain(|t| !t.span.file.starts_with("<prelude>/"));
         convert_tests_to_functions(&mut accumulated_module)
     } else if mode == BuildMode::Build {
         // Clear tests in build mode — they don't participate in codegen
@@ -801,11 +815,7 @@ pub fn build_project(
         }
         accumulated_module.main_function_fqn = main_fqn;
         if let Some(ref fqn) = accumulated_module.main_function_fqn {
-            typechecker::rules::validate_main_signature(
-                &accumulated_module,
-                fqn,
-                &mut diagnostics,
-            );
+            typechecker::rules::validate_main_signature(&accumulated_module, fqn, &mut diagnostics);
         }
         if diagnostics.has_errors() {
             return ProjectResult {
@@ -831,7 +841,8 @@ pub fn build_project(
             accumulated_module.clone(),
             &accumulated_registry,
             &mut diagnostics,
-        ).and_then(|mono_module| {
+        )
+        .and_then(|mono_module| {
             // Map the (monomorphized) binding functions back to their WIT imports so
             // codegen can swap each stub body for a canonical-ABI import call.
             if !wit_universe.is_empty() {
@@ -889,7 +900,7 @@ pub fn build_workspace(
     mode: BuildMode,
     overlays: &HashMap<String, String>,
     resilient: bool,
-    on_progress: Option<&(dyn Fn(usize, usize, &str) + Send + Sync)>,
+    on_progress: Option<&WorkspaceProgress>,
 ) -> WorkspaceResult {
     let mut all_diagnostics = Diagnostics::new();
     let mut project_results: Vec<(String, ProjectResult)> = Vec::new();
@@ -900,10 +911,20 @@ pub fn build_workspace(
     };
 
     let total_projects = projects_to_build.len();
-    for target in projects_to_build.iter().filter(|p| workspace.is_local(p) && project_filter.is_none_or(|name| p.name.0 == name)) {
-        if let Err(error) = crate::manifest::validate_dependency_closure(workspace, &target.name.0) {
-            all_diagnostics.error(crate::common::span::Span::point(Arc::from("Dovetail.toml"), 1, 1), error.to_string());
-            return WorkspaceResult { project_results, diagnostics: all_diagnostics };
+    for target in projects_to_build
+        .iter()
+        .filter(|p| workspace.is_local(p) && project_filter.is_none_or(|name| p.name.0 == name))
+    {
+        if let Err(error) = crate::manifest::validate_dependency_closure(workspace, &target.name.0)
+        {
+            all_diagnostics.error(
+                crate::common::span::Span::point(Arc::from("Dovetail.toml"), 1, 1),
+                error.to_string(),
+            );
+            return WorkspaceResult {
+                project_results,
+                diagnostics: all_diagnostics,
+            };
         }
     }
 
@@ -919,8 +940,11 @@ pub fn build_workspace(
         // Collect all transitive dependency project names (deduplicated).
         let mut all_dep_names: Vec<String> = Vec::new();
         let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let mut queue: std::collections::VecDeque<String> =
-            project.depends.iter().filter_map(|d| workspace.project(&d.0).map(|p| p.identity())).collect();
+        let mut queue: std::collections::VecDeque<String> = project
+            .depends
+            .iter()
+            .filter_map(|d| workspace.project(&d.0).map(|p| p.identity()))
+            .collect();
         while let Some(name) = queue.pop_front() {
             if !seen.insert(name.clone()) {
                 continue;
@@ -928,7 +952,9 @@ pub fn build_workspace(
             all_dep_names.push(name.clone());
             if let Some(dep_proj) = workspace.project(&name) {
                 for dd in &dep_proj.depends {
-                    if let Some(dep) = workspace.project(&dd.0) { queue.push_back(dep.identity()); }
+                    if let Some(dep) = workspace.project(&dd.0) {
+                        queue.push_back(dep.identity());
+                    }
                 }
             }
         }
@@ -961,7 +987,8 @@ pub fn build_workspace(
         // the final project (the target) gets the real mode; dependencies are
         // compiled in Check mode (no codegen needed).
         let project_mode = if workspace.is_local(project)
-            && project_filter.is_none_or(|name| project.name.0 == name) {
+            && project_filter.is_none_or(|name| project.name.0 == name)
+        {
             mode
         } else {
             BuildMode::Check
@@ -986,7 +1013,10 @@ pub fn build_workspace(
             project.identity(),
             (
                 result.project_registry.clone(),
-                result.dependency_module.take().unwrap_or_else(|| result.typed_module.clone()),
+                result
+                    .dependency_module
+                    .take()
+                    .unwrap_or_else(|| result.typed_module.clone()),
                 result.project_macros.clone(),
             ),
         );
@@ -1030,7 +1060,7 @@ fn convert_tests_to_functions(typed_module: &mut TypedModule) -> Vec<TestExportI
         );
     }
 
-    let tests: Vec<_> = typed_module.tests.drain(..).collect();
+    let tests: Vec<_> = std::mem::take(&mut typed_module.tests);
     for test in tests {
         let display_name = format!("test::{}", test.name);
         typed_module.functions.insert(
@@ -1055,13 +1085,13 @@ fn convert_tests_to_functions(typed_module: &mut TypedModule) -> Vec<TestExportI
     let mut test_exports = Vec::new();
     let mut index = 0;
     for key in typed_module.functions.keys() {
-        if key.0.starts_with("$test$") {
-            if let Some(meta) = test_meta.get(&key.0) {
-                let mut info = meta.clone();
-                info.index = index;
-                test_exports.push(info);
-                index += 1;
-            }
+        if key.0.starts_with("$test$")
+            && let Some(meta) = test_meta.get(&key.0)
+        {
+            let mut info = meta.clone();
+            info.index = index;
+            test_exports.push(info);
+            index += 1;
         }
     }
     test_exports
@@ -1134,10 +1164,7 @@ pub fn compile_for_test_with_derives(
     // Macro phase (between Parse and Collect)
     let mut macro_registry = macros::builtin_registry();
     for (fqn, script) in rhai_derives {
-        macro_registry.register_rhai_derive(
-            macros::MacroFqn::new(*fqn),
-            (*script).to_string(),
-        );
+        macro_registry.register_rhai_derive(macros::MacroFqn::new(*fqn), (*script).to_string());
     }
     macros::expand_package(&mut package_ast, &macro_registry, &mut diagnostics);
     if diagnostics.has_errors() {
@@ -1167,20 +1194,31 @@ pub fn compile_for_test_with_derives(
     desugar::desugar_all(&mut tc_result.typed_module);
 
     // Convert tests to functions (no main resolution), excluding prelude tests
-    tc_result.typed_module.tests.retain(|t| !t.span.file.starts_with("<prelude>/"));
+    tc_result
+        .typed_module
+        .tests
+        .retain(|t| !t.span.file.starts_with("<prelude>/"));
     let test_exports = convert_tests_to_functions(&mut tc_result.typed_module);
 
     // 5. Monomorphize + ByName/Capture + Variance casts + Codegen
     let merged_registry = base_registry.merge(&tc_result.registry);
-    let Some(mono_module) = prepare_codegen(
-        tc_result.typed_module,
-        &merged_registry,
-        &mut diagnostics,
-    ) else {
-        return CompileResult { wasm: None, diagnostics, test_exports: vec![] };
+    let Some(mono_module) =
+        prepare_codegen(tc_result.typed_module, &merged_registry, &mut diagnostics)
+    else {
+        return CompileResult {
+            wasm: None,
+            diagnostics,
+            test_exports: vec![],
+        };
     };
     let empty_universe = witgen::WitImportUniverse::empty();
-    let wasm = match codegen::generate_component(&mono_module, &merged_registry, &test_exports, &empty_universe, &[]) {
+    let wasm = match codegen::generate_component(
+        &mono_module,
+        &merged_registry,
+        &test_exports,
+        &empty_universe,
+        &[],
+    ) {
         Ok(bytes) => Some(bytes),
         Err(e) => {
             diagnostics.error(
@@ -1191,20 +1229,31 @@ pub fn compile_for_test_with_derives(
         }
     };
 
-    CompileResult { wasm, diagnostics, test_exports }
+    CompileResult {
+        wasm,
+        diagnostics,
+        test_exports,
+    }
 }
 
 /// Filter workspace projects to include only the target project and its transitive dependencies.
 /// Preserves topological order.
-fn filter_projects<'a>(workspace: &'a ResolvedWorkspace, target_name: &str) -> Vec<&'a ResolvedProject> {
+fn filter_projects<'a>(
+    workspace: &'a ResolvedWorkspace,
+    target_name: &str,
+) -> Vec<&'a ResolvedProject> {
     let mut needed = BTreeSet::new();
     let mut queue = vec![target_name.to_string()];
     while let Some(key) = queue.pop() {
-        if let Some(project) = workspace.project(&key) {
-            if needed.insert(project.identity()) {
-                queue.extend(project.depends.iter().map(|d| d.0.clone()));
-            }
+        if let Some(project) = workspace.project(&key)
+            && needed.insert(project.identity())
+        {
+            queue.extend(project.depends.iter().map(|d| d.0.clone()));
         }
     }
-    workspace.projects.iter().filter(|p| needed.contains(&p.identity())).collect()
+    workspace
+        .projects
+        .iter()
+        .filter(|p| needed.contains(&p.identity()))
+        .collect()
 }

@@ -75,7 +75,12 @@ fn run_workspace(workspace_root: &std::path::Path, run_project: &str) -> Result<
         let errors: Vec<String> = result
             .diagnostics
             .iter()
-            .map(|d| format!("{}:{}:{}: {}", d.span.file, d.span.line, d.span.column, d.message))
+            .map(|d| {
+                format!(
+                    "{}:{}:{}: {}",
+                    d.span.file, d.span.line, d.span.column, d.message
+                )
+            })
             .collect();
         return Err(format!("build failed:\n{}", errors.join("\n")));
     }
@@ -350,10 +355,10 @@ function main(): Unit =
 
     let errors = build_errors(root);
     assert!(
-        errors
-            .iter()
-            .any(|(_, _, _, msg)| msg.contains("is not a string-literal prefix")
-                && msg.contains("@stringLiteral")),
+        errors.iter().any(
+            |(_, _, _, msg)| msg.contains("is not a string-literal prefix")
+                && msg.contains("@stringLiteral")
+        ),
         "expected a not-a-prefix error naming the attribute, got: {errors:#?}"
     );
 }

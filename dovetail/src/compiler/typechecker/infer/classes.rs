@@ -1,9 +1,12 @@
 use crate::common::span::{Span, Spanned};
-use crate::common::types::{Fqn, MangledName, SymbolName, TypeParamName, VarName, Variance, Visibility};
+use crate::common::types::{
+    Fqn, MangledName, SymbolName, TypeParamName, VarName, Variance, Visibility,
+};
 use crate::parser::ast::{ClassDecl, ClassMember, FunctionDecl, PropertyDecl};
 
 use crate::typechecker::types::{
-    ClassFieldDef, ClassTypeDef, Type, TypeDef, TypedExpr, TypedExprKind, TypedFunction, TypedGlobal, TypedParam, VtableSlot,
+    ClassFieldDef, ClassTypeDef, Type, TypeDef, TypedExpr, TypedExprKind, TypedFunction,
+    TypedGlobal, TypedParam, VtableSlot,
 };
 
 /// Build the FQN for a class method: `package` from the class, `symbol` is `ClassName.methodName`.
@@ -36,40 +39,78 @@ fn parent_binding(
     binding
 }
 
-
 use crate::typechecker::registry::{ClassTypeSignature, FunctionSignature, GenericClassMethodDef};
 
-use crate::monomorphize::substitute::apply_type_substitution;
 use super::generic_functions::MethodKind;
 use super::generics::apply_substitution;
 use super::type_param_substitution::TypeParamSubstitution;
 use super::{Inference, ResolvedFunction};
+use crate::monomorphize::substitute::apply_type_substitution;
 
 impl Inference<'_> {
-    pub(super) fn trait_virtual_slot(&self, receiver: &Type, trait_fqn: &Fqn, trait_parameters: &[Type], member: &SymbolName) -> Option<u32> {
+    pub(super) fn trait_virtual_slot(
+        &self,
+        receiver: &Type,
+        trait_fqn: &Fqn,
+        trait_parameters: &[Type],
+        member: &SymbolName,
+    ) -> Option<u32> {
         let class_fqn = receiver.try_to_fqn()?;
         let class = self.registry.get_class_type(&class_fqn)?;
         let signature = self.registry.get_trait(trait_fqn)?;
-        let method = signature.methods.iter().find(|method| signature.method_dispatch_name(method) == *member);
-        let property = signature.properties.iter().find(|property| property.name == member.0);
+        let method = signature
+            .methods
+            .iter()
+            .find(|method| signature.method_dispatch_name(method) == *member);
+        let property = signature
+            .properties
+            .iter()
+            .find(|property| property.name == member.0);
         let (name, parameters, is_property) = match (method, property) {
-            (Some(method), _) if method.type_params.is_empty() => (&method.name, &method.params, false),
+            (Some(method), _) if method.type_params.is_empty() => {
+                (&method.name, &method.params, false)
+            }
             (_, Some(property)) => (&property.name, &property.params, true),
             _ => return None,
         };
-        if !parameters.first().is_some_and(|(name, _)| name == "self") { return None; }
-        let trait_substitution = TypeParamSubstitution::from_pairs(&signature.type_params, trait_parameters).with_self_type(receiver.clone());
-        let expected: Vec<_> = parameters.iter().skip(1).map(|(_, ty)| apply_substitution(&trait_substitution, ty)).collect();
+        if !parameters.first().is_some_and(|(name, _)| name == "self") {
+            return None;
+        }
+        let trait_substitution =
+            TypeParamSubstitution::from_pairs(&signature.type_params, trait_parameters)
+                .with_self_type(receiver.clone());
+        let expected: Vec<_> = parameters
+            .iter()
+            .skip(1)
+            .map(|(_, ty)| apply_substitution(&trait_substitution, ty))
+            .collect();
         let class_parameters = match receiver {
-            Type::GenericClass { type_args, .. } => type_args.iter().map(|(_, ty)| ty.clone()).collect(),
+            Type::GenericClass { type_args, .. } => {
+                type_args.iter().map(|(_, ty)| ty.clone()).collect()
+            }
             _ => Vec::new(),
         };
-        let class_substitution = TypeParamSubstitution::from_pairs(&class.type_params, &class_parameters);
-        self.compute_vtable_methods(&class_fqn, class).iter().position(|slot| {
-            slot.is_property == is_property && slot.method_name.0 == *name && slot.param_types.len() == expected.len() + 1
-                && slot.param_types.iter().skip(1).zip(&expected).all(|(actual, expected)|
-                    crate::typechecker::subtyping::identical(&apply_substitution(&class_substitution, actual), expected))
-        }).map(|index| index as u32)
+        let class_substitution =
+            TypeParamSubstitution::from_pairs(&class.type_params, &class_parameters);
+        self.compute_vtable_methods(&class_fqn, class)
+            .iter()
+            .position(|slot| {
+                slot.is_property == is_property
+                    && slot.method_name.0 == *name
+                    && slot.param_types.len() == expected.len() + 1
+                    && slot
+                        .param_types
+                        .iter()
+                        .skip(1)
+                        .zip(&expected)
+                        .all(|(actual, expected)| {
+                            crate::typechecker::subtyping::identical(
+                                &apply_substitution(&class_substitution, actual),
+                                expected,
+                            )
+                        })
+            })
+            .map(|index| index as u32)
     }
 
     /// Infer types for a class declaration: constructor body, let bindings, methods.
@@ -88,7 +129,10 @@ impl Inference<'_> {
             package: self.package_path.clone(),
             symbol: SymbolName(class_name.clone()),
         };
-        let class_sig = match self.registry.lookup_class_type(&class_fqn, &self.package_path) {
+        let class_sig = match self
+            .registry
+            .lookup_class_type(&class_fqn, &self.package_path)
+        {
             Some(sig) => sig.clone(),
             None => {
                 self.container_name = prev_container;
@@ -104,11 +148,7 @@ impl Inference<'_> {
         let mut constructor_typed_params = Vec::new();
         for param in &class.params {
             let ty = self.resolve_type_expr(&param.type_annotation);
-            self.define_variable(
-                VarName(param.name.value.clone()),
-                ty.clone(),
-                param.mutable,
-            );
+            self.define_variable(VarName(param.name.value.clone()), ty.clone(), param.mutable);
             constructor_typed_params.push(TypedParam {
                 name: param.name.value.clone(),
                 ty: ty.clone(),
@@ -125,9 +165,7 @@ impl Inference<'_> {
                 _ => {
                     self.diagnostics.error(
                         ext.span.clone(),
-                        format!(
-                            "extends clause expected a class type, found '{parent_ty}'"
-                        ),
+                        format!("extends clause expected a class type, found '{parent_ty}'"),
                     );
                 }
             }
@@ -178,7 +216,10 @@ impl Inference<'_> {
                     );
                 }
                 ClassMember::LetBinding(lb) => {
-                    let annotated_ty = lb.type_annotation.as_ref().map(|ta| self.resolve_type_expr(ta));
+                    let annotated_ty = lb
+                        .type_annotation
+                        .as_ref()
+                        .map(|ta| self.resolve_type_expr(ta));
 
                     let prev_expected = self.expected_type.take();
                     self.expected_type = annotated_ty.clone();
@@ -234,9 +275,10 @@ impl Inference<'_> {
         //    parent fields + own constructor params + own let bindings
         let class_mangled = MangledName::for_type(&class_fqn);
         let parent_mangled_name = match &resolved_parent_ty {
-            Some(Type::Class(_, mn)) | Some(Type::GenericClass { mangled_name: mn, .. }) => {
-                Some(mn.clone())
-            }
+            Some(Type::Class(_, mn))
+            | Some(Type::GenericClass {
+                mangled_name: mn, ..
+            }) => Some(mn.clone()),
             _ => class_sig.parent_class.as_ref().map(MangledName::for_type),
         };
 
@@ -297,7 +339,8 @@ impl Inference<'_> {
             let mut current_parent = parent_mangled_name.clone();
             while let Some(ref p_mn) = current_parent {
                 hierarchy_root_mangled = p_mn.clone();
-                current_parent = if let Some(TypeDef::Class(p_cls)) = self.class_type_defs.get(p_mn) {
+                current_parent = if let Some(TypeDef::Class(p_cls)) = self.class_type_defs.get(p_mn)
+                {
                     p_cls.parent_mangled_name.clone()
                 } else {
                     None
@@ -335,7 +378,13 @@ impl Inference<'_> {
                 ClassMember::Method(func) => {
                     self.check_class_method_contract(func, &class_sig);
                     if func.is_abstract && !func.type_params.is_empty() {
-                        self.register_abstract_template_member(func, &class_fqn, &[], class_sig.is_final, false);
+                        self.register_abstract_template_member(
+                            func,
+                            &class_fqn,
+                            &[],
+                            class_sig.is_final,
+                            false,
+                        );
                     } else if func.is_abstract {
                         self.register_abstract_method_placeholder(&class_name, func);
                     } else if !func.type_params.is_empty() {
@@ -347,11 +396,21 @@ impl Inference<'_> {
                 ClassMember::Property(prop) => {
                     let func_decl = self.property_to_function_decl(prop);
                     if prop.is_abstract && !prop.type_params.is_empty() {
-                        self.register_abstract_template_member(&func_decl, &class_fqn, &[], class_sig.is_final, true);
+                        self.register_abstract_template_member(
+                            &func_decl,
+                            &class_fqn,
+                            &[],
+                            class_sig.is_final,
+                            true,
+                        );
                     } else if prop.is_abstract {
                         self.register_abstract_property_placeholder(&class_name, prop);
                     } else if !prop.type_params.is_empty() {
-                        self.infer_template_class_method_doubly_generic(&func_decl, &class_fqn, &[]);
+                        self.infer_template_class_method_doubly_generic(
+                            &func_decl,
+                            &class_fqn,
+                            &[],
+                        );
                     } else {
                         self.infer_function(&func_decl);
                     }
@@ -364,7 +423,8 @@ impl Inference<'_> {
         // Set vtable_self_type on virtual methods: use hierarchy root class type as param 0
         {
             let root_mn = &hierarchy_root_mangled;
-            let root_fqn = if let Some(TypeDef::Class(root_cls)) = self.class_type_defs.get(root_mn) {
+            let root_fqn = if let Some(TypeDef::Class(root_cls)) = self.class_type_defs.get(root_mn)
+            {
                 root_cls.fqn.clone()
             } else {
                 class_fqn.clone()
@@ -375,7 +435,9 @@ impl Inference<'_> {
                 // Each slot's impl is found by mangling its `impl_fqn` + `param_types` —
                 // the same `for_function` recipe the typechecker used when the method was
                 // inserted into `typed_functions`.
-                let impl_mangles: Vec<MangledName> = cls_def.vtable_methods.iter()
+                let impl_mangles: Vec<MangledName> = cls_def
+                    .vtable_methods
+                    .iter()
                     .map(|slot| MangledName::for_function(&slot.impl_fqn, &slot.param_types))
                     .collect();
                 for impl_mn in impl_mangles {
@@ -402,7 +464,10 @@ impl Inference<'_> {
             symbol: SymbolName(class_name),
         };
 
-        let class_sig = match self.registry.lookup_class_type(&class_fqn, &self.package_path) {
+        let class_sig = match self
+            .registry
+            .lookup_class_type(&class_fqn, &self.package_path)
+        {
             Some(sig) => sig.clone(),
             None => {
                 self.container_name = prev_container;
@@ -457,7 +522,10 @@ impl Inference<'_> {
                     if lb.is_static {
                         // Static let bindings: typecheck in empty scope, store as template TypedGlobal
                         self.push_scope();
-                        let annotated_ty = lb.type_annotation.as_ref().map(|ta| self.resolve_type_expr(ta));
+                        let annotated_ty = lb
+                            .type_annotation
+                            .as_ref()
+                            .map(|ta| self.resolve_type_expr(ta));
                         let prev_expected = self.expected_type.take();
                         self.expected_type = annotated_ty.clone();
                         let value = self.infer_expr(&lb.value);
@@ -495,7 +563,10 @@ impl Inference<'_> {
                     } else {
                         // Resolve annotation first to set expected_type (enables correct
                         // type inference for e.g. Option.None → Option<FiberResult>)
-                        let annotated_ty = lb.type_annotation.as_ref().map(|ta| self.resolve_type_expr(ta));
+                        let annotated_ty = lb
+                            .type_annotation
+                            .as_ref()
+                            .map(|ta| self.resolve_type_expr(ta));
                         let prev_expected = self.expected_type.take();
                         self.expected_type = annotated_ty.clone();
                         let value = self.infer_expr(&lb.value);
@@ -506,7 +577,11 @@ impl Inference<'_> {
                         } else {
                             value.ty.clone()
                         };
-                        self.define_variable(VarName(lb.name.value.clone()), ty.clone(), lb.mutable);
+                        self.define_variable(
+                            VarName(lb.name.value.clone()),
+                            ty.clone(),
+                            lb.mutable,
+                        );
                         class_fields.push(ClassFieldDef {
                             name: lb.name.value.clone(),
                             ty: ty.clone(),
@@ -566,32 +641,36 @@ impl Inference<'_> {
                 let mut current_parent = parent_mangled_name.clone();
                 while let Some(ref p_mn) = current_parent {
                     hierarchy_root_mangled = p_mn.clone();
-                    current_parent = if let Some(TypeDef::Class(p_cls)) = self.class_type_defs.get(p_mn) {
-                        p_cls.parent_mangled_name.clone()
-                    } else {
-                        None
-                    };
+                    current_parent =
+                        if let Some(TypeDef::Class(p_cls)) = self.class_type_defs.get(p_mn) {
+                            p_cls.parent_mangled_name.clone()
+                        } else {
+                            None
+                        };
                 }
             }
 
-            self.class_type_defs.insert(class_mangled.clone(), TypeDef::Class(ClassTypeDef {
-                fqn: class_fqn.clone(),
-                mangled_name: class_mangled.clone(),
-                fields: class_fields.clone(),
-                is_final: class_sig.is_final,
-                is_abstract: class_sig.is_abstract,
-                is_sealed: class_sig.is_sealed,
-                parent_mangled_name,
-                parent_type: None,          // Resolved during monomorphize
-                vtable_methods: vec![],     // Populated after method body inference below
-                hierarchy_root_mangled,
-                constructor_params: template_constructor_params,
-                initializer: template_initializer,
-                initializer_fields: template_initializer_fields,
-                extends_args: template_extends_args,
-                type_params: class_sig.type_params.clone(),
-                span: class_sig.span.clone(),
-            }));
+            self.class_type_defs.insert(
+                class_mangled.clone(),
+                TypeDef::Class(ClassTypeDef {
+                    fqn: class_fqn.clone(),
+                    mangled_name: class_mangled.clone(),
+                    fields: class_fields.clone(),
+                    is_final: class_sig.is_final,
+                    is_abstract: class_sig.is_abstract,
+                    is_sealed: class_sig.is_sealed,
+                    parent_mangled_name,
+                    parent_type: None,      // Resolved during monomorphize
+                    vtable_methods: vec![], // Populated after method body inference below
+                    hierarchy_root_mangled,
+                    constructor_params: template_constructor_params,
+                    initializer: template_initializer,
+                    initializer_fields: template_initializer_fields,
+                    extends_args: template_extends_args,
+                    type_params: class_sig.type_params.clone(),
+                    span: class_sig.span.clone(),
+                }),
+            );
         }
 
         self.typechecking_class = Some((class_mangled.clone(), class_fields));
@@ -607,9 +686,19 @@ impl Inference<'_> {
                 ClassMember::Method(func) => {
                     self.check_class_method_contract(func, &class_sig);
                     if func.is_abstract {
-                        self.register_abstract_template_member(func, &class_fqn, &class_sig.type_params, class_sig.is_final, false);
+                        self.register_abstract_template_member(
+                            func,
+                            &class_fqn,
+                            &class_sig.type_params,
+                            class_sig.is_final,
+                            false,
+                        );
                     } else if !func.type_params.is_empty() {
-                        self.infer_template_class_method_doubly_generic(func, &class_fqn, &class_sig.type_params);
+                        self.infer_template_class_method_doubly_generic(
+                            func,
+                            &class_fqn,
+                            &class_sig.type_params,
+                        );
                     } else {
                         self.infer_template_class_method(func, &class_fqn, &class_sig.type_params);
                     }
@@ -617,11 +706,25 @@ impl Inference<'_> {
                 ClassMember::Property(prop) => {
                     let func_decl = self.property_to_function_decl(prop);
                     if prop.is_abstract {
-                        self.register_abstract_template_member(&func_decl, &class_fqn, &class_sig.type_params, class_sig.is_final, true);
+                        self.register_abstract_template_member(
+                            &func_decl,
+                            &class_fqn,
+                            &class_sig.type_params,
+                            class_sig.is_final,
+                            true,
+                        );
                     } else if !func_decl.type_params.is_empty() {
-                        self.infer_template_class_method_doubly_generic(&func_decl, &class_fqn, &class_sig.type_params);
+                        self.infer_template_class_method_doubly_generic(
+                            &func_decl,
+                            &class_fqn,
+                            &class_sig.type_params,
+                        );
                     } else {
-                        self.infer_template_class_method(&func_decl, &class_fqn, &class_sig.type_params);
+                        self.infer_template_class_method(
+                            &func_decl,
+                            &class_fqn,
+                            &class_sig.type_params,
+                        );
                     }
                 }
                 _ => {}
@@ -639,19 +742,23 @@ impl Inference<'_> {
         // class type as param 0, so codegen casts `self` to the slot's erased
         // signature. Mirrors the non-generic path in `infer_class`.
         {
-            let (root_mn, impl_mangles) = if let Some(TypeDef::Class(cls_def)) = self.class_type_defs.get(&class_mangled) {
-                let impl_mangles: Vec<MangledName> = cls_def.vtable_methods.iter()
-                    .map(|slot| MangledName::for_function(&slot.impl_fqn, &slot.param_types))
-                    .collect();
-                (cls_def.hierarchy_root_mangled.clone(), impl_mangles)
-            } else {
-                (class_mangled.clone(), vec![])
-            };
-            let root_fqn = if let Some(TypeDef::Class(root_cls)) = self.class_type_defs.get(&root_mn) {
-                root_cls.fqn.clone()
-            } else {
-                class_fqn.clone()
-            };
+            let (root_mn, impl_mangles) =
+                if let Some(TypeDef::Class(cls_def)) = self.class_type_defs.get(&class_mangled) {
+                    let impl_mangles: Vec<MangledName> = cls_def
+                        .vtable_methods
+                        .iter()
+                        .map(|slot| MangledName::for_function(&slot.impl_fqn, &slot.param_types))
+                        .collect();
+                    (cls_def.hierarchy_root_mangled.clone(), impl_mangles)
+                } else {
+                    (class_mangled.clone(), vec![])
+                };
+            let root_fqn =
+                if let Some(TypeDef::Class(root_cls)) = self.class_type_defs.get(&root_mn) {
+                    root_cls.fqn.clone()
+                } else {
+                    class_fqn.clone()
+                };
             let root_type = Type::Class(root_fqn, root_mn);
             for impl_mn in impl_mangles {
                 if let Some(func) = self.typed_functions.get_mut(&impl_mn) {
@@ -685,7 +792,11 @@ impl Inference<'_> {
     ) -> Option<TypedExpr> {
         let (fqn, _mn) = match &typed_object.ty {
             Type::Class(fqn, mn) => (fqn, mn),
-            Type::GenericClass { fqn, mangled_name: mn, .. } => (fqn, mn),
+            Type::GenericClass {
+                fqn,
+                mangled_name: mn,
+                ..
+            } => (fqn, mn),
             _ => return None,
         };
 
@@ -697,28 +808,35 @@ impl Inference<'_> {
         };
 
         // Check typechecking_class first (set during generic class body typechecking)
-        let tc_class_fields = self.typechecking_class.as_ref()
+        let tc_class_fields = self
+            .typechecking_class
+            .as_ref()
             .filter(|(mn, _)| *mn == class_mangled || *mn == MangledName::for_type(fqn))
             .map(|(_, fields)| {
                 let mut fields = fields.clone();
-                if let Type::GenericClass { type_args, .. } = &typed_object.ty {
-                    if let Some(signature) = self.registry.lookup_class_type(fqn, &self.package_path) {
-                        let arguments: Vec<_> = type_args.iter().map(|(_, ty)| ty.clone()).collect();
-                        let substitution = TypeParamSubstitution::from_pairs(&signature.type_params, &arguments);
-                        for field in &mut fields {
-                            field.ty = apply_substitution(&substitution, &field.ty);
-                        }
+                if let Type::GenericClass { type_args, .. } = &typed_object.ty
+                    && let Some(signature) =
+                        self.registry.lookup_class_type(fqn, &self.package_path)
+                {
+                    let arguments: Vec<_> = type_args.iter().map(|(_, ty)| ty.clone()).collect();
+                    let substitution =
+                        TypeParamSubstitution::from_pairs(&signature.type_params, &arguments);
+                    for field in &mut fields {
+                        field.ty = apply_substitution(&substitution, &field.ty);
                     }
                 }
                 fields
             });
 
-        if fqn.package == self.package_path || matches!(&typed_object.ty, Type::GenericClass { .. }) {
+        if fqn.package == self.package_path || matches!(&typed_object.ty, Type::GenericClass { .. })
+        {
             // Same package (or generic class): use ClassTypeDef for full field access
             // For generic classes in typecheck-only mode, the ClassTypeDef is stored with
             // MangledName::for_type (no type args), so also try that as fallback.
             let fields = tc_class_fields.or_else(|| {
-                let cls_lookup = self.class_type_defs.get(&class_mangled)
+                let cls_lookup = self
+                    .class_type_defs
+                    .get(&class_mangled)
                     .or_else(|| self.class_type_defs.get(&MangledName::for_type(fqn)));
                 if let Some(TypeDef::Class(cls)) = cls_lookup {
                     if cls.type_params.is_empty() {
@@ -741,8 +859,12 @@ impl Inference<'_> {
                             // (canonical/erased). Recompute the concrete type via the registry
                             // walk that applies parent_type_expr substitution.
                             let field_ty = if &f.declared_by != fqn {
-                                self.resolve_inherited_field_type_via_registry(typed_object, fqn, &field.value)
-                                    .unwrap_or_else(|| f.ty.clone())
+                                self.resolve_inherited_field_type_via_registry(
+                                    typed_object,
+                                    fqn,
+                                    &field.value,
+                                )
+                                .unwrap_or_else(|| f.ty.clone())
                             } else {
                                 f.ty.clone()
                             };
@@ -805,9 +927,15 @@ impl Inference<'_> {
                 let class_sig = class_sig.clone();
                 if let Some(ref parent_fqn) = class_sig.parent_class {
                     // Resolve the parent type by substituting into parent_type_expr
-                    let resolved_parent_type = class_sig.parent_type_expr.as_ref()
+                    let resolved_parent_type = class_sig
+                        .parent_type_expr
+                        .as_ref()
                         .map(|pt| apply_substitution(&sub, pt));
-                    self.collect_parent_fields_from_registry(parent_fqn, &resolved_parent_type, &mut fields);
+                    self.collect_parent_fields_from_registry(
+                        parent_fqn,
+                        &resolved_parent_type,
+                        &mut fields,
+                    );
                 }
             }
 
@@ -837,7 +965,10 @@ impl Inference<'_> {
         parent_type: &Option<Type>,
         fields: &mut Vec<ClassFieldDef>,
     ) {
-        let Some(parent_sig) = self.registry.lookup_class_type(parent_fqn, &self.package_path) else {
+        let Some(parent_sig) = self
+            .registry
+            .lookup_class_type(parent_fqn, &self.package_path)
+        else {
             return;
         };
         let parent_sig = parent_sig.clone();
@@ -846,7 +977,10 @@ impl Inference<'_> {
         let parent_sub = if !parent_sig.type_params.is_empty() {
             if let Some(Type::GenericClass { type_args, .. }) = parent_type {
                 let concrete: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                Some(TypeParamSubstitution::from_pairs(&parent_sig.type_params, &concrete))
+                Some(TypeParamSubstitution::from_pairs(
+                    &parent_sig.type_params,
+                    &concrete,
+                ))
             } else {
                 None
             }
@@ -892,11 +1026,17 @@ impl Inference<'_> {
         fqn: &Fqn,
         field_name: &str,
     ) -> Option<Type> {
-        let class_sig = self.registry.lookup_class_type(fqn, &self.package_path)?.clone();
+        let class_sig = self
+            .registry
+            .lookup_class_type(fqn, &self.package_path)?
+            .clone();
         let substitution = if let Type::GenericClass { type_args, .. } = &typed_object.ty {
             if !class_sig.type_params.is_empty() {
                 let concrete_types: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                Some(TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_types))
+                Some(TypeParamSubstitution::from_pairs(
+                    &class_sig.type_params,
+                    &concrete_types,
+                ))
             } else {
                 None
             }
@@ -925,11 +1065,17 @@ impl Inference<'_> {
         fqn: &Fqn,
         field_name: &str,
     ) -> Option<Type> {
-        let class_sig = self.registry.lookup_class_type(fqn, &self.package_path)?.clone();
+        let class_sig = self
+            .registry
+            .lookup_class_type(fqn, &self.package_path)?
+            .clone();
         let substitution = if let Type::GenericClass { type_args, .. } = &typed_object.ty {
             if !class_sig.type_params.is_empty() {
                 let concrete_types: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                Some(TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_types))
+                Some(TypeParamSubstitution::from_pairs(
+                    &class_sig.type_params,
+                    &concrete_types,
+                ))
             } else {
                 None
             }
@@ -972,13 +1118,19 @@ impl Inference<'_> {
         field: &Spanned<String>,
         span: &Span,
     ) -> Option<TypedExpr> {
-        let class_sig = self.registry.lookup_class_type(class_fqn, &self.package_path)?.clone();
+        let class_sig = self
+            .registry
+            .lookup_class_type(class_fqn, &self.package_path)?
+            .clone();
 
         // Build type param substitution for generic classes so field types are concrete.
         let substitution = if let Type::GenericClass { type_args, .. } = &typed_object.ty {
             if !class_sig.type_params.is_empty() {
                 let concrete_types: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                Some(TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_types))
+                Some(TypeParamSubstitution::from_pairs(
+                    &class_sig.type_params,
+                    &concrete_types,
+                ))
             } else {
                 None
             }
@@ -987,7 +1139,10 @@ impl Inference<'_> {
         };
 
         // Compute whether this generic class has variance (for boxing mutable fields)
-        let has_variance = class_sig.type_param_variances.iter().any(|v| *v != crate::common::types::Variance::Invariant);
+        let has_variance = class_sig
+            .type_param_variances
+            .iter()
+            .any(|v| *v != crate::common::types::Variance::Invariant);
 
         // Count parent fields so field_index accounts for inherited fields
         let parent_field_count = self.count_parent_fields_from_registry(class_fqn, &substitution);
@@ -1044,7 +1199,10 @@ impl Inference<'_> {
                 typed_object.clone()
             };
             return self.try_resolve_class_field_from_registry(
-                &parent_obj, parent_fqn, field, span,
+                &parent_obj,
+                parent_fqn,
+                field,
+                span,
             );
         }
 
@@ -1058,12 +1216,18 @@ impl Inference<'_> {
         class_fqn: &Fqn,
         _substitution: &Option<TypeParamSubstitution>,
     ) -> usize {
-        let class_sig = match self.registry.lookup_class_type(class_fqn, &self.package_path) {
+        let class_sig = match self
+            .registry
+            .lookup_class_type(class_fqn, &self.package_path)
+        {
             Some(sig) => sig,
             None => return 0,
         };
         if let Some(ref parent_fqn) = class_sig.parent_class {
-            let parent_sig = match self.registry.lookup_class_type(parent_fqn, &self.package_path) {
+            let parent_sig = match self
+                .registry
+                .lookup_class_type(parent_fqn, &self.package_path)
+            {
                 Some(sig) => sig,
                 None => return 0,
             };
@@ -1088,9 +1252,11 @@ impl Inference<'_> {
     ) -> Option<TypedExpr> {
         let (fqn, _mn, class_type_args) = match &typed_object.ty {
             Type::Class(fqn, mn) => (fqn, mn, vec![]),
-            Type::GenericClass { fqn, mangled_name: mn, type_args } => {
-                (fqn, mn, type_args.iter().map(|(_, t)| t.clone()).collect())
-            }
+            Type::GenericClass {
+                fqn,
+                mangled_name: mn,
+                type_args,
+            } => (fqn, mn, type_args.iter().map(|(_, t)| t.clone()).collect()),
             _ => return None,
         };
 
@@ -1104,12 +1270,20 @@ impl Inference<'_> {
         let mut current_fqn = fqn.clone();
         let mut class_type_args = class_type_args;
         loop {
-            let class_sig = self.registry.lookup_class_type(&current_fqn, &self.package_path)?.clone();
+            let class_sig = self
+                .registry
+                .lookup_class_type(&current_fqn, &self.package_path)?
+                .clone();
             let method_name = SymbolName(method.value.clone());
 
-            if let Some(overloads) = class_sig.instance_methods.get(&method_name)
-                .filter(|methods| explicit_method_type_args.is_empty()
-                    && methods.iter().any(|method| !method.is_property))
+            if let Some(overloads) =
+                class_sig
+                    .instance_methods
+                    .get(&method_name)
+                    .filter(|methods| {
+                        explicit_method_type_args.is_empty()
+                            && methods.iter().any(|method| !method.is_property)
+                    })
             {
                 // Build full args including self
                 let mut full_args = vec![typed_object.clone()];
@@ -1120,10 +1294,19 @@ impl Inference<'_> {
                 // Find matching overload
                 let matching: Vec<_> = overloads
                     .iter()
-                    .filter(|sig| !sig.is_property && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a)))
+                    .filter(|sig| {
+                        !sig.is_property
+                            && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+                    })
                     .collect();
 
-                if !matching.is_empty() && !self.check_class_field_visibility(matching[0].visibility, &current_fqn, span) {
+                if !matching.is_empty()
+                    && !self.check_class_field_visibility(
+                        matching[0].visibility,
+                        &current_fqn,
+                        span,
+                    )
+                {
                     return Some(TypedExpr {
                         kind: TypedExprKind::UnitLiteral,
                         ty: Type::Error,
@@ -1136,18 +1319,23 @@ impl Inference<'_> {
                     let return_type = sig.return_type.clone();
 
                     // Check if this method should use virtual dispatch
-                    if self.is_method_virtual(fqn, &method.value) {
-                        if let Some(vtable_slot) = self.find_vtable_slot(&current_fqn, &method.value, &sig.params, sig.is_property) {
-                            return Some(TypedExpr {
-                                kind: TypedExprKind::ClassVirtualCall {
-                                    object: Box::new(typed_object.clone()),
-                                    vtable_slot,
-                                    args: full_args,
-                                },
-                                ty: return_type,
-                                span: span.clone(),
-                            });
-                        }
+                    if self.is_method_virtual(fqn, &method.value)
+                        && let Some(vtable_slot) = self.find_vtable_slot(
+                            &current_fqn,
+                            &method.value,
+                            &sig.params,
+                            sig.is_property,
+                        )
+                    {
+                        return Some(TypedExpr {
+                            kind: TypedExprKind::ClassVirtualCall {
+                                object: Box::new(typed_object.clone()),
+                                vtable_slot,
+                                args: full_args,
+                            },
+                            ty: return_type,
+                            span: span.clone(),
+                        });
                     }
 
                     // Static dispatch (final method or no vtable)
@@ -1175,7 +1363,9 @@ impl Inference<'_> {
             }
 
             // Check generic methods (methods on generic classes, or methods with own type params)
-            if class_sig.generic_instance_methods.get(&method_name)
+            if class_sig
+                .generic_instance_methods
+                .get(&method_name)
                 .is_some_and(|methods| methods.iter().any(|method| !method.is_property))
             {
                 return self.resolve_generic_class_method(
@@ -1198,8 +1388,14 @@ impl Inference<'_> {
             // checks MakeWaiter's module — Async's `map` is missed. Try the module
             // for the current parent FQN here.
             if let Some(result) = self.try_resolve_module_method_for_class(
-                &current_fqn, &class_type_args, &class_sig, method, typed_object,
-                typed_args.clone(), explicit_method_type_args, span,
+                &current_fqn,
+                &class_type_args,
+                &class_sig,
+                method,
+                typed_object,
+                typed_args.clone(),
+                explicit_method_type_args,
+                span,
             ) {
                 return Some(result);
             }
@@ -1207,32 +1403,30 @@ impl Inference<'_> {
             // Walk to parent. Resolve parent_type_expr (which has TypeParameter
             // placeholders for *this* class's params) against the current class's
             // concrete type args, so the parent sees the right substitution.
-            match class_sig.parent_class {
-                Some(parent_fqn) => {
-                    let parent_type_args = match &class_sig.parent_type_expr {
-                        Some(parent_ty) => {
-                            let parent_ty = if class_sig.type_params.is_empty() {
-                                parent_ty.clone()
-                            } else {
-                                let sub = TypeParamSubstitution::from_pairs(
-                                    &class_sig.type_params,
-                                    &class_type_args,
-                                );
-                                apply_substitution(&sub, parent_ty)
-                            };
-                            match &parent_ty {
-                                Type::GenericClass { type_args, .. } => {
-                                    type_args.iter().map(|(_, t)| t.clone()).collect()
-                                }
-                                _ => vec![],
+            {
+                let parent_fqn = class_sig.parent_class?;
+                let parent_type_args = match &class_sig.parent_type_expr {
+                    Some(parent_ty) => {
+                        let parent_ty = if class_sig.type_params.is_empty() {
+                            parent_ty.clone()
+                        } else {
+                            let sub = TypeParamSubstitution::from_pairs(
+                                &class_sig.type_params,
+                                &class_type_args,
+                            );
+                            apply_substitution(&sub, parent_ty)
+                        };
+                        match &parent_ty {
+                            Type::GenericClass { type_args, .. } => {
+                                type_args.iter().map(|(_, t)| t.clone()).collect()
                             }
+                            _ => vec![],
                         }
-                        None => vec![],
-                    };
-                    current_fqn = parent_fqn;
-                    class_type_args = parent_type_args;
-                }
-                None => return None,
+                    }
+                    None => vec![],
+                };
+                current_fqn = parent_fqn;
+                class_type_args = parent_type_args;
             }
         }
     }
@@ -1244,6 +1438,10 @@ impl Inference<'_> {
     /// lookup uses the parent type. (Class-pattern `match` arms compare the
     /// concrete struct, so widening the receiver in the typed AST would break
     /// downstream dispatch.)
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep the compiler context parameters explicit at this call boundary."
+    )]
     fn try_resolve_module_method_for_class(
         &mut self,
         class_fqn: &Fqn,
@@ -1258,7 +1456,7 @@ impl Inference<'_> {
         // No module for this class — nothing to try.
         let module_info = self.registry.lookup_module(class_fqn).cloned()?;
         let method_sym = SymbolName(method.value.clone());
-        let has_concrete = module_info.functions.get(&method_sym).is_some();
+        let has_concrete = module_info.functions.contains_key(&method_sym);
         let has_generic = !module_info
             .generic_members
             .lookup_visible(&method_sym, &self.package_path, &self.current_file)
@@ -1287,22 +1485,33 @@ impl Inference<'_> {
         };
 
         // 1. Concrete module-for-type instance method
-        if has_concrete {
-            if let Some(overloads) = module_info.functions.get(&method_sym) {
-                let instance_overloads: Vec<FunctionSignature> = overloads
-                    .iter()
-                    .filter(|sig| !sig.is_property && !sig.params.is_empty() && sig.params[0].0 == "self")
-                    .filter(|sig| self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file))
-                    .cloned()
-                    .collect();
-                if !instance_overloads.is_empty() {
-                    let mut all_args = vec![typed_object.clone()];
-                    all_args.extend(typed_args);
-                    let display = format!("{}.{}", class_fqn.symbol, method.value);
-                    return Some(self.resolve_overloads_with_intrinsics(
-                        class_fqn, &method_sym, instance_overloads, all_args, &display, span,
-                    ));
-                }
+        if has_concrete && let Some(overloads) = module_info.functions.get(&method_sym) {
+            let instance_overloads: Vec<FunctionSignature> = overloads
+                .iter()
+                .filter(|sig| {
+                    !sig.is_property && !sig.params.is_empty() && sig.params[0].0 == "self"
+                })
+                .filter(|sig| {
+                    self.is_member_visible(
+                        sig.visibility,
+                        &module_info.fqn.package,
+                        &sig.source_file,
+                    )
+                })
+                .cloned()
+                .collect();
+            if !instance_overloads.is_empty() {
+                let mut all_args = vec![typed_object.clone()];
+                all_args.extend(typed_args);
+                let display = format!("{}.{}", class_fqn.symbol, method.value);
+                return Some(self.resolve_overloads_with_intrinsics(
+                    class_fqn,
+                    &method_sym,
+                    instance_overloads,
+                    all_args,
+                    &display,
+                    span,
+                ));
             }
         }
 
@@ -1312,7 +1521,11 @@ impl Inference<'_> {
             // No span: this is one strategy among several, and the call may
             // still resolve as a trait impl below.
             let (candidates, _) = self.resolve_generic_module_instance_method(
-                &parent_ty, &method_sym, &arg_types, explicit_method_type_args, None,
+                &parent_ty,
+                &method_sym,
+                &arg_types,
+                explicit_method_type_args,
+                None,
             );
             if !candidates.is_empty() {
                 let mut all_args = vec![typed_object.clone()];
@@ -1340,13 +1553,18 @@ impl Inference<'_> {
             Some(Type::Class(fqn, _)) | Some(Type::GenericClass { fqn, .. }) => fqn,
             _ => return Err(typed_args),
         };
-        let class_sig = match self.registry.lookup_class_type(&class_fqn, &self.package_path) {
+        let class_sig = match self
+            .registry
+            .lookup_class_type(&class_fqn, &self.package_path)
+        {
             Some(sig) => sig.clone(),
             None => return Err(typed_args),
         };
         let method_name = SymbolName(method.value.clone());
 
-        if let Some(overloads) = class_sig.static_methods.get(&method_name)
+        if let Some(overloads) = class_sig
+            .static_methods
+            .get(&method_name)
             .filter(|_| method_type_args.is_empty())
         {
             let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
@@ -1355,7 +1573,9 @@ impl Inference<'_> {
                 .filter(|sig| sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a)))
                 .collect();
 
-            if !matching.is_empty() && !self.check_class_field_visibility(matching[0].visibility, &class_fqn, span) {
+            if !matching.is_empty()
+                && !self.check_class_field_visibility(matching[0].visibility, &class_fqn, span)
+            {
                 return Ok(TypedExpr {
                     kind: TypedExprKind::UnitLiteral,
                     ty: Type::Error,
@@ -1440,8 +1660,12 @@ impl Inference<'_> {
             }
 
             if !explicit_method_type_args.is_empty() {
-                if explicit_method_type_args.len() != def.method_type_params.len() { continue; }
-                let Some(arguments) = self.resolve_type_args(explicit_method_type_args) else { continue };
+                if explicit_method_type_args.len() != def.method_type_params.len() {
+                    continue;
+                }
+                let Some(arguments) = self.resolve_type_args(explicit_method_type_args) else {
+                    continue;
+                };
                 for (parameter, argument) in def.method_type_params.iter().zip(arguments) {
                     substitution.insert(parameter.clone(), argument);
                 }
@@ -1489,7 +1713,12 @@ impl Inference<'_> {
             };
 
             // Validate trait bounds
-            if !self.check_trait_bounds(&def.trait_bounds, &all_type_params, &combined_type_args, span) {
+            if !self.check_trait_bounds(
+                &def.trait_bounds,
+                &all_type_params,
+                &combined_type_args,
+                span,
+            ) {
                 continue;
             }
 
@@ -1526,7 +1755,9 @@ impl Inference<'_> {
                 &effective_fqn,
                 &generic_def,
                 &combined_type_args,
-                MethodKind::ClassMethod { method_parameter_count: def.method_type_params.len() },
+                MethodKind::ClassMethod {
+                    method_parameter_count: def.method_type_params.len(),
+                },
             );
 
             return Ok(TypedExpr {
@@ -1693,27 +1924,22 @@ impl Inference<'_> {
                 type_args: expected_args,
                 ..
             }) = self.expected_type.as_ref()
+                && *expected_fqn == *fqn
             {
-                if *expected_fqn == *fqn {
-                    let placeholder_args: Vec<Type> = class_sig
-                        .type_params
-                        .iter()
-                        .map(|tp| {
-                            Type::TypeVariable(
-                                tp.clone(),
-                                class_sig
-                                    .trait_bounds
-                                    .get(tp)
-                                    .cloned()
-                                    .unwrap_or_default(),
-                            )
-                        })
-                        .collect();
-                    for (placeholder, (_, expected_arg)) in
-                        placeholder_args.iter().zip(expected_args.iter())
-                    {
-                        substitution.unify(placeholder, expected_arg);
-                    }
+                let placeholder_args: Vec<Type> = class_sig
+                    .type_params
+                    .iter()
+                    .map(|tp| {
+                        Type::TypeVariable(
+                            tp.clone(),
+                            class_sig.trait_bounds.get(tp).cloned().unwrap_or_default(),
+                        )
+                    })
+                    .collect();
+                for (placeholder, (_, expected_arg)) in
+                    placeholder_args.iter().zip(expected_args.iter())
+                {
+                    substitution.unify(placeholder, expected_arg);
                 }
             }
             match substitution.resolve_type_params(&class_sig.type_params) {
@@ -1779,12 +2005,11 @@ impl Inference<'_> {
     }
 
     /// Recover the parent's physical field prefix without specializing erased fields.
-    fn collect_canonical_parent_fields(
-        &self,
-        parent_fqn: &Fqn,
-        fields: &mut Vec<ClassFieldDef>,
-    ) {
-        let Some(parent_sig) = self.registry.lookup_class_type(parent_fqn, &self.package_path) else {
+    fn collect_canonical_parent_fields(&self, parent_fqn: &Fqn, fields: &mut Vec<ClassFieldDef>) {
+        let Some(parent_sig) = self
+            .registry
+            .lookup_class_type(parent_fqn, &self.package_path)
+        else {
             return;
         };
         if let Some(ref grandparent_fqn) = parent_sig.parent_class {
@@ -1831,40 +2056,49 @@ impl Inference<'_> {
             .collect();
 
         // Inherit the parent's vtable via the registry (cross-file / cross-package).
-        if let Some(ref parent_fqn) = class_sig.parent_class {
-            if let Some(parent_sig) = self.registry.lookup_class_type(parent_fqn, &self.package_path) {
-                let parent_sig = parent_sig.clone();
-                let mut parent_vtable = self.compute_vtable_methods(parent_fqn, &parent_sig);
-                // Re-express the parent's slots in THIS class's type-param space via
-                // the `extends Parent<binding>` binding, so a slot inherited from a
-                // generic ancestor (e.g. a non-generic class extending
-                // `AsyncInputStream<TlsIoError>`) records the concrete binding rather
-                // than the ancestor's abstract type param.
-                let binding = parent_binding(&parent_sig, class_sig.parent_type_expr.as_ref());
-                if !binding.is_empty() {
-                    for slot in &mut parent_vtable {
-                        // Only re-express `impl_type_params` (the binding for looking up
-                        // the concrete impl method). `param_types`/`return_type` stay
-                        // in the impl's own (template) type-param space so
-                        // `for_function(impl_fqn, param_types)` keeps matching the
-                        // registered template method; the `impl_type_params` suffix is
-                        // what selects the monomorphized instance.
-                        slot.impl_type_params = slot
-                            .impl_type_params
-                            .iter()
-                            .map(|t| apply_type_substitution(t, &binding))
-                            .collect();
-                    }
+        if let Some(ref parent_fqn) = class_sig.parent_class
+            && let Some(parent_sig) = self
+                .registry
+                .lookup_class_type(parent_fqn, &self.package_path)
+        {
+            let parent_sig = parent_sig.clone();
+            let mut parent_vtable = self.compute_vtable_methods(parent_fqn, &parent_sig);
+            // Re-express the parent's slots in THIS class's type-param space via
+            // the `extends Parent<binding>` binding, so a slot inherited from a
+            // generic ancestor (e.g. a non-generic class extending
+            // `AsyncInputStream<TlsIoError>`) records the concrete binding rather
+            // than the ancestor's abstract type param.
+            let binding = parent_binding(&parent_sig, class_sig.parent_type_expr.as_ref());
+            if !binding.is_empty() {
+                for slot in &mut parent_vtable {
+                    // Only re-express `impl_type_params` (the binding for looking up
+                    // the concrete impl method). `param_types`/`return_type` stay
+                    // in the impl's own (template) type-param space so
+                    // `for_function(impl_fqn, param_types)` keeps matching the
+                    // registered template method; the `impl_type_params` suffix is
+                    // what selects the monomorphized instance.
+                    slot.impl_type_params = slot
+                        .impl_type_params
+                        .iter()
+                        .map(|t| apply_type_substitution(t, &binding))
+                        .collect();
                 }
-                vtable = parent_vtable;
             }
+            vtable = parent_vtable;
         }
 
         let class_is_final = class_sig.is_final;
-        let merge = |vtable: &mut Vec<VtableSlot>, name: &SymbolName, params: Vec<Type>, ret: Type, is_final_method: bool, is_property: bool| {
+        let merge = |vtable: &mut Vec<VtableSlot>,
+                     name: &SymbolName,
+                     params: Vec<Type>,
+                     ret: Type,
+                     is_final_method: bool,
+                     is_property: bool| {
             let impl_fqn = class_method_fqn(class_fqn, &name.0);
             if let Some(entry) = vtable.iter_mut().find(|slot| {
-                slot.is_property == is_property && slot.method_name == *name && self.vtable_parameters_match(slot, &params)
+                slot.is_property == is_property
+                    && slot.method_name == *name
+                    && self.vtable_parameters_match(slot, &params)
             }) {
                 // Override: child re-implements an inherited slot (keep its index).
                 entry.impl_fqn = impl_fqn;
@@ -1872,7 +2106,14 @@ impl Inference<'_> {
                 entry.return_type = ret;
                 entry.impl_type_params = own_type_params.clone();
             } else if !is_final_method && !class_is_final {
-                vtable.push(VtableSlot { is_property, method_name: name.clone(), impl_fqn, param_types: params, return_type: ret, impl_type_params: own_type_params.clone() });
+                vtable.push(VtableSlot {
+                    is_property,
+                    method_name: name.clone(),
+                    impl_fqn,
+                    param_types: params,
+                    return_type: ret,
+                    impl_type_params: own_type_params.clone(),
+                });
             }
         };
 
@@ -1880,7 +2121,14 @@ impl Inference<'_> {
         for (method_name, overloads) in &class_sig.instance_methods {
             for sig in overloads {
                 let params: Vec<Type> = sig.params.iter().map(|(_, t)| t.clone()).collect();
-                merge(&mut vtable, method_name, params, sig.return_type.clone(), sig.is_final_method, sig.is_property);
+                merge(
+                    &mut vtable,
+                    method_name,
+                    params,
+                    sig.return_type.clone(),
+                    sig.is_final_method,
+                    sig.is_property,
+                );
             }
         }
         // Generic instance methods (generic classes). Skip doubly-generic (own type params,
@@ -1894,7 +2142,14 @@ impl Inference<'_> {
                     continue;
                 }
                 let params: Vec<Type> = def.params.iter().map(|(_, t)| t.clone()).collect();
-                merge(&mut vtable, method_name, params, def.return_type.clone(), def.is_final_method, def.is_property);
+                merge(
+                    &mut vtable,
+                    method_name,
+                    params,
+                    def.return_type.clone(),
+                    def.is_final_method,
+                    def.is_property,
+                );
             }
         }
 
@@ -1903,12 +2158,25 @@ impl Inference<'_> {
 
     /// Find the vtable slot index for a method name on the given class, from the
     /// registry (works cross-file / cross-package).
-    fn find_vtable_slot(&self, object_fqn: &Fqn, method_name: &str, parameters: &[(String, Type)], is_property: bool) -> Option<u32> {
-        let sig = self.registry.lookup_class_type(object_fqn, &self.package_path)?.clone();
+    fn find_vtable_slot(
+        &self,
+        object_fqn: &Fqn,
+        method_name: &str,
+        parameters: &[(String, Type)],
+        is_property: bool,
+    ) -> Option<u32> {
+        let sig = self
+            .registry
+            .lookup_class_type(object_fqn, &self.package_path)?
+            .clone();
         let parameters: Vec<_> = parameters.iter().map(|(_, ty)| ty.clone()).collect();
         self.compute_vtable_methods(object_fqn, &sig)
             .iter()
-            .position(|slot| slot.is_property == is_property && slot.method_name.0 == method_name && self.vtable_parameters_match(slot, &parameters))
+            .position(|slot| {
+                slot.is_property == is_property
+                    && slot.method_name.0 == method_name
+                    && self.vtable_parameters_match(slot, &parameters)
+            })
             .map(|idx| idx as u32)
     }
 
@@ -1918,21 +2186,39 @@ impl Inference<'_> {
         if slot.param_types.len() != parameters.len() {
             return false;
         }
-        let Some((owner, _)) = slot.impl_fqn.symbol.0.rsplit_once('.') else { return false };
-        let owner = Fqn { package: slot.impl_fqn.package.clone(), symbol: SymbolName(owner.to_string()) };
-        let Some(class) = self.registry.lookup_class_type(&owner, &self.package_path) else { return false };
-        let substitution = class.type_params.iter().cloned()
-            .zip(slot.impl_type_params.iter().cloned()).collect();
-        slot.param_types.iter().skip(1).zip(parameters.iter().skip(1)).all(|(inherited, actual)| {
-            let inherited = apply_type_substitution(inherited, &substitution);
-            crate::typechecker::subtyping::identical(&inherited, actual)
-        })
+        let Some((owner, _)) = slot.impl_fqn.symbol.0.rsplit_once('.') else {
+            return false;
+        };
+        let owner = Fqn {
+            package: slot.impl_fqn.package.clone(),
+            symbol: SymbolName(owner.to_string()),
+        };
+        let Some(class) = self.registry.lookup_class_type(&owner, &self.package_path) else {
+            return false;
+        };
+        let substitution = class
+            .type_params
+            .iter()
+            .cloned()
+            .zip(slot.impl_type_params.iter().cloned())
+            .collect();
+        slot.param_types
+            .iter()
+            .skip(1)
+            .zip(parameters.iter().skip(1))
+            .all(|(inherited, actual)| {
+                let inherited = apply_type_substitution(inherited, &substitution);
+                crate::typechecker::subtyping::identical(&inherited, actual)
+            })
     }
 
     /// Check if a method is virtual (needs vtable dispatch) or final (direct call).
     /// Returns false for final classes (exact type known, direct dispatch is safe).
     fn is_method_virtual(&self, class_fqn: &Fqn, method_name: &str) -> bool {
-        let sig = match self.registry.lookup_class_type(class_fqn, &self.package_path) {
+        let sig = match self
+            .registry
+            .lookup_class_type(class_fqn, &self.package_path)
+        {
             Some(s) => s.clone(),
             None => return false,
         };
@@ -2048,7 +2334,10 @@ impl Inference<'_> {
             package: self.package_path.clone(),
             symbol: SymbolName(class_name.clone()),
         };
-        let class_sig = match self.registry.lookup_class_type(&class_fqn, &self.package_path) {
+        let class_sig = match self
+            .registry
+            .lookup_class_type(&class_fqn, &self.package_path)
+        {
             Some(sig) => sig.clone(),
             None => {
                 self.diagnostics.error(
@@ -2157,7 +2446,12 @@ impl Inference<'_> {
         span: &Span,
     ) -> Type {
         // Check trait bounds
-        self.check_trait_bounds(&class_sig.trait_bounds, &class_sig.type_params, type_args, span);
+        self.check_trait_bounds(
+            &class_sig.trait_bounds,
+            &class_sig.type_params,
+            type_args,
+            span,
+        );
 
         // Erased mangled name — all instantiations share one canonical TypeDef.
         let mangled = MangledName::for_type(fqn);
@@ -2192,7 +2486,10 @@ impl Inference<'_> {
         is_property: bool,
         span: &Span,
     ) -> Option<TypedExpr> {
-        let class_sig = self.registry.lookup_class_type(fqn, &self.package_path)?.clone();
+        let class_sig = self
+            .registry
+            .lookup_class_type(fqn, &self.package_path)?
+            .clone();
 
         let defs = class_sig.generic_instance_methods.get(method_name)?;
         if defs.is_empty() {
@@ -2201,15 +2498,22 @@ impl Inference<'_> {
 
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
 
-        for def in defs.iter().filter(|definition| definition.is_property == is_property) {
+        for def in defs
+            .iter()
+            .filter(|definition| definition.is_property == is_property)
+        {
             // Pre-populate substitution with class-level type args
             let mut substitution = TypeParamSubstitution::new();
             for (tp, arg) in def.class_type_params.iter().zip(class_type_args.iter()) {
                 substitution.insert(tp.clone(), arg.clone());
             }
             if !explicit_method_type_args.is_empty() {
-                if explicit_method_type_args.len() != def.method_type_params.len() { continue; }
-                let Some(arguments) = self.resolve_type_args(explicit_method_type_args) else { continue };
+                if explicit_method_type_args.len() != def.method_type_params.len() {
+                    continue;
+                }
+                let Some(arguments) = self.resolve_type_args(explicit_method_type_args) else {
+                    continue;
+                };
                 for (parameter, argument) in def.method_type_params.iter().zip(arguments) {
                     substitution.insert(parameter.clone(), argument);
                 }
@@ -2230,7 +2534,8 @@ impl Inference<'_> {
                 let mut inferred = substitution.clone();
                 if inferred.unify(param_ty, arg_ty) {
                     substitution = inferred;
-                } else if !self.is_assignable(&apply_substitution(&substitution, param_ty), arg_ty) {
+                } else if !self.is_assignable(&apply_substitution(&substitution, param_ty), arg_ty)
+                {
                     all_unified = false;
                     break;
                 }
@@ -2261,11 +2566,10 @@ impl Inference<'_> {
                                 Some(a) => a,
                                 None => continue,
                             };
-                        let method_args =
-                            match self.resolve_type_args(explicit_method_type_args) {
-                                Some(a) => a,
-                                None => continue,
-                            };
+                        let method_args = match self.resolve_type_args(explicit_method_type_args) {
+                            Some(a) => a,
+                            None => continue,
+                        };
                         [class_args, method_args].concat()
                     } else if let Some(ref expected) = self.expected_type {
                         substitution.unify(&def.return_type, expected);
@@ -2280,7 +2584,12 @@ impl Inference<'_> {
             };
 
             // Validate trait bounds
-            if !self.check_trait_bounds(&def.trait_bounds, &all_type_params, &combined_type_args, span) {
+            if !self.check_trait_bounds(
+                &def.trait_bounds,
+                &all_type_params,
+                &combined_type_args,
+                span,
+            ) {
                 continue;
             }
 
@@ -2289,21 +2598,23 @@ impl Inference<'_> {
             // dispatch through the vtable instead of emitting a static call to
             // the (possibly abstract, body-less) template. Mirrors the
             // non-generic path in `try_resolve_class_instance_method`.
-            if def.method_type_params.is_empty() && self.is_method_virtual(fqn, &method_name.0) {
-                if let Some(vtable_slot) = self.find_vtable_slot(fqn, &method_name.0, &def.params, def.is_property) {
-                    let return_type = apply_substitution(&substitution, &def.return_type);
-                    let mut full_args = vec![typed_object.clone()];
-                    full_args.extend(typed_args.clone());
-                    return Some(TypedExpr {
-                        kind: TypedExprKind::ClassVirtualCall {
-                            object: Box::new(typed_object.clone()),
-                            vtable_slot,
-                            args: full_args,
-                        },
-                        ty: return_type,
-                        span: span.clone(),
-                    });
-                }
+            if def.method_type_params.is_empty()
+                && self.is_method_virtual(fqn, &method_name.0)
+                && let Some(vtable_slot) =
+                    self.find_vtable_slot(fqn, &method_name.0, &def.params, def.is_property)
+            {
+                let return_type = apply_substitution(&substitution, &def.return_type);
+                let mut full_args = vec![typed_object.clone()];
+                full_args.extend(typed_args.clone());
+                return Some(TypedExpr {
+                    kind: TypedExprKind::ClassVirtualCall {
+                        object: Box::new(typed_object.clone()),
+                        vtable_slot,
+                        args: full_args,
+                    },
+                    ty: return_type,
+                    span: span.clone(),
+                });
             }
 
             // Build GenericFunctionDef for template name resolution
@@ -2330,7 +2641,9 @@ impl Inference<'_> {
                 &effective_fqn,
                 &generic_def,
                 &combined_type_args,
-                MethodKind::ClassMethod { method_parameter_count: def.method_type_params.len() },
+                MethodKind::ClassMethod {
+                    method_parameter_count: def.method_type_params.len(),
+                },
             );
 
             let mut full_args = vec![typed_object.clone()];
@@ -2363,20 +2676,17 @@ impl Inference<'_> {
             params: prop.params.clone(),
             return_type: Some(prop.return_type.clone()),
             where_clause: vec![],
-            body: prop.body.clone().unwrap_or_else(|| {
-                crate::parser::ast::Expr::UnitLiteral(prop.span.clone())
-            }),
+            body: prop
+                .body
+                .clone()
+                .unwrap_or_else(|| crate::parser::ast::Expr::UnitLiteral(prop.span.clone())),
             doc_comment: prop.doc_comment.clone(),
             span: prop.span.clone(),
         }
     }
 
     /// Register a placeholder TypedFunction with Panic body for an abstract method.
-    fn register_abstract_method_placeholder(
-        &mut self,
-        class_name: &str,
-        func: &FunctionDecl,
-    ) {
+    fn register_abstract_method_placeholder(&mut self, class_name: &str, func: &FunctionDecl) {
         let typed_params: Vec<TypedParam> = func
             .params
             .iter()
@@ -2432,11 +2742,7 @@ impl Inference<'_> {
     }
 
     /// Register a placeholder TypedFunction with Panic body for an abstract property.
-    fn register_abstract_property_placeholder(
-        &mut self,
-        class_name: &str,
-        prop: &PropertyDecl,
-    ) {
+    fn register_abstract_property_placeholder(&mut self, class_name: &str, prop: &PropertyDecl) {
         let func_decl = self.property_to_function_decl(prop);
         self.register_abstract_method_placeholder(class_name, &func_decl);
     }
@@ -2446,7 +2752,6 @@ impl Inference<'_> {
     /// `TypedFunction` (carrying the class's type params) so the base vtable slot
     /// has a concrete function under erasure, and return the `VtableSlot` so callers
     /// dispatch virtually instead of statically calling the body-less template.
-
     fn register_abstract_template_member(
         &mut self,
         func: &FunctionDecl,
@@ -2455,16 +2760,24 @@ impl Inference<'_> {
         class_is_final: bool,
         is_property: bool,
     ) -> Option<VtableSlot> {
-        let method_type_params: Vec<_> = func.type_params.iter()
-            .map(|parameter| TypeParamName(parameter.value.clone())).collect();
-        let all_type_params: Vec<_> = class_type_params.iter()
-            .chain(&method_type_params).cloned().collect();
-        let method_bounds = self.resolve_trait_bounds_from_where_clause(
-            &func.where_clause, &all_type_params,
-        );
+        let method_type_params: Vec<_> = func
+            .type_params
+            .iter()
+            .map(|parameter| TypeParamName(parameter.value.clone()))
+            .collect();
+        let all_type_params: Vec<_> = class_type_params
+            .iter()
+            .chain(&method_type_params)
+            .cloned()
+            .collect();
+        let method_bounds =
+            self.resolve_trait_bounds_from_where_clause(&func.where_clause, &all_type_params);
         let method_scope = self.type_param_map(&method_type_params, &method_bounds);
-        self.current_type_params.extend(method_scope.into_iter()
-            .map(|(name, ty)| (TypeParamName(name), ty)));
+        self.current_type_params.extend(
+            method_scope
+                .into_iter()
+                .map(|(name, ty)| (TypeParamName(name), ty)),
+        );
         self.add_current_type_param_bounds(&method_bounds);
         let typed_params: Vec<TypedParam> = func
             .params
@@ -2482,7 +2795,9 @@ impl Inference<'_> {
         let method_fqn = class_method_fqn(class_fqn, &func.name.value);
         let param_types_ref: Vec<&Type> = typed_params.iter().map(|p| &p.ty).collect();
         let template_mn = crate::typechecker::class_trait_methods::template_name(
-            &method_fqn, &param_types_ref, method_type_params.len(),
+            &method_fqn,
+            &param_types_ref,
+            method_type_params.len(),
         );
         let display_name = super::make_display_name(&method_fqn.to_string(), &typed_params);
         let slot_param_types: Vec<Type> = typed_params.iter().map(|p| p.ty.clone()).collect();
@@ -2498,7 +2813,9 @@ impl Inference<'_> {
                 body: TypedExpr {
                     kind: TypedExprKind::Panic {
                         message: Box::new(TypedExpr {
-                            kind: TypedExprKind::StringLiteral("abstract method called".to_string()),
+                            kind: TypedExprKind::StringLiteral(
+                                "abstract method called".to_string(),
+                            ),
                             ty: Type::String,
                             span: func.span.clone(),
                         }),
@@ -2542,9 +2859,8 @@ impl Inference<'_> {
         class_fqn: &Fqn,
         class_type_params: &[TypeParamName],
     ) -> MangledName {
-        let method_bounds = self.resolve_trait_bounds_from_where_clause(
-            &func.where_clause, class_type_params,
-        );
+        let method_bounds =
+            self.resolve_trait_bounds_from_where_clause(&func.where_clause, class_type_params);
         self.add_current_type_param_bounds(&method_bounds);
         let return_type = match &func.return_type {
             Some(type_expr) => self.resolve_type_expr(type_expr),
@@ -2564,14 +2880,11 @@ impl Inference<'_> {
             .collect();
         self.push_scope();
         for param in &typed_params {
-            self.define_variable(
-                VarName(param.name.clone()),
-                param.ty.clone(),
-                false,
-            );
+            self.define_variable(VarName(param.name.clone()), param.ty.clone(), false);
         }
         let body_expected_type = if func.is_async {
-            self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+            self.resolve_awaitable_value_type(&return_type)
+                .unwrap_or(return_type.clone())
         } else {
             return_type.clone()
         };
@@ -2676,14 +2989,11 @@ impl Inference<'_> {
             .collect();
         self.push_scope();
         for param in &typed_params {
-            self.define_variable(
-                VarName(param.name.clone()),
-                param.ty.clone(),
-                false,
-            );
+            self.define_variable(VarName(param.name.clone()), param.ty.clone(), false);
         }
         let body_expected_type = if func.is_async {
-            self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+            self.resolve_awaitable_value_type(&return_type)
+                .unwrap_or(return_type.clone())
         } else {
             return_type.clone()
         };
@@ -2717,7 +3027,9 @@ impl Inference<'_> {
         };
         let param_types: Vec<&Type> = typed_params.iter().map(|p| &p.ty).collect();
         let template_name = crate::typechecker::class_trait_methods::template_name(
-            &method_fqn, &param_types, func_type_params.len(),
+            &method_fqn,
+            &param_types,
+            func_type_params.len(),
         );
 
         // For async templates, wrap the body in AsyncBlock (see the
@@ -2752,15 +3064,20 @@ impl Inference<'_> {
     ) -> Option<TypedExpr> {
         let (fqn, _mn, class_type_args) = match &typed_object.ty {
             Type::Class(fqn, mn) => (fqn, mn, vec![]),
-            Type::GenericClass { fqn, mangled_name: mn, type_args } => {
-                (fqn, mn, type_args.iter().map(|(_, t)| t.clone()).collect())
-            }
+            Type::GenericClass {
+                fqn,
+                mangled_name: mn,
+                type_args,
+            } => (fqn, mn, type_args.iter().map(|(_, t)| t.clone()).collect()),
             _ => return None,
         };
 
         let mut current_fqn = fqn.clone();
         loop {
-            let class_sig = self.registry.lookup_class_type(&current_fqn, &self.package_path)?.clone();
+            let class_sig = self
+                .registry
+                .lookup_class_type(&current_fqn, &self.package_path)?
+                .clone();
             let prop_name = SymbolName(field.value.clone());
 
             if let Some(overloads) = class_sig.instance_methods.get(&prop_name) {
@@ -2784,18 +3101,23 @@ impl Inference<'_> {
                     let full_args = vec![typed_object.clone()];
 
                     // Virtual dispatch if method has vtable slot
-                    if self.is_method_virtual(fqn, &field.value) {
-                        if let Some(vtable_slot) = self.find_vtable_slot(&current_fqn, &field.value, &sig.params, sig.is_property) {
-                            return Some(TypedExpr {
-                                kind: TypedExprKind::ClassVirtualCall {
-                                    object: Box::new(typed_object.clone()),
-                                    vtable_slot,
-                                    args: full_args,
-                                },
-                                ty: return_type,
-                                span: span.clone(),
-                            });
-                        }
+                    if self.is_method_virtual(fqn, &field.value)
+                        && let Some(vtable_slot) = self.find_vtable_slot(
+                            &current_fqn,
+                            &field.value,
+                            &sig.params,
+                            sig.is_property,
+                        )
+                    {
+                        return Some(TypedExpr {
+                            kind: TypedExprKind::ClassVirtualCall {
+                                object: Box::new(typed_object.clone()),
+                                vtable_slot,
+                                args: full_args,
+                            },
+                            ty: return_type,
+                            span: span.clone(),
+                        });
                     }
 
                     // Static dispatch
@@ -2812,7 +3134,10 @@ impl Inference<'_> {
             }
 
             // Check generic instance methods for property
-            if let Some(defs) = class_sig.generic_instance_methods.get(&SymbolName(field.value.clone())) {
+            if let Some(defs) = class_sig
+                .generic_instance_methods
+                .get(&SymbolName(field.value.clone()))
+            {
                 let prop_defs: Vec<_> = defs.iter().filter(|d| d.is_property).collect();
                 if !prop_defs.is_empty() {
                     return self.resolve_generic_class_method(
@@ -2829,9 +3154,9 @@ impl Inference<'_> {
             }
 
             // Walk to parent
-            match class_sig.parent_class {
-                Some(parent_fqn) => current_fqn = parent_fqn,
-                None => return None,
+            {
+                let parent_fqn = class_sig.parent_class?;
+                current_fqn = parent_fqn
             }
         }
     }
@@ -2848,9 +3173,11 @@ impl Inference<'_> {
             Some(Type::Class(fqn, _)) | Some(Type::GenericClass { fqn, .. }) => fqn,
             _ => return None,
         };
-        let class_sig = match self.registry.lookup_class_type(&class_fqn, &self.package_path) {
-            Some(sig) => sig.clone(),
-            None => return None,
+        let class_sig = {
+            let sig = self
+                .registry
+                .lookup_class_type(&class_fqn, &self.package_path)?;
+            sig.clone()
         };
         let prop_name = SymbolName(field.value.clone());
 
@@ -2908,7 +3235,10 @@ impl Inference<'_> {
                 package: class_fqn.package.clone(),
                 symbol: SymbolName(format!("{}.{}", class_fqn.symbol, field.value)),
             };
-            if let Some(sig) = self.registry.lookup_global(&global_fqn, &self.package_path, &self.current_file) {
+            if let Some(sig) =
+                self.registry
+                    .lookup_global(&global_fqn, &self.package_path, &self.current_file)
+            {
                 if !self.check_class_field_visibility(sig.visibility, &class_fqn, span) {
                     return Some(TypedExpr {
                         kind: TypedExprKind::UnitLiteral,
@@ -2918,7 +3248,10 @@ impl Inference<'_> {
                 }
                 return Some(TypedExpr {
                     ty: sig.ty.clone(),
-                    kind: TypedExprKind::GlobalRef { name: sig.mangled_name.clone(), type_params: vec![] },
+                    kind: TypedExprKind::GlobalRef {
+                        name: sig.mangled_name.clone(),
+                        type_params: vec![],
+                    },
                     span: span.clone(),
                 });
             }
@@ -2933,19 +3266,15 @@ impl Inference<'_> {
                     return None;
                 }
                 self.resolve_type_args(explicit_type_args)?
-            } else if let Some(ref expected) = self.expected_type {
-                if let Some(ref ty) = def.ty {
-                    let mut substitution = TypeParamSubstitution::new();
-                    if substitution.unify(ty, expected) {
-                        substitution.resolve_type_params(&def.type_params)?
-                    } else {
-                        return None;
-                    }
+            } else {
+                let expected = self.expected_type.as_ref()?;
+                let ty = def.ty.as_ref()?;
+                let mut substitution = TypeParamSubstitution::new();
+                if substitution.unify(ty, expected) {
+                    substitution.resolve_type_params(&def.type_params)?
                 } else {
                     return None;
                 }
-            } else {
-                return None;
             };
 
             // Instantiate
@@ -2976,12 +3305,14 @@ impl Inference<'_> {
             let _ = type_args;
             return Some(TypedExpr {
                 ty: concrete_ty,
-                kind: TypedExprKind::GlobalRef { name: mangled, type_params: vec![] },
+                kind: TypedExprKind::GlobalRef {
+                    name: mangled,
+                    type_params: vec![],
+                },
                 span: span.clone(),
             });
         }
 
         None
     }
-
 }

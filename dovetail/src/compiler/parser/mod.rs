@@ -185,14 +185,20 @@ impl Parser {
             // Check for test declarations before visibility parsing
             if self.at(TokenKind::At) {
                 let attributes = self.parse_test_attributes();
-                if self.peek().kind == TokenKind::Ident && self.peek().text == "test" && self.peek_at(1).kind == TokenKind::StringLiteral {
+                if self.peek().kind == TokenKind::Ident
+                    && self.peek().text == "test"
+                    && self.peek_at(1).kind == TokenKind::StringLiteral
+                {
                     tests.push(self.parse_test_decl(attributes));
                 } else {
                     self.error_at_current("expected 'test' declaration after attributes");
                 }
                 continue;
             }
-            if self.peek().kind == TokenKind::Ident && self.peek().text == "test" && self.peek_at(1).kind == TokenKind::StringLiteral {
+            if self.peek().kind == TokenKind::Ident
+                && self.peek().text == "test"
+                && self.peek_at(1).kind == TokenKind::StringLiteral
+            {
                 tests.push(self.parse_test_decl(vec![]));
                 continue;
             }
@@ -214,19 +220,26 @@ impl Parser {
                 _ => Visibility::Internal,
             };
 
-            let is_async = if self.at(TokenKind::Async) && self.peek_at(1).kind == TokenKind::Function {
-                self.advance(); // consume 'async'
-                true
-            } else {
-                false
-            };
+            let is_async =
+                if self.at(TokenKind::Async) && self.peek_at(1).kind == TokenKind::Function {
+                    self.advance(); // consume 'async'
+                    true
+                } else {
+                    false
+                };
 
             if self.at(TokenKind::Function) {
-                let mut func = self.parse_extension_method_with_visibility(&for_type, visibility, member_doc);
+                let mut func =
+                    self.parse_extension_method_with_visibility(&for_type, visibility, member_doc);
                 func.is_async = is_async;
                 functions.push(func);
             } else if self.at(TokenKind::Property) {
-                properties.push(self.parse_property_decl(&for_type, visibility, PropertyBodyMode::Required, member_doc));
+                properties.push(self.parse_property_decl(
+                    &for_type,
+                    visibility,
+                    PropertyBodyMode::Required,
+                    member_doc,
+                ));
             } else if self.at(TokenKind::Let) {
                 if self.peek_at(1).kind == TokenKind::Property {
                     properties.push(self.parse_module_property(visibility, member_doc));
@@ -454,11 +467,19 @@ impl Parser {
             TokenKind::Async if self.peek_at(1).kind == TokenKind::Function => {
                 reject_derive(self);
                 self.advance(); // consume 'async'
-                Some(Declaration::Function(self.parse_function_decl(visibility, true, doc_comment)))
+                Some(Declaration::Function(self.parse_function_decl(
+                    visibility,
+                    true,
+                    doc_comment,
+                )))
             }
             TokenKind::Function => {
                 reject_derive(self);
-                Some(Declaration::Function(self.parse_function_decl(visibility, false, doc_comment)))
+                Some(Declaration::Function(self.parse_function_decl(
+                    visibility,
+                    false,
+                    doc_comment,
+                )))
             }
             TokenKind::Let => {
                 reject_derive(self);
@@ -479,19 +500,31 @@ impl Parser {
             ))),
             TokenKind::Trait => {
                 reject_derive(self);
-                Some(Declaration::Trait(self.parse_trait_decl(visibility, doc_comment, false)))
+                Some(Declaration::Trait(self.parse_trait_decl(
+                    visibility,
+                    doc_comment,
+                    false,
+                )))
             }
             TokenKind::Interface => {
                 reject_derive(self);
-                Some(Declaration::Trait(self.parse_trait_decl(visibility, doc_comment, true)))
+                Some(Declaration::Trait(self.parse_trait_decl(
+                    visibility,
+                    doc_comment,
+                    true,
+                )))
             }
             TokenKind::Extension => {
                 reject_derive(self);
-                Some(Declaration::Extension(self.parse_extension_decl(doc_comment)))
+                Some(Declaration::Extension(
+                    self.parse_extension_decl(doc_comment),
+                ))
             }
             TokenKind::Implement => {
                 reject_derive(self);
-                Some(Declaration::Implement(self.parse_implement_decl(doc_comment)))
+                Some(Declaration::Implement(
+                    self.parse_implement_decl(doc_comment),
+                ))
             }
             TokenKind::Module => {
                 reject_derive(self);
@@ -508,37 +541,74 @@ impl Parser {
                         "@derive(...) can only appear on a record or enum declaration",
                     );
                 }
-                Some(self.parse_type_alias_decl(
-                    visibility,
-                    doc_comment,
-                    string_literal,
-                ))
+                Some(self.parse_type_alias_decl(visibility, doc_comment, string_literal))
             }
             TokenKind::Class => {
                 reject_derive_only(self);
-                Some(Declaration::Class(self.parse_class_decl(visibility, false, false, false, doc_comment, string_literal)))
+                Some(Declaration::Class(self.parse_class_decl(
+                    visibility,
+                    false,
+                    false,
+                    false,
+                    doc_comment,
+                    string_literal,
+                )))
             }
             TokenKind::Final if self.peek_at(1).kind == TokenKind::Class => {
                 reject_derive_only(self);
                 self.advance(); // consume 'final'
-                Some(Declaration::Class(self.parse_class_decl(visibility, true, false, false, doc_comment, string_literal)))
+                Some(Declaration::Class(self.parse_class_decl(
+                    visibility,
+                    true,
+                    false,
+                    false,
+                    doc_comment,
+                    string_literal,
+                )))
             }
             TokenKind::Abstract if self.peek_at(1).kind == TokenKind::Class => {
                 reject_derive_only(self);
                 self.advance(); // consume 'abstract'
-                Some(Declaration::Class(self.parse_class_decl(visibility, false, true, false, doc_comment, string_literal)))
+                Some(Declaration::Class(self.parse_class_decl(
+                    visibility,
+                    false,
+                    true,
+                    false,
+                    doc_comment,
+                    string_literal,
+                )))
             }
-            TokenKind::Abstract if self.peek_at(1).kind == TokenKind::Final && self.peek_at(2).kind == TokenKind::Class => {
+            TokenKind::Abstract
+                if self.peek_at(1).kind == TokenKind::Final
+                    && self.peek_at(2).kind == TokenKind::Class =>
+            {
                 reject_derive_only(self);
                 self.advance(); // consume 'abstract'
                 self.advance(); // consume 'final'
-                Some(Declaration::Class(self.parse_class_decl(visibility, true, true, false, doc_comment, string_literal)))
+                Some(Declaration::Class(self.parse_class_decl(
+                    visibility,
+                    true,
+                    true,
+                    false,
+                    doc_comment,
+                    string_literal,
+                )))
             }
-            TokenKind::Sealed if self.peek_at(1).kind == TokenKind::Abstract && self.peek_at(2).kind == TokenKind::Class => {
+            TokenKind::Sealed
+                if self.peek_at(1).kind == TokenKind::Abstract
+                    && self.peek_at(2).kind == TokenKind::Class =>
+            {
                 reject_derive_only(self);
                 self.advance(); // consume 'sealed'
                 self.advance(); // consume 'abstract'
-                Some(Declaration::Class(self.parse_class_decl(visibility, false, true, true, doc_comment, string_literal)))
+                Some(Declaration::Class(self.parse_class_decl(
+                    visibility,
+                    false,
+                    true,
+                    true,
+                    doc_comment,
+                    string_literal,
+                )))
             }
             TokenKind::At => {
                 reject_derive(self);
@@ -546,14 +616,20 @@ impl Parser {
                     self.error_at_current("test declarations cannot have visibility modifiers");
                 }
                 let attributes = self.parse_test_attributes();
-                if self.peek().kind == TokenKind::Ident && self.peek().text == "test" && self.peek_at(1).kind == TokenKind::StringLiteral {
+                if self.peek().kind == TokenKind::Ident
+                    && self.peek().text == "test"
+                    && self.peek_at(1).kind == TokenKind::StringLiteral
+                {
                     Some(Declaration::Test(self.parse_test_decl(attributes)))
                 } else {
                     self.error_at_current("expected 'test' declaration after attributes");
                     None
                 }
             }
-            TokenKind::Ident if self.peek().text == "test" && self.peek_at(1).kind == TokenKind::StringLiteral => {
+            TokenKind::Ident
+                if self.peek().text == "test"
+                    && self.peek_at(1).kind == TokenKind::StringLiteral =>
+            {
                 reject_derive(self);
                 if visibility != Visibility::Internal {
                     self.error_at_current("test declarations cannot have visibility modifiers");
@@ -784,7 +860,12 @@ impl Parser {
         let body = self.parse_block_expr();
         let span = start.merge(&body.span());
 
-        TestDecl { attributes, name, body, span }
+        TestDecl {
+            attributes,
+            name,
+            body,
+            span,
+        }
     }
 
     fn parse_function_decl(
@@ -807,7 +888,12 @@ impl Parser {
         result
     }
 
-    fn parse_function_decl_inner(&mut self, visibility: Visibility, is_async: bool, doc_comment: Option<String>) -> FunctionDecl {
+    fn parse_function_decl_inner(
+        &mut self,
+        visibility: Visibility,
+        is_async: bool,
+        doc_comment: Option<String>,
+    ) -> FunctionDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'function'
 
@@ -891,7 +977,12 @@ impl Parser {
         result
     }
 
-    fn parse_abstract_method_decl_inner(&mut self, self_type_expr: &TypeExpr, visibility: Visibility, doc_comment: Option<String>) -> FunctionDecl {
+    fn parse_abstract_method_decl_inner(
+        &mut self,
+        self_type_expr: &TypeExpr,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> FunctionDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'function'
 
@@ -962,7 +1053,11 @@ impl Parser {
         result
     }
 
-    fn parse_global_var_decl_inner(&mut self, visibility: Visibility, doc_comment: Option<String>) -> GlobalVarDecl {
+    fn parse_global_var_decl_inner(
+        &mut self,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> GlobalVarDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'let'
 
@@ -1142,8 +1237,12 @@ impl Parser {
 
         // Empty records have no terminator, and top-level layout removes newlines.
         // A later declaration's leading `private` must not become our modifier.
-        let private_continues_header = self.peek().span.line == self.tokens[self.pos - 1].span.end_line
-            || matches!(self.peek_at(1).kind, TokenKind::Equals | TokenKind::Where | TokenKind::Eof);
+        let private_continues_header = self.peek().span.line
+            == self.tokens[self.pos - 1].span.end_line
+            || matches!(
+                self.peek_at(1).kind,
+                TokenKind::Equals | TokenKind::Where | TokenKind::Eof
+            );
         let construction_private = if self.at(TokenKind::Private) && private_continues_header {
             self.advance();
             true
@@ -1316,8 +1415,7 @@ impl Parser {
     ) {
         let start = self.pos;
         let checkpoint = self.syntax.len();
-        let result =
-            self.parse_trait_member_inner(self_type_expr, methods, properties, associated_types);
+        self.parse_trait_member_inner(self_type_expr, methods, properties, associated_types);
         if self.capture_source && self.pos > start {
             self.syntax.push(syntax::SyntaxNode {
                 kind: syntax::SyntaxKind::Item,
@@ -1326,7 +1424,6 @@ impl Parser {
         } else {
             self.syntax.truncate(checkpoint);
         }
-        result
     }
 
     fn parse_trait_member_inner(
@@ -1340,7 +1437,12 @@ impl Parser {
         if self.at(TokenKind::Function) {
             methods.push(self.parse_trait_method_signature(self_type_expr, doc_comment));
         } else if self.at(TokenKind::Property) {
-            properties.push(self.parse_property_decl(self_type_expr, Visibility::Internal, PropertyBodyMode::Optional, doc_comment));
+            properties.push(self.parse_property_decl(
+                self_type_expr,
+                Visibility::Internal,
+                PropertyBodyMode::Optional,
+                doc_comment,
+            ));
         } else if self.at(TokenKind::Type) {
             associated_types.push(self.parse_associated_type_decl(doc_comment));
         } else {
@@ -1363,7 +1465,10 @@ impl Parser {
         result
     }
 
-    fn parse_associated_type_decl_inner(&mut self, doc_comment: Option<String>) -> AssociatedTypeDecl {
+    fn parse_associated_type_decl_inner(
+        &mut self,
+        doc_comment: Option<String>,
+    ) -> AssociatedTypeDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'type'
 
@@ -1411,7 +1516,11 @@ impl Parser {
         result
     }
 
-    fn parse_trait_method_signature_inner(&mut self, self_type_expr: &TypeExpr, doc_comment: Option<String>) -> TraitMethodSignature {
+    fn parse_trait_method_signature_inner(
+        &mut self,
+        self_type_expr: &TypeExpr,
+        doc_comment: Option<String>,
+    ) -> TraitMethodSignature {
         let start = self.peek().span.clone();
         self.expect(TokenKind::Function, "expected 'function' in trait body");
 
@@ -1741,8 +1850,7 @@ impl Parser {
     ) {
         let start = self.pos;
         let checkpoint = self.syntax.len();
-        let result =
-            self.parse_implement_member_inner(for_type, methods, properties, associated_types);
+        self.parse_implement_member_inner(for_type, methods, properties, associated_types);
         if self.capture_source && self.pos > start {
             self.syntax.push(syntax::SyntaxNode {
                 kind: syntax::SyntaxKind::Item,
@@ -1751,7 +1859,6 @@ impl Parser {
         } else {
             self.syntax.truncate(checkpoint);
         }
-        result
     }
 
     fn parse_implement_member_inner(
@@ -1787,11 +1894,17 @@ impl Parser {
         };
 
         if self.at(TokenKind::Function) {
-            let mut func = self.parse_extension_method_with_visibility(for_type, visibility, doc_comment);
+            let mut func =
+                self.parse_extension_method_with_visibility(for_type, visibility, doc_comment);
             func.is_async = is_async;
             methods.push(func);
         } else if self.at(TokenKind::Property) {
-            properties.push(self.parse_property_decl(for_type, visibility, PropertyBodyMode::Required, doc_comment));
+            properties.push(self.parse_property_decl(
+                for_type,
+                visibility,
+                PropertyBodyMode::Required,
+                doc_comment,
+            ));
         } else if self.at(TokenKind::Type) {
             associated_types.push(self.parse_associated_type_def());
         } else {
@@ -1902,7 +2015,12 @@ impl Parser {
     fn parse_module_body(
         &mut self,
         for_type: &TypeExpr,
-    ) -> (Vec<FunctionDecl>, Vec<PropertyDecl>, Vec<GlobalVarDecl>, Vec<TestDecl>) {
+    ) -> (
+        Vec<FunctionDecl>,
+        Vec<PropertyDecl>,
+        Vec<GlobalVarDecl>,
+        Vec<TestDecl>,
+    ) {
         let mut functions = Vec::new();
         let mut properties = Vec::new();
         let mut globals = Vec::new();
@@ -1911,16 +2029,34 @@ impl Parser {
         if self.at(TokenKind::Begin) {
             self.advance(); // consume Begin
 
-            self.parse_module_member(for_type, &mut functions, &mut properties, &mut globals, &mut tests);
+            self.parse_module_member(
+                for_type,
+                &mut functions,
+                &mut properties,
+                &mut globals,
+                &mut tests,
+            );
 
             while self.at(TokenKind::Sep) {
                 self.advance(); // consume Sep
-                self.parse_module_member(for_type, &mut functions, &mut properties, &mut globals, &mut tests);
+                self.parse_module_member(
+                    for_type,
+                    &mut functions,
+                    &mut properties,
+                    &mut globals,
+                    &mut tests,
+                );
             }
 
             self.expect(TokenKind::End, "expected end of module body");
         } else {
-            self.parse_module_member(for_type, &mut functions, &mut properties, &mut globals, &mut tests);
+            self.parse_module_member(
+                for_type,
+                &mut functions,
+                &mut properties,
+                &mut globals,
+                &mut tests,
+            );
         }
 
         (functions, properties, globals, tests)
@@ -1936,8 +2072,7 @@ impl Parser {
     ) {
         let start = self.pos;
         let checkpoint = self.syntax.len();
-        let result =
-            self.parse_module_member_inner(for_type, functions, properties, globals, tests);
+        self.parse_module_member_inner(for_type, functions, properties, globals, tests);
         if self.capture_source && self.pos > start {
             self.syntax.push(syntax::SyntaxNode {
                 kind: syntax::SyntaxKind::Item,
@@ -1946,7 +2081,6 @@ impl Parser {
         } else {
             self.syntax.truncate(checkpoint);
         }
-        result
     }
 
     fn parse_module_member_inner(
@@ -1968,14 +2102,20 @@ impl Parser {
             while self.at(TokenKind::Sep) {
                 self.advance();
             }
-            if self.peek().kind == TokenKind::Ident && self.peek().text == "test" && self.peek_at(1).kind == TokenKind::StringLiteral {
+            if self.peek().kind == TokenKind::Ident
+                && self.peek().text == "test"
+                && self.peek_at(1).kind == TokenKind::StringLiteral
+            {
                 tests.push(self.parse_test_decl(attributes));
             } else {
                 self.error_at_current("expected 'test' declaration after attributes");
             }
             return;
         }
-        if self.peek().kind == TokenKind::Ident && self.peek().text == "test" && self.peek_at(1).kind == TokenKind::StringLiteral {
+        if self.peek().kind == TokenKind::Ident
+            && self.peek().text == "test"
+            && self.peek_at(1).kind == TokenKind::StringLiteral
+        {
             tests.push(self.parse_test_decl(vec![]));
             return;
         }
@@ -2006,11 +2146,17 @@ impl Parser {
         };
 
         if self.at(TokenKind::Function) {
-            let mut func = self.parse_extension_method_with_visibility(for_type, visibility, doc_comment);
+            let mut func =
+                self.parse_extension_method_with_visibility(for_type, visibility, doc_comment);
             func.is_async = is_async;
             functions.push(func);
         } else if self.at(TokenKind::Property) {
-            properties.push(self.parse_property_decl(for_type, visibility, PropertyBodyMode::Required, doc_comment));
+            properties.push(self.parse_property_decl(
+                for_type,
+                visibility,
+                PropertyBodyMode::Required,
+                doc_comment,
+            ));
         } else if self.at(TokenKind::Let) {
             // Check if this is `let property ...` (contextual keyword) or a regular `let`
             if self.peek_at(1).kind == TokenKind::Property {
@@ -2044,7 +2190,11 @@ impl Parser {
         result
     }
 
-    fn parse_module_property_inner(&mut self, visibility: Visibility, doc_comment: Option<String>) -> PropertyDecl {
+    fn parse_module_property_inner(
+        &mut self,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> PropertyDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'let'
 
@@ -2130,10 +2280,16 @@ impl Parser {
             let ext_start = self.peek().span.clone();
             self.advance(); // consume 'extends'
             let parent_type = self.parse_type_expr();
-            self.expect(TokenKind::LParen, "expected '(' after parent type in extends clause");
+            self.expect(
+                TokenKind::LParen,
+                "expected '(' after parent type in extends clause",
+            );
             let super_args = self.parse_arg_list();
             let rparen_span = self.peek().span.clone();
-            self.expect(TokenKind::RParen, "expected ')' after super constructor args");
+            self.expect(
+                TokenKind::RParen,
+                "expected ')' after super constructor args",
+            );
             let ext_span = ext_start.merge(&rparen_span);
             Some(ClassExtends {
                 parent_type,
@@ -2166,12 +2322,13 @@ impl Parser {
 
         // Check for misplaced `implements` after `where` — common ordering mistake
         if self.at(TokenKind::Implements) {
-            self.diagnostics.push(crate::common::diagnostics::Diagnostic {
-                severity: crate::common::diagnostics::Severity::Error,
-                span: self.peek().span.clone(),
-                message: "'implements' clause must appear before 'where' clause".to_string(),
-                tag: None,
-            });
+            self.diagnostics
+                .push(crate::common::diagnostics::Diagnostic {
+                    severity: crate::common::diagnostics::Severity::Error,
+                    span: self.peek().span.clone(),
+                    message: "'implements' clause must appear before 'where' clause".to_string(),
+                    tag: None,
+                });
         }
 
         // Optional body after `=`
@@ -2273,7 +2430,11 @@ impl Parser {
         }
     }
 
-    fn parse_class_body(&mut self, class_name: &Spanned<String>, type_params: &[VariantTypeParam]) -> Vec<ClassMember> {
+    fn parse_class_body(
+        &mut self,
+        class_name: &Spanned<String>,
+        type_params: &[VariantTypeParam],
+    ) -> Vec<ClassMember> {
         let mut members = Vec::new();
 
         // Build a self type expr for property parsing (includes type params for generic classes)
@@ -2361,13 +2522,18 @@ impl Parser {
         // function ... (all methods use parse_function_decl; instance methods declare self: ClassName explicitly)
         if self.at(TokenKind::Function) {
             if is_abstract {
-                let mut func = self.parse_abstract_method_decl(self_type_expr, visibility, doc_comment);
+                let mut func =
+                    self.parse_abstract_method_decl(self_type_expr, visibility, doc_comment);
                 func.is_async = is_async;
                 func.is_override = is_override;
                 func.is_final = is_final_method;
                 return ClassMember::Method(func);
             }
-            let mut func = self.parse_extension_method_with_visibility(self_type_expr, visibility, doc_comment);
+            let mut func = self.parse_extension_method_with_visibility(
+                self_type_expr,
+                visibility,
+                doc_comment,
+            );
             func.is_async = is_async;
             func.is_override = is_override;
             func.is_final = is_final_method;
@@ -2381,7 +2547,8 @@ impl Parser {
             } else {
                 PropertyBodyMode::Required
             };
-            let mut prop = self.parse_property_decl(self_type_expr, visibility, body_mode, doc_comment);
+            let mut prop =
+                self.parse_property_decl(self_type_expr, visibility, body_mode, doc_comment);
             prop.is_override = is_override;
             prop.is_final = is_final_method;
             prop.is_abstract = is_abstract;
@@ -2416,7 +2583,11 @@ impl Parser {
         result
     }
 
-    fn parse_class_let_binding_inner(&mut self, visibility: Visibility, doc_comment: Option<String>) -> ClassLetBinding {
+    fn parse_class_let_binding_inner(
+        &mut self,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> ClassLetBinding {
         let start = self.peek().span.clone();
         self.advance(); // consume 'let'
 
@@ -2519,7 +2690,7 @@ impl Parser {
     ) {
         let start = self.pos;
         let checkpoint = self.syntax.len();
-        let result = self.parse_extension_member_inner(for_type, methods, properties);
+        self.parse_extension_member_inner(for_type, methods, properties);
         if self.capture_source && self.pos > start {
             self.syntax.push(syntax::SyntaxNode {
                 kind: syntax::SyntaxKind::Item,
@@ -2528,7 +2699,6 @@ impl Parser {
         } else {
             self.syntax.truncate(checkpoint);
         }
-        result
     }
 
     fn parse_extension_member_inner(
@@ -2564,11 +2734,17 @@ impl Parser {
         };
 
         if self.at(TokenKind::Function) {
-            let mut func = self.parse_extension_method_with_visibility(for_type, visibility, doc_comment);
+            let mut func =
+                self.parse_extension_method_with_visibility(for_type, visibility, doc_comment);
             func.is_async = is_async;
             methods.push(func);
         } else if self.at(TokenKind::Property) {
-            properties.push(self.parse_property_decl(for_type, visibility, PropertyBodyMode::Required, doc_comment));
+            properties.push(self.parse_property_decl(
+                for_type,
+                visibility,
+                PropertyBodyMode::Required,
+                doc_comment,
+            ));
         } else {
             self.error_at_current("expected 'function' or 'property' in extension body");
         }
@@ -3261,7 +3437,11 @@ impl Parser {
             self.advance();
             let result = self.parse_type_expr();
             let span = left.span().merge(&result.span());
-            return TypeExpr::Function(parameters.unwrap_or_else(|| vec![left]), Box::new(result), span);
+            return TypeExpr::Function(
+                parameters.unwrap_or_else(|| vec![left]),
+                Box::new(result),
+                span,
+            );
         }
         left
     }
@@ -3296,9 +3476,21 @@ impl Parser {
             }
             let ty = if elements.len() == 1 {
                 let first = elements[0].clone();
-                if !is_parameter_list && !allow_scalar_group && !self.at(TokenKind::Tilde)
-                    && !matches!(first, TypeExpr::Function(..) | TypeExpr::Tuple(..) | TypeExpr::TupleExtend(..)) {
-                    self.diagnostics.push(Diagnostic { severity: crate::common::diagnostics::Severity::Error, span: start, message: "single-element tuples are not allowed; use the type directly".into(), tag: None });
+                if !is_parameter_list
+                    && !allow_scalar_group
+                    && !self.at(TokenKind::Tilde)
+                    && !matches!(
+                        first,
+                        TypeExpr::Function(..) | TypeExpr::Tuple(..) | TypeExpr::TupleExtend(..)
+                    )
+                {
+                    self.diagnostics.push(Diagnostic {
+                        severity: crate::common::diagnostics::Severity::Error,
+                        span: start,
+                        message: "single-element tuples are not allowed; use the type directly"
+                            .into(),
+                        tag: None,
+                    });
                 }
                 first
             } else {
@@ -3325,7 +3517,9 @@ impl Parser {
 
         while self.at(TokenKind::Dot) {
             self.advance();
-            let Some(member) = self.expect_ident("expected associated type name after '.'") else { break };
+            let Some(member) = self.expect_ident("expected associated type name after '.'") else {
+                break;
+            };
             ident.value.push('.');
             ident.value.push_str(&member.value);
             ident.span = ident.span.merge(&member.span);
@@ -3383,7 +3577,10 @@ impl Parser {
                 let found = &self.peek().text;
                 let found_kind = &self.peek().kind;
                 if found.is_empty() {
-                    self.error_at_current(&format!("expected end of block, found {:?}", found_kind));
+                    self.error_at_current(&format!(
+                        "expected end of block, found {:?}",
+                        found_kind
+                    ));
                 } else {
                     self.error_at_current(&format!("expected end of block, found '{}'", found));
                 }
@@ -3544,7 +3741,10 @@ impl Parser {
                         self.error_at_current("unexpected identifier after expression");
                     }
                     // Recovery: skip tokens until Sep or End to avoid cascading errors
-                    while !self.at(TokenKind::Sep) && !self.at(TokenKind::End) && !self.at(TokenKind::Eof) {
+                    while !self.at(TokenKind::Sep)
+                        && !self.at(TokenKind::End)
+                        && !self.at(TokenKind::Eof)
+                    {
                         self.advance();
                     }
                 }
@@ -3810,7 +4010,11 @@ impl Parser {
         }
         // A whole-literal span for `[]`, which has no elements to inherit one.
         match acc {
-            Pattern::EnumVariant { type_name, variant_name, .. } => Pattern::EnumVariant {
+            Pattern::EnumVariant {
+                type_name,
+                variant_name,
+                ..
+            } => Pattern::EnumVariant {
                 type_name,
                 variant_name,
                 span,
@@ -4475,7 +4679,11 @@ impl Parser {
                 };
                 let inclusive = self.at(TokenKind::DotDotEq);
                 self.expect(
-                    if inclusive { TokenKind::DotDotEq } else { TokenKind::DotDot },
+                    if inclusive {
+                        TokenKind::DotDotEq
+                    } else {
+                        TokenKind::DotDot
+                    },
                     "expected '..' or '..=' in slice expression",
                 );
                 let end = if self.at(TokenKind::PipeRBracket) && !inclusive {
@@ -4484,9 +4692,15 @@ impl Parser {
                     Some(Box::new(self.parse_value_expr()))
                 };
                 let span_end = self.peek().span.clone();
-                self.expect(TokenKind::PipeRBracket, "expected '|]' after slice expression");
+                self.expect(
+                    TokenKind::PipeRBracket,
+                    "expected '|]' after slice expression",
+                );
                 expr = Expr::SliceIndex {
-                    object: Box::new(expr), start, end, inclusive,
+                    object: Box::new(expr),
+                    start,
+                    end,
+                    inclusive,
                     span: span_start.merge(&span_end),
                 };
             } else if self.at(TokenKind::LBracket) {
@@ -4566,7 +4780,10 @@ impl Parser {
             self.advance(); // do already opens a layout block
             let body = self.parse_block_expr();
             let span = start.merge(&body.span());
-            return Expr::AsyncDo { body: Box::new(body), span };
+            return Expr::AsyncDo {
+                body: Box::new(body),
+                span,
+            };
         }
         // Async closure: `async x => body` or `async (x: Int32) => body`
         if self.at(TokenKind::Async) && self.peek_at(1).kind != TokenKind::Function {
@@ -4574,7 +4791,9 @@ impl Parser {
             self.advance(); // consume 'async'
             let inner = self.parse_primary_expr();
             match inner {
-                Expr::Closure { params, body, span, .. } => {
+                Expr::Closure {
+                    params, body, span, ..
+                } => {
                     let span = start.merge(&span);
                     return Expr::Closure {
                         is_async: true,
@@ -4584,12 +4803,13 @@ impl Parser {
                     };
                 }
                 _ => {
-                    self.diagnostics.push(crate::common::diagnostics::Diagnostic {
-                        severity: crate::common::diagnostics::Severity::Error,
-                        span: start,
-                        message: "expected closure after 'async' keyword".to_string(),
-                        tag: None,
-                    });
+                    self.diagnostics
+                        .push(crate::common::diagnostics::Diagnostic {
+                            severity: crate::common::diagnostics::Severity::Error,
+                            span: start,
+                            message: "expected closure after 'async' keyword".to_string(),
+                            tag: None,
+                        });
                     return inner;
                 }
             }
@@ -4623,11 +4843,15 @@ impl Parser {
             let start = self.peek().span.clone();
 
             // Early detection of annotated closure params: `(ident: Type, ...)`
-            if self.peek_at(1).kind == TokenKind::Ident && self.peek_at(2).kind == TokenKind::Colon {
+            if self.peek_at(1).kind == TokenKind::Ident && self.peek_at(2).kind == TokenKind::Colon
+            {
                 self.advance(); // consume (
                 let params = self.parse_closure_param_list();
                 self.expect(TokenKind::RParen, "expected ')' after closure parameters");
-                self.expect(TokenKind::FatArrow, "expected '=>' after closure parameters");
+                self.expect(
+                    TokenKind::FatArrow,
+                    "expected '=>' after closure parameters",
+                );
                 let body = self.parse_block_expr();
                 let span = start.merge(&body.span());
                 return Expr::Closure {
@@ -4804,7 +5028,10 @@ impl Parser {
             // Bare identifier closure: `x => body`
             if self.at(TokenKind::FatArrow) {
                 let param = ClosureParam {
-                    kind: ClosureParamKind::Name(Spanned::new(token.text.clone(), token.span.clone())),
+                    kind: ClosureParamKind::Name(Spanned::new(
+                        token.text.clone(),
+                        token.span.clone(),
+                    )),
                     type_annotation: None,
                     span: token.span.clone(),
                 };
@@ -5708,7 +5935,9 @@ mod tests {
         }
         let (_, diagnostics) = parse("package a\ntype Example = (Int32)");
         assert!(diagnostics.iter().any(|diagnostic| {
-            diagnostic.message.contains("single-element tuples are not allowed")
+            diagnostic
+                .message
+                .contains("single-element tuples are not allowed")
         }));
     }
 
@@ -5720,9 +5949,14 @@ mod tests {
             "package a\nfunction f(x: Any): Unit =\n    match x with\n        case value: () => ()\n        case _ => ()",
         ] {
             let (_, diagnostics) = parse(source);
-            assert!(diagnostics.iter().any(|diagnostic| {
-                diagnostic.message.contains("empty parentheses in type position")
-            }), "{source}: {diagnostics:?}");
+            assert!(
+                diagnostics.iter().any(|diagnostic| {
+                    diagnostic
+                        .message
+                        .contains("empty parentheses in type position")
+                }),
+                "{source}: {diagnostics:?}"
+            );
         }
         for ty in ["() => Bool", "Int32 ~ (() => Bool)", "(() => Bool) ~ Int32"] {
             let (_, diagnostics) = parse(&format!("package a\ntype Example = {ty}"));
@@ -6315,10 +6549,11 @@ mod tests {
     #[test]
     fn test_parse_two_identifiers_in_a_row_error() {
         // `var x = 0` should produce a clear error about unexpected identifier
-        let (_, diagnostics) =
-            parse("package a\n\nfunction main(): Unit =\n    var x = 0\n    ()");
+        let (_, diagnostics) = parse("package a\n\nfunction main(): Unit =\n    var x = 0\n    ()");
         assert!(
-            diagnostics.iter().any(|d| d.message.contains("unexpected identifier after 'var'")),
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("unexpected identifier after 'var'")),
             "expected 'unexpected identifier' error, got: {:?}",
             diagnostics
         );
@@ -6386,33 +6621,47 @@ record Token private
     fn empty_records_preserve_following_private_declarations() {
         for header in ["record Token", "record Token<T>"] {
             for separator in [" ", "\n"] {
-                let (file, diagnostics) = parse(&format!(r#"
+                let (file, diagnostics) = parse(&format!(
+                    r#"
 package a
 {header}
 private{separator}function secret(): Int32 = 1
-"#));
+"#
+                ));
                 assert!(diagnostics.is_empty(), "{diagnostics:?}");
                 assert!(!unwrap_record(&file.declarations[0]).construction_private);
-                assert_eq!(unwrap_function(&file.declarations[1]).visibility, Visibility::Private);
+                assert_eq!(
+                    unwrap_function(&file.declarations[1]).visibility,
+                    Visibility::Private
+                );
             }
         }
-        let (file, diagnostics) = parse(r#"
+        let (file, diagnostics) = parse(
+            r#"
 package a
 record Token
 private record Hidden
 record Permit private
 private function secret(): Int32 = 1
-"#);
+"#,
+        );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(!unwrap_record(&file.declarations[0]).construction_private);
-        assert_eq!(unwrap_record(&file.declarations[1]).visibility, Visibility::Private);
+        assert_eq!(
+            unwrap_record(&file.declarations[1]).visibility,
+            Visibility::Private
+        );
         assert!(unwrap_record(&file.declarations[2]).construction_private);
-        assert_eq!(unwrap_function(&file.declarations[3]).visibility, Visibility::Private);
+        assert_eq!(
+            unwrap_function(&file.declarations[3]).visibility,
+            Visibility::Private
+        );
     }
 
     #[test]
     fn record_private_modifiers_can_continue_a_header() {
-        let (file, diagnostics) = parse(r#"
+        let (file, diagnostics) = parse(
+            r#"
 package a
 record Account
     private =
@@ -6421,7 +6670,8 @@ record Account
 record Box<T>
     private where T: Equatable =
         item: T
-"#);
+"#,
+        );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert!(unwrap_record(&file.declarations[0]).construction_private);
         assert!(unwrap_record(&file.declarations[1]).construction_private);
@@ -6429,13 +6679,17 @@ record Box<T>
 
     #[test]
     fn legacy_newtype_privacy_position_is_rejected() {
-        let (_, diagnostics) = parse(r#"
+        let (_, diagnostics) = parse(
+            r#"
 package a
 
 newtype Amount = private Int32
-"#);
+"#,
+        );
         assert!(
-            diagnostics.iter().any(|d| d.message.contains("place 'private' after the type name")),
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("place 'private' after the type name")),
             "{diagnostics:?}",
         );
     }
@@ -6459,7 +6713,11 @@ newtype Amount = private Int32
         let (source_file, diagnostics) = parse(
             "package a\n\n@derive(Equatable)\npublic record Point =\n    x: Int32\n    y: Int32\n",
         );
-        assert!(diagnostics.is_empty(), "unexpected errors: {:?}", diagnostics);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected errors: {:?}",
+            diagnostics
+        );
         let r = unwrap_record(&source_file.declarations[0]);
         assert_eq!(r.attributes.len(), 1);
         assert_eq!(r.attributes[0].macro_name.len(), 1);
@@ -6468,10 +6726,13 @@ newtype Amount = private Int32
 
     #[test]
     fn test_parse_derive_on_enum() {
-        let (source_file, diagnostics) = parse(
-            "package a\n\n@derive(Equatable)\npublic enum Shape =\n    Circle\n    Square\n",
+        let (source_file, diagnostics) =
+            parse("package a\n\n@derive(Equatable)\npublic enum Shape =\n    Circle\n    Square\n");
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected errors: {:?}",
+            diagnostics
         );
-        assert!(diagnostics.is_empty(), "unexpected errors: {:?}", diagnostics);
         let e = unwrap_enum(&source_file.declarations[0]);
         assert_eq!(e.attributes.len(), 1);
         assert_eq!(e.attributes[0].macro_name[0].value, "Equatable");
@@ -6479,10 +6740,13 @@ newtype Amount = private Int32
 
     #[test]
     fn test_parse_multiple_derive() {
-        let (source_file, diagnostics) = parse(
-            "package a\n\n@derive(Equatable)\n@derive(Hashable)\nrecord Foo = x: Int32\n",
+        let (source_file, diagnostics) =
+            parse("package a\n\n@derive(Equatable)\n@derive(Hashable)\nrecord Foo = x: Int32\n");
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected errors: {:?}",
+            diagnostics
         );
-        assert!(diagnostics.is_empty(), "unexpected errors: {:?}", diagnostics);
         let r = unwrap_record(&source_file.declarations[0]);
         assert_eq!(r.attributes.len(), 2);
         assert_eq!(r.attributes[0].macro_name[0].value, "Equatable");
@@ -6491,10 +6755,13 @@ newtype Amount = private Int32
 
     #[test]
     fn test_parse_derive_qualified_name() {
-        let (source_file, diagnostics) = parse(
-            "package a\n\n@derive(json.JsonCodec)\nrecord Foo = x: Int32\n",
+        let (source_file, diagnostics) =
+            parse("package a\n\n@derive(json.JsonCodec)\nrecord Foo = x: Int32\n");
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected errors: {:?}",
+            diagnostics
         );
-        assert!(diagnostics.is_empty(), "unexpected errors: {:?}", diagnostics);
         let r = unwrap_record(&source_file.declarations[0]);
         assert_eq!(r.attributes.len(), 1);
         let path: Vec<_> = r.attributes[0]
@@ -6507,18 +6774,20 @@ newtype Amount = private Int32
 
     #[test]
     fn test_parse_derive_on_non_record_errors() {
-        let (_, diagnostics) = parse("package a\n\n@derive(Equatable)\nfunction foo(): Unit = ()\n");
+        let (_, diagnostics) =
+            parse("package a\n\n@derive(Equatable)\nfunction foo(): Unit = ()\n");
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.message.contains("@derive(...) can only appear on a record or enum")),
+            diagnostics.iter().any(|d| d
+                .message
+                .contains("@derive(...) can only appear on a record or enum")),
             "expected @derive misuse error, got {:?}",
             diagnostics
         );
     }
     #[test]
     fn async_do_layout_and_nesting() {
-        let (source, diagnostics) = parse(r#"
+        let (source, diagnostics) = parse(
+            r#"
 package a
 
 function program() =
@@ -6531,33 +6800,46 @@ function program() =
         await nested
 
 function after(): Unit = ()
-"#);
+"#,
+        );
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
         assert_eq!(source.declarations.len(), 2);
         let function = unwrap_function(&source.declarations[0]);
-        let Expr::Block(block) = &function.body else { panic!("expected block") };
+        let Expr::Block(block) = &function.body else {
+            panic!("expected block")
+        };
         assert_eq!(block.expressions.len(), 3);
-        assert!(matches!(block.expressions.last(), Some(Expr::AsyncDo { .. })));
+        assert!(matches!(
+            block.expressions.last(),
+            Some(Expr::AsyncDo { .. })
+        ));
     }
 
     #[test]
     fn async_do_requires_a_body() {
-        let (_, diagnostics) = parse(r#"
+        let (_, diagnostics) = parse(
+            r#"
 package a
 
 function program() = async do
-"#);
+"#,
+        );
         assert!(!diagnostics.is_empty());
     }
 
     #[test]
     fn async_without_do_still_requires_a_closure() {
-        let (_, diagnostics) = parse(r#"
+        let (_, diagnostics) = parse(
+            r#"
 package a
 
 function program() = async 42
-"#);
-        assert!(diagnostics.iter().any(|error| error.message.contains("expected closure")));
+"#,
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|error| error.message.contains("expected closure"))
+        );
     }
-
 }

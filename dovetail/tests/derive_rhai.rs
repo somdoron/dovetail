@@ -9,10 +9,7 @@ mod common;
 
 /// Compile a Dovetail source with the given Rhai-defined derive macros
 /// registered, then run it as a WASI CLI component.
-fn compile_and_run_with_derives(
-    source: &str,
-    rhai_derives: &[(&str, &str)],
-) -> Result<(), String> {
+fn compile_and_run_with_derives(source: &str, rhai_derives: &[(&str, &str)]) -> Result<(), String> {
     let result = dovetail::compile_for_test_with_derives(source, "test.dove", rhai_derives);
 
     if result.diagnostics.has_errors() {

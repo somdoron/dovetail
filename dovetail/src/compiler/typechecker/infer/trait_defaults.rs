@@ -11,8 +11,10 @@
 
 use crate::common::types::{Fqn, MangledName, SymbolName, TypeParamName};
 use crate::parser::ast::TraitDecl;
-use crate::typechecker::types::{BoundKind, NamedTraitBound, TraitBound, TypedFunction, TypedParam};
 use crate::typechecker::types::Type;
+use crate::typechecker::types::{
+    BoundKind, NamedTraitBound, TraitBound, TypedFunction, TypedParam,
+};
 
 use super::generics::apply_substitution;
 use super::type_param_substitution::TypeParamSubstitution;
@@ -27,21 +29,44 @@ impl Inference<'_> {
         use crate::typechecker::collect::rename_method_bounds;
         use crate::typechecker::registry::{instantiate_trait_method, same_method_parameters};
         use crate::typechecker::types::TraitBounds;
-        let Some((origin, arguments)) = &method.origin else { return };
-        let Some(source) = self.registry.get_trait(origin) else { return };
-        let substitution: std::collections::BTreeMap<_, _> = source.type_params.iter()
-            .cloned().zip(arguments.iter().cloned()).collect();
+        let Some((origin, arguments)) = &method.origin else {
+            return;
+        };
+        let Some(source) = self.registry.get_trait(origin) else {
+            return;
+        };
+        let substitution: std::collections::BTreeMap<_, _> = source
+            .type_params
+            .iter()
+            .cloned()
+            .zip(arguments.iter().cloned())
+            .collect();
         let Some(contract) = source.methods.iter().find(|candidate| {
-            if candidate.name != method.name { return false; }
+            if candidate.name != method.name {
+                return false;
+            }
             let candidate = instantiate_trait_method(candidate, &substitution);
             same_method_parameters(&candidate, method)
-        }) else { return };
+        }) else {
+            return;
+        };
         let available = rename_method_bounds(
-            &contract.trait_bounds, &contract.type_params, &method.type_params, &substitution,
+            &contract.trait_bounds,
+            &contract.type_params,
+            &method.type_params,
+            &substitution,
         );
-        let parameters: Vec<_> = owner.type_params.iter().chain(&method.type_params).cloned().collect();
+        let parameters: Vec<_> = owner
+            .type_params
+            .iter()
+            .chain(&method.type_params)
+            .cloned()
+            .collect();
         let evidence = Type::type_param_map(&parameters, &available);
-        let arguments: Vec<_> = parameters.iter().map(|name| evidence[&name.0].clone()).collect();
+        let arguments: Vec<_> = parameters
+            .iter()
+            .map(|name| evidence[&name.0].clone())
+            .collect();
         let required: TraitBounds = method.trait_bounds.clone();
         for failure in self.unsatisfied_trait_bounds(&required, &parameters, &arguments) {
             self.diagnostics.error(method.span.clone(), format!(
@@ -102,15 +127,26 @@ impl Inference<'_> {
         }
 
         let mut self_sub = TypeParamSubstitution::new().with_self_type(self_ty.clone());
-        let Type::TypeVariable(_, self_bounds) = &self_ty else { unreachable!() };
+        let Type::TypeVariable(_, self_bounds) = &self_ty else {
+            unreachable!()
+        };
         let self_bound = self_bounds[0].named().unwrap();
         for associated in &trait_sig.associated_types {
-            let parameters = associated.type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![])).collect();
+            let parameters = associated
+                .type_params
+                .iter()
+                .map(|name| Type::TypeVariable(name.clone(), vec![]))
+                .collect();
             if let Some(projection) = crate::typechecker::associated_types::from_bound(
-                &self_ty, self_bound, &associated.name, parameters, self.registry,
+                &self_ty,
+                self_bound,
+                &associated.name,
+                parameters,
+                self.registry,
             ) {
                 self_sub.insert(TypeParamName(associated.name.clone()), projection.clone());
-                self.current_type_params.insert(TypeParamName(associated.name.clone()), projection);
+                self.current_type_params
+                    .insert(TypeParamName(associated.name.clone()), projection);
             }
         }
         // Template type params: Self + the trait's own params (all present in
@@ -119,15 +155,15 @@ impl Inference<'_> {
         template_type_params.extend(trait_sig.type_params.iter().cloned());
 
         for method in &trait_decl.methods {
-            let Some(body_ast) = &method.body else { continue };
+            let Some(body_ast) = &method.body else {
+                continue;
+            };
             // Note: a default-override of an inherited member carries
             // origin = Some(super) after flattening — match by default_source
             // (this trait) instead of origin.
-            let Some(sig) = trait_sig
-                .methods
-                .iter()
-                .find(|m| m.name == method.name.value && m.default_source.as_ref() == Some(&trait_fqn))
-            else {
+            let Some(sig) = trait_sig.methods.iter().find(|m| {
+                m.name == method.name.value && m.default_source.as_ref() == Some(&trait_fqn)
+            }) else {
                 continue;
             };
             if sig.default_source.is_none() {
@@ -153,7 +189,8 @@ impl Inference<'_> {
                 let identity = TypeParamName(format!("$method${}", parameter.0));
                 let bounded = Type::TypeVariable(identity, bounds);
                 let bounded = apply_substitution(&method_substitution, &bounded);
-                self.current_type_params.insert(parameter.clone(), bounded.clone());
+                self.current_type_params
+                    .insert(parameter.clone(), bounded.clone());
                 method_substitution.insert(parameter.clone(), bounded);
             }
 
@@ -210,12 +247,12 @@ impl Inference<'_> {
         }
 
         for property in &trait_decl.properties {
-            let Some(body_ast) = &property.body else { continue };
-            let Some(sig) = trait_sig
-                .properties
-                .iter()
-                .find(|p| p.name == property.name.value && p.default_source.as_ref() == Some(&trait_fqn))
-            else {
+            let Some(body_ast) = &property.body else {
+                continue;
+            };
+            let Some(sig) = trait_sig.properties.iter().find(|p| {
+                p.name == property.name.value && p.default_source.as_ref() == Some(&trait_fqn)
+            }) else {
                 continue;
             };
             if sig.default_source.is_none() {

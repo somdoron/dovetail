@@ -108,7 +108,10 @@ const DNS_ERROR_VARIANT_NAMES: [&str; 6] = [
     "PermanentResolverFailure",
     "Other",
 ];
-const _: () = assert!(other_case_is_at(&DNS_ERROR_VARIANT_NAMES, DNS_ERROR_OTHER_DISC));
+const _: () = assert!(other_case_is_at(
+    &DNS_ERROR_VARIANT_NAMES,
+    DNS_ERROR_OTHER_DISC
+));
 
 /// FileSystemError variant names in p3 `wasi:filesystem/types` error-code order
 /// (`would-block` was removed and a catch-all `other` appended).
@@ -151,7 +154,10 @@ const FS_ERROR_VARIANT_NAMES: [&str; 37] = [
     "CrossDevice",
     "Other",
 ];
-const _: () = assert!(other_case_is_at(&FS_ERROR_VARIANT_NAMES, FS_ERROR_OTHER_DISC));
+const _: () = assert!(other_case_is_at(
+    &FS_ERROR_VARIANT_NAMES,
+    FS_ERROR_OTHER_DISC
+));
 
 /// `descriptor-type` case names in p3 order: `unknown` was removed and
 /// `other(option<string>)` appended.
@@ -312,12 +318,7 @@ impl<'a> super::FunctionEmitter<'a> {
 
     /// Evaluate a string argument, marshal its bytes to scratch, and store
     /// (ptr, len) into an indirect-params block at `offset`/`offset + 4`.
-    pub(super) fn emit_p3_store_string(
-        &mut self,
-        pblock: u32,
-        offset: u64,
-        arg: &TypedExpr,
-    ) {
+    pub(super) fn emit_p3_store_string(&mut self, pblock: u32, offset: u64, arg: &TypedExpr) {
         self.emit_expr(arg, ExprContext::Value);
         let str_local = self.add_local(ValType::Ref(wasm_encoder::RefType {
             nullable: false,
@@ -369,14 +370,16 @@ impl<'a> super::FunctionEmitter<'a> {
         // disc
         self.instruction(Instruction::LocalGet(pblock));
         self.instruction(Instruction::LocalGet(ts_local));
-        self.instruction(Instruction::RefTestNonNull(wasm_encoder::HeapType::Concrete(
-            no_change_idx,
-        )));
+        self.instruction(Instruction::RefTestNonNull(
+            wasm_encoder::HeapType::Concrete(no_change_idx),
+        ));
         self.instruction(Instruction::If(BlockType::Result(ValType::I32)));
         self.instruction(Instruction::I32Const(0));
         self.instruction(Instruction::Else);
         self.instruction(Instruction::LocalGet(ts_local));
-        self.instruction(Instruction::RefTestNonNull(wasm_encoder::HeapType::Concrete(now_idx)));
+        self.instruction(Instruction::RefTestNonNull(
+            wasm_encoder::HeapType::Concrete(now_idx),
+        ));
         self.instruction(Instruction::If(BlockType::Result(ValType::I32)));
         self.instruction(Instruction::I32Const(1));
         self.instruction(Instruction::Else);
@@ -391,7 +394,9 @@ impl<'a> super::FunctionEmitter<'a> {
 
         // At(instant) payload
         self.instruction(Instruction::LocalGet(ts_local));
-        self.instruction(Instruction::RefTestNonNull(wasm_encoder::HeapType::Concrete(at_idx)));
+        self.instruction(Instruction::RefTestNonNull(
+            wasm_encoder::HeapType::Concrete(at_idx),
+        ));
         self.instruction(Instruction::If(BlockType::Empty));
         {
             let at_ref = self.add_local(ValType::Ref(wasm_encoder::RefType {
@@ -399,11 +404,12 @@ impl<'a> super::FunctionEmitter<'a> {
                 heap_type: wasm_encoder::HeapType::Concrete(at_idx),
             }));
             self.instruction(Instruction::LocalGet(ts_local));
-            self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(at_idx)));
+            self.instruction(Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(at_idx),
+            ));
             self.instruction(Instruction::LocalSet(at_ref));
             // Instant record ref in variant field 0
-            let instant_ty =
-                self.enum_variant_payload_types(&arg.ty, "At");
+            let instant_ty = self.enum_variant_payload_types(&arg.ty, "At");
             let instant_mn = instant_ty[0].mangled_name();
             let instant_idx = self.codegen.type_indices[&instant_mn];
             let instant_local = self.add_local(ValType::Ref(wasm_encoder::RefType {
@@ -590,9 +596,9 @@ impl<'a> super::FunctionEmitter<'a> {
 
         self.instruction(Instruction::Block(BlockType::Empty));
         self.instruction(Instruction::LocalGet(opt_local));
-        self.instruction(Instruction::RefTestNonNull(wasm_encoder::HeapType::Concrete(
-            some_idx,
-        )));
+        self.instruction(Instruction::RefTestNonNull(
+            wasm_encoder::HeapType::Concrete(some_idx),
+        ));
         self.instruction(Instruction::I32Eqz);
         self.instruction(Instruction::BrIf(0)); // None → leave disc 0
 
@@ -610,16 +616,16 @@ impl<'a> super::FunctionEmitter<'a> {
             heap_type: wasm_encoder::HeapType::Concrete(sa_base_idx),
         }));
         self.instruction(Instruction::LocalGet(opt_local));
-        self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(
-            some_idx,
-        )));
+        self.instruction(Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(some_idx),
+        ));
         self.instruction(Instruction::StructGet {
             struct_type_index: some_idx,
             field_index: self.codegen.id_prefix(&option_mn),
         });
-        self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(
-            sa_base_idx,
-        )));
+        self.instruction(Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(sa_base_idx),
+        ));
         self.instruction(Instruction::LocalSet(sa_local));
         self.emit_p3_store_socket_address_from_local(pblock, offset + 4, &sa_mn, sa_local);
         self.instruction(Instruction::End);
@@ -735,9 +741,9 @@ impl<'a> super::FunctionEmitter<'a> {
             heap_type: wasm_encoder::HeapType::Concrete(array_type_index),
         }));
         self.instruction(Instruction::LocalGet(backing));
-        self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(
-            array_type_index,
-        )));
+        self.instruction(Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(array_type_index),
+        ));
         self.instruction(Instruction::LocalSet(arr));
         self.wasi_copy_u8_array_slice_to_memory(arr, Some(offset), buf, len, array_type_index);
         self.emit_end_block();
@@ -824,7 +830,7 @@ impl<'a> super::FunctionEmitter<'a> {
         self.instruction(Instruction::GlobalGet(0));
         self.instruction(Instruction::I32Const(7));
         self.instruction(Instruction::I32Add);
-        self.instruction(Instruction::I32Const(-8));  // ~7 = 0xFFFFFFF8
+        self.instruction(Instruction::I32Const(-8)); // ~7 = 0xFFFFFFF8
         self.instruction(Instruction::I32And);
         self.instruction(Instruction::LocalTee(ptr));
         self.instruction(Instruction::I32Const(size as i32));
@@ -1048,15 +1054,10 @@ impl<'a> super::FunctionEmitter<'a> {
         self.instruction(Instruction::End); // end block
     }
 
-
     /// Create a GC Array<Uint8> from bytes in linear memory.
     /// Used for list<u8> → Array<Uint8> marshaling (InputStreamRead).
     /// Leaves the array ref on the stack.
-    pub(super) fn wasi_create_u8_array_from_bytes(
-        &mut self,
-        src_ptr_local: u32,
-        len_local: u32,
-    ) {
+    pub(super) fn wasi_create_u8_array_from_bytes(&mut self, src_ptr_local: u32, len_local: u32) {
         let array_type_index = self.codegen.array_type_index(&Type::Uint8);
         let array_ref_type = ValType::Ref(wasm_encoder::RefType {
             nullable: false,
@@ -1106,7 +1107,6 @@ impl<'a> super::FunctionEmitter<'a> {
 
         self.instruction(Instruction::LocalGet(array_local));
     }
-
 
     /// Create a Dovetail String from string data in linear memory (ptr, len).
     /// Copies bytes into a GC backing array, then calls self.codegen.func_string_from_bytes().
@@ -1170,8 +1170,6 @@ impl<'a> super::FunctionEmitter<'a> {
         self.instruction(Instruction::Call(self.codegen.func_string_from_bytes()));
     }
 
-
-
     /// Construct Result::Ok(value) where the value is already on the stack.
     /// Construct Result::Ok(value) where the value is already on the stack.
     ///
@@ -1182,8 +1180,7 @@ impl<'a> super::FunctionEmitter<'a> {
     pub(super) fn wasi_construct_result_ok(&mut self, result_type: &Type, ok_value_ty: &Type) {
         let result_mn = result_type.mangled_name();
         self.box_value_for_erased_slot(ok_value_ty);
-        let ok_idx =
-            self.codegen.variant_type_indices[&(result_mn.clone(), "Ok".to_string())];
+        let ok_idx = self.codegen.variant_type_indices[&(result_mn.clone(), "Ok".to_string())];
         self.emit_nominal_struct_new(result_type, ok_idx);
     }
 
@@ -1204,7 +1201,10 @@ impl<'a> super::FunctionEmitter<'a> {
     /// already anyref-compatible and pass through untouched. A tuple's flattened values are
     /// reboxed into its `(ref $Tuple_N)` struct.
     pub(super) fn box_value_for_erased_slot(&mut self, value_ty: &Type) {
-        if matches!(value_ty, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _) | Type::Any) {
+        if matches!(
+            value_ty,
+            Type::TypeVariable(_, _) | Type::GenericParam(_, _, _) | Type::Any
+        ) {
             return;
         }
         if self.codegen.is_tuple(value_ty) {
@@ -1222,7 +1222,10 @@ impl<'a> super::FunctionEmitter<'a> {
     pub(super) fn wasi_result_ok_type(result_type: &Type) -> Type {
         match result_type {
             Type::GenericEnum { type_args, .. } if type_args.len() == 2 => type_args[0].1.clone(),
-            _ => unreachable!("wasi_result_ok_type: expected Result<Ok, Error>, got {}", result_type),
+            _ => unreachable!(
+                "wasi_result_ok_type: expected Result<Ok, Error>, got {}",
+                result_type
+            ),
         }
     }
 
@@ -1230,11 +1233,12 @@ impl<'a> super::FunctionEmitter<'a> {
     pub(super) fn wasi_result_error_type(result_type: &Type) -> Type {
         match result_type {
             Type::GenericEnum { type_args, .. } if type_args.len() == 2 => type_args[1].1.clone(),
-            _ => unreachable!("wasi_result_error_type: expected Result<Ok, Error>, got {}", result_type),
+            _ => unreachable!(
+                "wasi_result_error_type: expected Result<Ok, Error>, got {}",
+                result_type
+            ),
         }
     }
-
-
 
     /// Copy bytes from a u8 backing array (GC) to linear memory.
     /// Used for marshaling Dovetail strings to WASI string params.
@@ -1391,7 +1395,13 @@ impl<'a> super::FunctionEmitter<'a> {
         offset: u64,
     ) {
         let option_type = match &self.codegen.typed_module.types[enum_mn] {
-            crate::typechecker::types::TypeDef::Enum(e) => e.variants.iter().find(|v|v.name == "Other").unwrap().payload_types[0].clone(),
+            crate::typechecker::types::TypeDef::Enum(e) => e
+                .variants
+                .iter()
+                .find(|v| v.name == "Other")
+                .unwrap()
+                .payload_types[0]
+                .clone(),
             _ => unreachable!(),
         };
         let option_mn = option_type.mangled_name();
@@ -1448,7 +1458,10 @@ impl<'a> super::FunctionEmitter<'a> {
         };
         let ne_mn = match network_error_type {
             Type::Enum(_, mn) => mn.clone(),
-            _ => unreachable!("Expected Enum NetworkError type, got: {}", network_error_type),
+            _ => unreachable!(
+                "Expected Enum NetworkError type, got: {}",
+                network_error_type
+            ),
         };
 
         self.wasi_i32_load8_u(retptr_local, offset);
@@ -1796,7 +1809,6 @@ impl<'a> super::FunctionEmitter<'a> {
         );
     }
 
-
     /// Construct `Result<Int32, NetworkError>` from a retptr — the `I32`
     /// instance of `wasi_construct_result_scalar_network_error`, kept as a name
     /// because that is what the socket-handle-returning intrinsics mean.
@@ -1805,11 +1817,13 @@ impl<'a> super::FunctionEmitter<'a> {
         retptr_local: u32,
         result_type: &Type,
     ) {
-        self.wasi_construct_result_scalar_network_error(retptr_local, result_type, 4, WasiScalar::I32);
+        self.wasi_construct_result_scalar_network_error(
+            retptr_local,
+            result_type,
+            4,
+            WasiScalar::I32,
+        );
     }
-
-
-
 
     /// Construct `Result<scalar, NetworkError>` from a retptr block.
     ///
@@ -1853,10 +1867,7 @@ impl<'a> super::FunctionEmitter<'a> {
     ///   V6: disc=1, p0=port, p1=flowInfo, p2..p9=addr(8 x u16), p10=scopeId
     ///
     /// The SocketAddress GC value must already be on the stack.
-    pub(super) fn wasi_marshal_socket_address_flat(
-        &mut self,
-        socket_addr_mn: &MangledName,
-    ) {
+    pub(super) fn wasi_marshal_socket_address_flat(&mut self, socket_addr_mn: &MangledName) {
         let sa_base_idx = self.codegen.type_indices[socket_addr_mn];
         let sa_ref_type = ValType::Ref(wasm_encoder::RefType {
             nullable: false,
@@ -1889,10 +1900,8 @@ impl<'a> super::FunctionEmitter<'a> {
         socket_addr_mn: &MangledName,
         sa_local: u32,
     ) -> (u32, [u32; 11]) {
-        let v4_idx = self.codegen.variant_type_indices
-            [&(socket_addr_mn.clone(), "V4".to_string())];
-        let v6_idx = self.codegen.variant_type_indices
-            [&(socket_addr_mn.clone(), "V6".to_string())];
+        let v4_idx = self.codegen.variant_type_indices[&(socket_addr_mn.clone(), "V4".to_string())];
+        let v6_idx = self.codegen.variant_type_indices[&(socket_addr_mn.clone(), "V6".to_string())];
 
         let ipv4_sa_mn = self.find_record_mn_for_variant(socket_addr_mn, "V4", &[]);
         let ipv4_sa_idx = self.codegen.type_indices[&ipv4_sa_mn];
@@ -2072,10 +2081,8 @@ impl<'a> super::FunctionEmitter<'a> {
             heap_type: wasm_encoder::HeapType::Concrete(sa_base_idx),
         });
 
-        let v4_idx = self.codegen.variant_type_indices
-            [&(socket_addr_mn.clone(), "V4".to_string())];
-        let v6_idx = self.codegen.variant_type_indices
-            [&(socket_addr_mn.clone(), "V6".to_string())];
+        let v4_idx = self.codegen.variant_type_indices[&(socket_addr_mn.clone(), "V4".to_string())];
+        let v6_idx = self.codegen.variant_type_indices[&(socket_addr_mn.clone(), "V6".to_string())];
 
         let ipv4_sa_mn = self.find_record_mn_for_variant(socket_addr_mn, "V4", &[]);
         let ipv4_sa_idx = self.codegen.type_indices[&ipv4_sa_mn];
@@ -2161,8 +2168,6 @@ impl<'a> super::FunctionEmitter<'a> {
         self.emit_end_block();
     }
 
-
-
     /// Extract the SocketAddress MangledName from a function argument's type.
     pub(super) fn extract_socket_address_mn(addr_type: &Type) -> MangledName {
         match addr_type {
@@ -2170,7 +2175,6 @@ impl<'a> super::FunctionEmitter<'a> {
             _ => unreachable!("Expected Enum SocketAddress type"),
         }
     }
-
 
     /// Find the MangledName of the record type used as a field in a record type.
     /// Looks up the record type definition and returns the type of the given field index.
@@ -2181,12 +2185,11 @@ impl<'a> super::FunctionEmitter<'a> {
     ) -> MangledName {
         use crate::typechecker::types::TypeDef;
         for (name, type_def) in &self.codegen.typed_module.types {
-            if name == record_mn {
-                if let TypeDef::Record(r) = type_def {
-                    if let Some(field) = r.fields.get(field_index) {
-                        return field.1.mangled_name();
-                    }
-                }
+            if name == record_mn
+                && let TypeDef::Record(r) = type_def
+                && let Some(field) = r.fields.get(field_index)
+            {
+                return field.1.mangled_name();
             }
         }
         unreachable!(
@@ -2205,12 +2208,11 @@ impl<'a> super::FunctionEmitter<'a> {
     ) -> Type {
         use crate::typechecker::types::TypeDef;
         for (name, type_def) in &self.codegen.typed_module.types {
-            if name == record_mn {
-                if let TypeDef::Record(r) = type_def {
-                    if let Some(field) = r.fields.get(field_index) {
-                        return field.1.clone();
-                    }
-                }
+            if name == record_mn
+                && let TypeDef::Record(r) = type_def
+                && let Some(field) = r.fields.get(field_index)
+            {
+                return field.1.clone();
             }
         }
         unreachable!(
@@ -2234,33 +2236,40 @@ impl<'a> super::FunctionEmitter<'a> {
     ) -> MangledName {
         use crate::typechecker::types::TypeDef;
         for (name, type_def) in &self.codegen.typed_module.types {
-            if name == enum_mn {
-                if let TypeDef::Enum(e) = type_def {
-                    for variant in &e.variants {
-                        if variant.name == variant_name {
-                            if let Some(payload_type) = variant.payload_types.first() {
-                                let sub: std::collections::BTreeMap<crate::common::types::TypeParamName, Type> = e
-                                    .type_params
-                                    .iter()
-                                    .cloned()
-                                    .zip(type_args.iter().cloned())
-                                    .collect();
-                                let resolved = if sub.is_empty() {
-                                    payload_type.clone()
-                                } else {
-                                    crate::compiler::monomorphize::substitute::apply_type_substitution(payload_type, &sub)
-                                };
-                                return resolved.mangled_name();
-                            }
-                        }
+            if name == enum_mn
+                && let TypeDef::Enum(e) = type_def
+            {
+                for variant in &e.variants {
+                    if variant.name == variant_name
+                        && let Some(payload_type) = variant.payload_types.first()
+                    {
+                        let sub: std::collections::BTreeMap<
+                            crate::common::types::TypeParamName,
+                            Type,
+                        > = e
+                            .type_params
+                            .iter()
+                            .cloned()
+                            .zip(type_args.iter().cloned())
+                            .collect();
+                        let resolved = if sub.is_empty() {
+                            payload_type.clone()
+                        } else {
+                            crate::compiler::monomorphize::substitute::apply_type_substitution(
+                                payload_type,
+                                &sub,
+                            )
+                        };
+                        return resolved.mangled_name();
                     }
                 }
             }
         }
-        unreachable!("Could not find record type for variant {}.{}", enum_mn, variant_name)
+        unreachable!(
+            "Could not find record type for variant {}.{}",
+            enum_mn, variant_name
+        )
     }
-
-
 
     // --- Filesystem marshaling helpers ---
 
@@ -2336,7 +2345,6 @@ impl<'a> super::FunctionEmitter<'a> {
         });
     }
 
-
     /// Marshal a Dovetail String to linear memory, returning (ptr_local, len_local).
     /// Extracts the backing array and copies the bytes into a pinned-scratch
     /// block owned by the enclosing marshaling window — a string's length is
@@ -2397,7 +2405,9 @@ impl<'a> super::FunctionEmitter<'a> {
         // Get variant names from codegen's variant_type_indices
         // We need to iterate in the correct order. Since we know the variant names
         // for each enum type, we look them up from the type registry.
-        let variants: Vec<(String, u32)> = self.codegen.variant_type_indices
+        let variants: Vec<(String, u32)> = self
+            .codegen
+            .variant_type_indices
             .iter()
             .filter(|((mn, _), _)| *mn == enum_mn)
             .map(|((_, name), &idx)| (name.clone(), idx))
@@ -2596,7 +2606,6 @@ impl<'a> super::FunctionEmitter<'a> {
         self.instruction(Instruction::LocalGet(result_local));
     }
 
-
     /// Construct Result<FileStat, FileSystemError> from retptr.
     /// Canonical ABI layout, p3 (112 bytes — callers must allocate that much;
     /// p2's block was 104, and a retptr sized to the old number would have the
@@ -2672,9 +2681,14 @@ impl<'a> super::FunctionEmitter<'a> {
         // `TypeVariable("T")` — we recover the concrete payload (`Instant`) from the
         // `Option<Instant>` Type's type_args.
         let (option_mn, type_args): (&MangledName, Vec<Type>) = match option_type {
-            Type::GenericEnum { mangled_name, type_args, .. } => {
-                (mangled_name, type_args.iter().map(|(_, t)| t.clone()).collect())
-            }
+            Type::GenericEnum {
+                mangled_name,
+                type_args,
+                ..
+            } => (
+                mangled_name,
+                type_args.iter().map(|(_, t)| t.clone()).collect(),
+            ),
             Type::Enum(_, mangled_name) => (mangled_name, Vec::new()),
             _ => unreachable!("wasi_fs_construct_option_instant expects an Option enum type"),
         };
@@ -2684,10 +2698,8 @@ impl<'a> super::FunctionEmitter<'a> {
             heap_type: wasm_encoder::HeapType::Concrete(option_base_idx),
         });
 
-        let some_idx = self.codegen.variant_type_indices
-            [&(option_mn.clone(), "Some".to_string())];
-        let none_idx = self.codegen.variant_type_indices
-            [&(option_mn.clone(), "None".to_string())];
+        let some_idx = self.codegen.variant_type_indices[&(option_mn.clone(), "Some".to_string())];
+        let none_idx = self.codegen.variant_type_indices[&(option_mn.clone(), "None".to_string())];
 
         self.wasi_i32_load8_u(retptr_local, base_offset);
         self.emit_if_block(BlockType::Result(option_ref));
@@ -2716,11 +2728,7 @@ impl<'a> super::FunctionEmitter<'a> {
     /// previous user of this scratch block left there — `wasi_bump_alloc` never
     /// zeroes the arena and the bump pointer is rewound and reused on every call —
     /// which turns a host `none` into `Some(<stale handle>)`.
-    pub(super) fn wasi_construct_option_i32(
-        &mut self,
-        retptr_local: u32,
-        option_type: &Type,
-    ) {
+    pub(super) fn wasi_construct_option_i32(&mut self, retptr_local: u32, option_type: &Type) {
         let option_mn = option_type.mangled_name();
         let option_base_idx = self.codegen.type_indices[&option_mn];
         let option_ref = ValType::Ref(wasm_encoder::RefType {
@@ -2737,15 +2745,15 @@ impl<'a> super::FunctionEmitter<'a> {
             self.instruction(Instruction::StructNew(
                 self.codegen.box_type_index_for(&Type::Int32),
             ));
-            let some_idx = self.codegen.variant_type_indices
-                [&(option_mn.clone(), "Some".to_string())];
+            let some_idx =
+                self.codegen.variant_type_indices[&(option_mn.clone(), "Some".to_string())];
             self.emit_nominal_struct_new(option_type, some_idx);
         }
         self.instruction(Instruction::Else);
         // else: None
         {
-            let none_idx = self.codegen.variant_type_indices
-                [&(option_mn.clone(), "None".to_string())];
+            let none_idx =
+                self.codegen.variant_type_indices[&(option_mn.clone(), "None".to_string())];
             self.emit_nominal_struct_new(option_type, none_idx);
         }
         self.emit_end_block();
@@ -2758,11 +2766,7 @@ impl<'a> super::FunctionEmitter<'a> {
     /// see `wasi_construct_option_i32` for why a 4-byte load of it is a bug. Here the
     /// consequence is worse than a stale handle: the `Some` arm lifts a string from a
     /// garbage pointer/length and then hands that pointer to `pinned_free`.
-    pub(super) fn wasi_construct_option_string(
-        &mut self,
-        retptr_local: u32,
-        option_type: &Type,
-    ) {
+    pub(super) fn wasi_construct_option_string(&mut self, retptr_local: u32, option_type: &Type) {
         let option_mn = option_type.mangled_name();
         let option_base_idx = self.codegen.type_indices[&option_mn];
         let option_ref = ValType::Ref(wasm_encoder::RefType {
@@ -2784,15 +2788,15 @@ impl<'a> super::FunctionEmitter<'a> {
             // The host allocated these bytes through `cabi_realloc`; the GC
             // string owns a copy now.
             self.wasi_free_lifted_block(str_ptr);
-            let some_idx = self.codegen.variant_type_indices
-                [&(option_mn.clone(), "Some".to_string())];
+            let some_idx =
+                self.codegen.variant_type_indices[&(option_mn.clone(), "Some".to_string())];
             self.emit_nominal_struct_new(option_type, some_idx);
         }
         self.instruction(Instruction::Else);
         // else: None
         {
-            let none_idx = self.codegen.variant_type_indices
-                [&(option_mn.clone(), "None".to_string())];
+            let none_idx =
+                self.codegen.variant_type_indices[&(option_mn.clone(), "None".to_string())];
             self.emit_nominal_struct_new(option_type, none_idx);
         }
         self.emit_end_block();

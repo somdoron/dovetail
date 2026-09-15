@@ -25,15 +25,16 @@ impl TypedExprVisitor for ContinuationCheck<'_> {
             target_error,
             ..
         } = &expression.kind
+            && matches!(operand.ty, Type::TypeVariable(..) | Type::GenericParam(..))
+            && !self.matches_wrapper(&operand.ty, target_error)
         {
-            if matches!(operand.ty, Type::TypeVariable(..) | Type::GenericParam(..))
-                && !self.matches_wrapper(&operand.ty, target_error)
-            {
-                diagnostics.error(expression.span.clone(), format!(
+            diagnostics.error(
+                expression.span.clone(),
+                format!(
                     "generic use requires a continuation returning '{}.Wrapped<U, {}>', found '{}'",
                     operand.ty, target_error, self.result,
-                ));
-            }
+                ),
+            );
         }
         walk_expr(self, expression, diagnostics);
     }

@@ -120,18 +120,40 @@ fn collect_hints(
                     data: None,
                 });
             }
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
-        TypedExprKind::FunctionCall { name, args, type_params: _ } => {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params: _,
+        } => {
             // Parameter name hints at call sites
             if let Some(func) = super::source_functions::get(typed_module, name) {
                 add_param_hints(args, &func.params, hints);
             }
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
-        TypedExprKind::ClassNew { mangled_name, args, .. } => {
+        TypedExprKind::ClassNew {
+            mangled_name, args, ..
+        } => {
             // Parameter name hints for constructor calls
             if let Some(crate::typechecker::types::TypeDef::Class(class_def)) =
                 typed_module.types.get(mangled_name)
@@ -139,12 +161,28 @@ fn collect_hints(
                 add_constructor_param_hints(args, &class_def.constructor_params, hints);
             }
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         // Recurse into all other expression kinds
         _ => {
-            walk_for_hints(expr, file, start_line, end_line, typed_module, document_content, hints);
+            walk_for_hints(
+                expr,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
     }
 }
@@ -168,10 +206,10 @@ fn should_show_type_hint(
     }
 
     // Check if the user wrote an explicit type annotation by scanning the source line
-    if let Some(content) = document_content {
-        if has_explicit_type_annotation(content, let_span, name) {
-            return false;
-        }
+    if let Some(content) = document_content
+        && has_explicit_type_annotation(content, let_span, name)
+    {
+        return false;
     }
 
     true
@@ -222,7 +260,9 @@ pub(super) fn has_explicit_type_annotation(
     if search_start > line.len() {
         return false;
     }
-    if let Some(name_abs) = find_whole_word(&line[search_start..], &name_str).map(|p| search_start + p) {
+    if let Some(name_abs) =
+        find_whole_word(&line[search_start..], &name_str).map(|p| search_start + p)
+    {
         let after_name = &line[name_abs + name_str.len()..];
         // Find `=` in the rest of the line
         if let Some(eq_pos) = after_name.find('=') {
@@ -251,14 +291,14 @@ pub(super) fn find_let_name_end(
             // Search for name as a whole word after "let " to avoid matching
             // inside keywords (e.g. name "e" inside "let" or "mutable")
             let search_start = let_span.column.saturating_sub(1) as usize + 4;
-            if search_start <= line.len() {
-                if let Some(name_pos) = find_whole_word(&line[search_start..], &name_str) {
-                    let absolute_pos = search_start + name_pos + name_str.len();
-                    return Position {
-                        line: let_span.line - 1, // Convert to 0-indexed
-                        character: absolute_pos as u32,
-                    };
-                }
+            if search_start <= line.len()
+                && let Some(name_pos) = find_whole_word(&line[search_start..], &name_str)
+            {
+                let absolute_pos = search_start + name_pos + name_str.len();
+                return Position {
+                    line: let_span.line - 1, // Convert to 0-indexed
+                    character: absolute_pos as u32,
+                };
             }
         }
     }
@@ -314,10 +354,10 @@ fn add_param_hints(
         }
 
         // Skip if the argument is a VarRef whose name matches the parameter name
-        if let TypedExprKind::VarRef { name, .. } = &arg.kind {
-            if name.to_string() == param.name {
-                continue;
-            }
+        if let TypedExprKind::VarRef { name, .. } = &arg.kind
+            && name.to_string() == param.name
+        {
+            continue;
         }
 
         hints.push(InlayHint {
@@ -349,10 +389,10 @@ fn add_constructor_param_hints(
         let param = &params[i];
 
         // Skip if the argument is a VarRef whose name matches the parameter name
-        if let TypedExprKind::VarRef { name, .. } = &arg.kind {
-            if name.to_string() == param.name {
-                continue;
-            }
+        if let TypedExprKind::VarRef { name, .. } = &arg.kind
+            && name.to_string() == param.name
+        {
+            continue;
         }
 
         hints.push(InlayHint {
@@ -404,36 +444,116 @@ fn walk_for_hints(
 ) {
     match &expr.kind {
         TypedExprKind::BinaryOp { left, right, .. } => {
-            collect_hints(left, file, start_line, end_line, typed_module, document_content, hints);
-            collect_hints(right, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                left,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
+            collect_hints(
+                right,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::UnaryOp { operand, .. } => {
-            collect_hints(operand, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                operand,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Block(exprs) => {
             for e in exprs {
-                collect_hints(e, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    e,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::Panic { message } => {
-            collect_hints(message, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                message,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Assert { condition, message } => {
-            collect_hints(condition, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                condition,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             if let Some(msg) = message {
-                collect_hints(msg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    msg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::Let { value, .. } => {
             // Already handled in collect_hints; just recurse into value
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Assign { value, .. } | TypedExprKind::GlobalAssign { value, .. } => {
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::FunctionCall { args, .. } => {
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::If {
@@ -441,145 +561,462 @@ fn walk_for_hints(
             then_branch,
             else_branch,
         } => {
-            collect_hints(condition, file, start_line, end_line, typed_module, document_content, hints);
-            collect_hints(then_branch, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                condition,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
+            collect_hints(
+                then_branch,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             if let Some(eb) = else_branch {
-                collect_hints(eb, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    eb,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::While { condition, body } => {
-            collect_hints(condition, file, start_line, end_line, typed_module, document_content, hints);
-            collect_hints(body, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                condition,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
+            collect_hints(
+                body,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Match { subject, arms } => {
-            collect_hints(subject, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                subject,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             for arm in arms {
-                collect_hints(&arm.body, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    &arm.body,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::TupleLiteral { elements } => {
             for element in elements {
-                collect_hints(element, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    element,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::RecordCreate { fields, .. } => {
             for (_, field_expr) in fields {
-                collect_hints(field_expr, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    field_expr,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::EnumCreate { args, .. }
         | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::FieldAccess { object, .. } => {
-            collect_hints(object, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                object,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::FieldAssign { object, value, .. } => {
-            collect_hints(object, file, start_line, end_line, typed_module, document_content, hints);
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                object,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::RecordWith {
             object, overrides, ..
         } => {
-            collect_hints(object, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                object,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             for (_, _, val) in overrides {
-                collect_hints(val, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    val,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::ArrayLiteral { elements } => {
             for e in elements {
-                collect_hints(e, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    e,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::IntrinsicCall { args, .. } => {
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::BoxToAny { inner } => {
-            collect_hints(inner, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                inner,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::TypeTest { value, .. } | TypedExprKind::TypeCast { value, .. } => {
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::LetDestructure { value, .. } => {
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::ClassNew { args, .. } => {
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::ClassVirtualCall { object, args, .. } => {
-            collect_hints(object, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                object,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::ClassSuperCall { args, .. } => {
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value } => {
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::InterfaceObjectCoerce { inner, .. }
         | TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. }
         | TypedExprKind::InterfaceObjectUpcast { inner } => {
-            collect_hints(inner, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                inner,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
-            collect_hints(receiver, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                receiver,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::Await { operand, .. } => {
-            collect_hints(operand, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                operand,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => {
-            collect_hints(iterable, file, start_line, end_line, typed_module, document_content, hints);
-            collect_hints(body, file, start_line, end_line, typed_module, document_content, hints);
+        TypedExprKind::ForLoop { iterable, body, .. } => {
+            collect_hints(
+                iterable,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
+            collect_hints(
+                body,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::AsyncBlock { body, .. } => {
-            collect_hints(body, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                body,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Try { operand, .. } | TypedExprKind::Use { operand, .. } => {
-            collect_hints(operand, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                operand,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Return { value, .. } => {
-            collect_hints(value, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                value,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::Closure { body, .. } => {
-            collect_hints(body, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                body,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::ClosureCall { callee, args } => {
-            collect_hints(callee, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                callee,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::MethodRef { object, .. } => {
-            collect_hints(object, file, start_line, end_line, typed_module, document_content, hints);
+            collect_hints(
+                object,
+                file,
+                start_line,
+                end_line,
+                typed_module,
+                document_content,
+                hints,
+            );
         }
         TypedExprKind::ClassStructCreate { fields, .. } => {
             for field in fields {
-                collect_hints(field, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    field,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
         TypedExprKind::ImplFunctionCall { args, .. }
         | TypedExprKind::ExtFunctionCall { args, .. } => {
             for arg in args {
-                collect_hints(arg, file, start_line, end_line, typed_module, document_content, hints);
+                collect_hints(
+                    arg,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -621,7 +1058,13 @@ mod tests {
         let name = VarName("e".to_string());
         let pos = find_let_name_end(&span, &name, Some(content));
         // "e" starts at column 12 (0-indexed), ends at 13
-        assert_eq!(pos, Position { line: 0, character: 13 });
+        assert_eq!(
+            pos,
+            Position {
+                line: 0,
+                character: 13
+            }
+        );
     }
 
     #[test]
@@ -630,7 +1073,13 @@ mod tests {
         let span = make_span(1, 1);
         let name = VarName("result".to_string());
         let pos = find_let_name_end(&span, &name, Some(content));
-        assert_eq!(pos, Position { line: 0, character: 10 });
+        assert_eq!(
+            pos,
+            Position {
+                line: 0,
+                character: 10
+            }
+        );
     }
 
     #[test]
@@ -640,7 +1089,13 @@ mod tests {
         let name = VarName("e".to_string());
         let pos = find_let_name_end(&span, &name, Some(content));
         // "let mutable e" — "e" is at column 16 (0-indexed), ends at 17
-        assert_eq!(pos, Position { line: 0, character: 17 });
+        assert_eq!(
+            pos,
+            Position {
+                line: 0,
+                character: 17
+            }
+        );
     }
 
     #[test]

@@ -75,7 +75,11 @@ pub fn goto_type_definition(
         NodeAtPosition::FunctionCall { .. } => return None, // return type is not a named type
         NodeAtPosition::FunctionRef { ty, .. } => ty,
         NodeAtPosition::MethodRef { .. } => return None,
-        NodeAtPosition::FieldAccess { span: _, receiver_type: _, field_name: _ } => {
+        NodeAtPosition::FieldAccess {
+            span: _,
+            receiver_type: _,
+            field_name: _,
+        } => {
             // The expression type is the field type — we need it from the node
             return None;
         }

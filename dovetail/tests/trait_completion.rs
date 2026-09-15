@@ -487,10 +487,16 @@ function invalid<R>(resource: R): Int32 where R: Usable<Int32, Never> =
     value + 1
 function main(): Unit = ()
 "#,
-    ].into_iter().enumerate() {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let errors = common::compile_expecting_errors(source);
         let expected = ["type parameter count", "ambiguous", "generic use requires"][index];
-        assert!(errors.iter().any(|error| error.contains(expected)), "{errors:?}");
+        assert!(
+            errors.iter().any(|error| error.contains(expected)),
+            "{errors:?}"
+        );
     }
 }
 

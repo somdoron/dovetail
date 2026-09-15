@@ -23,7 +23,10 @@ impl Collector<'_> {
         let is_interface = self
             .package_registry
             .lookup_trait(trait_fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_trait(trait_fqn, &self.package_path))
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_trait(trait_fqn, &self.package_path)
+            })
             .is_some_and(|sig| sig.is_interface);
         if !is_interface {
             self.diagnostics.error(
@@ -37,7 +40,6 @@ impl Collector<'_> {
         is_interface
     }
 
-
     /// Resolve one component of an intersection type expression to
     /// `(interface FQN, resolved type args)`. Emits an error and returns `None`
     /// for unknown names, non-interfaces, and arity mismatches.
@@ -47,8 +49,13 @@ impl Collector<'_> {
         type_params_map: Option<&BTreeMap<String, Type>>,
     ) -> Option<(Fqn, Vec<Type>)> {
         let trait_fqn = self.resolve_name_to_fqn(&named.name.value, |fqn| {
-            self.package_registry.lookup_trait(fqn, &self.package_path).is_some()
-                || self.dependency_registry.lookup_trait(fqn, &self.package_path).is_some()
+            self.package_registry
+                .lookup_trait(fqn, &self.package_path)
+                .is_some()
+                || self
+                    .dependency_registry
+                    .lookup_trait(fqn, &self.package_path)
+                    .is_some()
         });
         let Some(trait_fqn) = trait_fqn else {
             let known_non_trait = self
@@ -74,7 +81,10 @@ impl Collector<'_> {
         let expected_count = self
             .package_registry
             .lookup_trait(&trait_fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_trait(&trait_fqn, &self.package_path))
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_trait(&trait_fqn, &self.package_path)
+            })
             .map(|sig| sig.type_params.len())
             .unwrap_or(0);
         if named.type_args.len() != expected_count {
@@ -143,9 +153,14 @@ impl Collector<'_> {
 
     pub(super) fn resolve_type_expr(&mut self, type_expr: &TypeExpr) -> Type {
         match type_expr {
-            TypeExpr::TupleExtend(left, right, _) => Type::tuple_extend(self.resolve_type_expr(left), self.resolve_type_expr(right)),
+            TypeExpr::TupleExtend(left, right, _) => {
+                Type::tuple_extend(self.resolve_type_expr(left), self.resolve_type_expr(right))
+            }
             TypeExpr::Tuple(type_exprs, _span) => {
-                let types: Vec<Type> = type_exprs.iter().map(|te| self.resolve_type_expr(te)).collect();
+                let types: Vec<Type> = type_exprs
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te))
+                    .collect();
                 if types.iter().any(|t| t.is_error()) {
                     return Type::Error;
                 }
@@ -190,8 +205,13 @@ impl Collector<'_> {
                         Type::Error
                     }
                 } else if let Some(trait_fqn) = self.resolve_name_to_fqn(&named.name.value, |fqn| {
-                    self.package_registry.lookup_trait(fqn, &self.package_path).is_some()
-                        || self.dependency_registry.lookup_trait(fqn, &self.package_path).is_some()
+                    self.package_registry
+                        .lookup_trait(fqn, &self.package_path)
+                        .is_some()
+                        || self
+                            .dependency_registry
+                            .lookup_trait(fqn, &self.package_path)
+                            .is_some()
                 }) {
                     if self.check_interface_in_type_position(&trait_fqn, &named.name.span) {
                         Type::interface_object(trait_fqn, vec![])
@@ -207,7 +227,10 @@ impl Collector<'_> {
                 }
             }
             TypeExpr::Function(param_exprs, ret_expr, _span) => {
-                let param_types: Vec<Type> = param_exprs.iter().map(|te| self.resolve_type_expr(te)).collect();
+                let param_types: Vec<Type> = param_exprs
+                    .iter()
+                    .map(|te| self.resolve_type_expr(te))
+                    .collect();
                 let ret_type = self.resolve_type_expr(ret_expr);
                 if param_types.iter().any(|t| t.is_error()) || ret_type.is_error() {
                     return Type::Error;
@@ -228,7 +251,10 @@ impl Collector<'_> {
         type_params_map: &BTreeMap<String, Type>,
     ) -> Type {
         match type_expr {
-            TypeExpr::TupleExtend(left, right, _) => Type::tuple_extend(self.resolve_type_expr_with_type_params(left, type_params_map), self.resolve_type_expr_with_type_params(right, type_params_map)),
+            TypeExpr::TupleExtend(left, right, _) => Type::tuple_extend(
+                self.resolve_type_expr_with_type_params(left, type_params_map),
+                self.resolve_type_expr_with_type_params(right, type_params_map),
+            ),
             TypeExpr::Tuple(type_exprs, _span) => {
                 let types: Vec<Type> = type_exprs
                     .iter()
@@ -241,17 +267,26 @@ impl Collector<'_> {
                 Type::Tuple(types, mn)
             }
             TypeExpr::Named(named) => {
-                if let Some((root, member)) = named.name.value.split_once('.') {
-                    if let Some(receiver) = type_params_map.get(root) {
-                        let arguments: Vec<_> = named.type_args.iter().map(|ty|
-                            self.resolve_type_expr_with_type_params(ty, type_params_map)).collect();
-                        return match crate::typechecker::associated_types::resolve_reference(
-                            receiver, member, arguments, &[&self.package_registry, self.dependency_registry],
-                        ) {
-                            Ok(ty) => ty,
-                            Err(message) => { self.diagnostics.error(named.span.clone(), message); Type::Error }
-                        };
-                    }
+                if let Some((root, member)) = named.name.value.split_once('.')
+                    && let Some(receiver) = type_params_map.get(root)
+                {
+                    let arguments: Vec<_> = named
+                        .type_args
+                        .iter()
+                        .map(|ty| self.resolve_type_expr_with_type_params(ty, type_params_map))
+                        .collect();
+                    return match crate::typechecker::associated_types::resolve_reference(
+                        receiver,
+                        member,
+                        arguments,
+                        &[&self.package_registry, self.dependency_registry],
+                    ) {
+                        Ok(ty) => ty,
+                        Err(message) => {
+                            self.diagnostics.error(named.span.clone(), message);
+                            Type::Error
+                        }
+                    };
                 }
 
                 // Check type params first
@@ -260,7 +295,9 @@ impl Collector<'_> {
                         return ty.clone();
                     }
                     // GAT reference: resolve type args and create TypeConstructor
-                    let resolved_args: Vec<Type> = named.type_args.iter()
+                    let resolved_args: Vec<Type> = named
+                        .type_args
+                        .iter()
                         .map(|te| self.resolve_type_expr_with_type_params(te, type_params_map))
                         .collect();
                     return Type::TypeConstructor {
@@ -281,7 +318,8 @@ impl Collector<'_> {
                         );
                         return Type::Error;
                     }
-                    let elem = self.resolve_type_expr_with_type_params(&named.type_args[0], type_params_map);
+                    let elem = self
+                        .resolve_type_expr_with_type_params(&named.type_args[0], type_params_map);
                     return Type::Array(Box::new(elem));
                 }
 
@@ -292,8 +330,13 @@ impl Collector<'_> {
 
                 // Check if name is a trait → interface object type
                 if let Some(trait_fqn) = self.resolve_name_to_fqn(&named.name.value, |fqn| {
-                    self.package_registry.lookup_trait(fqn, &self.package_path).is_some()
-                        || self.dependency_registry.lookup_trait(fqn, &self.package_path).is_some()
+                    self.package_registry
+                        .lookup_trait(fqn, &self.package_path)
+                        .is_some()
+                        || self
+                            .dependency_registry
+                            .lookup_trait(fqn, &self.package_path)
+                            .is_some()
                 }) {
                     if self.check_interface_in_type_position(&trait_fqn, &named.name.span) {
                         return Type::interface_object(trait_fqn, vec![]);
@@ -305,7 +348,8 @@ impl Collector<'_> {
                 self.resolve_type_expr(type_expr)
             }
             TypeExpr::Function(param_exprs, ret_expr, _span) => {
-                let param_types: Vec<Type> = param_exprs.iter()
+                let param_types: Vec<Type> = param_exprs
+                    .iter()
                     .map(|te| self.resolve_type_expr_with_type_params(te, type_params_map))
                     .collect();
                 let ret_type = self.resolve_type_expr_with_type_params(ret_expr, type_params_map);
@@ -342,10 +386,20 @@ impl Collector<'_> {
             let def = self
                 .package_registry
                 .lookup_generic_record_by_fqn(&fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_generic_record_by_fqn(&fqn, &self.package_path));
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_generic_record_by_fqn(&fqn, &self.package_path)
+                });
             if let Some(def) = def {
                 let def = def.clone();
-                return self.finish_resolve_generic_type_expr(named, type_params_map, &fqn, &def.type_params, &def.type_param_variances, GenericTypeKind::Record);
+                return self.finish_resolve_generic_type_expr(
+                    named,
+                    type_params_map,
+                    &fqn,
+                    &def.type_params,
+                    &def.type_param_variances,
+                    GenericTypeKind::Record,
+                );
             }
         }
 
@@ -364,10 +418,20 @@ impl Collector<'_> {
             let def = self
                 .package_registry
                 .lookup_generic_enum_by_fqn(&fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_generic_enum_by_fqn(&fqn, &self.package_path));
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_generic_enum_by_fqn(&fqn, &self.package_path)
+                });
             if let Some(def) = def {
                 let def = def.clone();
-                return self.finish_resolve_generic_type_expr(named, type_params_map, &fqn, &def.type_params, &def.type_param_variances, GenericTypeKind::Enum);
+                return self.finish_resolve_generic_type_expr(
+                    named,
+                    type_params_map,
+                    &fqn,
+                    &def.type_params,
+                    &def.type_param_variances,
+                    GenericTypeKind::Enum,
+                );
             }
         }
 
@@ -386,7 +450,10 @@ impl Collector<'_> {
             let sig = self
                 .package_registry
                 .lookup_class_type(&fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_class_type(&fqn, &self.package_path));
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_class_type(&fqn, &self.package_path)
+                });
             if let Some(sig) = sig {
                 let type_params = sig.type_params.clone();
                 let variances = sig.type_param_variances.clone();
@@ -419,11 +486,12 @@ impl Collector<'_> {
                     .collect();
 
                 let mangled = MangledName::for_type(&fqn);
-                let type_args_with_variance: Vec<(crate::common::types::Variance, Type)> = variances
-                    .iter()
-                    .zip(resolved_type_args.iter())
-                    .map(|(v, t)| (*v, t.clone()))
-                    .collect();
+                let type_args_with_variance: Vec<(crate::common::types::Variance, Type)> =
+                    variances
+                        .iter()
+                        .zip(resolved_type_args.iter())
+                        .map(|(v, t)| (*v, t.clone()))
+                        .collect();
                 return Type::GenericClass {
                     fqn,
                     mangled_name: mangled,
@@ -447,12 +515,22 @@ impl Collector<'_> {
             let sig = self
                 .package_registry
                 .lookup_generic_newtype_by_fqn(&fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_generic_newtype_by_fqn(&fqn, &self.package_path));
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_generic_newtype_by_fqn(&fqn, &self.package_path)
+                });
             if let Some(sig) = sig {
                 let type_params = sig.type_params.clone();
                 let variances = sig.type_param_variances.clone();
                 let inner_type = sig.inner_type.clone();
-                return self.finish_resolve_generic_newtype_expr(named, type_params_map, &fqn, &type_params, &variances, &inner_type);
+                return self.finish_resolve_generic_newtype_expr(
+                    named,
+                    type_params_map,
+                    &fqn,
+                    &type_params,
+                    &variances,
+                    &inner_type,
+                );
             }
         }
 
@@ -471,7 +549,10 @@ impl Collector<'_> {
             let alias_sig = self
                 .package_registry
                 .lookup_generic_type_alias_by_fqn(&fqn)
-                .or_else(|| self.dependency_registry.lookup_generic_type_alias_by_fqn(&fqn));
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_generic_type_alias_by_fqn(&fqn)
+                });
             if let Some(alias_sig) = alias_sig {
                 let alias_sig = alias_sig.clone();
 
@@ -490,13 +571,17 @@ impl Collector<'_> {
                 }
 
                 // Resolve type arguments
-                let resolved_type_args: Vec<Type> = named.type_args.iter().map(|ta| {
-                    if type_params_map.is_empty() {
-                        self.resolve_type_expr(ta)
-                    } else {
-                        self.resolve_type_expr_with_type_params(ta, type_params_map)
-                    }
-                }).collect();
+                let resolved_type_args: Vec<Type> = named
+                    .type_args
+                    .iter()
+                    .map(|ta| {
+                        if type_params_map.is_empty() {
+                            self.resolve_type_expr(ta)
+                        } else {
+                            self.resolve_type_expr_with_type_params(ta, type_params_map)
+                        }
+                    })
+                    .collect();
 
                 // Build substitution map: type_param_name → concrete type
                 let substitution: BTreeMap<String, Type> = alias_sig
@@ -513,11 +598,21 @@ impl Collector<'_> {
 
         // Try generic trait → interface object type
         if let Some(trait_fqn) = self.resolve_name_to_fqn(&named.name.value, |fqn| {
-            self.package_registry.lookup_trait(fqn, &self.package_path).is_some()
-                || self.dependency_registry.lookup_trait(fqn, &self.package_path).is_some()
+            self.package_registry
+                .lookup_trait(fqn, &self.package_path)
+                .is_some()
+                || self
+                    .dependency_registry
+                    .lookup_trait(fqn, &self.package_path)
+                    .is_some()
         }) {
-            let sig = self.package_registry.lookup_trait(&trait_fqn, &self.package_path)
-                .or_else(|| self.dependency_registry.lookup_trait(&trait_fqn, &self.package_path));
+            let sig = self
+                .package_registry
+                .lookup_trait(&trait_fqn, &self.package_path)
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_trait(&trait_fqn, &self.package_path)
+                });
             if let Some(sig) = sig {
                 let expected_count = sig.type_params.len();
                 if named.type_args.len() != expected_count {
@@ -532,13 +627,17 @@ impl Collector<'_> {
                     );
                     return Type::Error;
                 }
-                let trait_type_args: Vec<Type> = named.type_args.iter().map(|ta| {
-                    if type_params_map.is_empty() {
-                        self.resolve_type_expr(ta)
-                    } else {
-                        self.resolve_type_expr_with_type_params(ta, type_params_map)
-                    }
-                }).collect();
+                let trait_type_args: Vec<Type> = named
+                    .type_args
+                    .iter()
+                    .map(|ta| {
+                        if type_params_map.is_empty() {
+                            self.resolve_type_expr(ta)
+                        } else {
+                            self.resolve_type_expr_with_type_params(ta, type_params_map)
+                        }
+                    })
+                    .collect();
                 if !self.check_interface_in_type_position(&trait_fqn, &named.name.span) {
                     return Type::Error;
                 }
@@ -588,7 +687,10 @@ impl Collector<'_> {
                 } else {
                     self.resolve_type_expr_with_type_params(ta, type_params_map)
                 };
-                let variance = type_param_variances.get(i).copied().unwrap_or(Variance::Invariant);
+                let variance = type_param_variances
+                    .get(i)
+                    .copied()
+                    .unwrap_or(Variance::Invariant);
                 (variance, ty)
             })
             .collect();
@@ -645,7 +747,10 @@ impl Collector<'_> {
                 } else {
                     self.resolve_type_expr_with_type_params(ta, type_params_map)
                 };
-                let variance = type_param_variances.get(i).copied().unwrap_or(Variance::Invariant);
+                let variance = type_param_variances
+                    .get(i)
+                    .copied()
+                    .unwrap_or(Variance::Invariant);
                 (variance, ty)
             })
             .collect();
@@ -653,7 +758,8 @@ impl Collector<'_> {
         // Substitute type params in the inner type.
         // When type args contain TypeParameter (e.g. inside a generic context),
         // the result will contain TypeParameter types — correct for templates.
-        let substitution: BTreeMap<String, Type> = type_params.iter()
+        let substitution: BTreeMap<String, Type> = type_params
+            .iter()
             .zip(resolved_type_args.iter())
             .map(|(tp, (_, ty))| (tp.0.clone(), ty.clone()))
             .collect();
@@ -665,7 +771,6 @@ impl Collector<'_> {
             concrete_inner_type: Box::new(concrete_inner),
         }
     }
-
 }
 
 /// Recursively substitute type parameters in a type.
@@ -679,12 +784,17 @@ pub(super) fn substitute_type_params_in(ty: &Type, substitution: &BTreeMap<Strin
                 ty.clone()
             }
         }
-        Type::Array(elem) => {
-            Type::Array(Box::new(substitute_type_params_in(elem, substitution)))
+        Type::Array(elem) => Type::Array(Box::new(substitute_type_params_in(elem, substitution))),
+        Type::TupleExtend(left, right) => Type::tuple_extend(
+            substitute_type_params_in(left, substitution),
+            substitute_type_params_in(right, substitution),
+        ),
+        Type::TupleProjection(receiver, kind) => {
+            Type::tuple_projection(substitute_type_params_in(receiver, substitution), *kind)
         }
-        Type::TupleExtend(left, right) => Type::tuple_extend(substitute_type_params_in(left, substitution), substitute_type_params_in(right, substitution)),
-        Type::TupleProjection(receiver, kind) => Type::tuple_projection(substitute_type_params_in(receiver, substitution), *kind),
-        Type::AssociatedProjection(projection) => projection.map(|ty| substitute_type_params_in(ty, substitution)).into_type(),
+        Type::AssociatedProjection(projection) => projection
+            .map(|ty| substitute_type_params_in(ty, substitution))
+            .into_type(),
         Type::Tuple(types, _mn) => {
             let substituted: Vec<Type> = types
                 .iter()
@@ -693,11 +803,7 @@ pub(super) fn substitute_type_params_in(ty: &Type, substitution: &BTreeMap<Strin
             let mn = MangledName::for_tuple(&substituted);
             Type::Tuple(substituted, mn)
         }
-        Type::GenericRecord {
-            fqn,
-            type_args,
-            ..
-        } => {
+        Type::GenericRecord { fqn, type_args, .. } => {
             let substituted_args: Vec<(Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, substitute_type_params_in(t, substitution)))
@@ -708,11 +814,7 @@ pub(super) fn substitute_type_params_in(ty: &Type, substitution: &BTreeMap<Strin
                 type_args: substituted_args,
             }
         }
-        Type::GenericEnum {
-            fqn,
-            type_args,
-            ..
-        } => {
+        Type::GenericEnum { fqn, type_args, .. } => {
             let substituted_args: Vec<(Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, substitute_type_params_in(t, substitution)))
@@ -723,7 +825,11 @@ pub(super) fn substitute_type_params_in(ty: &Type, substitution: &BTreeMap<Strin
                 type_args: substituted_args,
             }
         }
-        Type::GenericClass { fqn, type_args: type_params, .. } => {
+        Type::GenericClass {
+            fqn,
+            type_args: type_params,
+            ..
+        } => {
             let substituted_params = type_params
                 .iter()
                 .map(|(variance, ty)| (*variance, substitute_type_params_in(ty, substitution)))
@@ -748,10 +854,15 @@ pub(super) fn substitute_type_params_in(ty: &Type, substitution: &BTreeMap<Strin
                 })
                 .collect(),
         ),
-        Type::Newtype(fqn, inner) => {
-            Type::Newtype(fqn.clone(), Box::new(substitute_type_params_in(inner, substitution)))
-        }
-        Type::GenericNewtype { fqn, type_args, concrete_inner_type } => {
+        Type::Newtype(fqn, inner) => Type::Newtype(
+            fqn.clone(),
+            Box::new(substitute_type_params_in(inner, substitution)),
+        ),
+        Type::GenericNewtype {
+            fqn,
+            type_args,
+            concrete_inner_type,
+        } => {
             let substituted_args: Vec<(Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, substitute_type_params_in(t, substitution)))

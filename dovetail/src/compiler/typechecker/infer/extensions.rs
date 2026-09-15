@@ -1,7 +1,9 @@
 use crate::common::types::{Fqn, SymbolName, TypeParamName, VarName};
 use crate::parser::ast::{Expr, ExtensionDecl, FunctionDecl};
 
-use crate::typechecker::types::{TraitBounds, Type, TypedExtMethod, TypedExtensionBlock, TypedParam};
+use crate::typechecker::types::{
+    TraitBounds, Type, TypedExtMethod, TypedExtensionBlock, TypedParam,
+};
 
 use super::Inference;
 
@@ -72,7 +74,8 @@ impl Inference<'_> {
             self.validate_async_constraints(method, &return_type);
 
             let body_expected_type = if method.is_async {
-                self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+                self.resolve_awaitable_value_type(&return_type)
+                    .unwrap_or(return_type.clone())
             } else {
                 return_type.clone()
             };
@@ -241,7 +244,8 @@ impl Inference<'_> {
             };
             self.validate_async_constraints(method, &return_type);
             let body_expected_type = if method.is_async {
-                self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+                self.resolve_awaitable_value_type(&return_type)
+                    .unwrap_or(return_type.clone())
             } else {
                 return_type.clone()
             };
@@ -343,7 +347,10 @@ impl Inference<'_> {
     }
 
     /// Type-check a generic method on a non-generic extension and return the typed body.
-    fn typecheck_generic_extension_method(&mut self, method: &FunctionDecl) -> Option<TypedExtMethod> {
+    fn typecheck_generic_extension_method(
+        &mut self,
+        method: &FunctionDecl,
+    ) -> Option<TypedExtMethod> {
         let type_params: Vec<TypeParamName> = method
             .type_params
             .iter()
@@ -364,7 +371,8 @@ impl Inference<'_> {
         };
         self.validate_async_constraints(method, &return_type);
         let body_expected_type = if method.is_async {
-            self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+            self.resolve_awaitable_value_type(&return_type)
+                .unwrap_or(return_type.clone())
         } else {
             return_type.clone()
         };

@@ -1531,7 +1531,10 @@ function main(): Unit =
     ()
 "#,
     );
-    assert!(result.is_err(), "tuple syntax on record variant should error");
+    assert!(
+        result.is_err(),
+        "tuple syntax on record variant should error"
+    );
 }
 
 #[test]
@@ -1698,9 +1701,7 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("expects 1 argument")),
+        errors.iter().any(|e| e.contains("expects 1 argument")),
         "expected error for no-args pattern on tuple variant, got: {:?}",
         errors
     );
@@ -1722,9 +1723,7 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("record-style pattern")),
+        errors.iter().any(|e| e.contains("record-style pattern")),
         "expected error for tuple-style pattern on record variant, got: {:?}",
         errors
     );
@@ -1768,9 +1767,7 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("expected variant name")),
+        errors.iter().any(|e| e.contains("expected variant name")),
         "expected error for empty enum, got: {:?}",
         errors
     );

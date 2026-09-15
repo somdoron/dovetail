@@ -471,7 +471,11 @@ fn format_type_expr(type_expr: &TypeExpr) -> String {
         TypeExpr::TupleExtend(left, right, _) => {
             let operand = |ty: &TypeExpr| {
                 let text = format_type_expr(ty);
-                if matches!(ty, TypeExpr::Function(..)) { format!("({text})") } else { text }
+                if matches!(ty, TypeExpr::Function(..)) {
+                    format!("({text})")
+                } else {
+                    text
+                }
             };
             format!("({} ~ {})", operand(left), operand(right))
         }

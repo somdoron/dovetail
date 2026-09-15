@@ -86,12 +86,7 @@ impl MacroRegistry {
     }
 
     pub fn register_derive(&mut self, fqn: MacroFqn, expander: Arc<dyn DeriveExpander>) {
-        let short_name = fqn
-            .0
-            .rsplit('.')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let short_name = fqn.0.rsplit('.').next().unwrap_or("").to_string();
         self.short_names
             .entry(short_name)
             .or_default()
@@ -123,11 +118,7 @@ impl MacroRegistry {
         self.derives.get(fqn)
     }
 
-    fn resolve(
-        &self,
-        path: &[String],
-        imports: &[(Vec<String>, Option<String>)],
-    ) -> ResolveResult {
+    fn resolve(&self, path: &[String], imports: &[(Vec<String>, Option<String>)]) -> ResolveResult {
         // 1. Fully-qualified: try as a direct FQN.
         if path.len() > 1 {
             let fqn = MacroFqn::new(path.join("."));
@@ -151,9 +142,7 @@ impl MacroRegistry {
 
         // 3. Direct import: `import a.b.X` and the user wrote `@derive(X)`.
         for (import_path, alias) in imports {
-            if alias.is_none()
-                && import_path.last().map(|s| s.as_str()) == Some(name.as_str())
-            {
+            if alias.is_none() && import_path.last().map(|s| s.as_str()) == Some(name.as_str()) {
                 let fqn = MacroFqn::new(import_path.join("."));
                 if self.lookup(&fqn).is_some() {
                     return ResolveResult::Found(fqn);
@@ -197,11 +186,7 @@ pub fn expand_package(
     }
 }
 
-fn expand_file(
-    file: &mut SourceFile,
-    registry: &MacroRegistry,
-    diagnostics: &mut Diagnostics,
-) {
+fn expand_file(file: &mut SourceFile, registry: &MacroRegistry, diagnostics: &mut Diagnostics) {
     let imports: Vec<(Vec<String>, Option<String>)> = file
         .imports
         .iter()
@@ -270,11 +255,7 @@ fn expand_decl_attrs(
             // Parser already reported a syntax error.
             continue;
         }
-        let path: Vec<String> = attr
-            .macro_name
-            .iter()
-            .map(|s| s.value.clone())
-            .collect();
+        let path: Vec<String> = attr.macro_name.iter().map(|s| s.value.clone()).collect();
 
         match registry.resolve(&path, imports) {
             ResolveResult::Found(fqn) => {
@@ -296,8 +277,7 @@ fn expand_decl_attrs(
                 }
             }
             ResolveResult::Ambiguous(candidates) => {
-                let names: Vec<String> =
-                    candidates.iter().map(|c| c.0.clone()).collect();
+                let names: Vec<String> = candidates.iter().map(|c| c.0.clone()).collect();
                 diagnostics.error(
                     attr.span.clone(),
                     format!(
@@ -319,16 +299,15 @@ fn expand_decl_attrs(
 
 fn borrow_target<'a>(target: &DeriveTarget<'a>) -> DeriveTarget<'a> {
     match target {
-        DeriveTarget::Record(r) => DeriveTarget::Record(*r),
-        DeriveTarget::Enum(e) => DeriveTarget::Enum(*e),
-        DeriveTarget::Newtype(n) => DeriveTarget::Newtype(*n),
+        DeriveTarget::Record(r) => DeriveTarget::Record(r),
+        DeriveTarget::Enum(e) => DeriveTarget::Enum(e),
+        DeriveTarget::Newtype(n) => DeriveTarget::Newtype(n),
     }
 }
 
 /// The Rhai source for `@derive(Equatable)`, embedded at compile time.
 /// Lives at `dovetail/prelude/macros/Equatable.rhai`.
-const EQUATABLE_RHAI_SCRIPT: &str =
-    include_str!("../../../prelude/macros/Equatable.rhai");
+const EQUATABLE_RHAI_SCRIPT: &str = include_str!("../../../prelude/macros/Equatable.rhai");
 
 /// Build a MacroRegistry pre-populated with the compiler's built-in derive macros.
 ///

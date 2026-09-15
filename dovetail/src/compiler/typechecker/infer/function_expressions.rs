@@ -1,16 +1,21 @@
 use crate::common::span::Span;
-use crate::common::types::{Fqn, MangledName, PackagePath, SymbolName, InterfaceMemberName, TypeParamName, VarName, Visibility};
+use crate::common::types::{
+    Fqn, InterfaceMemberName, MangledName, PackagePath, SymbolName, TypeParamName, VarName,
+    Visibility,
+};
 use crate::parser::ast::{Expr, TypeExpr};
 
 use crate::typechecker::registry::{
     ExtMethodSignature, ExtensionBlockSignature, FunctionSignature, ImplBlockSignature,
     ImplMethodSignature, VariantPayload,
 };
-use crate::typechecker::types::{IntrinsicKind, NamedTraitBound, TraitBound, Type, TypedExpr, TypedExprKind};
+use crate::typechecker::types::{
+    IntrinsicKind, NamedTraitBound, TraitBound, Type, TypedExpr, TypedExprKind,
+};
 
 use super::generics::apply_substitution;
-use super::types::SymbolKind;
 use super::type_param_substitution::TypeParamSubstitution;
+use super::types::SymbolKind;
 use super::{Inference, ResolvedFunction};
 
 /// Outcome of resolving a method call against one trait bound.
@@ -52,7 +57,10 @@ impl Inference<'_> {
             // Variable exists but is not a function type — not callable
             self.diagnostics.error(
                 span.clone(),
-                format!("'{}' has type '{}' which is not callable", name.value, binding.ty),
+                format!(
+                    "'{}' has type '{}' which is not callable",
+                    name.value, binding.ty
+                ),
             );
             let typed_args = self.infer_args_with_expected(args, &None);
             return self.error_call(typed_args, span);
@@ -172,13 +180,13 @@ impl Inference<'_> {
                     .into_iter()
                     .filter(|sig| sig.matches_args(&arg_type_refs, |p, a| self.is_assignable(p, a)))
                     .map(|sig| {
-                        if sig.is_intrinsic {
-                            if let Some(intrinsic) = resolve_freestanding_intrinsic(&fqn) {
-                                return ResolvedFunction::Intrinsic {
-                                    intrinsic,
-                                    return_type: sig.return_type,
-                                };
-                            }
+                        if sig.is_intrinsic
+                            && let Some(intrinsic) = resolve_freestanding_intrinsic(&fqn)
+                        {
+                            return ResolvedFunction::Intrinsic {
+                                intrinsic,
+                                return_type: sig.return_type,
+                            };
                         }
                         ResolvedFunction::Regular {
                             mangled_name: sig.mangled_name,
@@ -212,10 +220,11 @@ impl Inference<'_> {
         };
 
         // Try class constructor: `ClassName(args)` or `ClassName<T>(args)` → resolve as ClassNew
-        let typed_args = match self.try_resolve_class_constructor(&name.value, type_args, typed_args, span) {
-            Ok(result) => return result,
-            Err(typed_args) => typed_args,
-        };
+        let typed_args =
+            match self.try_resolve_class_constructor(&name.value, type_args, typed_args, span) {
+                Ok(result) => return result,
+                Err(typed_args) => typed_args,
+            };
 
         // Try newtype constructor: `Cents(100)` or `Wrapper<Int32>(42)` → resolve as newtype create
         match self.try_resolve_newtype_call(&name.value, type_args, typed_args, span) {
@@ -238,10 +247,20 @@ impl Inference<'_> {
         // Defer them and closures with unannotated parameters until the receiver
         // supplies expected types from the method signature.
         let has_async_expression = args.iter().any(|arg| {
-            matches!(arg, Expr::AsyncDo { .. } | Expr::Closure { is_async: true, .. })
+            matches!(
+                arg,
+                Expr::AsyncDo { .. } | Expr::Closure { is_async: true, .. }
+            )
         });
         let static_async_context = if has_async_expression {
-            self.static_async_argument_context(receiver, method, receiver_type_args, type_params, args.len(), span)
+            self.static_async_argument_context(
+                receiver,
+                method,
+                receiver_type_args,
+                type_params,
+                args.len(),
+                span,
+            )
         } else {
             None
         };
@@ -256,7 +275,9 @@ impl Inference<'_> {
         // `expected_type` to disambiguate by. The second pass re-infers
         // each arg with the method's parameter type as the expected_type,
         // which lets the overload resolution pick the right impl.
-        let has_deferred_overloaded_refs = args.iter().any(|arg| self.is_ambiguous_static_method_ref(arg));
+        let has_deferred_overloaded_refs = args
+            .iter()
+            .any(|arg| self.is_ambiguous_static_method_ref(arg));
 
         // Derive expected arg types for enum variant constructors (Enum.Variant(args)).
         // When expected_type matches the enum, substitute type args into payload types
@@ -268,20 +289,34 @@ impl Inference<'_> {
                 }
                 let (_, payload) = enum_sig.variants.iter().find(|(v, _)| v == &method.value)?;
                 let payload_types = match payload {
-                    crate::typechecker::registry::VariantPayload::Tuple(types) if types.len() == args.len() => types.clone(),
+                    crate::typechecker::registry::VariantPayload::Tuple(types)
+                        if types.len() == args.len() =>
+                    {
+                        types.clone()
+                    }
                     _ => return None,
                 };
                 // Use expected_type to determine type args for the enum
-                if let Some(Type::GenericEnum { fqn: exp_fqn, type_args: expected_args, .. }) = &self.expected_type {
-                    if *exp_fqn == enum_sig.fqn {
-                        let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
-                            &enum_sig.type_params,
-                            &expected_args.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
-                        );
-                        return Some(payload_types.iter().map(|t| {
-                            super::generics::apply_substitution(&sub, t)
-                        }).collect());
-                    }
+                if let Some(Type::GenericEnum {
+                    fqn: exp_fqn,
+                    type_args: expected_args,
+                    ..
+                }) = &self.expected_type
+                    && *exp_fqn == enum_sig.fqn
+                {
+                    let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                        &enum_sig.type_params,
+                        &expected_args
+                            .iter()
+                            .map(|(_, t)| t.clone())
+                            .collect::<Vec<_>>(),
+                    );
+                    return Some(
+                        payload_types
+                            .iter()
+                            .map(|t| super::generics::apply_substitution(&sub, t))
+                            .collect(),
+                    );
                 }
                 None
             })
@@ -294,27 +329,29 @@ impl Inference<'_> {
         // expected at `List<Int32>` — without this, a member that needs its type
         // from context (a generic module property like `List.empty`) fails to
         // resolve in a position where the information was available all along.
-        let variant_payload_template: Option<(Vec<crate::common::types::TypeParamName>, Vec<Type>)> =
-            if enum_variant_expected.is_some() {
-                None
-            } else if let Expr::Identifier(name, _) = receiver {
-                self.resolve_enum_type(name).and_then(|enum_sig| {
-                    if enum_sig.type_params.is_empty() {
-                        return None;
+        let variant_payload_template: Option<(
+            Vec<crate::common::types::TypeParamName>,
+            Vec<Type>,
+        )> = if enum_variant_expected.is_some() {
+            None
+        } else if let Expr::Identifier(name, _) = receiver {
+            self.resolve_enum_type(name).and_then(|enum_sig| {
+                if enum_sig.type_params.is_empty() {
+                    return None;
+                }
+                let (_, payload) = enum_sig.variants.iter().find(|(v, _)| v == &method.value)?;
+                match payload {
+                    crate::typechecker::registry::VariantPayload::Tuple(types)
+                        if types.len() == args.len() =>
+                    {
+                        Some((enum_sig.type_params.clone(), types.clone()))
                     }
-                    let (_, payload) = enum_sig.variants.iter().find(|(v, _)| v == &method.value)?;
-                    match payload {
-                        crate::typechecker::registry::VariantPayload::Tuple(types)
-                            if types.len() == args.len() =>
-                        {
-                            Some((enum_sig.type_params.clone(), types.clone()))
-                        }
-                        _ => None,
-                    }
-                })
-            } else {
-                None
-            };
+                    _ => None,
+                }
+            })
+        } else {
+            None
+        };
         let mut progressive_sub = super::type_param_substitution::TypeParamSubstitution::new();
 
         let mut has_non_deferred_error = false;
@@ -324,8 +361,12 @@ impl Inference<'_> {
             .map(|(i, arg)| {
                 let is_deferred_closure = matches!(arg, Expr::AsyncDo { .. })
                     || super::async_arguments::deferred_async_sibling(arg);
-                let is_deferred_ref = has_deferred_overloaded_refs && self.is_ambiguous_static_method_ref(arg);
-                if matches!(arg, Expr::AsyncDo { .. }) || (has_deferred_closures && is_deferred_closure) || is_deferred_ref {
+                let is_deferred_ref =
+                    has_deferred_overloaded_refs && self.is_ambiguous_static_method_ref(arg);
+                if matches!(arg, Expr::AsyncDo { .. })
+                    || (has_deferred_closures && is_deferred_closure)
+                    || is_deferred_ref
+                {
                     // Placeholder — will be re-inferred after receiver provides expected types
                     TypedExpr {
                         kind: TypedExprKind::UnitLiteral,
@@ -334,15 +375,17 @@ impl Inference<'_> {
                     }
                 } else {
                     // Set expected type from enum variant payload if available
-                    let progressive = variant_payload_template.as_ref().and_then(|(_, template)| {
-                        let substituted =
-                            super::generics::apply_substitution(&progressive_sub, &template[i]);
-                        // Only a fully-resolved type is a useful expectation; a
-                        // half-substituted one would mislead inference.
-                        (!substituted.contains_type_parameter()).then_some(substituted)
-                    });
+                    let progressive =
+                        variant_payload_template.as_ref().and_then(|(_, template)| {
+                            let substituted =
+                                super::generics::apply_substitution(&progressive_sub, &template[i]);
+                            // Only a fully-resolved type is a useful expectation; a
+                            // half-substituted one would mislead inference.
+                            (!substituted.contains_type_parameter()).then_some(substituted)
+                        });
                     let closure_hint = if matches!(arg, Expr::Closure { .. }) {
-                        static_async_context.as_ref()
+                        static_async_context
+                            .as_ref()
                             .and_then(|hints| hints.get(i))
                             .cloned()
                             .flatten()
@@ -385,19 +428,21 @@ impl Inference<'_> {
         } else {
             typed_args
         };
-        if has_non_deferred_error || typed_args.iter().zip(args).any(|(typed, arg)| {
-            matches!(arg, Expr::AsyncDo { .. }) && !has_deferred_closures && typed.ty.is_error()
-        }) {
+        if has_non_deferred_error
+            || typed_args.iter().zip(args).any(|(typed, arg)| {
+                matches!(arg, Expr::AsyncDo { .. }) && !has_deferred_closures && typed.ty.is_error()
+            })
+        {
             return self.error_call(typed_args, span);
         }
 
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
 
         // Super method call: super.method(args)
-        if let Expr::Identifier(name, super_span) = receiver {
-            if name == "super" {
-                return self.resolve_super_method_call(method, typed_args, super_span, span);
-            }
+        if let Expr::Identifier(name, super_span) = receiver
+            && name == "super"
+        {
+            return self.resolve_super_method_call(method, typed_args, super_span, span);
         }
 
         // 0. Try to resolve as a module-qualified function call (Module.func style).
@@ -452,7 +497,12 @@ impl Inference<'_> {
                 if !overloads.is_empty() {
                     let display = format!("{}.{}", name, method.value);
                     return self.resolve_overloads_with_intrinsics(
-                        &module_info.fqn, &member_sym, overloads, typed_args, &display, span,
+                        &module_info.fqn,
+                        &member_sym,
+                        overloads,
+                        typed_args,
+                        &display,
+                        span,
                     );
                 }
             }
@@ -475,29 +525,47 @@ impl Inference<'_> {
             // arg types. Report argument mismatch instead of falling through to
             // "no variant in enum". Only considers members visible from the caller's
             // context and that are static (no `self` param).
-            let has_visible_static = module_info.functions.get(&member_sym).is_some_and(|overloads| {
-                overloads.iter().any(|sig| {
-                    (sig.params.is_empty() || sig.params[0].0 != "self")
-                        && match sig.visibility {
-                            Visibility::Public | Visibility::Protected => true,
-                            Visibility::Internal => module_info.fqn.package == self.package_path,
-                            Visibility::Private => sig.source_file == self.current_file,
-                        }
-                })
-            }) || module_info.generic_members.lookup_visible(
-                &member_sym, &self.package_path, &self.current_file,
-            ).iter().any(|def| def.params.is_empty() || def.params[0].0 != "self");
-            let has_other_static = self.registry.find_impl_method(&module_info.fqn, &member_sym)
-                .iter().any(|(_, method)| method.params.first().is_none_or(|(name, _)| name != "self"))
-                || self.lookup_named_extension_methods(&module_info.fqn, &member_sym)
-                    .iter().any(|(_, method)| method.params.first().is_none_or(|(name, _)| name != "self"));
+            let has_visible_static =
+                module_info
+                    .functions
+                    .get(&member_sym)
+                    .is_some_and(|overloads| {
+                        overloads.iter().any(|sig| {
+                            (sig.params.is_empty() || sig.params[0].0 != "self")
+                                && match sig.visibility {
+                                    Visibility::Public | Visibility::Protected => true,
+                                    Visibility::Internal => {
+                                        module_info.fqn.package == self.package_path
+                                    }
+                                    Visibility::Private => sig.source_file == self.current_file,
+                                }
+                        })
+                    })
+                    || module_info
+                        .generic_members
+                        .lookup_visible(&member_sym, &self.package_path, &self.current_file)
+                        .iter()
+                        .any(|def| def.params.is_empty() || def.params[0].0 != "self");
+            let has_other_static = self
+                .registry
+                .find_impl_method(&module_info.fqn, &member_sym)
+                .iter()
+                .any(|(_, method)| method.params.first().is_none_or(|(name, _)| name != "self"))
+                || self
+                    .lookup_named_extension_methods(&module_info.fqn, &member_sym)
+                    .iter()
+                    .any(|(_, method)| {
+                        method.params.first().is_none_or(|(name, _)| name != "self")
+                    });
             if has_visible_static && !has_other_static {
                 let arg_type_strs: Vec<String> = arg_types.iter().map(|t| t.to_string()).collect();
                 self.diagnostics.error(
                     span.clone(),
                     format!(
                         "no matching overload for '{}.{}' with argument types ({})",
-                        name, method.value, arg_type_strs.join(", ")
+                        name,
+                        method.value,
+                        arg_type_strs.join(", ")
                     ),
                 );
                 return self.error_call(typed_args, span);
@@ -506,163 +574,173 @@ impl Inference<'_> {
         }
 
         // 0b. Try to resolve as an enum variant constructor: Enum.Variant(args)
-        if let Expr::Identifier(name, _) = receiver {
-            if let Some(enum_sig) = self.resolve_enum_type(name) {
-                if let Some((_, payload)) =
-                    enum_sig.variants.iter().find(|(v, _)| v == &method.value)
-                {
-                    self.check_private_type_access(
-                        &enum_sig.fqn,
-                        enum_sig.construction_private,
-                        "enum",
-                        span,
-                        "construct",
-                    );
+        if let Expr::Identifier(name, _) = receiver
+            && let Some(enum_sig) = self.resolve_enum_type(name)
+            && let Some((_, payload)) = enum_sig.variants.iter().find(|(v, _)| v == &method.value)
+        {
+            self.check_private_type_access(
+                &enum_sig.fqn,
+                enum_sig.construction_private,
+                "enum",
+                span,
+                "construct",
+            );
 
-                    let payload_types = match payload {
-                        VariantPayload::Tuple(types) => types.clone(),
-                        VariantPayload::None => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                format!(
-                                    "variant '{}.{}' has no fields; use '{}.{}' without parentheses",
-                                    name, method.value, name, method.value
-                                ),
-                            );
-                            return TypedExpr {
-                                kind: TypedExprKind::UnitLiteral,
-                                ty: Type::Error,
-                                span: span.clone(),
-                            };
-                        }
-                        VariantPayload::Record(_) => {
-                            self.diagnostics.error(
-                                span.clone(),
-                                format!(
-                                    "variant '{}.{}' requires record-style construction with {{ }}, not ()",
-                                    name,
-                                    method.value
-                                ),
-                            );
-                            return TypedExpr {
-                                kind: TypedExprKind::UnitLiteral,
-                                ty: Type::Error,
-                                span: span.clone(),
-                            };
-                        }
-                    };
-                    if typed_args.len() != payload_types.len() {
-                        self.diagnostics.error(
-                            span.clone(),
-                            format!(
-                                "variant '{}.{}' expects {} argument(s), found {}",
-                                name,
-                                method.value,
-                                payload_types.len(),
-                                typed_args.len()
-                            ),
-                        );
-                        return TypedExpr {
-                            kind: TypedExprKind::UnitLiteral,
-                            ty: Type::Error,
-                            span: span.clone(),
-                        };
-                    }
-                    // Handle generic enums
-                    if !enum_sig.type_params.is_empty() {
-                        // Unify payload template types against typed arg types
-                        let mut substitution = super::type_param_substitution::TypeParamSubstitution::new();
-                        for (payload_ty, arg) in payload_types.iter().zip(typed_args.iter()) {
-                            substitution.unify(payload_ty, &arg.ty);
-                        }
-                        // Try to resolve type params from unification, then expected_type, then covariant defaults
-                        let resolved = substitution.resolve_type_params(&enum_sig.type_params);
-                        let type_args: Vec<Type> = match resolved {
-                            Some(args) => args,
-                            _ => {
-                                // Fallback: try expected_type
-                                match &self.expected_type {
-                                    Some(Type::GenericEnum { fqn: exp_fqn, type_args: expected_args, .. })
-                                        if *exp_fqn == enum_sig.fqn =>
-                                    {
-                                        // Merge payload unification results with expected type args.
-                                        // Prefer concrete bindings from payload unification (e.g. T=Int32 from Succeed(x))
-                                        // over the expected type args.
-                                        expected_args.iter().zip(enum_sig.type_params.iter()).map(|((_, exp_ty), tp)| {
-                                            match substitution.get(tp) {
-                                                Some(ty) if !matches!(ty, Type::TypeVariable(..) | Type::GenericParam(..)) => ty.clone(),
-                                                _ => exp_ty.clone(),
-                                            }
-                                        }).collect()
-                                    }
-                                    _ => {
-                                        // Default covariant params to Never
-                                        match substitution.resolve_with_variance_defaults(&enum_sig.type_params, &enum_sig.type_param_variances) {
-                                            Some(args) => args,
-                                            None => {
-                                                self.diagnostics.error(
-                                                    span.clone(),
-                                                    format!(
-                                                        "cannot infer type arguments for generic enum '{}'",
-                                                        name
-                                                    ),
-                                                );
-                                                return TypedExpr {
-                                                    kind: TypedExprKind::UnitLiteral,
-                                                    ty: Type::Error,
-                                                    span: span.clone(),
-                                                };
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        };
-                        let enum_ty = self.resolve_generic_enum_type(&enum_sig.fqn, &enum_sig, &type_args);
-                        // Substitute and check assignability of payload args
-                        let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
-                            &enum_sig.type_params,
-                            &type_args,
-                        );
-                        let concrete_payload: Vec<Type> = payload_types
-                            .iter()
-                            .map(|t| apply_substitution(&sub, t))
-                            .collect();
-                        for (arg, expected) in typed_args.iter().zip(concrete_payload.iter()) {
-                            self.check_assignable(arg.span.clone(), expected, &arg.ty);
-                        }
-                        return TypedExpr {
-                            ty: enum_ty,
-                            kind: TypedExprKind::EnumCreate {
-                                fqn: enum_sig.fqn.clone(),
-                                variant_name: method.value.clone(),
-                                args: typed_args,
-                                type_params: type_args.clone(),
-                            },
-                            span: span.clone(),
-                        };
-                    }
-                    for (arg, expected) in typed_args.iter().zip(payload_types.iter()) {
-                        self.check_assignable(arg.span.clone(), expected, &arg.ty);
-                    }
-                    let mangled_name = MangledName::for_type(&enum_sig.fqn);
+            let payload_types = match payload {
+                VariantPayload::Tuple(types) => types.clone(),
+                VariantPayload::None => {
+                    self.diagnostics.error(
+                        span.clone(),
+                        format!(
+                            "variant '{}.{}' has no fields; use '{}.{}' without parentheses",
+                            name, method.value, name, method.value
+                        ),
+                    );
                     return TypedExpr {
-                        ty: Type::Enum(enum_sig.fqn.clone(), mangled_name),
-                        kind: TypedExprKind::EnumCreate {
-                            fqn: enum_sig.fqn.clone(),
-                            variant_name: method.value.clone(),
-                            args: typed_args,
-                            type_params: vec![],
-                        },
+                        kind: TypedExprKind::UnitLiteral,
+                        ty: Type::Error,
                         span: span.clone(),
                     };
                 }
-                // Variant not found on this enum — fall through to subsequent
-                // dispatch (class statics, qualified calls, static trait
-                // methods). Lets `EnumName.method(...)` resolve to a static
-                // trait method like `Color.fromJson(json)` via JsonDecoder.
+                VariantPayload::Record(_) => {
+                    self.diagnostics.error(
+                        span.clone(),
+                        format!(
+                            "variant '{}.{}' requires record-style construction with {{ }}, not ()",
+                            name, method.value
+                        ),
+                    );
+                    return TypedExpr {
+                        kind: TypedExprKind::UnitLiteral,
+                        ty: Type::Error,
+                        span: span.clone(),
+                    };
+                }
+            };
+            if typed_args.len() != payload_types.len() {
+                self.diagnostics.error(
+                    span.clone(),
+                    format!(
+                        "variant '{}.{}' expects {} argument(s), found {}",
+                        name,
+                        method.value,
+                        payload_types.len(),
+                        typed_args.len()
+                    ),
+                );
+                return TypedExpr {
+                    kind: TypedExprKind::UnitLiteral,
+                    ty: Type::Error,
+                    span: span.clone(),
+                };
             }
+            // Handle generic enums
+            if !enum_sig.type_params.is_empty() {
+                // Unify payload template types against typed arg types
+                let mut substitution = super::type_param_substitution::TypeParamSubstitution::new();
+                for (payload_ty, arg) in payload_types.iter().zip(typed_args.iter()) {
+                    substitution.unify(payload_ty, &arg.ty);
+                }
+                // Try to resolve type params from unification, then expected_type, then covariant defaults
+                let resolved = substitution.resolve_type_params(&enum_sig.type_params);
+                let type_args: Vec<Type> = match resolved {
+                    Some(args) => args,
+                    _ => {
+                        // Fallback: try expected_type
+                        match &self.expected_type {
+                            Some(Type::GenericEnum {
+                                fqn: exp_fqn,
+                                type_args: expected_args,
+                                ..
+                            }) if *exp_fqn == enum_sig.fqn => {
+                                // Merge payload unification results with expected type args.
+                                // Prefer concrete bindings from payload unification (e.g. T=Int32 from Succeed(x))
+                                // over the expected type args.
+                                expected_args
+                                    .iter()
+                                    .zip(enum_sig.type_params.iter())
+                                    .map(|((_, exp_ty), tp)| match substitution.get(tp) {
+                                        Some(ty)
+                                            if !matches!(
+                                                ty,
+                                                Type::TypeVariable(..) | Type::GenericParam(..)
+                                            ) =>
+                                        {
+                                            ty.clone()
+                                        }
+                                        _ => exp_ty.clone(),
+                                    })
+                                    .collect()
+                            }
+                            _ => {
+                                // Default covariant params to Never
+                                match substitution.resolve_with_variance_defaults(
+                                    &enum_sig.type_params,
+                                    &enum_sig.type_param_variances,
+                                ) {
+                                    Some(args) => args,
+                                    None => {
+                                        self.diagnostics.error(
+                                            span.clone(),
+                                            format!(
+                                                "cannot infer type arguments for generic enum '{}'",
+                                                name
+                                            ),
+                                        );
+                                        return TypedExpr {
+                                            kind: TypedExprKind::UnitLiteral,
+                                            ty: Type::Error,
+                                            span: span.clone(),
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                };
+                let enum_ty = self.resolve_generic_enum_type(&enum_sig.fqn, &enum_sig, &type_args);
+                // Substitute and check assignability of payload args
+                let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                    &enum_sig.type_params,
+                    &type_args,
+                );
+                let concrete_payload: Vec<Type> = payload_types
+                    .iter()
+                    .map(|t| apply_substitution(&sub, t))
+                    .collect();
+                for (arg, expected) in typed_args.iter().zip(concrete_payload.iter()) {
+                    self.check_assignable(arg.span.clone(), expected, &arg.ty);
+                }
+                return TypedExpr {
+                    ty: enum_ty,
+                    kind: TypedExprKind::EnumCreate {
+                        fqn: enum_sig.fqn.clone(),
+                        variant_name: method.value.clone(),
+                        args: typed_args,
+                        type_params: type_args.clone(),
+                    },
+                    span: span.clone(),
+                };
+            }
+            for (arg, expected) in typed_args.iter().zip(payload_types.iter()) {
+                self.check_assignable(arg.span.clone(), expected, &arg.ty);
+            }
+            let mangled_name = MangledName::for_type(&enum_sig.fqn);
+            return TypedExpr {
+                ty: Type::Enum(enum_sig.fqn.clone(), mangled_name),
+                kind: TypedExprKind::EnumCreate {
+                    fqn: enum_sig.fqn.clone(),
+                    variant_name: method.value.clone(),
+                    args: typed_args,
+                    type_params: vec![],
+                },
+                span: span.clone(),
+            };
         }
+        // Variant not found on this enum — fall through to subsequent
+        // dispatch (class statics, qualified calls, static trait
+        // methods). Lets `EnumName.method(...)` resolve to a static
+        // trait method like `Color.fromJson(json)` via JsonDecoder.
 
         // 0d. Explicit disambiguation calls (trait-design-appendix §2.3) —
         // placed before the class-static probe because that probe resolves the
@@ -674,43 +752,66 @@ impl Inference<'_> {
             // inference.
             let shadowed_by_local = self.lookup_variable(name).is_some();
             // 2c. Explicit extension call: `ExtName.method(receiver, args...)`.
-            let ext_target = if shadowed_by_local { None } else { self.import_scope.lookup(name).and_then(|r| {
-                if let crate::typechecker::imports::ImportTarget::Extension(ref f) = r.target {
-                    Some(f.clone())
-                } else {
-                    None
-                }
-            }) };
+            let ext_target = if shadowed_by_local {
+                None
+            } else {
+                self.import_scope.lookup(name).and_then(|r| {
+                    if let crate::typechecker::imports::ImportTarget::Extension(ref f) = r.target {
+                        Some(f.clone())
+                    } else {
+                        None
+                    }
+                })
+            };
             if let Some(ext_fqn) = ext_target {
                 return self.infer_explicit_extension_call(
-                    name, &ext_fqn, method, typed_args, type_params, span,
+                    name,
+                    &ext_fqn,
+                    method,
+                    typed_args,
+                    type_params,
+                    span,
                 );
             }
 
             // 2d. Explicit trait call: `TraitName.method(receiver, args...)` or
             // `TraitName.staticFn(args...)`. Records/enums sharing the name win
             // (modules/classes/enum variants were already claimed above).
-            if let Some(trait_fqn) = if shadowed_by_local { None } else { self.resolve_trait_fqn(name) } {
-                if self.resolve_fqn(name, SymbolKind::Record).is_none()
-                    && self.resolve_fqn(name, SymbolKind::Enum).is_none()
-                    && self.resolve_fqn(name, SymbolKind::Class).is_none()
-                {
-                    if let Some(result) = self.infer_explicit_trait_call(
-                        name, &trait_fqn, receiver_type_args, method, &typed_args, type_params, span,
-                    ) {
-                        return result;
-                    }
-                    // None: the name is an interface and the member wasn't
-                    // found — fall through to the type-name path below.
-                }
+            if let Some(trait_fqn) = if shadowed_by_local {
+                None
+            } else {
+                self.resolve_trait_fqn(name)
+            } && self.resolve_fqn(name, SymbolKind::Record).is_none()
+                && self.resolve_fqn(name, SymbolKind::Enum).is_none()
+                && self.resolve_fqn(name, SymbolKind::Class).is_none()
+                && let Some(result) = self.infer_explicit_trait_call(
+                    name,
+                    &trait_fqn,
+                    receiver_type_args,
+                    method,
+                    &typed_args,
+                    type_params,
+                    span,
+                )
+            {
+                return result;
             }
+            // None: the name is an interface and the member wasn't
+            // found — fall through to the type-name path below.
         }
 
         // 0c. Try to resolve as a class static method: ClassName.method(args)
         // Drop arg_types borrow before moving typed_args; recompute below.
         drop(arg_types);
         let typed_args = if let Expr::Identifier(name, _) = receiver {
-            match self.try_resolve_class_static_method(name, method, typed_args, receiver_type_args, type_params, span) {
+            match self.try_resolve_class_static_method(
+                name,
+                method,
+                typed_args,
+                receiver_type_args,
+                type_params,
+                span,
+            ) {
                 Ok(result) => return result,
                 Err(args) => args,
             }
@@ -736,8 +837,13 @@ impl Inference<'_> {
         if let Expr::Identifier(name, _) = receiver {
             // 2b. Try generic static extension methods (e.g. Array.fill, Array<Int32>.empty)
             let method_sym = SymbolName(method.value.clone());
-            let (generic_static, has_generic_static_defs) =
-                self.resolve_generic_static_extension(name, &method_sym, &arg_types, receiver_type_args, type_params);
+            let (generic_static, has_generic_static_defs) = self.resolve_generic_static_extension(
+                name,
+                &method_sym,
+                &arg_types,
+                receiver_type_args,
+                type_params,
+            );
             if has_generic_static_defs {
                 let display = format!("{}.{}", name, method.value);
                 return self.resolve_overload(&display, generic_static, typed_args, span);
@@ -747,32 +853,73 @@ impl Inference<'_> {
             if let Some(ty) = resolved_type {
                 // Handle type parameter static method calls (e.g., T.from(value))
                 // Look up the method from the type parameter's trait bounds
-                if let Type::TypeVariable(_, ref bounds) | Type::GenericParam(_, ref bounds, _) = ty {
+                if let Type::TypeVariable(_, ref bounds) | Type::GenericParam(_, ref bounds, _) = ty
+                {
                     // Every bound that declares the static competes; a trait
                     // and a sub-trait extending it are ONE inherited
                     // declaration (origin's direct impl wins), and otherwise
                     // bound ORDER must not silently decide the callee.
                     let matching: Vec<(usize, (Type, Vec<Type>))> = bounds
-                        .iter().enumerate().filter_map(|(i, bound)| {
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, bound)| {
                             let bound = bound.named()?;
-                            let trait_sig = self.registry.lookup_trait(&bound.trait_fqn, &self.package_path)?.clone();
-                            let method_sig = trait_sig.methods.iter().find(|m| m.name == method.value
-                                && (m.params.is_empty() || m.params[0].0 != "self") && m.params.len() == typed_args.len())?;
+                            let trait_sig = self
+                                .registry
+                                .lookup_trait(&bound.trait_fqn, &self.package_path)?
+                                .clone();
+                            let method_sig = trait_sig.methods.iter().find(|m| {
+                                m.name == method.value
+                                    && (m.params.is_empty() || m.params[0].0 != "self")
+                                    && m.params.len() == typed_args.len()
+                            })?;
                             let mut sub = TypeParamSubstitution::new().with_self_type(ty.clone());
-                            for (tp,arg) in trait_sig.type_params.iter().zip(&bound.type_args) { sub.insert(tp.clone(),self.scoped_bound_type(arg)); }
-                            for (name,ty) in &bound.associated_types { sub.insert(TypeParamName(name.clone()),self.scoped_bound_type(ty)); }
+                            for (tp, arg) in trait_sig.type_params.iter().zip(&bound.type_args) {
+                                sub.insert(tp.clone(), self.scoped_bound_type(arg));
+                            }
+                            for (name, ty) in &bound.associated_types {
+                                sub.insert(TypeParamName(name.clone()), self.scoped_bound_type(ty));
+                            }
                             for associated in &trait_sig.associated_types {
-                                let parameters = associated.type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![])).collect();
-                                if let Some(projection) = crate::typechecker::associated_types::from_bound(
-                                    &ty, bound, &associated.name, parameters, self.registry,
-                                ) { sub.insert(TypeParamName(associated.name.clone()), projection); }
+                                let parameters = associated
+                                    .type_params
+                                    .iter()
+                                    .map(|name| Type::TypeVariable(name.clone(), vec![]))
+                                    .collect();
+                                if let Some(projection) =
+                                    crate::typechecker::associated_types::from_bound(
+                                        &ty,
+                                        bound,
+                                        &associated.name,
+                                        parameters,
+                                        self.registry,
+                                    )
+                                {
+                                    sub.insert(TypeParamName(associated.name.clone()), projection);
+                                }
                             }
                             if bound.type_args.is_empty() {
-                                for (arg,(_,param)) in typed_args.iter().zip(&method_sig.params) { sub.unify(param,&arg.ty); }
+                                for (arg, (_, param)) in typed_args.iter().zip(&method_sig.params) {
+                                    sub.unify(param, &arg.ty);
+                                }
                             }
-                            if !typed_args.iter().zip(&method_sig.params).all(|(arg,(_,param))| self.is_assignable(&apply_substitution(&sub,param),&arg.ty)) { return None; }
-                            Some((i,(apply_substitution(&sub,&method_sig.return_type),sub.resolve_type_params(&trait_sig.type_params).unwrap_or_else(||bound.type_args.clone()))))
-                        }).collect();
+                            if !typed_args.iter().zip(&method_sig.params).all(
+                                |(arg, (_, param))| {
+                                    self.is_assignable(&apply_substitution(&sub, param), &arg.ty)
+                                },
+                            ) {
+                                return None;
+                            }
+                            Some((
+                                i,
+                                (
+                                    apply_substitution(&sub, &method_sig.return_type),
+                                    sub.resolve_type_params(&trait_sig.type_params)
+                                        .unwrap_or_else(|| bound.type_args.clone()),
+                                ),
+                            ))
+                        })
+                        .collect();
                     let matching = if matching.len() > 1 {
                         match self.dedup_bound_matches_by_origin(
                             &matching,
@@ -823,9 +970,16 @@ impl Inference<'_> {
                     // No matching method found in trait bounds
                     self.diagnostics.error(
                         span.clone(),
-                        format!("no method '{}' found in trait bounds of type parameter '{}'", method.value, name),
+                        format!(
+                            "no method '{}' found in trait bounds of type parameter '{}'",
+                            method.value, name
+                        ),
                     );
-                    return TypedExpr { ty: Type::Error, kind: TypedExprKind::UnitLiteral, span: span.clone() };
+                    return TypedExpr {
+                        ty: Type::Error,
+                        kind: TypedExprKind::UnitLiteral,
+                        span: span.clone(),
+                    };
                 }
                 if ty.is_error() {
                     return self.error_call(typed_args, span);
@@ -834,7 +988,10 @@ impl Inference<'_> {
                     // Intersections have no single FQN and no static members.
                     self.diagnostics.error(
                         span.clone(),
-                        format!("no static method '{}' found for type '{}'", method.value, ty),
+                        format!(
+                            "no static method '{}' found for type '{}'",
+                            method.value, ty
+                        ),
                     );
                     return self.error_call(typed_args, span);
                 };
@@ -856,17 +1013,28 @@ impl Inference<'_> {
                     .filter(|(b, _)| b.for_type == ty)
                     .cloned()
                     .collect();
-                let static_ext: Vec<_> =
-                    if exact_static_ext.is_empty() { all_static_ext } else { exact_static_ext };
+                let static_ext: Vec<_> = if exact_static_ext.is_empty() {
+                    all_static_ext
+                } else {
+                    exact_static_ext
+                };
                 if !static_ext.is_empty() {
                     let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
                     let any_match = static_ext.iter().any(|(_, m)| {
-                        FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| self.is_assignable(p, a))
+                        FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
+                            self.is_assignable(p, a)
+                        })
                     });
                     if any_match {
                         let display = format!("{}.{}", name, method.value);
                         return self.resolve_ext_overloads_with_intrinsics(
-                            &type_fqn, &method_sym, static_ext, &ty, typed_args, &display, span,
+                            &type_fqn,
+                            &method_sym,
+                            static_ext,
+                            &ty,
+                            typed_args,
+                            &display,
+                            span,
                         );
                     }
                 }
@@ -877,14 +1045,16 @@ impl Inference<'_> {
                 // siblings as overloads); when no block matches the exact
                 // spelling (e.g. a bare-name form), keep the full base-FQN
                 // set so single-impl programs resolve as before.
-                let all_static_impls: Vec<_> = self.registry
+                let all_static_impls: Vec<_> = self
+                    .registry
                     .find_impl_method(&type_fqn, &method_sym)
                     .into_iter()
                     .filter(|(b, m)| {
                         b.type_params.is_empty()
                             && m.method_type_params.is_empty()
                             && (m.params.is_empty() || m.params[0].0 != "self")
-                            && (m.visibility != Visibility::Private || m.span.file == self.current_file)
+                            && (m.visibility != Visibility::Private
+                                || m.span.file == self.current_file)
                     })
                     .collect();
                 let exact_static_impls: Vec<_> = all_static_impls
@@ -893,19 +1063,35 @@ impl Inference<'_> {
                     .cloned()
                     .collect();
                 let static_impl_pairs: Vec<(Fqn, Vec<Type>, FunctionSignature)> =
-                    if exact_static_impls.is_empty() { all_static_impls } else { exact_static_impls }
+                    if exact_static_impls.is_empty() {
+                        all_static_impls
+                    } else {
+                        exact_static_impls
+                    }
                     .into_iter()
-                    .map(|(b, m)| (b.trait_fqn.clone(), b.trait_type_args.clone(), FunctionSignature {
-                        visibility: m.visibility,
-                        mangled_name: crate::typechecker::types::impl_member_mangled_name(&b.trait_fqn, &b.for_type, &b.type_params, &m.dispatch_name, &b.trait_type_args),
-                        params: m.params.clone(),
-                        return_type: m.return_type.clone(),
-                        source_file: b.source_file.clone(),
-                        is_intrinsic: m.is_intrinsic,
-                        is_property: m.is_property,
-                        is_final_method: false,
-                        is_abstract_method: false,
-                    }))
+                    .map(|(b, m)| {
+                        (
+                            b.trait_fqn.clone(),
+                            b.trait_type_args.clone(),
+                            FunctionSignature {
+                                visibility: m.visibility,
+                                mangled_name: crate::typechecker::types::impl_member_mangled_name(
+                                    &b.trait_fqn,
+                                    &b.for_type,
+                                    &b.type_params,
+                                    &m.dispatch_name,
+                                    &b.trait_type_args,
+                                ),
+                                params: m.params.clone(),
+                                return_type: m.return_type.clone(),
+                                source_file: b.source_file.clone(),
+                                is_intrinsic: m.is_intrinsic,
+                                is_property: m.is_property,
+                                is_final_method: false,
+                                is_abstract_method: false,
+                            },
+                        )
+                    })
                     .collect();
                 let static_impl_pairs: Vec<(Fqn, FunctionSignature)> = self
                     .prefer_origin_impl_pairs(static_impl_pairs, &typed_args, &method.value, false)
@@ -915,14 +1101,23 @@ impl Inference<'_> {
                 if !static_impl_pairs.is_empty() {
                     let display = format!("{}.{}", name, method.value);
                     if let Some(err) = self.check_cross_trait_ambiguity(
-                        &static_impl_pairs, &typed_args, &display, &method.value, span,
+                        &static_impl_pairs,
+                        &typed_args,
+                        &display,
+                        &method.value,
+                        span,
                     ) {
                         return err;
                     }
                     let static_trait_impl: Vec<FunctionSignature> =
                         static_impl_pairs.into_iter().map(|(_, sig)| sig).collect();
                     return self.resolve_overloads_with_intrinsics(
-                        &type_fqn, &method_sym, static_trait_impl, typed_args, &display, span,
+                        &type_fqn,
+                        &method_sym,
+                        static_trait_impl,
+                        typed_args,
+                        &display,
+                        span,
                     );
                 }
 
@@ -938,49 +1133,100 @@ impl Inference<'_> {
                 // to pick up.
                 let mut generic_static_ambiguous = false;
                 let generic_match: Option<(ImplBlockSignature, ImplMethodSignature, Vec<Type>)> = {
-                    let mut candidates: Vec<_> = self.registry.find_impl_method(&type_fqn, &method_sym).into_iter()
-                        .filter(|(b,m)| !b.type_params.is_empty() && m.method_type_params.is_empty()
-                            && (m.params.is_empty() || m.params[0].0 != "self")
-                            && (m.visibility != Visibility::Private || m.span.file == self.current_file))
-                        .filter_map(|(b,m)| {
+                    let mut candidates: Vec<_> = self
+                        .registry
+                        .find_impl_method(&type_fqn, &method_sym)
+                        .into_iter()
+                        .filter(|(b, m)| {
+                            !b.type_params.is_empty()
+                                && m.method_type_params.is_empty()
+                                && (m.params.is_empty() || m.params[0].0 != "self")
+                                && (m.visibility != Visibility::Private
+                                    || m.span.file == self.current_file)
+                        })
+                        .filter_map(|(b, m)| {
                             let mut sub = TypeParamSubstitution::new();
-                            if !sub.unify(&b.for_type,&ty) { return None; }
+                            if !sub.unify(&b.for_type, &ty) {
+                                return None;
+                            }
                             let args = sub.resolve_type_params(&b.type_params)?;
-                            Some((b,m,args))
-                        }).collect();
-                    let arg_types: Vec<_> = typed_args.iter().map(|a|&a.ty).collect();
-                    let accepting: Vec<_> = candidates.iter().filter(|(b,m,args)| {
-                        let sub=TypeParamSubstitution::from_pairs(&b.type_params,args);
-                        let params: Vec<_> = m.params.iter().map(|(n,t)|(n.clone(),apply_substitution(&sub,t))).collect();
-                        FunctionSignature::params_match_args(&params,&arg_types,|p,a|self.is_assignable(p,a))
-                    }).cloned().collect();
-                    if !accepting.is_empty() { candidates=accepting; }
-                    let application = |b: &ImplBlockSignature,args: &[Type]| {
-                        let sub=TypeParamSubstitution::from_pairs(&b.type_params,args);
-                        (b.trait_fqn.clone(),b.trait_type_args.iter().map(|t|apply_substitution(&sub,t)).collect::<Vec<_>>())
+                            Some((b, m, args))
+                        })
+                        .collect();
+                    let arg_types: Vec<_> = typed_args.iter().map(|a| &a.ty).collect();
+                    let accepting: Vec<_> = candidates
+                        .iter()
+                        .filter(|(b, m, args)| {
+                            let sub = TypeParamSubstitution::from_pairs(&b.type_params, args);
+                            let params: Vec<_> = m
+                                .params
+                                .iter()
+                                .map(|(n, t)| (n.clone(), apply_substitution(&sub, t)))
+                                .collect();
+                            FunctionSignature::params_match_args(&params, &arg_types, |p, a| {
+                                self.is_assignable(p, a)
+                            })
+                        })
+                        .cloned()
+                        .collect();
+                    if !accepting.is_empty() {
+                        candidates = accepting;
+                    }
+                    let application = |b: &ImplBlockSignature, args: &[Type]| {
+                        let sub = TypeParamSubstitution::from_pairs(&b.type_params, args);
+                        (
+                            b.trait_fqn.clone(),
+                            b.trait_type_args
+                                .iter()
+                                .map(|t| apply_substitution(&sub, t))
+                                .collect::<Vec<_>>(),
+                        )
                     };
-                    let mut distinct=Vec::new();
-                    for (b,_,args) in &candidates { let key=application(b,args);if !distinct.contains(&key) {distinct.push(key);} }
-                    if distinct.len()>1 {
-                        if let Some(kept)=self.dedup_traits_by_member_origin(&distinct,|sig,member|sig.methods.iter().find(|m|m.name==member).and_then(|m|m.origin.clone()),&method.value) {
-                            let keep=distinct[kept].clone();candidates.retain(|(b,_,args)|application(b,args)==keep);distinct=vec![keep];
+                    let mut distinct = Vec::new();
+                    for (b, _, args) in &candidates {
+                        let key = application(b, args);
+                        if !distinct.contains(&key) {
+                            distinct.push(key);
                         }
                     }
-                    if distinct.len()>1 {
-                        let names: Vec<_>=distinct.iter().map(|(f,a)|format!("'{}'",Self::trait_application_display(f,a))).collect();
+                    if distinct.len() > 1
+                        && let Some(kept) = self.dedup_traits_by_member_origin(
+                            &distinct,
+                            |sig, member| {
+                                sig.methods
+                                    .iter()
+                                    .find(|m| m.name == member)
+                                    .and_then(|m| m.origin.clone())
+                            },
+                            &method.value,
+                        )
+                    {
+                        let keep = distinct[kept].clone();
+                        candidates.retain(|(b, _, args)| application(b, args) == keep);
+                        distinct = vec![keep];
+                    }
+                    if distinct.len() > 1 {
+                        let names: Vec<_> = distinct
+                            .iter()
+                            .map(|(f, a)| format!("'{}'", Self::trait_application_display(f, a)))
+                            .collect();
                         self.diagnostics.error(span.clone(),format!("ambiguous call to '{}.{}': implemented by trait {}; a static function of a generic implementation cannot be selected by trait name",name,method.value,names.join(" and trait ")));
-                        generic_static_ambiguous=true;None
-                    } else { candidates.into_iter().next().map(|(b,m,args)|(b.clone(),m.clone(),args)) }
+                        generic_static_ambiguous = true;
+                        None
+                    } else {
+                        candidates
+                            .into_iter()
+                            .next()
+                            .map(|(b, m, args)| (b.clone(), m.clone(), args))
+                    }
                 };
                 if generic_static_ambiguous {
                     return self.error_call(typed_args, span);
                 }
 
                 if let Some((block, impl_method, implementation_args)) = generic_match {
-                    let sub = TypeParamSubstitution::from_pairs(
-                        &block.type_params,
-                        &implementation_args,
-                    );
+                    let sub =
+                        TypeParamSubstitution::from_pairs(&block.type_params, &implementation_args);
                     // Validate trait bounds (e.g. `T: JsonDecoder`).
                     if self.check_trait_bounds(
                         &block.trait_bounds,
@@ -1007,7 +1253,9 @@ impl Inference<'_> {
                                 ty: concrete_ret,
                                 kind: TypedExprKind::ImplFunctionCall {
                                     trait_fqn: block.trait_fqn.clone(),
-                                    trait_type_params: block.trait_type_args.iter()
+                                    trait_type_params: block
+                                        .trait_type_args
+                                        .iter()
                                         .map(|ty| apply_substitution(&sub, ty))
                                         .collect(),
                                     for_type: concrete_for_type,
@@ -1055,8 +1303,7 @@ impl Inference<'_> {
                     !b.type_params.is_empty()
                         && m.method_type_params.is_empty()
                         && (m.params.is_empty() || m.params[0].0 != "self")
-                        && (m.visibility != Visibility::Private
-                            || m.span.file == self.current_file)
+                        && (m.visibility != Visibility::Private || m.span.file == self.current_file)
                 })
                 .map(|(b, m)| (b.clone(), m.clone()))
                 .collect();
@@ -1082,35 +1329,43 @@ impl Inference<'_> {
                 })
                 .cloned()
                 .collect();
-            let mut candidates = if accepting.is_empty() { candidates } else { accepting };
+            let mut candidates = if accepting.is_empty() {
+                candidates
+            } else {
+                accepting
+            };
             // Distinct traits' blocks providing the same tuple static are
             // ambiguous — mirror of the named-type path, not first-wins.
-            let distinct_of = |cands: &[(ImplBlockSignature, ImplMethodSignature)]| -> Vec<(Fqn, Vec<Type>)> {
-                let mut out: Vec<(Fqn, Vec<Type>)> = Vec::new();
-                for (b, _) in cands {
-                    let key = (b.trait_fqn.clone(), b.trait_type_args.clone());
-                    if !out.contains(&key) {
-                        out.push(key);
+            let distinct_of =
+                |cands: &[(ImplBlockSignature, ImplMethodSignature)]| -> Vec<(Fqn, Vec<Type>)> {
+                    let mut out: Vec<(Fqn, Vec<Type>)> = Vec::new();
+                    for (b, _) in cands {
+                        let key = (b.trait_fqn.clone(), b.trait_type_args.clone());
+                        if !out.contains(&key) {
+                            out.push(key);
+                        }
                     }
-                }
-                out
-            };
+                    out
+                };
             let mut distinct = distinct_of(&candidates);
             // ...except when they are ONE inherited declaration (a trait plus
             // a sub-trait extending it): the origin's direct impl wins.
-            if distinct.len() > 1 {
-                if let Some(kept) = self.dedup_traits_by_member_origin(
+            if distinct.len() > 1
+                && let Some(kept) = self.dedup_traits_by_member_origin(
                     &distinct,
                     |sig, member| {
-                        sig.methods.iter().find(|m| m.name == member).and_then(|m| m.origin.clone())
+                        sig.methods
+                            .iter()
+                            .find(|m| m.name == member)
+                            .and_then(|m| m.origin.clone())
                     },
                     &method.value,
-                ) {
-                    let (keep_fqn, keep_args) = distinct[kept].clone();
-                    candidates
-                        .retain(|(b, _)| b.trait_fqn == keep_fqn && b.trait_type_args == keep_args);
-                    distinct = distinct_of(&candidates);
-                }
+                )
+            {
+                let (keep_fqn, keep_args) = distinct[kept].clone();
+                candidates
+                    .retain(|(b, _)| b.trait_fqn == keep_fqn && b.trait_type_args == keep_args);
+                distinct = distinct_of(&candidates);
             }
             if distinct.len() > 1 {
                 let names: Vec<String> = distinct
@@ -1130,50 +1385,39 @@ impl Inference<'_> {
 
             if let Some((block, impl_method)) = generic_match {
                 let mut sub = TypeParamSubstitution::new();
-                if sub.unify(&block.for_type, &tuple_ty) {
-                    if let Some(receiver_args) =
-                        sub.resolve_type_params(&block.type_params)
-                    {
-                        if self.check_trait_bounds(
-                            &block.trait_bounds,
-                            &block.type_params,
-                            &receiver_args,
-                            span,
-                        ) {
-                            let concrete_params: Vec<(String, Type)> = impl_method
-                                .params
-                                .iter()
-                                .map(|(n, t)| (n.clone(), apply_substitution(&sub, t)))
-                                .collect();
-                            let concrete_ret =
-                                apply_substitution(&sub, &impl_method.return_type);
-                            let concrete_for_type =
-                                apply_substitution(&sub, &block.for_type);
+                if sub.unify(&block.for_type, &tuple_ty)
+                    && let Some(receiver_args) = sub.resolve_type_params(&block.type_params)
+                    && self.check_trait_bounds(
+                        &block.trait_bounds,
+                        &block.type_params,
+                        &receiver_args,
+                        span,
+                    )
+                {
+                    let concrete_params: Vec<(String, Type)> = impl_method
+                        .params
+                        .iter()
+                        .map(|(n, t)| (n.clone(), apply_substitution(&sub, t)))
+                        .collect();
+                    let concrete_ret = apply_substitution(&sub, &impl_method.return_type);
+                    let concrete_for_type = apply_substitution(&sub, &block.for_type);
 
-                            if typed_args.len() == concrete_params.len() {
-                                for ((_, expected), arg) in
-                                    concrete_params.iter().zip(typed_args.iter())
-                                {
-                                    self.check_assignable(
-                                        arg.span.clone(),
-                                        expected,
-                                        &arg.ty,
-                                    );
-                                }
-                                return TypedExpr {
-                                    ty: concrete_ret,
-                                    kind: TypedExprKind::ImplFunctionCall {
-                                        trait_fqn: block.trait_fqn.clone(),
-                                        trait_type_params: block.trait_type_args.clone(),
-                                        for_type: concrete_for_type,
-                                        method_name: impl_method.dispatch_name.clone(),
-                                        args: typed_args,
-                                        method_type_params: vec![],
-                                    },
-                                    span: span.clone(),
-                                };
-                            }
+                    if typed_args.len() == concrete_params.len() {
+                        for ((_, expected), arg) in concrete_params.iter().zip(typed_args.iter()) {
+                            self.check_assignable(arg.span.clone(), expected, &arg.ty);
                         }
+                        return TypedExpr {
+                            ty: concrete_ret,
+                            kind: TypedExprKind::ImplFunctionCall {
+                                trait_fqn: block.trait_fqn.clone(),
+                                trait_type_params: block.trait_type_args.clone(),
+                                for_type: concrete_for_type,
+                                method_name: impl_method.dispatch_name.clone(),
+                                args: typed_args,
+                                method_type_params: vec![],
+                            },
+                            span: span.clone(),
+                        };
                     }
                 }
             }
@@ -1190,38 +1434,50 @@ impl Inference<'_> {
         // Early check: if explicit type params are provided, verify the count matches
         // the method's type params before attempting deferred closure inference.
         // This prevents cascading errors from closure inference with unresolved type params.
-        if !type_params.is_empty() && !typed_receiver.ty.is_error()
-            && !matches!(typed_receiver.ty, Type::TypeVariable(..) | Type::GenericParam(..))
+        if !type_params.is_empty()
+            && !typed_receiver.ty.is_error()
+            && !matches!(
+                typed_receiver.ty,
+                Type::TypeVariable(..) | Type::GenericParam(..)
+            )
             && let Some(type_fqn) = typed_receiver.ty.try_to_fqn()
+            && let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned()
         {
-            if let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned() {
-                let method_sym_early = SymbolName(method.value.clone());
-                let defs: Vec<_> = module_info
-                    .generic_members
-                    .lookup_visible(&method_sym_early, &self.package_path, &self.current_file)
-                    .into_iter()
-                    .filter(|d| !d.params.is_empty() && d.params[0].0 == "self"
-                        && d.params.len() - 1 == args.len())
-                    .collect();
-                if !defs.is_empty()
-                    && defs.iter().all(|d| d.method_type_params.len() != type_params.len())
-                {
-                    let expected = defs[0].method_type_params.len();
-                    self.diagnostics.error(
-                        span.clone(),
-                        format!(
-                            "method '{}' expects {} type parameter{} but {} {} provided",
-                            method.value,
-                            expected,
-                            if expected == 1 { "" } else { "s" },
-                            type_params.len(),
-                            if type_params.len() == 1 { "was" } else { "were" },
-                        ),
-                    );
-                    let mut all_args = vec![typed_receiver];
-                    all_args.extend(typed_args);
-                    return self.error_call(all_args, span);
-                }
+            let method_sym_early = SymbolName(method.value.clone());
+            let defs: Vec<_> = module_info
+                .generic_members
+                .lookup_visible(&method_sym_early, &self.package_path, &self.current_file)
+                .into_iter()
+                .filter(|d| {
+                    !d.params.is_empty()
+                        && d.params[0].0 == "self"
+                        && d.params.len() - 1 == args.len()
+                })
+                .collect();
+            if !defs.is_empty()
+                && defs
+                    .iter()
+                    .all(|d| d.method_type_params.len() != type_params.len())
+            {
+                let expected = defs[0].method_type_params.len();
+                self.diagnostics.error(
+                    span.clone(),
+                    format!(
+                        "method '{}' expects {} type parameter{} but {} {} provided",
+                        method.value,
+                        expected,
+                        if expected == 1 { "" } else { "s" },
+                        type_params.len(),
+                        if type_params.len() == 1 {
+                            "was"
+                        } else {
+                            "were"
+                        },
+                    ),
+                );
+                let mut all_args = vec![typed_receiver];
+                all_args.extend(typed_args);
+                return self.error_call(all_args, span);
             }
         }
 
@@ -1241,13 +1497,15 @@ impl Inference<'_> {
             ) {
                 // Only re-infer if there are deferred closures or if expected types
                 // would help (when an arg got a different type than expected)
-                let needs_reinfer = has_deferred_closures || has_deferred_overloaded_refs || typed_args.iter().zip(expected.iter()).any(|(arg, exp)| {
-                    if let Some(exp_ty) = exp {
-                        arg.ty != *exp_ty && !arg.ty.is_error()
-                    } else {
-                        false
-                    }
-                });
+                let needs_reinfer = has_deferred_closures
+                    || has_deferred_overloaded_refs
+                    || typed_args.iter().zip(expected.iter()).any(|(arg, exp)| {
+                        if let Some(exp_ty) = exp {
+                            arg.ty != *exp_ty && !arg.ty.is_error()
+                        } else {
+                            false
+                        }
+                    });
                 if needs_reinfer {
                     self.unresolved_method_type_params = unresolved;
                     typed_args = self.infer_args_with_expected(args, &Some(expected));
@@ -1272,14 +1530,23 @@ impl Inference<'_> {
                 let name = name.clone();
                 let bounds = bounds.clone();
                 if let Some(expr) = self.try_resolve_method_from_class_bounds(
-                    &name, &bounds, &typed_receiver, &method.value,
-                    typed_args.clone(), span,
+                    &name,
+                    &bounds,
+                    &typed_receiver,
+                    &method.value,
+                    typed_args.clone(),
+                    span,
                 ) {
                     return expr;
                 }
                 if let Some(expr) = self.try_resolve_method_from_trait_bounds(
-                    &name, &bounds, &typed_receiver, &method.value,
-                    typed_args.clone(), type_params, span,
+                    &name,
+                    &bounds,
+                    &typed_receiver,
+                    &method.value,
+                    typed_args.clone(),
+                    type_params,
+                    span,
                 ) {
                     return expr;
                 }
@@ -1326,26 +1593,30 @@ impl Inference<'_> {
                             None => (c.trait_fqn.clone(), c.trait_type_args.clone()),
                         })
                     };
-                    let origins: Vec<Option<(Fqn, Vec<Type>)>> = declaring.iter().map(|c| member_origin(c)).collect();
-                    if origins.iter().all(|o| o.is_some()) && origins.windows(2).all(|w| w[0] == w[1]) {
+                    let origins: Vec<Option<(Fqn, Vec<Type>)>> =
+                        declaring.iter().map(|c| member_origin(c)).collect();
+                    if origins.iter().all(|o| o.is_some())
+                        && origins.windows(2).all(|w| w[0] == w[1])
+                    {
                         let (origin_fqn, origin_args) = origins[0].clone().unwrap();
                         // Dedup only when the origin application is itself a
                         // component (`A and B` with B extends A): dispatch
                         // through the origin's own slots. Two SUB-traits
                         // inheriting the same application from a shared super
                         // carry distinct inline impls — that stays ambiguous.
-                        if let Some(pos) = declaring
-                            .iter()
-                            .position(|c| c.trait_fqn == origin_fqn && c.trait_type_args == origin_args)
-                        {
+                        if let Some(pos) = declaring.iter().position(|c| {
+                            c.trait_fqn == origin_fqn && c.trait_type_args == origin_args
+                        }) {
                             let chosen = declaring[pos];
                             declaring = vec![chosen];
                         }
                     }
                 }
                 if declaring.len() > 1 {
-                    let names: Vec<String> =
-                        declaring.iter().map(|c| format!("'{}'", c.trait_fqn.symbol)).collect();
+                    let names: Vec<String> = declaring
+                        .iter()
+                        .map(|c| format!("'{}'", c.trait_fqn.symbol))
+                        .collect();
                     self.diagnostics.error(
                         span.clone(),
                         format!(
@@ -1360,15 +1631,23 @@ impl Inference<'_> {
                     let trait_fqn = component.trait_fqn.clone();
                     let trait_type_args = component.trait_type_args.clone();
                     if let Some(result) = self.resolve_interface_object_method_call(
-                        typed_receiver.clone(), &method.value, &trait_fqn, &trait_type_args,
-                        typed_args.clone(), span,
+                        typed_receiver.clone(),
+                        &method.value,
+                        &trait_fqn,
+                        &trait_type_args,
+                        typed_args.clone(),
+                        span,
                     ) {
                         return result;
                     }
                 }
                 // Method not in any component — try concrete pipeline below
                 if let Some(result) = self.resolve_concrete_type_instance_method(
-                    &typed_receiver, method, &typed_args, type_params, span,
+                    &typed_receiver,
+                    method,
+                    &typed_args,
+                    type_params,
+                    span,
                 ) {
                     return result;
                 }
@@ -1376,12 +1655,20 @@ impl Inference<'_> {
 
             Type::Class(..) | Type::GenericClass { .. } => {
                 if let Some(result) = self.try_resolve_class_instance_method(
-                    &typed_receiver, method, typed_args.clone(), type_params, span,
+                    &typed_receiver,
+                    method,
+                    typed_args.clone(),
+                    type_params,
+                    span,
                 ) {
                     return result;
                 }
                 if let Some(result) = self.resolve_concrete_type_instance_method(
-                    &typed_receiver, method, &typed_args, type_params, span,
+                    &typed_receiver,
+                    method,
+                    &typed_args,
+                    type_params,
+                    span,
                 ) {
                     return result;
                 }
@@ -1389,7 +1676,11 @@ impl Inference<'_> {
 
             _ => {
                 if let Some(result) = self.resolve_concrete_type_instance_method(
-                    &typed_receiver, method, &typed_args, type_params, span,
+                    &typed_receiver,
+                    method,
+                    &typed_args,
+                    type_params,
+                    span,
                 ) {
                     return result;
                 }
@@ -1400,14 +1691,21 @@ impl Inference<'_> {
         // name to provide a better error about argument mismatch vs missing method.
         let method_sym = SymbolName(method.value.clone());
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
-        let had_generic_defs = if !matches!(typed_receiver.ty, Type::TypeVariable(..) | Type::GenericParam(..)) {
+        let had_generic_defs = if !matches!(
+            typed_receiver.ty,
+            Type::TypeVariable(..) | Type::GenericParam(..)
+        ) {
             // WITH a span, and this is the only instance-method site that has
             // one: every other strategy has already failed, so a candidate that
             // matched the name and the arguments and was rejected for a trait
             // bound is the reason this call does not resolve, and saying which
             // bound beats the argument-types summary below.
             let (_, had) = self.resolve_generic_module_instance_method(
-                &typed_receiver.ty, &method_sym, &arg_types, &[], Some(span),
+                &typed_receiver.ty,
+                &method_sym,
+                &arg_types,
+                &[],
+                Some(span),
             );
             had
         } else {
@@ -1428,7 +1726,9 @@ impl Inference<'_> {
                 span.clone(),
                 format!(
                     "no matching overload for '{}.{}' with argument types ({})",
-                    typed_receiver.ty, method.value, arg_type_strs.join(", ")
+                    typed_receiver.ty,
+                    method.value,
+                    arg_type_strs.join(", ")
                 ),
             );
         } else {
@@ -1472,20 +1772,43 @@ impl Inference<'_> {
         // Find the method in the trait signature. Object safety is guaranteed:
         // only interfaces reach type position, and interfaces are checked at
         // the declaration (rules/object_safety.rs).
-        let substitution = TypeParamSubstitution::from_pairs(&trait_sig.type_params, trait_type_args)
-            .with_self_type(typed_receiver.ty.clone());
-        let matching: Vec<_> = trait_sig.methods.iter().filter(|method| method.name == method_name)
+        let substitution =
+            TypeParamSubstitution::from_pairs(&trait_sig.type_params, trait_type_args)
+                .with_self_type(typed_receiver.ty.clone());
+        let matching: Vec<_> = trait_sig
+            .methods
+            .iter()
+            .filter(|method| method.name == method_name)
             .filter(|method| {
-                let parameters: Vec<_> = method.params.iter().filter(|(name, _)| name != "self").collect();
-                parameters.len() == typed_args.len() && parameters.iter().zip(&typed_args)
-                    .all(|((_, expected), actual)| self.is_assignable(&apply_substitution(&substitution, expected), &actual.ty))
-            }).collect();
+                let parameters: Vec<_> = method
+                    .params
+                    .iter()
+                    .filter(|(name, _)| name != "self")
+                    .collect();
+                parameters.len() == typed_args.len()
+                    && parameters
+                        .iter()
+                        .zip(&typed_args)
+                        .all(|((_, expected), actual)| {
+                            self.is_assignable(
+                                &apply_substitution(&substitution, expected),
+                                &actual.ty,
+                            )
+                        })
+            })
+            .collect();
         if matching.len() > 1 {
-            self.diagnostics.error(span.clone(), format!("ambiguous overload for '{method_name}'"));
+            self.diagnostics.error(
+                span.clone(),
+                format!("ambiguous overload for '{method_name}'"),
+            );
             return Some(self.error_call(typed_args, span));
         }
-        if let Some(method_sig) = matching.first().copied().or_else(|| trait_sig.methods.iter().find(|m| m.name == method_name)) {
-
+        if let Some(method_sig) = matching
+            .first()
+            .copied()
+            .or_else(|| trait_sig.methods.iter().find(|m| m.name == method_name))
+        {
             // Slot identity (member name, and the interface `Self` re-boxes
             // into) comes from the ORIGIN trait for inherited members.
             let (raw_name, raw_param_strs, origin_self_type) = {
@@ -1499,15 +1822,21 @@ impl Inference<'_> {
                 let origin_self_type = match &method_sig.origin {
                     None => Type::interface_object(trait_fqn.clone(), trait_type_args.to_vec()),
                     Some((origin_fqn, origin_args)) => {
-                        let owner_subst: std::collections::BTreeMap<TypeParamName, Type> = trait_sig
-                            .type_params
-                            .iter()
-                            .cloned()
-                            .zip(trait_type_args.iter().cloned())
-                            .collect();
+                        let owner_subst: std::collections::BTreeMap<TypeParamName, Type> =
+                            trait_sig
+                                .type_params
+                                .iter()
+                                .cloned()
+                                .zip(trait_type_args.iter().cloned())
+                                .collect();
                         let substituted: Vec<Type> = origin_args
                             .iter()
-                            .map(|t| crate::typechecker::collect::substitute_trait_type_params(t, &owner_subst))
+                            .map(|t| {
+                                crate::typechecker::collect::substitute_trait_type_params(
+                                    t,
+                                    &owner_subst,
+                                )
+                            })
                             .collect();
                         Type::interface_object(origin_fqn.clone(), substituted)
                     }
@@ -1519,8 +1848,10 @@ impl Inference<'_> {
             // intersection receiver, the full set would be unsound (the
             // wrapper cannot rebuild the other components).
             let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
-                &trait_sig.type_params, trait_type_args,
-            ).with_self_type(origin_self_type);
+                &trait_sig.type_params,
+                trait_type_args,
+            )
+            .with_self_type(origin_self_type);
 
             // Substitute SelfType and trait type params in method params (skip self param)
             let non_self_params: Vec<(String, Type)> = method_sig
@@ -1529,7 +1860,10 @@ impl Inference<'_> {
                 .filter(|(name, _)| name != "self")
                 .map(|(name, ty)| (name.clone(), ty.clone()))
                 .collect();
-            let method_params: Vec<(String, Type)> = non_self_params.iter().map(|(n, ty)| (n.clone(), apply_substitution(&sub, ty))).collect();
+            let method_params: Vec<(String, Type)> = non_self_params
+                .iter()
+                .map(|(n, ty)| (n.clone(), apply_substitution(&sub, ty)))
+                .collect();
 
             // Substitute in return type
             let return_type = apply_substitution(&sub, &method_sig.return_type);
@@ -1550,13 +1884,18 @@ impl Inference<'_> {
             }
 
             // Check argument types
-            for (i, (arg, (_, expected_ty))) in typed_args.iter().zip(method_params.iter()).enumerate() {
+            for (i, (arg, (_, expected_ty))) in
+                typed_args.iter().zip(method_params.iter()).enumerate()
+            {
                 if !self.is_assignable(expected_ty, &arg.ty) {
                     self.diagnostics.error(
                         span.clone(),
                         format!(
                             "type mismatch for argument {} of '{}': expected '{}', found '{}'",
-                            i + 1, method_name, expected_ty, arg.ty
+                            i + 1,
+                            method_name,
+                            expected_ty,
+                            arg.ty
                         ),
                     );
                 }
@@ -1574,7 +1913,9 @@ impl Inference<'_> {
             // ORIGIN trait's key: its slot lives in the nested super vtable and
             // codegen navigates there from the receiver's component.
             let interface_mangled_name = match &method_sig.origin {
-                Some((origin_fqn, _)) => MangledName::for_interface_object_per_interface(origin_fqn),
+                Some((origin_fqn, _)) => {
+                    MangledName::for_interface_object_per_interface(origin_fqn)
+                }
                 None => MangledName::for_interface_object_per_interface(trait_fqn),
             };
             return Some(TypedExpr {
@@ -1658,18 +1999,27 @@ impl Inference<'_> {
 
         let member_named = |m: &ExtMethodSignature| m.name == method_sym;
         let is_instance = |m: &ExtMethodSignature| !m.params.is_empty() && m.params[0].0 == "self";
-        let has_any = blocks
-            .iter()
-            .any(|b| b.methods.iter().chain(b.properties.iter()).any(member_named));
+        let has_any = blocks.iter().any(|b| {
+            b.methods
+                .iter()
+                .chain(b.properties.iter())
+                .any(member_named)
+        });
         if !has_any {
             self.diagnostics.error(
                 span.clone(),
-                format!("extension '{}' has no function '{}'", ext_name, method.value),
+                format!(
+                    "extension '{}' has no function '{}'",
+                    ext_name, method.value
+                ),
             );
             return self.error_call(typed_args, span);
         }
         let has_instance = blocks.iter().any(|b| {
-            b.methods.iter().chain(b.properties.iter()).any(|m| member_named(m) && is_instance(m))
+            b.methods
+                .iter()
+                .chain(b.properties.iter())
+                .any(|m| member_named(m) && is_instance(m))
         });
 
         if has_instance && !typed_args.is_empty() {
@@ -1689,7 +2039,11 @@ impl Inference<'_> {
                         if member_named(m)
                             && is_instance(m)
                             && crate::typechecker::registry::is_accessible(
-                                m.visibility, &b.package, &self.package_path, &b.source_file, &self.current_file,
+                                m.visibility,
+                                &b.package,
+                                &self.package_path,
+                                &b.source_file,
+                                &self.current_file,
                             )
                         {
                             candidates.push((b.clone(), m.clone()));
@@ -1698,7 +2052,13 @@ impl Inference<'_> {
                 }
                 if !candidates.is_empty() {
                     return self.resolve_ext_overloads_with_intrinsics(
-                        &type_fqn, &method_sym, candidates, &receiver_ty, typed_args, &display, span,
+                        &type_fqn,
+                        &method_sym,
+                        candidates,
+                        &receiver_ty,
+                        typed_args,
+                        &display,
+                        span,
                     );
                 }
             }
@@ -1706,7 +2066,11 @@ impl Inference<'_> {
             // Generic blocks, restricted to this extension.
             let rest_types: Vec<&Type> = typed_args[1..].iter().map(|a| &a.ty).collect();
             let candidates = self.resolve_generic_extension_instance_filtered(
-                &receiver_ty, &method_sym, &rest_types, explicit_type_params, Some(ext_fqn),
+                &receiver_ty,
+                &method_sym,
+                &rest_types,
+                explicit_type_params,
+                Some(ext_fqn),
             );
             if !candidates.is_empty() {
                 return self.resolve_overload(&display, candidates, typed_args, span);
@@ -1734,7 +2098,11 @@ impl Inference<'_> {
                 if member_named(m)
                     && !is_instance(m)
                     && crate::typechecker::registry::is_accessible(
-                        m.visibility, &b.package, &self.package_path, &b.source_file, &self.current_file,
+                        m.visibility,
+                        &b.package,
+                        &self.package_path,
+                        &b.source_file,
+                        &self.current_file,
                     )
                     && m.params.len() == arg_tys.len()
                 {
@@ -1782,12 +2150,17 @@ impl Inference<'_> {
             return self.error_call(typed_args, span);
         }
         if distinct_for_types.len() > 1 {
-            let names: Vec<String> = distinct_for_types.iter().map(|t| format!("'{}'", t)).collect();
+            let names: Vec<String> = distinct_for_types
+                .iter()
+                .map(|t| format!("'{}'", t))
+                .collect();
             self.diagnostics.error(
                 span.clone(),
                 format!(
                     "ambiguous call to '{}.{}': provided for {}",
-                    ext_name, method.value, names.join(" and "),
+                    ext_name,
+                    method.value,
+                    names.join(" and "),
                 ),
             );
             return self.error_call(typed_args, span);
@@ -1798,13 +2171,22 @@ impl Inference<'_> {
             None => {
                 self.diagnostics.error(
                     span.clone(),
-                    format!("extension '{}' has no function '{}' matching the given arguments", ext_name, method.value),
+                    format!(
+                        "extension '{}' has no function '{}' matching the given arguments",
+                        ext_name, method.value
+                    ),
                 );
                 return self.error_call(typed_args, span);
             }
         };
         self.resolve_ext_overloads_with_intrinsics(
-            &type_fqn, &method_sym, matching, &for_type, typed_args, &display, span,
+            &type_fqn,
+            &method_sym,
+            matching,
+            &for_type,
+            typed_args,
+            &display,
+            span,
         )
     }
 
@@ -1824,13 +2206,17 @@ impl Inference<'_> {
         explicit_type_params: &[TypeExpr],
         span: &Span,
     ) -> Option<TypedExpr> {
-        let trait_sig = self.registry.lookup_trait(trait_fqn, &self.package_path)?.clone();
+        let trait_sig = self
+            .registry
+            .lookup_trait(trait_fqn, &self.package_path)?
+            .clone();
         // `Conv<Bool>.tag(r)` — explicit trait type args select among sibling
         // instantiations.
         let required_trait_args: Vec<Type> = if receiver_type_args.is_empty() {
             vec![]
         } else {
-            self.resolve_type_args(receiver_type_args).unwrap_or_default()
+            self.resolve_type_args(receiver_type_args)
+                .unwrap_or_default()
         };
         let member_takes_self = trait_sig
             .methods
@@ -1873,7 +2259,8 @@ impl Inference<'_> {
             let rest: Vec<TypedExpr> = typed_args[1..].to_vec();
 
             match receiver.ty.clone() {
-                Type::TypeVariable(param_name, bounds) | Type::GenericParam(param_name, bounds, _) => {
+                Type::TypeVariable(param_name, bounds)
+                | Type::GenericParam(param_name, bounds, _) => {
                     // `T: B` also answers explicit calls through B's supers
                     // ("B satisfies A everywhere") — the member lives in B's
                     // flattened signature. Explicit trait args, when given,
@@ -1890,7 +2277,8 @@ impl Inference<'_> {
                             .is_some_and(|args| args == required_trait_args)
                     };
                     let candidate_bounds: Vec<NamedTraitBound> = bounds
-                        .iter().filter_map(TraitBound::named)
+                        .iter()
+                        .filter_map(TraitBound::named)
                         .filter(|b| {
                             (b.trait_fqn == *trait_fqn
                                 || self
@@ -1922,9 +2310,7 @@ impl Inference<'_> {
                     if distinct_apps.len() > 1 {
                         let names: Vec<String> = distinct_apps
                             .iter()
-                            .map(|a| {
-                                format!("'{}'", Self::trait_application_display(trait_fqn, a))
-                            })
+                            .map(|a| format!("'{}'", Self::trait_application_display(trait_fqn, a)))
                             .collect();
                         self.diagnostics.error(
                             span.clone(),
@@ -1957,8 +2343,14 @@ impl Inference<'_> {
                     let receiver_ty = receiver.ty.clone();
                     let rest_is_empty = rest.is_empty();
                     match self.try_resolve_method_from_one_bound(
-                        &param_name, &receiver_ty, &bound, &receiver, &method.value, &rest,
-                        explicit_type_params, span,
+                        &param_name,
+                        &receiver_ty,
+                        &bound,
+                        &receiver,
+                        &method.value,
+                        &rest,
+                        explicit_type_params,
+                        span,
                     ) {
                         BoundMethodResolution::Match(expr)
                         | BoundMethodResolution::HardError(expr) => Some(expr),
@@ -1995,25 +2387,29 @@ impl Inference<'_> {
                     // whose super closure contains the named trait ("B
                     // satisfies A everywhere"): its flattened signature holds
                     // the member and the origin machinery keys the slot.
-                    let component_application_matches = |c: &crate::typechecker::types::InterfaceComponent| -> bool {
-                        if required_trait_args.is_empty() {
-                            return true;
-                        }
-                        if c.trait_fqn == *trait_fqn {
-                            return c.trait_type_args == required_trait_args;
-                        }
-                        self.registry
-                            .super_closure_args(&c.trait_fqn, &c.trait_type_args, trait_fqn)
-                            .is_some_and(|args| args == required_trait_args)
-                    };
-                    let candidates: Vec<_> = traits.iter().filter(|c| {
-                        (c.trait_fqn == *trait_fqn
-                            || self
-                                .registry
+                    let component_application_matches =
+                        |c: &crate::typechecker::types::InterfaceComponent| -> bool {
+                            if required_trait_args.is_empty() {
+                                return true;
+                            }
+                            if c.trait_fqn == *trait_fqn {
+                                return c.trait_type_args == required_trait_args;
+                            }
+                            self.registry
                                 .super_closure_args(&c.trait_fqn, &c.trait_type_args, trait_fqn)
-                                .is_some())
-                            && component_application_matches(c)
-                    }).collect();
+                                .is_some_and(|args| args == required_trait_args)
+                        };
+                    let candidates: Vec<_> = traits
+                        .iter()
+                        .filter(|c| {
+                            (c.trait_fqn == *trait_fqn
+                                || self
+                                    .registry
+                                    .super_closure_args(&c.trait_fqn, &c.trait_type_args, trait_fqn)
+                                    .is_some())
+                                && component_application_matches(c)
+                        })
+                        .collect();
                     let Some(first_component) = candidates.first() else {
                         self.diagnostics.error(
                             span.clone(),
@@ -2024,26 +2420,39 @@ impl Inference<'_> {
                         );
                         return Some(self.error_call(typed_args.to_vec(), span));
                     };
-                    let application = |component: &crate::typechecker::types::InterfaceComponent| {
-                        if component.trait_fqn == *trait_fqn {
-                            component.trait_type_args.clone()
-                        } else {
-                            self.registry.super_closure_args(
-                                &component.trait_fqn, &component.trait_type_args, trait_fqn,
-                            ).unwrap_or_default()
-                        }
-                    };
+                    let application =
+                        |component: &crate::typechecker::types::InterfaceComponent| {
+                            if component.trait_fqn == *trait_fqn {
+                                component.trait_type_args.clone()
+                            } else {
+                                self.registry
+                                    .super_closure_args(
+                                        &component.trait_fqn,
+                                        &component.trait_type_args,
+                                        trait_fqn,
+                                    )
+                                    .unwrap_or_default()
+                            }
+                        };
                     let first_application = application(first_component);
-                    let different_applications = candidates.iter()
+                    let different_applications = candidates
+                        .iter()
                         .any(|component| application(component) != first_application);
-                    let direct_component = candidates.iter()
+                    let direct_component = candidates
+                        .iter()
                         .find(|component| component.trait_fqn == *trait_fqn);
-                    if different_applications || (direct_component.is_none() && candidates.len() > 1) {
-                        let names: Vec<_> = candidates.iter().map(|component| {
-                            Self::trait_application_display(
-                                &component.trait_fqn, &component.trait_type_args,
-                            )
-                        }).collect();
+                    if different_applications
+                        || (direct_component.is_none() && candidates.len() > 1)
+                    {
+                        let names: Vec<_> = candidates
+                            .iter()
+                            .map(|component| {
+                                Self::trait_application_display(
+                                    &component.trait_fqn,
+                                    &component.trait_type_args,
+                                )
+                            })
+                            .collect();
                         self.diagnostics.error(span.clone(), format!(
                             "ambiguous call to '{}.{}': interface components {} supply the trait; name a component or a unique trait application to disambiguate",
                             trait_name, method.value, names.join(" and "),
@@ -2058,16 +2467,26 @@ impl Inference<'_> {
                     // origin through a different intersection component.
                     let receiver = if traits.len() > 1 {
                         TypedExpr {
-                            ty: Type::interface_object(component_fqn.clone(), component_args.clone()),
+                            ty: Type::interface_object(
+                                component_fqn.clone(),
+                                component_args.clone(),
+                            ),
                             span: receiver.span.clone(),
-                            kind: TypedExprKind::InterfaceObjectUpcast { inner: Box::new(receiver) },
+                            kind: TypedExprKind::InterfaceObjectUpcast {
+                                inner: Box::new(receiver),
+                            },
                         }
                     } else {
                         receiver
                     };
                     let rest_is_empty = rest.is_empty();
                     match self.resolve_interface_object_method_call(
-                        receiver.clone(), &method.value, &component_fqn, &component_args, rest, span,
+                        receiver.clone(),
+                        &method.value,
+                        &component_fqn,
+                        &component_args,
+                        rest,
+                        span,
                     ) {
                         Some(expr) => Some(expr),
                         None => {
@@ -2080,7 +2499,11 @@ impl Inference<'_> {
                                     method.span.clone(),
                                 );
                                 if let Some(expr) = self.try_resolve_interface_object_property(
-                                    &receiver, &component_fqn, &component_args, &field, span,
+                                    &receiver,
+                                    &component_fqn,
+                                    &component_args,
+                                    &field,
+                                    span,
                                 ) {
                                     return Some(expr);
                                 }
@@ -2099,9 +2522,17 @@ impl Inference<'_> {
                 _ => {
                     let rest_types: Vec<&Type> = rest.iter().map(|a| &a.ty).collect();
                     match self.resolve_trait_impl_method_for_type_detailed(
-                        &receiver.ty, trait_fqn, &method.value, &rest_types, &required_trait_args,
+                        &receiver.ty,
+                        trait_fqn,
+                        &method.value,
+                        &rest_types,
+                        &required_trait_args,
                     ) {
-                        super::traits::ImplMethodResolution::Found { resolved, params, return_type } => {
+                        super::traits::ImplMethodResolution::Found {
+                            resolved,
+                            params,
+                            return_type,
+                        } => {
                             if let Some(params) = params {
                                 if params.len() != rest.len() {
                                     self.diagnostics.error(
@@ -2159,7 +2590,8 @@ impl Inference<'_> {
             // Direct impls first; when none provide the member, sub-trait
             // provider blocks do ("B satisfies A everywhere" — the static is
             // implemented inline in the provider block).
-            let collect_from = |blocks: Vec<&crate::typechecker::registry::ImplBlockSignature>| -> Vec<(Fqn, Type, Vec<Type>, Vec<(String, Type)>, Type)> {
+            type StaticMethodCandidate = (Fqn, Type, Vec<Type>, Vec<(String, Type)>, Type);
+            let collect_from = |blocks: Vec<&crate::typechecker::registry::ImplBlockSignature>| -> Vec<StaticMethodCandidate> {
                 blocks
                     .iter()
                     .flat_map(|b| {
@@ -2213,8 +2645,7 @@ impl Inference<'_> {
                                     // `Maker<Bool>.make(...)` must not run a
                                     // `Maker<Int32>` provider, and explicit args
                                     // uniquely select among sibling providers.
-                                    required_trait_args.is_empty()
-                                        || args == required_trait_args
+                                    required_trait_args.is_empty() || args == required_trait_args
                                 })
                     })
                     .collect();
@@ -2239,7 +2670,8 @@ impl Inference<'_> {
                     // trait when routed) — sibling providers of one super all
                     // provide the same requested fqn, so emitting the requested
                     // trait would collapse them at monomorphize.
-                    let (block_trait_fqn, for_type, trait_args, return_type) = matching.pop().unwrap();
+                    let (block_trait_fqn, for_type, trait_args, return_type) =
+                        matching.pop().unwrap();
                     Some(TypedExpr {
                         ty: return_type,
                         kind: TypedExprKind::ImplFunctionCall {
@@ -2280,11 +2712,12 @@ impl Inference<'_> {
                     // Candidates can differ by for_type, by trait application,
                     // or both — render whichever actually distinguishes them,
                     // and point the escape hatch at a usable spelling.
-                    let for_types_differ = matching
-                        .windows(2)
-                        .any(|w| w[0].1 != w[1].1);
+                    let for_types_differ = matching.windows(2).any(|w| w[0].1 != w[1].1);
                     let names: Vec<String> = if for_types_differ {
-                        matching.iter().map(|(_, t, _, _)| format!("'{}'", t)).collect()
+                        matching
+                            .iter()
+                            .map(|(_, t, _, _)| format!("'{}'", t))
+                            .collect()
                     } else {
                         matching
                             .iter()
@@ -2302,12 +2735,20 @@ impl Inference<'_> {
                             method.value,
                         )
                     };
-                    let by = if for_types_differ { "implemented for" } else { "implemented by trait" };
+                    let by = if for_types_differ {
+                        "implemented for"
+                    } else {
+                        "implemented by trait"
+                    };
                     self.diagnostics.error(
                         span.clone(),
                         format!(
                             "ambiguous call to '{}.{}': {} {}; use '{}' to choose one",
-                            trait_name, method.value, by, names.join(" and "), suggestion,
+                            trait_name,
+                            method.value,
+                            by,
+                            names.join(" and "),
+                            suggestion,
                         ),
                     );
                     Some(self.error_call(typed_args.to_vec(), span))
@@ -2316,6 +2757,10 @@ impl Inference<'_> {
         }
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep the compiler context parameters explicit at this call boundary."
+    )]
     fn try_resolve_method_from_trait_bounds(
         &mut self,
         name: &TypeParamName,
@@ -2335,10 +2780,18 @@ impl Inference<'_> {
         // stay distinguishable for both dedup and the diagnostic.
         let mut matches: Vec<(usize, TypedExpr)> = Vec::new();
         for (i, bound) in bounds.iter().enumerate() {
-            let Some(bound) = bound.named() else { continue; };
+            let Some(bound) = bound.named() else {
+                continue;
+            };
             match self.try_resolve_method_from_one_bound(
-                name, &receiver_ty, bound, typed_receiver, method_name, &typed_args,
-                explicit_type_params, span,
+                name,
+                &receiver_ty,
+                bound,
+                typed_receiver,
+                method_name,
+                &typed_args,
+                explicit_type_params,
+                span,
             ) {
                 BoundMethodResolution::Match(expr) => matches.push((i, expr)),
                 BoundMethodResolution::HardError(expr) => return Some(expr),
@@ -2353,7 +2806,12 @@ impl Inference<'_> {
             if let Some(kept) = self.dedup_bound_matches_by_origin(
                 &matches,
                 bounds,
-                |sig, member| sig.methods.iter().find(|m| m.name == member).and_then(|m| m.origin.clone()),
+                |sig, member| {
+                    sig.methods
+                        .iter()
+                        .find(|m| m.name == member)
+                        .and_then(|m| m.origin.clone())
+                },
                 method_name,
             ) {
                 matches = vec![matches.swap_remove(kept)];
@@ -2383,7 +2841,10 @@ impl Inference<'_> {
     /// the bare trait name. Two applications of one trait must not both print
     /// as `'Conv'` in an ambiguity message.
     pub(super) fn bound_display(bound: &TraitBound) -> String {
-        match bound.named() { Some(bound) => Self::trait_application_display(&bound.trait_fqn, &bound.type_args), None => "class".to_string() }
+        match bound.named() {
+            Some(bound) => Self::trait_application_display(&bound.trait_fqn, &bound.type_args),
+            None => "class".to_string(),
+        }
     }
 
     /// Narrow candidate impl-method pairs to the origin's own block when the
@@ -2408,7 +2869,9 @@ impl Inference<'_> {
         let applicable: Vec<usize> = impl_pairs
             .iter()
             .enumerate()
-            .filter(|(_, (_, _, sig))| sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a)))
+            .filter(|(_, (_, _, sig))| {
+                sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+            })
             .map(|(i, _)| i)
             .collect();
         // Applications carry the block's real trait args: a generic origin
@@ -2428,9 +2891,15 @@ impl Inference<'_> {
             &distinct,
             |sig, member| {
                 if is_property {
-                    sig.properties.iter().find(|p| p.name == member).and_then(|p| p.origin.clone())
+                    sig.properties
+                        .iter()
+                        .find(|p| p.name == member)
+                        .and_then(|p| p.origin.clone())
                 } else {
-                    sig.methods.iter().find(|m| m.name == member).and_then(|m| m.origin.clone())
+                    sig.methods
+                        .iter()
+                        .find(|m| m.name == member)
+                        .and_then(|m| m.origin.clone())
                 }
             },
             member_name,
@@ -2462,7 +2931,10 @@ impl Inference<'_> {
         let mut distinct: Vec<(Fqn, Vec<Type>)> = Vec::new();
         for c in &candidates {
             if let super::ResolvedFunction::ImplMethod { resolved, .. } = c {
-                let key = (resolved.trait_fqn.clone(), resolved.trait_type_params.clone());
+                let key = (
+                    resolved.trait_fqn.clone(),
+                    resolved.trait_type_params.clone(),
+                );
                 if !distinct.contains(&key) {
                     distinct.push(key);
                 }
@@ -2476,7 +2948,10 @@ impl Inference<'_> {
         let Some(kept) = self.dedup_traits_by_member_origin(
             &distinct,
             |sig, member| {
-                sig.methods.iter().find(|m| m.name == member).and_then(|m| m.origin.clone())
+                sig.methods
+                    .iter()
+                    .find(|m| m.name == member)
+                    .and_then(|m| m.origin.clone())
             },
             member_name,
         ) else {
@@ -2505,7 +2980,10 @@ impl Inference<'_> {
     pub(super) fn dedup_traits_by_member_origin(
         &self,
         candidates: &[(Fqn, Vec<Type>)],
-        member_origin: impl Fn(&crate::typechecker::registry::TraitSignature, &str) -> Option<(Fqn, Vec<Type>)>,
+        member_origin: impl Fn(
+            &crate::typechecker::registry::TraitSignature,
+            &str,
+        ) -> Option<(Fqn, Vec<Type>)>,
         member_name: &str,
     ) -> Option<usize> {
         let origin_of = |(f, args): &(Fqn, Vec<Type>)| -> Option<(Fqn, Vec<Type>)> {
@@ -2524,8 +3002,7 @@ impl Inference<'_> {
                 None => (f.clone(), args.clone()),
             })
         };
-        let origins: Vec<Option<(Fqn, Vec<Type>)>> =
-            candidates.iter().map(origin_of).collect();
+        let origins: Vec<Option<(Fqn, Vec<Type>)>> = candidates.iter().map(origin_of).collect();
         if !origins.iter().all(|o| o.is_some()) || !origins.windows(2).all(|w| w[0] == w[1]) {
             return None;
         }
@@ -2556,7 +3033,10 @@ impl Inference<'_> {
         &self,
         matches: &[(usize, T)],
         bounds: &[TraitBound],
-        member_origin: impl Fn(&crate::typechecker::registry::TraitSignature, &str) -> Option<(Fqn, Vec<Type>)>,
+        member_origin: impl Fn(
+            &crate::typechecker::registry::TraitSignature,
+            &str,
+        ) -> Option<(Fqn, Vec<Type>)>,
         member_name: &str,
     ) -> Option<usize> {
         // Each match names its OWN bound (by index), so two applications of
@@ -2587,7 +3067,9 @@ impl Inference<'_> {
         let (origin_fqn, origin_args) = origins[0].clone().unwrap();
         // Keep the match whose OWN bound is the origin application.
         matches.iter().position(|(i, _)| {
-            bounds[*i].named().is_some_and(|bound| bound.trait_fqn == origin_fqn && bound.type_args == origin_args)
+            bounds[*i].named().is_some_and(|bound| {
+                bound.trait_fqn == origin_fqn && bound.type_args == origin_args
+            })
         })
     }
 
@@ -2606,25 +3088,55 @@ impl Inference<'_> {
         explicit_type_params: &[TypeExpr],
         span: &Span,
     ) -> BoundMethodResolution {
-        let Some(signature) = self.registry.lookup_trait(&bound.trait_fqn, &self.package_path).cloned() else {
+        let Some(signature) = self
+            .registry
+            .lookup_trait(&bound.trait_fqn, &self.package_path)
+            .cloned()
+        else {
             return BoundMethodResolution::NoMatch;
         };
         let mut matches = Vec::new();
-        for method in signature.methods.iter().filter(|method| method.name == method_name) {
-            match self.try_resolve_bound_method(_name, receiver_ty, bound, typed_receiver,
-                method_name, typed_args, explicit_type_params, span, &signature, method) {
+        for method in signature
+            .methods
+            .iter()
+            .filter(|method| method.name == method_name)
+        {
+            match self.try_resolve_bound_method(
+                _name,
+                receiver_ty,
+                bound,
+                typed_receiver,
+                method_name,
+                typed_args,
+                explicit_type_params,
+                span,
+                &signature,
+                method,
+            ) {
                 BoundMethodResolution::Match(expression) => matches.push(expression),
-                BoundMethodResolution::HardError(expression) => return BoundMethodResolution::HardError(expression),
+                BoundMethodResolution::HardError(expression) => {
+                    return BoundMethodResolution::HardError(expression);
+                }
                 BoundMethodResolution::NoMatch => {}
             }
         }
         if matches.len() > 1 {
-            self.diagnostics.error(span.clone(), format!("ambiguous overload for '{method_name}'"));
+            self.diagnostics.error(
+                span.clone(),
+                format!("ambiguous overload for '{method_name}'"),
+            );
             return BoundMethodResolution::HardError(self.error_call(typed_args.to_vec(), span));
         }
-        matches.pop().map(BoundMethodResolution::Match).unwrap_or(BoundMethodResolution::NoMatch)
+        matches
+            .pop()
+            .map(BoundMethodResolution::Match)
+            .unwrap_or(BoundMethodResolution::NoMatch)
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep the compiler context parameters explicit at this call boundary."
+    )]
     fn try_resolve_bound_method(
         &mut self,
         _name: &TypeParamName,
@@ -2650,9 +3162,17 @@ impl Inference<'_> {
             }
 
             for associated in &trait_sig.associated_types {
-                let parameters = associated.type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![])).collect();
+                let parameters = associated
+                    .type_params
+                    .iter()
+                    .map(|name| Type::TypeVariable(name.clone(), vec![]))
+                    .collect();
                 if let Some(projection) = crate::typechecker::associated_types::from_bound(
-                    receiver_ty, bound, &associated.name, parameters, self.registry,
+                    receiver_ty,
+                    bound,
+                    &associated.name,
+                    parameters,
+                    self.registry,
                 ) {
                     sub.insert(TypeParamName(associated.name.clone()), projection);
                 }
@@ -2690,7 +3210,8 @@ impl Inference<'_> {
                         if !explicit_type_params.is_empty() {
                             match self.resolve_type_args(explicit_type_params) {
                                 Some(args) => {
-                                    for (tp, arg) in method_sig.type_params.iter().zip(args.iter()) {
+                                    for (tp, arg) in method_sig.type_params.iter().zip(args.iter())
+                                    {
                                         sub.insert(tp.clone(), arg.clone());
                                     }
                                     args
@@ -2716,7 +3237,10 @@ impl Inference<'_> {
                 }
             }
 
-            let method_params: Vec<(String, Type)> = non_self_params.iter().map(|(n, ty)| (n.clone(), apply_substitution(&sub, ty))).collect();
+            let method_params: Vec<(String, Type)> = non_self_params
+                .iter()
+                .map(|(n, ty)| (n.clone(), apply_substitution(&sub, ty)))
+                .collect();
             let return_type = apply_substitution(&sub, &method_sig.return_type);
             let all_match = typed_args
                 .iter()
@@ -2725,10 +3249,24 @@ impl Inference<'_> {
             if !all_match {
                 return BoundMethodResolution::NoMatch;
             }
-            let contract_parameters: Vec<_> = trait_sig.type_params.iter().chain(&method_sig.type_params).cloned().collect();
-            let contract_arguments = sub.resolve_type_params(&contract_parameters).unwrap_or_default();
-            if !self.check_trait_bounds(&method_sig.trait_bounds, &contract_parameters, &contract_arguments, span) {
-                return BoundMethodResolution::HardError(self.error_call(typed_args.to_vec(), span));
+            let contract_parameters: Vec<_> = trait_sig
+                .type_params
+                .iter()
+                .chain(&method_sig.type_params)
+                .cloned()
+                .collect();
+            let contract_arguments = sub
+                .resolve_type_params(&contract_parameters)
+                .unwrap_or_default();
+            if !self.check_trait_bounds(
+                &method_sig.trait_bounds,
+                &contract_parameters,
+                &contract_arguments,
+                span,
+            ) {
+                return BoundMethodResolution::HardError(
+                    self.error_call(typed_args.to_vec(), span),
+                );
             }
             let mut all_args = vec![typed_receiver.clone()];
             all_args.extend(typed_args.iter().cloned());
@@ -2739,7 +3277,9 @@ impl Inference<'_> {
                     for_type: typed_receiver.ty.clone(),
                     method_name: trait_sig.method_dispatch_name(method_sig),
                     args: all_args,
-                    method_type_params: sub.resolve_type_params(&method_sig.type_params).unwrap_or_default(),
+                    method_type_params: sub
+                        .resolve_type_params(&method_sig.type_params)
+                        .unwrap_or_default(),
                 },
                 ty: return_type,
                 span: span.clone(),
@@ -2759,7 +3299,7 @@ impl Inference<'_> {
         typed_args: Vec<TypedExpr>,
         span: &Span,
     ) -> Option<TypedExpr> {
-for bound in bounds.iter().filter_map(TraitBound::named) {
+        for bound in bounds.iter().filter_map(TraitBound::named) {
             if bound.kind != crate::typechecker::types::BoundKind::SubtypeOf {
                 continue;
             }
@@ -2774,17 +3314,15 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 if let Some(overloads) = class_sig.instance_methods.get(&method_sym) {
                     // Find a matching overload by argument count
                     for sig in overloads {
-                        let non_self_params: Vec<&(String, Type)> = sig
-                            .params
-                            .iter()
-                            .filter(|(n, _)| n != "self")
-                            .collect();
+                        let non_self_params: Vec<&(String, Type)> =
+                            sig.params.iter().filter(|(n, _)| n != "self").collect();
                         if non_self_params.len() != typed_args.len() {
                             continue;
                         }
-                        let all_match = typed_args.iter().zip(non_self_params.iter()).all(|(arg, (_, expected))| {
-                            self.is_assignable(expected, &arg.ty)
-                        });
+                        let all_match = typed_args
+                            .iter()
+                            .zip(non_self_params.iter())
+                            .all(|(arg, (_, expected))| self.is_assignable(expected, &arg.ty));
                         if !all_match {
                             continue;
                         }
@@ -2843,10 +3381,7 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
     ///
     /// Other expression shapes (numeric literals, calls, etc.) return None,
     /// preserving the existing value-receiver dispatch.
-    pub(super) fn try_expr_as_type_for_static_dispatch(
-        &mut self,
-        expr: &Expr,
-    ) -> Option<Type> {
+    pub(super) fn try_expr_as_type_for_static_dispatch(&mut self, expr: &Expr) -> Option<Type> {
         match expr {
             Expr::Identifier(name, span) => self.resolve_type_name(name, &[], span),
             // A lowering-produced receiver: resolve the type straight from the
@@ -2885,22 +3420,20 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
     ) -> TypedExpr {
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
         let intrinsic_match = overloads.iter().find(|sig| {
-            sig.is_intrinsic
-                && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+            sig.is_intrinsic && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
         });
-        if let Some(intrinsic_sig) = intrinsic_match {
-            if let Some(intrinsic) =
+        if let Some(intrinsic_sig) = intrinsic_match
+            && let Some(intrinsic) =
                 resolve_intrinsic_kind(type_fqn, method_sym, &intrinsic_sig.return_type)
-            {
-                return TypedExpr {
-                    ty: intrinsic_sig.return_type.clone(),
-                    kind: TypedExprKind::IntrinsicCall {
-                        intrinsic,
-                        args: typed_args,
-                    },
-                    span: span.clone(),
-                };
-            }
+        {
+            return TypedExpr {
+                ty: intrinsic_sig.return_type.clone(),
+                kind: TypedExprKind::IntrinsicCall {
+                    intrinsic,
+                    args: typed_args,
+                },
+                span: span.clone(),
+            };
         }
         let candidates = self.filter_overloads_resolved(overloads, &arg_types);
         self.resolve_overload(display_name, candidates, typed_args, span)
@@ -2922,33 +3455,36 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
         let intrinsic_match = overloads.iter().find(|(_, m)| {
             m.is_intrinsic
-                && FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| self.is_assignable(p, a))
+                && FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
+                    self.is_assignable(p, a)
+                })
         });
-        if let Some((_, intrinsic_method)) = intrinsic_match {
-            if let Some(intrinsic) =
+        if let Some((_, intrinsic_method)) = intrinsic_match
+            && let Some(intrinsic) =
                 resolve_intrinsic_kind(type_fqn, method_sym, &intrinsic_method.return_type)
-            {
-                return TypedExpr {
-                    ty: intrinsic_method.return_type.clone(),
-                    kind: TypedExprKind::IntrinsicCall {
-                        intrinsic,
-                        args: typed_args,
-                    },
-                    span: span.clone(),
-                };
-            }
+        {
+            return TypedExpr {
+                ty: intrinsic_method.return_type.clone(),
+                kind: TypedExprKind::IntrinsicCall {
+                    intrinsic,
+                    args: typed_args,
+                },
+                span: span.clone(),
+            };
         }
         let candidates: Vec<super::ResolvedFunction> = overloads
             .into_iter()
-            .filter(|(_, m)| FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| self.is_assignable(p, a)))
-            .map(|(block, m)| {
-                super::ResolvedFunction::ExtMethod {
-                    ext_fqn: block.ext_fqn.clone(),
-                    for_type: for_type.clone(),
-                    method_name: method_sym.clone(),
-                    type_args: vec![],
-                    return_type: m.return_type.clone(),
-                }
+            .filter(|(_, m)| {
+                FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
+                    self.is_assignable(p, a)
+                })
+            })
+            .map(|(block, m)| super::ResolvedFunction::ExtMethod {
+                ext_fqn: block.ext_fqn.clone(),
+                for_type: for_type.clone(),
+                method_name: method_sym.clone(),
+                type_args: vec![],
+                return_type: m.return_type.clone(),
             })
             .collect();
         self.resolve_overload(display_name, candidates, typed_args, span)
@@ -2981,24 +3517,42 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         };
 
         // 1. Module-for-type instance method
-        if let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned() {
-            if let Some(overloads) = module_info.functions.get(&method_sym) {
-                let instance_overloads: Vec<_> = overloads
-                    .iter()
-                    .filter(|sig| !sig.is_property && !sig.params.is_empty() && sig.params[0].0 == "self")
-                    .filter(|sig| sig.params.len() == typed_args.len() + 1
+        if let Some(module_info) = self.registry.lookup_module(&type_fqn).cloned()
+            && let Some(overloads) = module_info.functions.get(&method_sym)
+        {
+            let instance_overloads: Vec<_> = overloads
+                .iter()
+                .filter(|sig| {
+                    !sig.is_property && !sig.params.is_empty() && sig.params[0].0 == "self"
+                })
+                .filter(|sig| {
+                    sig.params.len() == typed_args.len() + 1
                         && self.is_assignable(&sig.params[0].1, &typed_receiver.ty)
-                        && sig.params[1..].iter().zip(typed_args).all(|((_, p), a)| self.is_assignable(p, &a.ty)))
-                    .filter(|sig| self.is_member_visible(sig.visibility, &module_info.fqn.package, &sig.source_file))
-                    .cloned()
-                    .collect();
-                if !instance_overloads.is_empty() {
-                    let all_args = build_all_args(typed_receiver, typed_args);
-                    let display = format!("{}.{}", type_fqn.symbol, method.value);
-                    return Some(self.resolve_overloads_with_intrinsics(
-                        &type_fqn, &method_sym, instance_overloads, all_args, &display, span,
-                    ));
-                }
+                        && sig.params[1..]
+                            .iter()
+                            .zip(typed_args)
+                            .all(|((_, p), a)| self.is_assignable(p, &a.ty))
+                })
+                .filter(|sig| {
+                    self.is_member_visible(
+                        sig.visibility,
+                        &module_info.fqn.package,
+                        &sig.source_file,
+                    )
+                })
+                .cloned()
+                .collect();
+            if !instance_overloads.is_empty() {
+                let all_args = build_all_args(typed_receiver, typed_args);
+                let display = format!("{}.{}", type_fqn.symbol, method.value);
+                return Some(self.resolve_overloads_with_intrinsics(
+                    &type_fqn,
+                    &method_sym,
+                    instance_overloads,
+                    all_args,
+                    &display,
+                    span,
+                ));
             }
         }
 
@@ -3007,7 +3561,11 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
             let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
             // No span here: trait-impl dispatch is tried after this one.
             let (candidates, _) = self.resolve_generic_module_instance_method(
-                &typed_receiver.ty, &method_sym, &arg_types, type_params, None,
+                &typed_receiver.ty,
+                &method_sym,
+                &arg_types,
+                type_params,
+                None,
             );
             if !candidates.is_empty() {
                 let all_args = build_all_args(typed_receiver, typed_args);
@@ -3030,12 +3588,20 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 let all_args = build_all_args(typed_receiver, typed_args);
                 let arg_types: Vec<&Type> = all_args.iter().map(|a| &a.ty).collect();
                 let any_match = instance_overloads.iter().any(|(_, m)| {
-                    FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| self.is_assignable(p, a))
+                    FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
+                        self.is_assignable(p, a)
+                    })
                 });
                 if any_match {
                     let display = format!("{}.{}", type_fqn.symbol, method.value);
                     return Some(self.resolve_ext_overloads_with_intrinsics(
-                        &type_fqn, &method_sym, instance_overloads, &typed_receiver.ty, all_args, &display, span,
+                        &type_fqn,
+                        &method_sym,
+                        instance_overloads,
+                        &typed_receiver.ty,
+                        all_args,
+                        &display,
+                        span,
                     ));
                 }
             }
@@ -3045,7 +3611,10 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         {
             let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
             let candidates = self.resolve_generic_extension_instance(
-                &typed_receiver.ty, &method_sym, &arg_types, type_params,
+                &typed_receiver.ty,
+                &method_sym,
+                &arg_types,
+                type_params,
             );
             if !candidates.is_empty() {
                 let all_args = build_all_args(typed_receiver, typed_args);
@@ -3056,7 +3625,8 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
 
         // 5. Trait impl instance methods
         {
-            let impl_pairs: Vec<(Fqn, Vec<Type>, FunctionSignature)> = self.registry
+            let impl_pairs: Vec<(Fqn, Vec<Type>, FunctionSignature)> = self
+                .registry
                 .find_impl_method(&type_fqn, &method_sym)
                 .into_iter()
                 .filter(|(b, m)| {
@@ -3067,17 +3637,29 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                         && m.params[0].0 == "self"
                         && (m.visibility != Visibility::Private || m.span.file == self.current_file)
                 })
-                .map(|(b, m)| (b.trait_fqn.clone(), b.trait_type_args.clone(), FunctionSignature {
-                    visibility: m.visibility,
-                    mangled_name: crate::typechecker::types::impl_member_mangled_name(&b.trait_fqn, &b.for_type, &b.type_params, &m.dispatch_name, &b.trait_type_args),
-                    params: m.params.clone(),
-                    return_type: m.return_type.clone(),
-                    source_file: b.source_file.clone(),
-                    is_intrinsic: m.is_intrinsic,
-                    is_property: m.is_property,
-                    is_final_method: false,
-                    is_abstract_method: false,
-                }))
+                .map(|(b, m)| {
+                    (
+                        b.trait_fqn.clone(),
+                        b.trait_type_args.clone(),
+                        FunctionSignature {
+                            visibility: m.visibility,
+                            mangled_name: crate::typechecker::types::impl_member_mangled_name(
+                                &b.trait_fqn,
+                                &b.for_type,
+                                &b.type_params,
+                                &m.dispatch_name,
+                                &b.trait_type_args,
+                            ),
+                            params: m.params.clone(),
+                            return_type: m.return_type.clone(),
+                            source_file: b.source_file.clone(),
+                            is_intrinsic: m.is_intrinsic,
+                            is_property: m.is_property,
+                            is_final_method: false,
+                            is_abstract_method: false,
+                        },
+                    )
+                })
                 .collect();
             if !impl_pairs.is_empty() {
                 let all_args = build_all_args(typed_receiver, typed_args);
@@ -3088,14 +3670,23 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                     .collect();
                 let display = format!("{}.{}", type_fqn.symbol, method.value);
                 if let Some(err) = self.check_cross_trait_ambiguity(
-                    &impl_pairs, &all_args, &display, &method.value, span,
+                    &impl_pairs,
+                    &all_args,
+                    &display,
+                    &method.value,
+                    span,
                 ) {
                     return Some(err);
                 }
                 let instance_overloads: Vec<FunctionSignature> =
                     impl_pairs.into_iter().map(|(_, sig)| sig).collect();
                 return Some(self.resolve_overloads_with_intrinsics(
-                    &type_fqn, &method_sym, instance_overloads, all_args, &display, span,
+                    &type_fqn,
+                    &method_sym,
+                    instance_overloads,
+                    all_args,
+                    &display,
+                    span,
                 ));
             }
         }
@@ -3104,7 +3695,11 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         {
             let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
             let candidates = self.resolve_generic_trait_impl_instance(
-                &typed_receiver.ty, &method_sym, &arg_types, type_params, None,
+                &typed_receiver.ty,
+                &method_sym,
+                &arg_types,
+                type_params,
+                None,
             );
             // Same `extends` origin dedup as the non-generic path: a trait
             // and a sub-trait that extends it surface ONE inherited
@@ -3118,19 +3713,29 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         }
 
         // 7. Function-typed field closure call
-        if let Some(field_expr) = self.try_resolve_record_field(typed_receiver, method, span) {
-            if let Type::Function(param_types, return_type) = field_expr.ty.clone() {
-                return Some(self.infer_field_closure_call(
-                    field_expr, &param_types, &return_type, typed_args.to_vec(), span, &method.value,
-                ));
-            }
+        if let Some(field_expr) = self.try_resolve_record_field(typed_receiver, method, span)
+            && let Type::Function(param_types, return_type) = field_expr.ty.clone()
+        {
+            return Some(self.infer_field_closure_call(
+                field_expr,
+                &param_types,
+                &return_type,
+                typed_args.to_vec(),
+                span,
+                &method.value,
+            ));
         }
-        if let Some(field_expr) = self.try_resolve_class_field(typed_receiver, method, span) {
-            if let Type::Function(param_types, return_type) = field_expr.ty.clone() {
-                return Some(self.infer_field_closure_call(
-                    field_expr, &param_types, &return_type, typed_args.to_vec(), span, &method.value,
-                ));
-            }
+        if let Some(field_expr) = self.try_resolve_class_field(typed_receiver, method, span)
+            && let Type::Function(param_types, return_type) = field_expr.ty.clone()
+        {
+            return Some(self.infer_field_closure_call(
+                field_expr,
+                &param_types,
+                &return_type,
+                typed_args.to_vec(),
+                span,
+                &method.value,
+            ));
         }
 
         None
@@ -3235,10 +3840,10 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 let ext_names: Vec<&Fqn> = {
                     let mut seen: Vec<&Fqn> = Vec::new();
                     for c in &candidates {
-                        if let ResolvedFunction::ExtMethod { ext_fqn, .. } = c {
-                            if !seen.contains(&ext_fqn) {
-                                seen.push(ext_fqn);
-                            }
+                        if let ResolvedFunction::ExtMethod { ext_fqn, .. } = c
+                            && !seen.contains(&ext_fqn)
+                        {
+                            seen.push(ext_fqn);
                         }
                     }
                     seen
@@ -3246,28 +3851,44 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 let impl_traits: Vec<&Fqn> = {
                     let mut seen: Vec<&Fqn> = Vec::new();
                     for c in &candidates {
-                        if let ResolvedFunction::ImplMethod { resolved, .. } = c {
-                            if !seen.contains(&&resolved.trait_fqn) {
-                                seen.push(&resolved.trait_fqn);
-                            }
+                        if let ResolvedFunction::ImplMethod { resolved, .. } = c
+                            && !seen.contains(&&resolved.trait_fqn)
+                        {
+                            seen.push(&resolved.trait_fqn);
                         }
                     }
                     seen
                 };
-                let all_ext = candidates.iter().all(|c| matches!(c, ResolvedFunction::ExtMethod { .. }));
-                let all_impl = candidates.iter().all(|c| matches!(c, ResolvedFunction::ImplMethod { .. }));
+                let all_ext = candidates
+                    .iter()
+                    .all(|c| matches!(c, ResolvedFunction::ExtMethod { .. }));
+                let all_impl = candidates
+                    .iter()
+                    .all(|c| matches!(c, ResolvedFunction::ImplMethod { .. }));
                 let member = display_name.rsplit('.').next().unwrap_or(display_name);
                 let message = if all_ext && ext_names.len() > 1 {
-                    let names: Vec<String> = ext_names.iter().map(|f| format!("'{}'", f.symbol)).collect();
+                    let names: Vec<String> = ext_names
+                        .iter()
+                        .map(|f| format!("'{}'", f.symbol))
+                        .collect();
                     format!(
                         "ambiguous call to '{}': provided by extension {}; use '{}.{}(...)' to choose one",
-                        display_name, names.join(" and extension "), ext_names[0].symbol, member,
+                        display_name,
+                        names.join(" and extension "),
+                        ext_names[0].symbol,
+                        member,
                     )
                 } else if all_impl && impl_traits.len() > 1 {
-                    let names: Vec<String> = impl_traits.iter().map(|f| format!("'{}'", f.symbol)).collect();
+                    let names: Vec<String> = impl_traits
+                        .iter()
+                        .map(|f| format!("'{}'", f.symbol))
+                        .collect();
                     format!(
                         "ambiguous call to '{}': implemented by trait {}; use '{}.{}(...)' to choose one",
-                        display_name, names.join(" and trait "), impl_traits[0].symbol, member,
+                        display_name,
+                        names.join(" and trait "),
+                        impl_traits[0].symbol,
+                        member,
                     )
                 } else {
                     format!(
@@ -3293,17 +3914,16 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         use crate::typechecker::imports::ImportTarget;
 
         // 1. Check if receiver is an identifier matching a package import alias
-        if let Expr::Identifier(name, _) = receiver {
-            if let Some(resolved) = self.import_scope.lookup(name) {
-                if let ImportTarget::Package(ref pkg) = resolved.target {
-                    return self.registry.lookup_function_in_package(
-                        pkg,
-                        method_name,
-                        &self.package_path,
-                        &self.current_file,
-                    );
-                }
-            }
+        if let Expr::Identifier(name, _) = receiver
+            && let Some(resolved) = self.import_scope.lookup(name)
+            && let ImportTarget::Package(ref pkg) = resolved.target
+        {
+            return self.registry.lookup_function_in_package(
+                pkg,
+                method_name,
+                &self.package_path,
+                &self.current_file,
+            );
         }
 
         // 2. Try to flatten receiver into a path for FQN resolution
@@ -3323,7 +3943,10 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 package: pkg,
                 symbol: SymbolName(full_path.last().unwrap().to_string()),
             };
-            if let Some(sigs) = self.registry.lookup_function(&fqn, &self.package_path, &self.current_file) {
+            if let Some(sigs) =
+                self.registry
+                    .lookup_function(&fqn, &self.package_path, &self.current_file)
+            {
                 return Some(sigs);
             }
         }
@@ -3354,13 +3977,23 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         self.import_scope
             .extension_blocks
             .iter()
-            .filter(|b| b.for_type.try_to_fqn().is_some_and(|f| f == *type_fqn) && b.type_params.is_empty())
+            .filter(|b| {
+                b.for_type.try_to_fqn().is_some_and(|f| f == *type_fqn) && b.type_params.is_empty()
+            })
             .flat_map(|b| {
-                b.methods.iter().chain(b.properties.iter())
+                b.methods
+                    .iter()
+                    .chain(b.properties.iter())
                     .filter(|m| m.name == *method_name)
-                    .filter(|m| crate::typechecker::registry::is_accessible(
-                        m.visibility, &b.package, &self.package_path, &b.source_file, &self.current_file,
-                    ))
+                    .filter(|m| {
+                        crate::typechecker::registry::is_accessible(
+                            m.visibility,
+                            &b.package,
+                            &self.package_path,
+                            &b.source_file,
+                            &self.current_file,
+                        )
+                    })
                     .map(move |m| (b.clone(), m.clone()))
             })
             .collect()
@@ -3372,11 +4005,7 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
     /// emits an `IntrinsicCall { ResourceBytes { resource_name,
     /// declaring_root }, ... }` whose codegen lowers to `array.new_data`
     /// over a passive WASM segment.
-    fn resolve_resource_bytes_intrinsic(
-        &mut self,
-        args: &[Expr],
-        span: &Span,
-    ) -> TypedExpr {
+    fn resolve_resource_bytes_intrinsic(&mut self, args: &[Expr], span: &Span) -> TypedExpr {
         if args.len() != 1 {
             self.diagnostics.error(
                 span.clone(),
@@ -3397,10 +4026,7 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 return self.error_call(vec![], span);
             }
         };
-        match self
-            .registry
-            .lookup_resource(&self.package_path, &literal)
-        {
+        match self.registry.lookup_resource(&self.package_path, &literal) {
             Some((root, _bytes)) => TypedExpr {
                 ty: Type::Array(Box::new(Type::Uint8)),
                 kind: TypedExprKind::IntrinsicCall {
@@ -3504,8 +4130,7 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
             });
         }
         // Unify payload types against arg types to infer type params
-        let mut substitution =
-            super::type_param_substitution::TypeParamSubstitution::new();
+        let mut substitution = super::type_param_substitution::TypeParamSubstitution::new();
         for (payload_ty, arg) in payload_types.iter().zip(typed_args.iter()) {
             substitution.unify(payload_ty, &arg.ty);
         }
@@ -3523,24 +4148,33 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                         // Merge payload unification results with expected type args.
                         // Prefer concrete bindings from payload unification (e.g. T=Int32 from Ok(x))
                         // over the expected type args.
-                        expected_args.iter().zip(enum_sig.type_params.iter()).map(|((_, exp_ty), tp)| {
-                            match substitution.get(tp) {
-                                Some(ty) if !matches!(ty, Type::TypeVariable(..) | Type::GenericParam(..)) => ty.clone(),
+                        expected_args
+                            .iter()
+                            .zip(enum_sig.type_params.iter())
+                            .map(|((_, exp_ty), tp)| match substitution.get(tp) {
+                                Some(ty)
+                                    if !matches!(
+                                        ty,
+                                        Type::TypeVariable(..) | Type::GenericParam(..)
+                                    ) =>
+                                {
+                                    ty.clone()
+                                }
                                 _ => exp_ty.clone(),
-                            }
-                        }).collect()
+                            })
+                            .collect()
                     }
                     _ => {
                         // Default covariant params to Never
-                        match substitution.resolve_with_variance_defaults(&enum_sig.type_params, &enum_sig.type_param_variances) {
+                        match substitution.resolve_with_variance_defaults(
+                            &enum_sig.type_params,
+                            &enum_sig.type_param_variances,
+                        ) {
                             Some(args) => args,
                             None => {
                                 self.diagnostics.error(
                                     span.clone(),
-                                    format!(
-                                        "cannot infer type arguments for '{}'",
-                                        name
-                                    ),
+                                    format!("cannot infer type arguments for '{}'", name),
                                 );
                                 return Ok(TypedExpr {
                                     kind: TypedExprKind::UnitLiteral,
@@ -3553,8 +4187,7 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 }
             }
         };
-        let enum_ty =
-            self.resolve_generic_enum_type(&enum_sig.fqn, &enum_sig, &type_args);
+        let enum_ty = self.resolve_generic_enum_type(&enum_sig.fqn, &enum_sig, &type_args);
         let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
             &enum_sig.type_params,
             &type_args,
@@ -3632,13 +4265,14 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
             Some(fqn) => fqn,
             None => return Err(typed_args),
         };
-        let sig = match self
-            .registry
-            .lookup_newtype_type(&fqn, &self.package_path, &self.current_file)
-        {
-            Some(sig) => sig.clone(),
-            None => return Err(typed_args),
-        };
+        let sig =
+            match self
+                .registry
+                .lookup_newtype_type(&fqn, &self.package_path, &self.current_file)
+            {
+                Some(sig) => sig.clone(),
+                None => return Err(typed_args),
+            };
         if !self.check_newtype_inner_access(&sig, span, "construct") {
             return Ok(TypedExpr {
                 kind: TypedExprKind::UnitLiteral,
@@ -3684,26 +4318,34 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                 }
                 match self.resolve_type_args(type_args) {
                     Some(args) => args,
-                    None => return Ok(TypedExpr {
-                        kind: TypedExprKind::UnitLiteral,
-                        ty: Type::Error,
-                        span: span.clone(),
-                    }),
+                    None => {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: span.clone(),
+                        });
+                    }
                 }
             } else {
                 // Infer type args from the argument type by unifying inner type with actual arg type
                 match self.infer_newtype_type_args(&sig, &typed_args[0].ty, span) {
                     Some(args) => args,
-                    None => return Ok(TypedExpr {
-                        kind: TypedExprKind::UnitLiteral,
-                        ty: Type::Error,
-                        span: span.clone(),
-                    }),
+                    None => {
+                        return Ok(TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: span.clone(),
+                        });
+                    }
                 }
             };
 
             let newtype_ty = self.resolve_generic_newtype(&fqn, &sig, &resolved_type_args, span);
-            if let Type::GenericNewtype { concrete_inner_type, .. } = &newtype_ty {
+            if let Type::GenericNewtype {
+                concrete_inner_type,
+                ..
+            } = &newtype_ty
+            {
                 self.check_assignable(
                     typed_args[0].span.clone(),
                     concrete_inner_type,
@@ -3770,26 +4412,22 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
             type_args: expected_args,
             ..
         }) = self.expected_type.as_ref()
+            && *expected_fqn == sig.fqn
         {
-            if *expected_fqn == sig.fqn {
-                let placeholder_args: Vec<Type> = sig
-                    .type_params
-                    .iter()
-                    .map(|tp| {
-                        Type::TypeVariable(
-                            tp.clone(),
-                            sig.trait_bounds
-                                .get(tp)
-                                .cloned()
-                                .unwrap_or_default(),
-                        )
-                    })
-                    .collect();
-                for (placeholder, (_, expected_arg)) in
-                    placeholder_args.iter().zip(expected_args.iter())
-                {
-                    substitution.unify(placeholder, expected_arg);
-                }
+            let placeholder_args: Vec<Type> = sig
+                .type_params
+                .iter()
+                .map(|tp| {
+                    Type::TypeVariable(
+                        tp.clone(),
+                        sig.trait_bounds.get(tp).cloned().unwrap_or_default(),
+                    )
+                })
+                .collect();
+            for (placeholder, (_, expected_arg)) in
+                placeholder_args.iter().zip(expected_args.iter())
+            {
+                substitution.unify(placeholder, expected_arg);
             }
         }
 
@@ -3821,19 +4459,36 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         expected_arg_types: &Option<Vec<Option<Type>>>,
     ) -> Vec<TypedExpr> {
         if args.iter().any(|arg| matches!(arg, Expr::AsyncDo { .. })) {
-            let hints = expected_arg_types.clone().unwrap_or_else(|| vec![None; args.len()]);
-            let typed = args.iter().enumerate().map(|(i, arg)| {
-                if matches!(arg, Expr::AsyncDo { .. }) || super::async_arguments::deferred_async_sibling(arg) {
-                    return TypedExpr { kind: TypedExprKind::UnitLiteral, ty: Type::Error, span: arg.span() };
-                }
-                let saved = self.expected_type.take();
-                self.expected_type = hints.get(i).cloned().flatten()
-                    .map(|ty| extract_byname_inner(&ty).cloned().unwrap_or(ty))
-                    .filter(|ty| !ty.contains_type_parameter() || matches!(arg, Expr::Closure { .. }));
-                let typed = self.infer_expr(arg);
-                self.expected_type = saved;
-                typed
-            }).collect();
+            let hints = expected_arg_types
+                .clone()
+                .unwrap_or_else(|| vec![None; args.len()]);
+            let typed = args
+                .iter()
+                .enumerate()
+                .map(|(i, arg)| {
+                    if matches!(arg, Expr::AsyncDo { .. })
+                        || super::async_arguments::deferred_async_sibling(arg)
+                    {
+                        return TypedExpr {
+                            kind: TypedExprKind::UnitLiteral,
+                            ty: Type::Error,
+                            span: arg.span(),
+                        };
+                    }
+                    let saved = self.expected_type.take();
+                    self.expected_type = hints
+                        .get(i)
+                        .cloned()
+                        .flatten()
+                        .map(|ty| extract_byname_inner(&ty).cloned().unwrap_or(ty))
+                        .filter(|ty| {
+                            !ty.contains_type_parameter() || matches!(arg, Expr::Closure { .. })
+                        });
+                    let typed = self.infer_expr(arg);
+                    self.expected_type = saved;
+                    typed
+                })
+                .collect();
             return self.infer_deferred_async_arguments(args, typed, &hints);
         }
         args.iter()
@@ -3865,21 +4520,30 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
     /// can't pick an overload. Deferring them lets the second pass
     /// re-infer with that context.
     fn is_ambiguous_static_method_ref(&self, arg: &Expr) -> bool {
-        if let Expr::FieldAccess { object, object_type_params, field, field_type_params, .. } = arg {
+        if let Expr::FieldAccess {
+            object,
+            object_type_params,
+            field,
+            field_type_params,
+            ..
+        } = arg
+        {
             if !object_type_params.is_empty() || !field_type_params.is_empty() {
                 return false;
             }
-            if let Expr::Identifier(name, _) = object.as_ref() {
-                if let Some(enum_sig) = self.resolve_enum_type(name) {
-                    let member_sym = SymbolName(field.value.clone());
-                    let matching = self.registry
-                        .find_impl_method(&enum_sig.fqn, &member_sym)
-                        .into_iter()
-                        .filter(|(_, m)| !m.is_property
-                            && (m.params.is_empty() || m.params[0].0 != "self"))
-                        .count();
-                    return matching > 1;
-                }
+            if let Expr::Identifier(name, _) = object.as_ref()
+                && let Some(enum_sig) = self.resolve_enum_type(name)
+            {
+                let member_sym = SymbolName(field.value.clone());
+                let matching = self
+                    .registry
+                    .find_impl_method(&enum_sig.fqn, &member_sym)
+                    .into_iter()
+                    .filter(|(_, m)| {
+                        !m.is_property && (m.params.is_empty() || m.params[0].0 != "self")
+                    })
+                    .count();
+                return matching > 1;
             }
         }
         false
@@ -3902,7 +4566,12 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         explicit_method_type_params: &[TypeExpr],
         known_args: &[TypedExpr],
     ) -> Option<(Vec<Option<Type>>, Vec<TypeParamName>)> {
-        if receiver_ty.is_error() || matches!(receiver_ty, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)) {
+        if receiver_ty.is_error()
+            || matches!(
+                receiver_ty,
+                Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)
+            )
+        {
             return None;
         }
 
@@ -3973,34 +4642,35 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
                     // First, try to bind from explicit type params on the call site
                     if !explicit_method_type_params.is_empty()
                         && explicit_method_type_params.len() == def.method_type_params.len()
+                        && let Some(method_args) =
+                            self.resolve_type_args(explicit_method_type_params)
                     {
-                        if let Some(method_args) = self.resolve_type_args(explicit_method_type_params) {
-                            for (tp, arg) in def.method_type_params.iter().zip(method_args.iter()) {
-                                substitution.insert(tp.clone(), arg.clone());
-                            }
+                        for (tp, arg) in def.method_type_params.iter().zip(method_args.iter()) {
+                            substitution.insert(tp.clone(), arg.clone());
                         }
                     }
 
                     // Then, try to resolve remaining from expected return type context
                     if let Some(ref expected) = self.expected_type {
-                        let method_return_substituted = apply_substitution(&substitution, &def.return_type);
+                        let method_return_substituted =
+                            apply_substitution(&substitution, &def.return_type);
                         let mut trial = substitution.clone();
                         trial.unify(&method_return_substituted, expected);
                         // Only keep bindings that don't map method type params to Never
                         for tp in &def.method_type_params {
-                            if substitution.get(tp).is_none() {
-                                if let Some(resolved) = trial.get(tp) {
-                                    if *resolved != Type::Never {
-                                        substitution.insert(tp.clone(), resolved.clone());
-                                    }
-                                }
+                            if substitution.get(tp).is_none()
+                                && let Some(resolved) = trial.get(tp)
+                                && *resolved != Type::Never
+                            {
+                                substitution.insert(tp.clone(), resolved.clone());
                             }
                         }
                     }
                 }
 
                 // Collect unresolved method-level type param names
-                let unresolved: Vec<TypeParamName> = def.method_type_params
+                let unresolved: Vec<TypeParamName> = def
+                    .method_type_params
                     .iter()
                     .filter(|tp| substitution.get(tp).is_none())
                     .cloned()
@@ -4018,68 +4688,73 @@ for bound in bounds.iter().filter_map(TraitBound::named) {
         }
 
         // Try class instance methods (classes store methods in ClassTypeSignature, not modules)
-        if matches!(receiver_ty, Type::Class(..) | Type::GenericClass { .. }) {
-            if let Some(class_sig) = self.registry.lookup_class_type(&type_fqn, &self.package_path) {
-                // Walk the class hierarchy
-                let mut current_sig = class_sig.clone();
-                loop {
-                    if let Some(overloads) = current_sig.instance_methods.get(&method_sym) {
-                        for sig in overloads {
-                            // Instance methods have self as first param
-                            if sig.params.is_empty() || sig.params[0].0 != "self" {
-                                continue;
-                            }
-                            if sig.params.len() - 1 != num_args {
-                                continue;
-                            }
-                            return Some((
-                                sig.params[1..]
-                                    .iter()
-                                    .map(|(_, ty)| Some(ty.clone()))
-                                    .collect(),
-                                Vec::new(),
-                            ));
-                        }
-                    }
-                    // Check generic instance methods on the class
-                    if let Some(defs) = current_sig.generic_instance_methods.get(&method_sym) {
-                        for def in defs {
-                            if def.params.is_empty() || def.params[0].0 != "self" {
-                                continue;
-                            }
-                            if def.params.len() - 1 != num_args {
-                                continue;
-                            }
-                            // Unify class type params from receiver type args
-                            let mut substitution = TypeParamSubstitution::new();
-                            if let Type::GenericClass { type_args, .. } = receiver_ty {
-                                for (tp, (_, ta)) in def.class_type_params.iter().zip(type_args.iter()) {
-                                    substitution.insert(tp.clone(), ta.clone());
-                                }
-                            }
-                            let unresolved: Vec<TypeParamName> = def.method_type_params
-                                .iter()
-                                .filter(|tp| substitution.get(tp).is_none())
-                                .cloned()
-                                .collect();
-                            return Some((
-                                def.params[1..]
-                                    .iter()
-                                    .map(|(_, ty)| Some(apply_substitution(&substitution, ty)))
-                                    .collect(),
-                                unresolved,
-                            ));
-                        }
-                    }
-                    // Walk up to parent class
-                    if let Some(ref parent) = current_sig.parent_class {
-                        if let Some(parent_sig) = self.registry.lookup_class_type(parent, &self.package_path) {
-                            current_sig = parent_sig.clone();
+        if matches!(receiver_ty, Type::Class(..) | Type::GenericClass { .. })
+            && let Some(class_sig) = self
+                .registry
+                .lookup_class_type(&type_fqn, &self.package_path)
+        {
+            // Walk the class hierarchy
+            let mut current_sig = class_sig.clone();
+            loop {
+                if let Some(overloads) = current_sig.instance_methods.get(&method_sym) {
+                    for sig in overloads {
+                        // Instance methods have self as first param
+                        if sig.params.is_empty() || sig.params[0].0 != "self" {
                             continue;
                         }
+                        if sig.params.len() - 1 != num_args {
+                            continue;
+                        }
+                        return Some((
+                            sig.params[1..]
+                                .iter()
+                                .map(|(_, ty)| Some(ty.clone()))
+                                .collect(),
+                            Vec::new(),
+                        ));
                     }
-                    break;
                 }
+                // Check generic instance methods on the class
+                if let Some(defs) = current_sig.generic_instance_methods.get(&method_sym) {
+                    for def in defs {
+                        if def.params.is_empty() || def.params[0].0 != "self" {
+                            continue;
+                        }
+                        if def.params.len() - 1 != num_args {
+                            continue;
+                        }
+                        // Unify class type params from receiver type args
+                        let mut substitution = TypeParamSubstitution::new();
+                        if let Type::GenericClass { type_args, .. } = receiver_ty {
+                            for (tp, (_, ta)) in def.class_type_params.iter().zip(type_args.iter())
+                            {
+                                substitution.insert(tp.clone(), ta.clone());
+                            }
+                        }
+                        let unresolved: Vec<TypeParamName> = def
+                            .method_type_params
+                            .iter()
+                            .filter(|tp| substitution.get(tp).is_none())
+                            .cloned()
+                            .collect();
+                        return Some((
+                            def.params[1..]
+                                .iter()
+                                .map(|(_, ty)| Some(apply_substitution(&substitution, ty)))
+                                .collect(),
+                            unresolved,
+                        ));
+                    }
+                }
+                // Walk up to parent class
+                if let Some(ref parent) = current_sig.parent_class
+                    && let Some(parent_sig) =
+                        self.registry.lookup_class_type(parent, &self.package_path)
+                {
+                    current_sig = parent_sig.clone();
+                    continue;
+                }
+                break;
             }
         }
 
@@ -4342,7 +5017,7 @@ pub(super) fn resolve_intrinsic_kind(
         // Random intrinsics
         // UDP intrinsics
         // Clock intrinsics
-                // ── WASI p3 core ──
+        // ── WASI p3 core ──
         ("WaitableSet", "make") => Some(IntrinsicKind::P3WaitableSetNew),
         ("WaitableSet", "join") => Some(IntrinsicKind::P3WaitableSetJoin),
         ("WaitableSet", "remove") => Some(IntrinsicKind::P3WaitableRemove),
@@ -4368,9 +5043,13 @@ pub(super) fn resolve_intrinsic_kind(
         ("FileDescriptor", "openAtFinish") => Some(IntrinsicKind::P3FsOpenAtFinish),
         ("FileDescriptor", "statStart") => Some(IntrinsicKind::P3FsStatStart),
         ("FileDescriptor", "statFinish") => Some(IntrinsicKind::P3FsStatFinish),
-        ("FileDescriptor", "createDirectoryAtStart") => Some(IntrinsicKind::P3FsCreateDirectoryAtStart),
+        ("FileDescriptor", "createDirectoryAtStart") => {
+            Some(IntrinsicKind::P3FsCreateDirectoryAtStart)
+        }
         ("FileDescriptor", "unlinkFileAtStart") => Some(IntrinsicKind::P3FsUnlinkFileAtStart),
-        ("FileDescriptor", "removeDirectoryAtStart") => Some(IntrinsicKind::P3FsRemoveDirectoryAtStart),
+        ("FileDescriptor", "removeDirectoryAtStart") => {
+            Some(IntrinsicKind::P3FsRemoveDirectoryAtStart)
+        }
         ("FileDescriptor", "unitFinish") => Some(IntrinsicKind::P3FsUnitFinish),
         ("FileDescriptor", "statAtStart") => Some(IntrinsicKind::P3FsStatAtStart),
         ("FileDescriptor", "setSizeStart") => Some(IntrinsicKind::P3FsSetSizeStart),
@@ -4522,10 +5201,11 @@ pub(super) fn resolve_freestanding_intrinsic(fqn: &Fqn) -> Option<IntrinsicKind>
 /// If `ty` is `ByName<T>` (i.e. `GenericNewtype { fqn: standard.prelude::ByName, ... }`),
 /// return the inner type `T`. Otherwise return `None`.
 pub(super) fn extract_byname_inner(ty: &Type) -> Option<&Type> {
-    if let Type::GenericNewtype { fqn, type_args, .. } = ty {
-        if super::types::is_byname_fqn(fqn) && type_args.len() == 1 {
-            return Some(&type_args[0].1);
-        }
+    if let Type::GenericNewtype { fqn, type_args, .. } = ty
+        && super::types::is_byname_fqn(fqn)
+        && type_args.len() == 1
+    {
+        return Some(&type_args[0].1);
     }
     None
 }

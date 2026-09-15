@@ -39,7 +39,10 @@ pub fn clamp_range(inner: Range, outer: Range) -> Range {
     };
     // Ensure start <= end after clamping
     if start.line > end.line || (start.line == end.line && start.character > end.character) {
-        Range { start: outer.start, end: outer.start }
+        Range {
+            start: outer.start,
+            end: outer.start,
+        }
     } else {
         Range { start, end }
     }

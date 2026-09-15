@@ -251,7 +251,10 @@ function main(): Unit = assert f([1]) == 1
     .expect_err("non-exhaustive");
     let text = format!("{err:?}");
     assert!(text.contains("non-exhaustive"), "{text}");
-    assert!(text.contains("[_, "), "expected a two-or-more witness: {text}");
+    assert!(
+        text.contains("[_, "),
+        "expected a two-or-more witness: {text}"
+    );
 }
 
 /// Covering every length up to a trailing `h :: t` is exhaustive.

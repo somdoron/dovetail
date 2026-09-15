@@ -34,7 +34,11 @@ pub fn hover_for_node(
             let sig = format_function_signature(func);
             (sig, None, span_to_range(span))
         }
-        NodeAtPosition::FieldAccess { receiver_type, field_name, span } => {
+        NodeAtPosition::FieldAccess {
+            receiver_type,
+            field_name,
+            span,
+        } => {
             let fqn = type_to_fqn(receiver_type)?;
             let field_type = lookup_field_type(registry, &fqn, field_name)?;
             let code = format!("{}: {}", field_name, field_type);
@@ -72,14 +76,17 @@ pub fn hover_for_node(
             let doc = registry.lookup_doc_comment(fqn).map(str::to_string);
             (code, doc, span_to_range(span))
         }
-        NodeAtPosition::EnumCreate { fqn, variant_name, span } => {
+        NodeAtPosition::EnumCreate {
+            fqn,
+            variant_name,
+            span,
+        } => {
             let sig = registry.get_enum_type(fqn)?;
-            let variant_info = sig
-                .variants
-                .iter()
-                .find(|(name, _)| name == variant_name);
+            let variant_info = sig.variants.iter().find(|(name, _)| name == variant_name);
             let code = match variant_info {
-                Some((name, payload)) => format!("{}.{}{}", fqn.symbol, name, format_variant_payload(payload)),
+                Some((name, payload)) => {
+                    format!("{}.{}{}", fqn.symbol, name, format_variant_payload(payload))
+                }
                 None => format!("{}.{}", fqn.symbol, variant_name),
             };
             let doc = registry
@@ -237,11 +244,17 @@ fn format_type_hover(ty: &crate::typechecker::types::Type, registry: &Registry) 
             }
         }
         Type::InterfaceObject { traits, .. } => {
-            let keyword = match traits.first().and_then(|c| registry.get_trait(&c.trait_fqn)) {
+            let keyword = match traits
+                .first()
+                .and_then(|c| registry.get_trait(&c.trait_fqn))
+            {
                 Some(sig) if sig.is_interface => "interface",
                 _ => "trait",
             };
-            let names: Vec<String> = traits.iter().map(|c| c.trait_fqn.symbol.to_string()).collect();
+            let names: Vec<String> = traits
+                .iter()
+                .map(|c| c.trait_fqn.symbol.to_string())
+                .collect();
             format!("{} {}", keyword, names.join(" and "))
         }
         _ => format!("{}", ty),

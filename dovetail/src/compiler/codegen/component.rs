@@ -165,9 +165,11 @@ pub(super) fn compose_components(
                  Details: {e:#}"
             ),
         })?;
-    let program_id = graph.register_package(program_pkg).map_err(|e| CodeGenError {
-        message: format!("Component composition failed: could not register program: {e:#}"),
-    })?;
+    let program_id = graph
+        .register_package(program_pkg)
+        .map_err(|e| CodeGenError {
+            message: format!("Component composition failed: could not register program: {e:#}"),
+        })?;
 
     let mut plug_ids = Vec::with_capacity(plugs.len());
     for (i, (name, bytes)) in plugs.iter().enumerate() {

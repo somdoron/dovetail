@@ -16,7 +16,9 @@ fn build_and_run(project: &ResolvedProject, workspace_root: &std::path::Path) {
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
 
     if result.diagnostics.has_errors() {
@@ -76,9 +78,9 @@ function main(): Unit = assert helper() == 42
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -133,9 +135,9 @@ function main(): Unit = assert id(5) == 5
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -187,9 +189,9 @@ function main(): Unit = ()
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -198,7 +200,9 @@ function main(): Unit = ()
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     assert!(result.wasm.is_none());
@@ -256,9 +260,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -337,9 +341,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -417,9 +421,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -428,7 +432,9 @@ function main(): Unit =
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -487,9 +493,9 @@ function main(): Unit = assert 5.secret() == 210
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -498,7 +504,9 @@ function main(): Unit = assert 5.secret() == 210
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -562,9 +570,9 @@ function main(): Unit = assert 5.hidden() == 495
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -573,7 +581,9 @@ function main(): Unit = assert 5.hidden() == 495
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -637,9 +647,9 @@ function main(): Unit = assert 5.internalOnly() == 6
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -648,7 +658,9 @@ function main(): Unit = assert 5.internalOnly() == 6
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -713,9 +725,9 @@ function main(): Unit = assert 5.triple() == 15
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -749,9 +761,9 @@ function main(): Unit = ()
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -760,7 +772,9 @@ function main(): Unit = ()
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result.diagnostics.iter().collect();
@@ -812,9 +826,9 @@ function main(): Unit = assert secret() == 42
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -823,7 +837,9 @@ function main(): Unit = assert secret() == 42
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -877,9 +893,9 @@ function main(): Unit = assert secret() == 42
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -888,7 +904,9 @@ function main(): Unit = assert secret() == 42
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -942,9 +960,9 @@ function main(): Unit = assert SECRET == 42
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -953,7 +971,9 @@ function main(): Unit = assert SECRET == 42
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -1019,9 +1039,9 @@ function main(): Unit = assert 3.cube() == 27
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -1069,9 +1089,9 @@ function main(): Unit =
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -1080,7 +1100,9 @@ function main(): Unit =
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -1150,9 +1172,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -1214,9 +1236,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -1272,9 +1294,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -1283,7 +1305,9 @@ function main(): Unit =
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -1362,9 +1386,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -1423,9 +1447,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -1434,7 +1458,9 @@ function main(): Unit =
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -1507,9 +1533,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());
@@ -1556,9 +1582,9 @@ function main(): Unit =
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let result = dovetail::build_project(
@@ -1567,7 +1593,9 @@ function main(): Unit =
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     assert!(result.diagnostics.has_errors());
     let errors: Vec<_> = result
@@ -1644,9 +1672,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     build_and_run(&project, dir.path());

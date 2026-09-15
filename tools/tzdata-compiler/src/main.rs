@@ -104,8 +104,8 @@ fn compile(iana_dir: &Path) -> Result<Vec<u8>, String> {
     let parser = LineParser::default();
     for fname in zone_files {
         let path = iana_dir.join(fname);
-        let content = fs::read_to_string(&path)
-            .map_err(|e| format!("reading {}: {}", path.display(), e))?;
+        let content =
+            fs::read_to_string(&path).map_err(|e| format!("reading {}: {}", path.display(), e))?;
         for (lineno, raw) in content.lines().enumerate() {
             // parse-zoneinfo wants stripped continuation comments — its
             // parser handles `#` already; just feed each line.
@@ -117,14 +117,14 @@ fn compile(iana_dir: &Path) -> Result<Vec<u8>, String> {
                         path.display(),
                         lineno + 1,
                         e
-                    ))
+                    ));
                 }
             };
             match line {
                 Line::Zone(z) => builder.add_zone_line(z).map_err(|e| e.to_string())?,
-                Line::Continuation(z) => {
-                    builder.add_continuation_line(z).map_err(|e| e.to_string())?
-                }
+                Line::Continuation(z) => builder
+                    .add_continuation_line(z)
+                    .map_err(|e| e.to_string())?,
                 Line::Rule(r) => builder.add_rule_line(r).map_err(|e| e.to_string())?,
                 Line::Link(l) => builder.add_link_line(l).map_err(|e| e.to_string())?,
                 Line::Space => {}
@@ -230,10 +230,7 @@ fn compile(iana_dir: &Path) -> Result<Vec<u8>, String> {
     // Abbreviation pool: deduplicated, NUL-terminated.
     let mut abbrev_pool: Vec<u8> = Vec::new();
     let mut abbrev_indices: BTreeMap<String, u16> = BTreeMap::new();
-    let intern_abbrev = |s: &str,
-                          pool: &mut Vec<u8>,
-                          indices: &mut BTreeMap<String, u16>|
-     -> u16 {
+    let intern_abbrev = |s: &str, pool: &mut Vec<u8>, indices: &mut BTreeMap<String, u16>| -> u16 {
         if let Some(&idx) = indices.get(s) {
             return idx;
         }
@@ -300,7 +297,7 @@ fn compile(iana_dir: &Path) -> Result<Vec<u8>, String> {
         zones_section.extend_from_slice(&posix_len.to_le_bytes());
         zones_section.extend_from_slice(&[0u8, 0u8]); // pad
         zones_section.extend_from_slice(posix_str.as_bytes());
-        while zones_section.len() % 4 != 0 {
+        while !zones_section.len().is_multiple_of(4) {
             zones_section.push(0);
         }
     }
@@ -324,7 +321,8 @@ fn compile(iana_dir: &Path) -> Result<Vec<u8>, String> {
     };
 
     let mut out = Vec::with_capacity(
-        HEADER_SIZE + index_size as usize
+        HEADER_SIZE
+            + index_size as usize
             + zones_section.len()
             + name_pool.len()
             + abbrev_pool.len()

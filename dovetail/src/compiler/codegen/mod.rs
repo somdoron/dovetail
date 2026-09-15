@@ -1,23 +1,26 @@
+use crate::typechecker::types::VtableMethodGroup;
 mod classes;
 mod component;
 mod dwarf;
 mod enums;
 mod function_emitter;
 mod globals;
+#[cfg(test)]
+mod identity_tests;
 mod instance_key;
+// Preserve the generator output; its exact contents are checked by p3-table-gen.
+#[rustfmt::skip]
 mod p3_imports;
 mod realloc;
 mod records;
+#[cfg(test)]
+mod runtime_type_tests;
 mod runtime_types;
 mod slice_checks;
 mod string_functions;
 mod string_literals;
 mod type_graph;
 mod wit_imports;
-#[cfg(test)]
-mod identity_tests;
-#[cfg(test)]
-mod runtime_type_tests;
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -31,11 +34,13 @@ use wasm_encoder::{
 
 use crate::TestExportInfo;
 use crate::common::span::Span;
-use crate::common::types::{MangledName, PackagePath, InterfaceMemberName, TypeParamName};
-use crate::monomorphize::substitute::apply_type_substitution;
-use instance_key::{instance_key, InstanceKey};
-use crate::typechecker::types::{CapturedVar, Type, TypeDef, TypedClosureParam, TypedExpr, TypedExprKind, TypedModule};
+use crate::common::types::{InterfaceMemberName, MangledName, PackagePath, TypeParamName};
 use crate::compiler::witgen::WitImportUniverse;
+use crate::monomorphize::substitute::apply_type_substitution;
+use crate::typechecker::types::{
+    CapturedVar, Type, TypeDef, TypedClosureParam, TypedExpr, TypedExprKind, TypedModule,
+};
+use instance_key::{InstanceKey, instance_key};
 use wit_imports::WitImportRegistry;
 
 /// Concrete type args to pass to a vtable slot's impl method at a given class
@@ -112,7 +117,6 @@ const NUM_IMPORTS: u32 = p3_imports::NUM_P3_IMPORTS;
 /// console_print, console_eprint, console_eprintln).
 const NUM_RUNTIME_FUNCS: u32 = 16;
 
-
 /// First user global index (after bump allocator at index 0).
 /// Runtime globals: 0 = scratch bump pointer; 1/2 = the blocking print path's
 /// own stdout/stderr writable stream ends (0 = uninitialized); 3 = the private
@@ -133,7 +137,6 @@ pub(super) const GLOBAL_PINNED_BRK: u32 = 5;
 pub(super) const GLOBAL_SCRATCH_PINNED_HEAD: u32 = 6;
 pub(super) const GLOBAL_IDENTITY_HASH_COUNTER: u32 = 7;
 const USER_GLOBAL_BASE: u32 = 8;
-
 
 /// Initial values of the runtime globals, indexed by the `GLOBAL_*` constants
 /// above — the whole layout in one place. `emit_global_section` emits it, and
@@ -208,8 +211,6 @@ const MUT_BOX_F32_TYPE_INDEX: u32 = 29;
 const MUT_BOX_F64_TYPE_INDEX: u32 = 30;
 pub(super) const MUT_BOX_REF_TYPE_INDEX: u32 = 31;
 
-
-
 /// Dedicated boxed form of `Uint128`: `(struct (field (mut i64)) (field (mut i64)))`.
 /// Holds the two halves as raw `i64` fields (lo, hi) — never the generic anyref `$Tuple_2`,
 /// so boxing a `Uint128` is one `struct.new` and unboxing is two `struct.get`, with no
@@ -272,16 +273,6 @@ const ARRAY_ELEMENT_TYPES: &[(Type, u32)] = &[
 const USER_TYPE_BASE: u32 = 48;
 
 // Import function indices
-
-
-
-
-
-
-
-
-
-
 
 /// Type: `(i32) -> i32` — `pinned_alloc`'s signature.
 const TYPE_PINNED_ALLOC: u32 = 32;
@@ -358,7 +349,7 @@ struct InterfaceObjectInfo {
     interface_mangled_name: MangledName,
     concrete_type: Type,
     /// Grouped per component: (component per-trait key, slot entries), sorted.
-    vtable_methods: Vec<(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)>,
+    vtable_methods: Vec<VtableMethodGroup>,
 }
 
 /// Holds the state for the codegen phase.
@@ -493,9 +484,7 @@ struct Codegen<'a> {
 /// runtime functions, then user functions.
 impl Codegen<'_> {
     fn runtime_func_base(&self) -> u32 {
-        NUM_IMPORTS
-            + self.num_task_return_imports
-            + self.num_wit_imports
+        NUM_IMPORTS + self.num_task_return_imports + self.num_wit_imports
     }
 
     /// Function index of the first WIT component import.
@@ -572,7 +561,11 @@ impl Codegen<'_> {
 }
 
 impl<'a> Codegen<'a> {
-    fn new(typed_module: &'a TypedModule, wit_imports: &'a WitImportUniverse, registry: &'a crate::typechecker::registry::Registry) -> Self {
+    fn new(
+        typed_module: &'a TypedModule,
+        wit_imports: &'a WitImportUniverse,
+        registry: &'a crate::typechecker::registry::Registry,
+    ) -> Self {
         // One `[task-return]` import per async-lifted export: run + each test.
         let num_tests = typed_module
             .functions
@@ -585,10 +578,8 @@ impl<'a> Codegen<'a> {
         let wit_import_base = NUM_IMPORTS + num_task_return_imports;
         let wit_registry = WitImportRegistry::build(wit_imports, wit_import_base);
         let num_wit_imports = wit_registry.len();
-        let user_func_base = NUM_IMPORTS
-            + num_task_return_imports
-            + num_wit_imports
-            + NUM_RUNTIME_FUNCS;
+        let user_func_base =
+            NUM_IMPORTS + num_task_return_imports + num_wit_imports + NUM_RUNTIME_FUNCS;
         // User functions start at user_func_base
         let function_indices: BTreeMap<MangledName, u32> = typed_module
             .functions
@@ -678,7 +669,6 @@ impl<'a> Codegen<'a> {
         codegen
     }
 
-
     /// Pre-scan typed module AST to find all InterfaceObjectCoerce nodes.
     fn prescan_interface_objects(&mut self) {
         for func in self.typed_module.functions.values() {
@@ -707,8 +697,12 @@ impl<'a> Codegen<'a> {
             let type_key = instance_key(&syn.concrete_type);
             let global_key =
                 Self::coercion_global_key(&syn.interface_mangled_name, &syn.vtable_methods);
-            if !self.vtable_global_indices.contains_key(&(type_key.clone(), global_key.clone())) {
-                self.vtable_global_indices.insert((type_key, global_key), u32::MAX);
+            if !self
+                .vtable_global_indices
+                .contains_key(&(type_key.clone(), global_key.clone()))
+            {
+                self.vtable_global_indices
+                    .insert((type_key, global_key), u32::MAX);
                 self.interface_object_infos.push(InterfaceObjectInfo {
                     interface_mangled_name: syn.interface_mangled_name.clone(),
                     concrete_type: syn.concrete_type.clone(),
@@ -758,14 +752,17 @@ impl<'a> Codegen<'a> {
                 self.scan_closures_in_expr(expr, &mut wave_bodies);
             }
         }
-
     }
 
     /// Scan an expression for Closure nodes. Does NOT recurse into closure bodies;
     /// instead pushes them to `next_wave_bodies` for the next wave.
     fn scan_closures_in_expr(&mut self, expr: &TypedExpr, next_wave_bodies: &mut Vec<TypedExpr>) {
         match &expr.kind {
-            TypedExprKind::Closure { params, body, captures } => {
+            TypedExprKind::Closure {
+                params,
+                body,
+                captures,
+            } => {
                 let param_types: Vec<Type> = params.iter().map(|p| p.ty.clone()).collect();
                 // Use the closure's declared return type (from expr.ty) rather than
                 // the body's type. After variance casts, the closure's Function type
@@ -786,11 +783,16 @@ impl<'a> Codegen<'a> {
                 next_wave_bodies.push((**body).clone());
             }
             TypedExprKind::Block(exprs) => {
-                for e in exprs { self.scan_closures_in_expr(e, next_wave_bodies); }
+                for e in exprs {
+                    self.scan_closures_in_expr(e, next_wave_bodies);
+                }
             }
-            TypedExprKind::Let { value, .. } | TypedExprKind::Assign { value, .. }
-            | TypedExprKind::Panic { message: value } | TypedExprKind::BoxToAny { inner: value }
-            | TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value }
+            TypedExprKind::Let { value, .. }
+            | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::Panic { message: value }
+            | TypedExprKind::BoxToAny { inner: value }
+            | TypedExprKind::NewtypeCreate { value }
+            | TypedExprKind::NewtypeValue { value }
             | TypedExprKind::GlobalAssign { value, .. }
             | TypedExprKind::Return { value, .. }
             | TypedExprKind::UnaryOp { operand: value, .. }
@@ -806,10 +808,16 @@ impl<'a> Codegen<'a> {
                 self.scan_closures_in_expr(left, next_wave_bodies);
                 self.scan_closures_in_expr(right, next_wave_bodies);
             }
-            TypedExprKind::If { condition, then_branch, else_branch } => {
+            TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.scan_closures_in_expr(condition, next_wave_bodies);
                 self.scan_closures_in_expr(then_branch, next_wave_bodies);
-                if let Some(e) = else_branch { self.scan_closures_in_expr(e, next_wave_bodies); }
+                if let Some(e) = else_branch {
+                    self.scan_closures_in_expr(e, next_wave_bodies);
+                }
             }
             TypedExprKind::While { condition, body } => {
                 self.scan_closures_in_expr(condition, next_wave_bodies);
@@ -817,22 +825,31 @@ impl<'a> Codegen<'a> {
             }
             TypedExprKind::Assert { condition, message } => {
                 self.scan_closures_in_expr(condition, next_wave_bodies);
-                if let Some(m) = message { self.scan_closures_in_expr(m, next_wave_bodies); }
+                if let Some(m) = message {
+                    self.scan_closures_in_expr(m, next_wave_bodies);
+                }
             }
-            TypedExprKind::FunctionCall { args, .. } | TypedExprKind::IntrinsicCall { args, .. }
+            TypedExprKind::FunctionCall { args, .. }
+            | TypedExprKind::IntrinsicCall { args, .. }
             | TypedExprKind::ArrayLiteral { elements: args }
             | TypedExprKind::EnumCreate { args, .. }
             | TypedExprKind::EnumVariantRecordCreate { args, .. }
             | TypedExprKind::ClassSuperCall { args, .. } => {
-                for a in args { self.scan_closures_in_expr(a, next_wave_bodies); }
+                for a in args {
+                    self.scan_closures_in_expr(a, next_wave_bodies);
+                }
             }
-            TypedExprKind::ClassNew { mangled_name, args, .. } => {
+            TypedExprKind::ClassNew {
+                mangled_name, args, ..
+            } => {
                 // Emission order at a `ClassNew` (see the emit arm): constructor
                 // args, then `emit_class_hierarchy` inlines the extends-args, the
                 // parent chain, and this class's own initializer statements. Walk
                 // the same shape so a closure anywhere in that expansion gets the
                 // id the emitter will consume for it — at THIS site.
-                for a in args { self.scan_closures_in_expr(a, next_wave_bodies); }
+                for a in args {
+                    self.scan_closures_in_expr(a, next_wave_bodies);
+                }
                 self.scan_class_hierarchy_closures(mangled_name, next_wave_bodies);
             }
             TypedExprKind::Match { subject, arms } => {
@@ -842,41 +859,63 @@ impl<'a> Codegen<'a> {
                     // first and the body inside its `if`, so the closure counter must
                     // see them in that order too. Scanning body-first crossed the ids
                     // of an arm that had a closure in both.
-                    if let Some(g) = &arm.guard { self.scan_closures_in_expr(g, next_wave_bodies); }
+                    if let Some(g) = &arm.guard {
+                        self.scan_closures_in_expr(g, next_wave_bodies);
+                    }
                     self.scan_closures_in_expr(&arm.body, next_wave_bodies);
                 }
             }
             TypedExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields { self.scan_closures_in_expr(e, next_wave_bodies); }
+                for (_, e) in fields {
+                    self.scan_closures_in_expr(e, next_wave_bodies);
+                }
             }
             TypedExprKind::TupleLiteral { elements } => {
-                for e in elements { self.scan_closures_in_expr(e, next_wave_bodies); }
+                for e in elements {
+                    self.scan_closures_in_expr(e, next_wave_bodies);
+                }
             }
-            TypedExprKind::RecordWith { object, overrides, .. } => {
+            TypedExprKind::RecordWith {
+                object, overrides, ..
+            } => {
                 self.scan_closures_in_expr(object, next_wave_bodies);
-                for (_, _, e) in overrides { self.scan_closures_in_expr(e, next_wave_bodies); }
+                for (_, _, e) in overrides {
+                    self.scan_closures_in_expr(e, next_wave_bodies);
+                }
             }
             TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. }
-            | TypedExprKind::ClassVirtualCall { object: receiver, args, .. } => {
+            | TypedExprKind::ClassVirtualCall {
+                object: receiver,
+                args,
+                ..
+            } => {
                 self.scan_closures_in_expr(receiver, next_wave_bodies);
-                for a in args { self.scan_closures_in_expr(a, next_wave_bodies); }
+                for a in args {
+                    self.scan_closures_in_expr(a, next_wave_bodies);
+                }
             }
             TypedExprKind::ClosureCall { callee, args } => {
                 self.scan_closures_in_expr(callee, next_wave_bodies);
-                for a in args { self.scan_closures_in_expr(a, next_wave_bodies); }
+                for a in args {
+                    self.scan_closures_in_expr(a, next_wave_bodies);
+                }
             }
             TypedExprKind::LetDestructure { value, .. } => {
                 self.scan_closures_in_expr(value, next_wave_bodies);
             }
             TypedExprKind::ClassStructCreate { fields, .. } => {
-                for a in fields { self.scan_closures_in_expr(a, next_wave_bodies); }
+                for a in fields {
+                    self.scan_closures_in_expr(a, next_wave_bodies);
+                }
             }
             TypedExprKind::FieldAssign { object, value, .. } => {
                 self.scan_closures_in_expr(object, next_wave_bodies);
                 self.scan_closures_in_expr(value, next_wave_bodies);
             }
             TypedExprKind::ImplFunctionCall { args, .. } => {
-                for a in args { self.scan_closures_in_expr(a, next_wave_bodies); }
+                for a in args {
+                    self.scan_closures_in_expr(a, next_wave_bodies);
+                }
             }
             TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. } => {
                 self.scan_closures_in_expr(inner, next_wave_bodies);
@@ -938,7 +977,8 @@ impl<'a> Codegen<'a> {
             self.scan_expr_for_ref_trampolines(expr);
         }
         // Also scan closure bodies (clone to avoid borrow conflict)
-        let closure_bodies: Vec<TypedExpr> = self.closure_infos.iter().map(|i| i.body.clone()).collect();
+        let closure_bodies: Vec<TypedExpr> =
+            self.closure_infos.iter().map(|i| i.body.clone()).collect();
         for body in &closure_bodies {
             self.scan_expr_for_ref_trampolines(body);
         }
@@ -947,13 +987,18 @@ impl<'a> Codegen<'a> {
     /// Recursively scan an expression for FunctionRef/MethodRef and register trampolines.
     fn scan_expr_for_ref_trampolines(&mut self, expr: &TypedExpr) {
         match &expr.kind {
-            TypedExprKind::FunctionRef { name, type_params: _ } => {
+            TypedExprKind::FunctionRef {
+                name,
+                type_params: _,
+            } => {
                 let (param_types, return_type) = match &expr.ty {
                     Type::Function(pts, ret) => (pts.clone(), ret.as_ref().clone()),
                     _ => unreachable!("FunctionRef must have Function type"),
                 };
                 let key = format!("$ref_func${}", name.0);
-                if let std::collections::btree_map::Entry::Vacant(e) = self.ref_trampoline_indices.entry(key) {
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    self.ref_trampoline_indices.entry(key)
+                {
                     e.insert(0); // placeholder, set in emit_function_section
                     self.ref_trampolines.push(RefTrampoline {
                         target_mangled: name.clone(),
@@ -963,15 +1008,23 @@ impl<'a> Codegen<'a> {
                     });
                 }
             }
-            TypedExprKind::MethodRef { object, method_name, type_params: _ } => {
+            TypedExprKind::MethodRef {
+                object,
+                method_name,
+                type_params: _,
+            } => {
                 self.scan_expr_for_ref_trampolines(object);
                 let (param_types, return_type) = match &expr.ty {
                     Type::Function(pts, ret) => (pts.clone(), ret.as_ref().clone()),
                     _ => unreachable!("MethodRef must have Function type"),
                 };
-                let self_ty = self.typed_module.functions[method_name].params[0].ty.clone();
+                let self_ty = self.typed_module.functions[method_name].params[0]
+                    .ty
+                    .clone();
                 let key = format!("$ref_method${}", method_name.0);
-                if let std::collections::btree_map::Entry::Vacant(e) = self.ref_trampoline_indices.entry(key) {
+                if let std::collections::btree_map::Entry::Vacant(e) =
+                    self.ref_trampoline_indices.entry(key)
+                {
                     e.insert(0); // placeholder, set in emit_function_section
                     self.ref_trampolines.push(RefTrampoline {
                         target_mangled: method_name.clone(),
@@ -983,11 +1036,16 @@ impl<'a> Codegen<'a> {
             }
             // Recurse into children
             TypedExprKind::Block(exprs) => {
-                for e in exprs { self.scan_expr_for_ref_trampolines(e); }
+                for e in exprs {
+                    self.scan_expr_for_ref_trampolines(e);
+                }
             }
-            TypedExprKind::Let { value, .. } | TypedExprKind::Assign { value, .. }
-            | TypedExprKind::Panic { message: value } | TypedExprKind::BoxToAny { inner: value }
-            | TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value }
+            TypedExprKind::Let { value, .. }
+            | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::Panic { message: value }
+            | TypedExprKind::BoxToAny { inner: value }
+            | TypedExprKind::NewtypeCreate { value }
+            | TypedExprKind::NewtypeValue { value }
             | TypedExprKind::GlobalAssign { value, .. }
             | TypedExprKind::Return { value, .. }
             | TypedExprKind::UnaryOp { operand: value, .. }
@@ -1002,10 +1060,16 @@ impl<'a> Codegen<'a> {
                 self.scan_expr_for_ref_trampolines(left);
                 self.scan_expr_for_ref_trampolines(right);
             }
-            TypedExprKind::If { condition, then_branch, else_branch } => {
+            TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.scan_expr_for_ref_trampolines(condition);
                 self.scan_expr_for_ref_trampolines(then_branch);
-                if let Some(e) = else_branch { self.scan_expr_for_ref_trampolines(e); }
+                if let Some(e) = else_branch {
+                    self.scan_expr_for_ref_trampolines(e);
+                }
             }
             TypedExprKind::While { condition, body } => {
                 self.scan_expr_for_ref_trampolines(condition);
@@ -1013,15 +1077,20 @@ impl<'a> Codegen<'a> {
             }
             TypedExprKind::Assert { condition, message } => {
                 self.scan_expr_for_ref_trampolines(condition);
-                if let Some(m) = message { self.scan_expr_for_ref_trampolines(m); }
+                if let Some(m) = message {
+                    self.scan_expr_for_ref_trampolines(m);
+                }
             }
-            TypedExprKind::FunctionCall { args, .. } | TypedExprKind::IntrinsicCall { args, .. }
+            TypedExprKind::FunctionCall { args, .. }
+            | TypedExprKind::IntrinsicCall { args, .. }
             | TypedExprKind::ArrayLiteral { elements: args }
             | TypedExprKind::EnumCreate { args, .. }
             | TypedExprKind::EnumVariantRecordCreate { args, .. }
             | TypedExprKind::ClassNew { args, .. }
             | TypedExprKind::ClassSuperCall { args, .. } => {
-                for a in args { self.scan_expr_for_ref_trampolines(a); }
+                for a in args {
+                    self.scan_expr_for_ref_trampolines(a);
+                }
             }
             TypedExprKind::Match { subject, arms } => {
                 self.scan_expr_for_ref_trampolines(subject);
@@ -1029,28 +1098,46 @@ impl<'a> Codegen<'a> {
                     // Guard before body, mirroring the emitter (see the closure scan).
                     // Trampolines are keyed by mangled name so order is not load-bearing
                     // here, but keeping every prescan in emission order is the invariant.
-                    if let Some(g) = &arm.guard { self.scan_expr_for_ref_trampolines(g); }
+                    if let Some(g) = &arm.guard {
+                        self.scan_expr_for_ref_trampolines(g);
+                    }
                     self.scan_expr_for_ref_trampolines(&arm.body);
                 }
             }
             TypedExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields { self.scan_expr_for_ref_trampolines(e); }
+                for (_, e) in fields {
+                    self.scan_expr_for_ref_trampolines(e);
+                }
             }
             TypedExprKind::TupleLiteral { elements } => {
-                for e in elements { self.scan_expr_for_ref_trampolines(e); }
+                for e in elements {
+                    self.scan_expr_for_ref_trampolines(e);
+                }
             }
-            TypedExprKind::RecordWith { object, overrides, .. } => {
+            TypedExprKind::RecordWith {
+                object, overrides, ..
+            } => {
                 self.scan_expr_for_ref_trampolines(object);
-                for (_, _, e) in overrides { self.scan_expr_for_ref_trampolines(e); }
+                for (_, _, e) in overrides {
+                    self.scan_expr_for_ref_trampolines(e);
+                }
             }
             TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. }
-            | TypedExprKind::ClassVirtualCall { object: receiver, args, .. } => {
+            | TypedExprKind::ClassVirtualCall {
+                object: receiver,
+                args,
+                ..
+            } => {
                 self.scan_expr_for_ref_trampolines(receiver);
-                for a in args { self.scan_expr_for_ref_trampolines(a); }
+                for a in args {
+                    self.scan_expr_for_ref_trampolines(a);
+                }
             }
             TypedExprKind::ClosureCall { callee, args } => {
                 self.scan_expr_for_ref_trampolines(callee);
-                for a in args { self.scan_expr_for_ref_trampolines(a); }
+                for a in args {
+                    self.scan_expr_for_ref_trampolines(a);
+                }
             }
             TypedExprKind::Closure { body, .. } => {
                 self.scan_expr_for_ref_trampolines(body);
@@ -1059,14 +1146,18 @@ impl<'a> Codegen<'a> {
                 self.scan_expr_for_ref_trampolines(value);
             }
             TypedExprKind::ClassStructCreate { fields, .. } => {
-                for a in fields { self.scan_expr_for_ref_trampolines(a); }
+                for a in fields {
+                    self.scan_expr_for_ref_trampolines(a);
+                }
             }
             TypedExprKind::FieldAssign { object, value, .. } => {
                 self.scan_expr_for_ref_trampolines(object);
                 self.scan_expr_for_ref_trampolines(value);
             }
             TypedExprKind::ImplFunctionCall { args, .. } => {
-                for a in args { self.scan_expr_for_ref_trampolines(a); }
+                for a in args {
+                    self.scan_expr_for_ref_trampolines(a);
+                }
             }
             TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. } => {
                 self.scan_expr_for_ref_trampolines(inner);
@@ -1075,20 +1166,29 @@ impl<'a> Codegen<'a> {
         }
     }
 
-
     /// The heap-struct type index of the mut-box that holds a captured **mutable** variable of this
     /// type. A tuple's own mutable `$Tuple_N` *is* the box (no wrapper) — its fields are written in
     /// place on reassignment; a primitive uses a `$MutBox$X`; every other reference type uses the
     /// shared anyref `$MutBox`.
     pub(super) fn mut_box_type_index_for(&self, ty: &Type) -> u32 {
         match ty {
-            Type::Unit | Type::Bool | Type::Char
-            | Type::Int8 | Type::Int16 | Type::Int32
-            | Type::Uint8 | Type::Uint16 | Type::Uint32 => MUT_BOX_I32_TYPE_INDEX,
+            Type::Unit
+            | Type::Bool
+            | Type::Char
+            | Type::Int8
+            | Type::Int16
+            | Type::Int32
+            | Type::Uint8
+            | Type::Uint16
+            | Type::Uint32 => MUT_BOX_I32_TYPE_INDEX,
             Type::Int64 | Type::Uint64 => MUT_BOX_I64_TYPE_INDEX,
             Type::Float32 => MUT_BOX_F32_TYPE_INDEX,
             Type::Float64 => MUT_BOX_F64_TYPE_INDEX,
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.mut_box_type_index_for(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.mut_box_type_index_for(inner),
             _ if self.is_tuple(ty) => self.tuple_struct_index(ty),
             // A mutable `Uint128`'s own `$Uint128` (mutable i64 fields) doubles as its mut-box.
             _ if self.is_uint128(ty) => UINT128_STRUCT_TYPE_INDEX,
@@ -1106,7 +1206,12 @@ impl<'a> Codegen<'a> {
 
     fn scan_expr_for_interface_objects(&mut self, expr: &crate::typechecker::types::TypedExpr) {
         match &expr.kind {
-            TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => {
+            TypedExprKind::InterfaceObjectCoerce {
+                inner,
+                interface_mangled_name,
+                concrete_type,
+                vtable_methods,
+            } => {
                 self.scan_expr_for_interface_objects(inner);
                 // Only record if we haven't seen this (type instantiation, trait) pair before.
                 // Per-instantiation key: a generic impl class (e.g. `ArrayIterator<Int32>` vs
@@ -1114,9 +1219,13 @@ impl<'a> Codegen<'a> {
                 // mangled name is shared — so key on `instance_key` (includes type args).
                 let type_key = instance_key(concrete_type);
                 let global_key = Self::coercion_global_key(interface_mangled_name, vtable_methods);
-                if !self.vtable_global_indices.contains_key(&(type_key.clone(), global_key.clone())) {
+                if !self
+                    .vtable_global_indices
+                    .contains_key(&(type_key.clone(), global_key.clone()))
+                {
                     // Use a placeholder global index for now — will be assigned later
-                    self.vtable_global_indices.insert((type_key, global_key), u32::MAX);
+                    self.vtable_global_indices
+                        .insert((type_key, global_key), u32::MAX);
                     self.interface_object_infos.push(InterfaceObjectInfo {
                         interface_mangled_name: interface_mangled_name.clone(),
                         concrete_type: concrete_type.clone(),
@@ -1126,27 +1235,41 @@ impl<'a> Codegen<'a> {
             }
             // Recurse into all children
             TypedExprKind::Block(exprs) => {
-                for e in exprs { self.scan_expr_for_interface_objects(e); }
+                for e in exprs {
+                    self.scan_expr_for_interface_objects(e);
+                }
             }
-            TypedExprKind::Let { value, .. } | TypedExprKind::Assign { value, .. }
-            | TypedExprKind::Panic { message: value } | TypedExprKind::BoxToAny { inner: value }
-            | TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value }
+            TypedExprKind::Let { value, .. }
+            | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::Panic { message: value }
+            | TypedExprKind::BoxToAny { inner: value }
+            | TypedExprKind::NewtypeCreate { value }
+            | TypedExprKind::NewtypeValue { value }
             | TypedExprKind::InterfaceObjectUpcast { inner: value }
             | TypedExprKind::GlobalAssign { value, .. } => {
                 self.scan_expr_for_interface_objects(value);
             }
-            TypedExprKind::If { condition, then_branch, else_branch } => {
+            TypedExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
                 self.scan_expr_for_interface_objects(condition);
                 self.scan_expr_for_interface_objects(then_branch);
-                if let Some(e) = else_branch { self.scan_expr_for_interface_objects(e); }
+                if let Some(e) = else_branch {
+                    self.scan_expr_for_interface_objects(e);
+                }
             }
             TypedExprKind::While { condition, body } => {
                 self.scan_expr_for_interface_objects(condition);
                 self.scan_expr_for_interface_objects(body);
             }
-            TypedExprKind::FunctionCall { args, .. } | TypedExprKind::IntrinsicCall { args, .. }
+            TypedExprKind::FunctionCall { args, .. }
+            | TypedExprKind::IntrinsicCall { args, .. }
             | TypedExprKind::ArrayLiteral { elements: args } => {
-                for a in args { self.scan_expr_for_interface_objects(a); }
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::BinaryOp { left, right, .. } => {
                 self.scan_expr_for_interface_objects(left);
@@ -1157,9 +1280,12 @@ impl<'a> Codegen<'a> {
             }
             TypedExprKind::Assert { condition, message } => {
                 self.scan_expr_for_interface_objects(condition);
-                if let Some(m) = message { self.scan_expr_for_interface_objects(m); }
+                if let Some(m) = message {
+                    self.scan_expr_for_interface_objects(m);
+                }
             }
-            TypedExprKind::FieldAccess { object, .. } | TypedExprKind::MethodRef { object, .. }
+            TypedExprKind::FieldAccess { object, .. }
+            | TypedExprKind::MethodRef { object, .. }
             | TypedExprKind::TypeTest { value: object, .. }
             | TypedExprKind::TypeCast { value: object, .. } => {
                 self.scan_expr_for_interface_objects(object);
@@ -1169,33 +1295,52 @@ impl<'a> Codegen<'a> {
                 for arm in arms {
                     // Guard before body, mirroring the emitter. Vtables are keyed by
                     // (instance, trait) so order is not load-bearing here either.
-                    if let Some(g) = &arm.guard { self.scan_expr_for_interface_objects(g); }
+                    if let Some(g) = &arm.guard {
+                        self.scan_expr_for_interface_objects(g);
+                    }
                     self.scan_expr_for_interface_objects(&arm.body);
                 }
             }
             TypedExprKind::RecordCreate { fields, .. } => {
-                for (_, e) in fields { self.scan_expr_for_interface_objects(e); }
+                for (_, e) in fields {
+                    self.scan_expr_for_interface_objects(e);
+                }
             }
             TypedExprKind::TupleLiteral { elements } => {
-                for e in elements { self.scan_expr_for_interface_objects(e); }
+                for e in elements {
+                    self.scan_expr_for_interface_objects(e);
+                }
             }
-            TypedExprKind::RecordWith { object, overrides, .. } => {
+            TypedExprKind::RecordWith {
+                object, overrides, ..
+            } => {
                 self.scan_expr_for_interface_objects(object);
-                for (_, _, e) in overrides { self.scan_expr_for_interface_objects(e); }
+                for (_, _, e) in overrides {
+                    self.scan_expr_for_interface_objects(e);
+                }
             }
-            TypedExprKind::EnumCreate { args, .. } | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
-                for a in args { self.scan_expr_for_interface_objects(a); }
+            TypedExprKind::EnumCreate { args, .. }
+            | TypedExprKind::EnumVariantRecordCreate { args, .. } => {
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
                 self.scan_expr_for_interface_objects(receiver);
-                for a in args { self.scan_expr_for_interface_objects(a); }
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::ClassVirtualCall { object, args, .. } => {
                 self.scan_expr_for_interface_objects(object);
-                for a in args { self.scan_expr_for_interface_objects(a); }
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::ClassSuperCall { args, .. } => {
-                for a in args { self.scan_expr_for_interface_objects(a); }
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::LetDestructure { value, .. } => {
                 self.scan_expr_for_interface_objects(value);
@@ -1204,17 +1349,23 @@ impl<'a> Codegen<'a> {
                 self.scan_expr_for_interface_objects(value);
             }
             TypedExprKind::ClassNew { args, .. } => {
-                for a in args { self.scan_expr_for_interface_objects(a); }
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::Closure { body, .. } => {
                 self.scan_expr_for_interface_objects(body);
             }
             TypedExprKind::ClosureCall { callee, args } => {
                 self.scan_expr_for_interface_objects(callee);
-                for a in args { self.scan_expr_for_interface_objects(a); }
+                for a in args {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             TypedExprKind::ClassStructCreate { fields, .. } => {
-                for a in fields { self.scan_expr_for_interface_objects(a); }
+                for a in fields {
+                    self.scan_expr_for_interface_objects(a);
+                }
             }
             // Leaf nodes
             _ => {}
@@ -1231,8 +1382,18 @@ impl<'a> Codegen<'a> {
     /// `wasm_type_index_for_any_cast` (the erasure-cast boundary).
     fn single_val_type(&self, ty: &Type) -> ValType {
         match ty {
-            Type::Record(_, mn) | Type::Enum(_, mn) | Type::GenericRecord { mangled_name: mn, .. } | Type::GenericEnum { mangled_name: mn, .. } => {
-                let struct_idx = *self.type_indices.get(mn).unwrap_or_else(|| panic!("missing type index for: {} (type: {})", mn, ty));
+            Type::Record(_, mn)
+            | Type::Enum(_, mn)
+            | Type::GenericRecord {
+                mangled_name: mn, ..
+            }
+            | Type::GenericEnum {
+                mangled_name: mn, ..
+            } => {
+                let struct_idx = *self
+                    .type_indices
+                    .get(mn)
+                    .unwrap_or_else(|| panic!("missing type index for: {} (type: {})", mn, ty));
                 ValType::Ref(wasm_encoder::RefType {
                     nullable: false,
                     heap_type: wasm_encoder::HeapType::Concrete(struct_idx),
@@ -1260,23 +1421,27 @@ impl<'a> Codegen<'a> {
             }),
             // Shared generic fields retain symbolic extensions; their varying
             // tuple shapes occupy one boxed slot, just like a type parameter.
-            Type::Any | Type::TupleProjection(..) | Type::TupleExtend(..) => ValType::Ref(wasm_encoder::RefType {
-                nullable: false,
-                heap_type: wasm_encoder::HeapType::ANY,
-            }),
+            Type::Any | Type::TupleProjection(..) | Type::TupleExtend(..) => {
+                ValType::Ref(wasm_encoder::RefType {
+                    nullable: false,
+                    heap_type: wasm_encoder::HeapType::ANY,
+                })
+            }
             Type::Never | Type::Error => ValType::I32,
             // A fully-generic array (element carries a type parameter) is erased, but to the
             // built-in abstract `array` heap type rather than bare `any`: every concrete array
             // type ($Array$iN / $Array$u128 / $Array$ref) is a subtype of it, so it's a valid
             // common slot, `array.len` works without a cast, and it catches non-array stores at
             // validation time. Non-null, matching the erased-slot convention (values never null).
-            Type::Array(elem) if elem.contains_type_parameter() => ValType::Ref(wasm_encoder::RefType {
-                nullable: false,
-                heap_type: wasm_encoder::HeapType::Abstract {
-                    shared: false,
-                    ty: wasm_encoder::AbstractHeapType::Array,
-                },
-            }),
+            Type::Array(elem) if elem.contains_type_parameter() => {
+                ValType::Ref(wasm_encoder::RefType {
+                    nullable: false,
+                    heap_type: wasm_encoder::HeapType::Abstract {
+                        shared: false,
+                        ty: wasm_encoder::AbstractHeapType::Array,
+                    },
+                })
+            }
             Type::Array(elem) => {
                 let array_type_index = self.array_type_index(elem);
                 ValType::Ref(wasm_encoder::RefType {
@@ -1284,12 +1449,20 @@ impl<'a> Codegen<'a> {
                     heap_type: wasm_encoder::HeapType::Concrete(array_type_index),
                 })
             }
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.single_val_type(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.single_val_type(inner),
             // Interface objects are de-monomorphized: one WASM type per trait, layout independent of the
             // type args (the vtable slot signatures erase the trait's generic params). So a trait
             // object is *never* erased — even when its type args contain a type parameter, it lowers
             // to the concrete per-trait struct (keyed by the per-trait `mangled_name`).
-            Type::InterfaceObject { mangled_name, traits, .. } => {
+            Type::InterfaceObject {
+                mangled_name,
+                traits,
+                ..
+            } => {
                 let idx = *self.interface_object_type_indices.get(mangled_name).unwrap_or_else(|| {
                     panic!("missing interface_object_type_index for: {mangled_name} (traits: {traits:?})")
                 });
@@ -1311,8 +1484,14 @@ impl<'a> Codegen<'a> {
                     heap_type: wasm_encoder::HeapType::Concrete(struct_idx),
                 })
             }
-            Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => {
-                let struct_idx = *self.type_indices.get(mn).unwrap_or_else(|| panic!("no type_index for class mangled_name: {}", mn));
+            Type::Class(_, mn)
+            | Type::GenericClass {
+                mangled_name: mn, ..
+            } => {
+                let struct_idx = *self
+                    .type_indices
+                    .get(mn)
+                    .unwrap_or_else(|| panic!("no type_index for class mangled_name: {}", mn));
                 ValType::Ref(wasm_encoder::RefType {
                     nullable: false,
                     heap_type: wasm_encoder::HeapType::Concrete(struct_idx),
@@ -1320,11 +1499,15 @@ impl<'a> Codegen<'a> {
             }
             Type::SelfType => unreachable!("SelfType should be resolved before codegen"),
             // Erased slots: type parameters and any composite carrying one lower to anyref.
-            Type::TypeVariable(_, _) | Type::GenericParam(_, _, _) => ValType::Ref(wasm_encoder::RefType {
-                nullable: false,
-                heap_type: wasm_encoder::HeapType::ANY,
-            }),
-            Type::TypeConstructor { .. } | Type::AssociatedProjection(_) => unreachable!("TypeConstructor should be expanded before codegen"),
+            Type::TypeVariable(_, _) | Type::GenericParam(_, _, _) => {
+                ValType::Ref(wasm_encoder::RefType {
+                    nullable: false,
+                    heap_type: wasm_encoder::HeapType::ANY,
+                })
+            }
+            Type::TypeConstructor { .. } | Type::AssociatedProjection(_) => {
+                unreachable!("TypeConstructor should be expanded before codegen")
+            }
         }
     }
 
@@ -1339,12 +1522,17 @@ impl<'a> Codegen<'a> {
             // Every tuple flattens transitively into its leaf values. A type-parameter leaf lowers to
             // `anyref` (via `single_val_type`), so `(Int, T)` → `[i32, anyref]` and `(A, B)` →
             // `[anyref, anyref]` — the boxed form is the shared `$Tuple_N`.
-            Type::Tuple(elems, _) => {
-                elems.iter().flat_map(|e| self.type_to_valtypes(e)).collect()
-            }
+            Type::Tuple(elems, _) => elems
+                .iter()
+                .flat_map(|e| self.type_to_valtypes(e))
+                .collect(),
             // Newtypes are transparent (mirror type_to_valtype) so a newtype over a
             // tuple inherits the flattened representation.
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.type_to_valtypes(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.type_to_valtypes(inner),
             // `Uint128` is the smallest non-tuple flattened value: a width-2 `[i64, i64]` (lo, hi)
             // run. Its boxed single slot (`single_val_type`) is the dedicated `(ref $Uint128)`.
             Type::Uint128 => smallvec![ValType::I64, ValType::I64],
@@ -1359,7 +1547,11 @@ impl<'a> Codegen<'a> {
     fn resolve_tuple<'t>(&self, ty: &'t Type) -> Option<(&'t [Type], &'t MangledName)> {
         match ty {
             Type::Tuple(elems, mn) => Some((elems, mn)),
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.resolve_tuple(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.resolve_tuple(inner),
             _ => None,
         }
     }
@@ -1376,7 +1568,11 @@ impl<'a> Codegen<'a> {
     fn is_uint128(&self, ty: &Type) -> bool {
         match ty {
             Type::Uint128 => true,
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.is_uint128(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.is_uint128(inner),
             _ => false,
         }
     }
@@ -1411,10 +1607,15 @@ impl<'a> Codegen<'a> {
     /// `$Tuple_N` field `k`.
     fn flatten_to_leaf_types(&self, ty: &Type) -> Vec<Type> {
         match ty {
-            Type::Tuple(elems, _) => {
-                elems.iter().flat_map(|e| self.flatten_to_leaf_types(e)).collect()
-            }
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.flatten_to_leaf_types(inner),
+            Type::Tuple(elems, _) => elems
+                .iter()
+                .flat_map(|e| self.flatten_to_leaf_types(e))
+                .collect(),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.flatten_to_leaf_types(inner),
             // A `Uint128` leaf flattens into its two `i64` halves (lo, hi) so the generic boxed
             // `$Tuple_N` stays a flat run of width-1 anyref fields.
             Type::Uint128 => vec![Type::Uint64, Type::Uint64],
@@ -1445,11 +1646,21 @@ impl<'a> Codegen<'a> {
     fn struct_field_range(&self, mn: &MangledName, field_idx: usize) -> (u32, u32) {
         match &self.typed_module.types[mn] {
             TypeDef::Record(r) => {
-                let start: u32 = r.fields[..field_idx].iter().map(|(_, t)| self.flat_width(t)).sum();
-                (self.id_prefix(mn) + start, self.flat_width(&r.fields[field_idx].1))
+                let start: u32 = r.fields[..field_idx]
+                    .iter()
+                    .map(|(_, t)| self.flat_width(t))
+                    .sum();
+                (
+                    self.id_prefix(mn) + start,
+                    self.flat_width(&r.fields[field_idx].1),
+                )
             }
             TypeDef::Class(c) => {
-                let start: u32 = self.class_header_size(mn) + c.fields[..field_idx].iter().map(|f| self.class_field_wasm_width(f)).sum::<u32>();
+                let start: u32 = self.class_header_size(mn)
+                    + c.fields[..field_idx]
+                        .iter()
+                        .map(|f| self.class_field_wasm_width(f))
+                        .sum::<u32>();
                 (start, self.class_field_wasm_width(&c.fields[field_idx]))
             }
             _ => unreachable!("struct_field_range on non-record/class typedef: {mn}"),
@@ -1459,13 +1670,29 @@ impl<'a> Codegen<'a> {
     /// The `(wasm_start, width)` range of WASM fields backing payload `field_idx` of an enum variant
     /// (variant structs splice tuple payloads, like records, with no prefix field). Used to read a
     /// variant payload by `struct.get`.
-    fn enum_payload_range(&self, enum_mn: &MangledName, variant_name: &str, field_idx: usize) -> (u32, u32) {
+    fn enum_payload_range(
+        &self,
+        enum_mn: &MangledName,
+        variant_name: &str,
+        field_idx: usize,
+    ) -> (u32, u32) {
         match &self.typed_module.types[enum_mn] {
             TypeDef::Enum(e) => {
-                let variant = e.variants.iter().find(|v| v.name == variant_name)
-                    .unwrap_or_else(|| panic!("enum_payload_range: no variant {variant_name} in {enum_mn}"));
-                let start: u32 = variant.payload_types[..field_idx].iter().map(|t| self.flat_width(t)).sum();
-                (self.id_prefix(enum_mn) + start, self.flat_width(&variant.payload_types[field_idx]))
+                let variant = e
+                    .variants
+                    .iter()
+                    .find(|v| v.name == variant_name)
+                    .unwrap_or_else(|| {
+                        panic!("enum_payload_range: no variant {variant_name} in {enum_mn}")
+                    });
+                let start: u32 = variant.payload_types[..field_idx]
+                    .iter()
+                    .map(|t| self.flat_width(t))
+                    .sum();
+                (
+                    self.id_prefix(enum_mn) + start,
+                    self.flat_width(&variant.payload_types[field_idx]),
+                )
             }
             _ => unreachable!("enum_payload_range on non-enum typedef: {enum_mn}"),
         }
@@ -1477,13 +1704,21 @@ impl<'a> Codegen<'a> {
     /// from `anyref` to its concrete leaf type (`ref.cast` + a trailing `struct.get 0` for boxed
     /// primitives). Uses one temp local at `base` (to re-load the ref); returns the values and the
     /// temp valtype.
-    fn tuple_unbox_instrs(&self, ty: &Type, base: u32) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
+    fn tuple_unbox_instrs(
+        &self,
+        ty: &Type,
+        base: u32,
+    ) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
         let (mut instrs, mut temps) = self.tuple_unbox_fields_instrs(ty, base);
         self.validate_unboxed_slices(ty, base, &mut instrs, &mut temps);
         (instrs, temps)
     }
 
-    fn tuple_unbox_fields_instrs(&self, ty: &Type, base: u32) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
+    fn tuple_unbox_fields_instrs(
+        &self,
+        ty: &Type,
+        base: u32,
+    ) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
         let idx = self.tuple_struct_index(ty);
         let ref_vt = ValType::Ref(wasm_encoder::RefType {
             nullable: false,
@@ -1504,7 +1739,9 @@ impl<'a> Codegen<'a> {
                 Type::Never | Type::Error => instrs.push(wasm_encoder::Instruction::Unreachable),
                 _ => {
                     let leaf_idx = self.wasm_type_index_for_any_cast(leaf);
-                    instrs.push(wasm_encoder::Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(leaf_idx)));
+                    instrs.push(wasm_encoder::Instruction::RefCastNonNull(
+                        wasm_encoder::HeapType::Concrete(leaf_idx),
+                    ));
                     if !leaf.is_reference_type() {
                         instrs.push(wasm_encoder::Instruction::StructGet {
                             struct_type_index: leaf_idx,
@@ -1522,7 +1759,10 @@ impl<'a> Codegen<'a> {
     /// is two `struct.get`s (no per-leaf cast). Uses one temp local at `base` (to re-load the ref);
     /// returns the instructions and the temp valtype. Mirrors `tuple_unbox_instrs` for the
     /// `wasm_encoder::Function` const-init contexts (trampolines).
-    fn uint128_unbox_instrs(&self, base: u32) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
+    fn uint128_unbox_instrs(
+        &self,
+        base: u32,
+    ) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
         let ref_vt = ValType::Ref(wasm_encoder::RefType {
             nullable: false,
             heap_type: wasm_encoder::HeapType::Concrete(UINT128_STRUCT_TYPE_INDEX),
@@ -1530,9 +1770,15 @@ impl<'a> Codegen<'a> {
         let instrs = vec![
             wasm_encoder::Instruction::LocalSet(base),
             wasm_encoder::Instruction::LocalGet(base),
-            wasm_encoder::Instruction::StructGet { struct_type_index: UINT128_STRUCT_TYPE_INDEX, field_index: 0 },
+            wasm_encoder::Instruction::StructGet {
+                struct_type_index: UINT128_STRUCT_TYPE_INDEX,
+                field_index: 0,
+            },
             wasm_encoder::Instruction::LocalGet(base),
-            wasm_encoder::Instruction::StructGet { struct_type_index: UINT128_STRUCT_TYPE_INDEX, field_index: 1 },
+            wasm_encoder::Instruction::StructGet {
+                struct_type_index: UINT128_STRUCT_TYPE_INDEX,
+                field_index: 1,
+            },
         ];
         (instrs, vec![ref_vt])
     }
@@ -1542,7 +1788,11 @@ impl<'a> Codegen<'a> {
     /// is first boxed to `anyref` (a `struct.new $Box$X` for a primitive; a free upcast for a ref)
     /// before `struct.new $Tuple_N`. The values are spilled into N temp locals at `base..base+N` (their
     /// valtypes are returned) so each leaf can be reloaded and boxed in order.
-    fn tuple_rebox_instrs(&self, ty: &Type, base: u32) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
+    fn tuple_rebox_instrs(
+        &self,
+        ty: &Type,
+        base: u32,
+    ) -> (Vec<wasm_encoder::Instruction<'static>>, Vec<ValType>) {
         let idx = self.tuple_struct_index(ty);
         let leaves = self.flatten_to_leaf_types(ty);
         let run_vts: Vec<ValType> = self.type_to_valtypes(ty).into_vec();
@@ -1557,9 +1807,14 @@ impl<'a> Codegen<'a> {
         for (k, leaf) in leaves.iter().enumerate() {
             instrs.push(wasm_encoder::Instruction::LocalGet(base + k as u32));
             let already_boxed = leaf.is_reference_type()
-                || matches!(leaf, Type::Any | Type::TypeVariable(..) | Type::GenericParam(..));
+                || matches!(
+                    leaf,
+                    Type::Any | Type::TypeVariable(..) | Type::GenericParam(..)
+                );
             if !already_boxed {
-                instrs.push(wasm_encoder::Instruction::StructNew(self.box_type_index_for(leaf)));
+                instrs.push(wasm_encoder::Instruction::StructNew(
+                    self.box_type_index_for(leaf),
+                ));
             }
         }
         instrs.push(wasm_encoder::Instruction::StructNew(idx));
@@ -1581,7 +1836,11 @@ impl<'a> Codegen<'a> {
     /// Newtypes are transparent to storage, packed reads, and erased dispatch.
     fn array_element_type(mut element: &Type) -> &Type {
         while let Type::Newtype(_, inner)
-        | Type::GenericNewtype { concrete_inner_type: inner, .. } = element {
+        | Type::GenericNewtype {
+            concrete_inner_type: inner,
+            ..
+        } = element
+        {
             element = inner;
         }
         element
@@ -1605,12 +1864,18 @@ impl<'a> Codegen<'a> {
             // `Function` is *not* erased — every closure is the uniform `(ref Closure_N)`; nor is a
             // `InterfaceObject` — it is de-monomorphized to one concrete WASM type per trait. Mirrors
             // `single_val_type`.
-            Type::Any | Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)
-            | Type::TupleExtend(..) | Type::TupleProjection(..) => true,
+            Type::Any
+            | Type::TypeVariable(_, _)
+            | Type::GenericParam(_, _, _)
+            | Type::TupleExtend(..)
+            | Type::TupleProjection(..) => true,
             Type::Array(elem) => elem.contains_type_parameter(),
             // Interface objects are de-monomorphized to one concrete WASM type per trait — never erased.
             Type::Newtype(_, inner) => Self::is_erased_slot(inner),
-            Type::GenericNewtype { concrete_inner_type, .. } => Self::is_erased_slot(concrete_inner_type),
+            Type::GenericNewtype {
+                concrete_inner_type,
+                ..
+            } => Self::is_erased_slot(concrete_inner_type),
             _ => false,
         }
     }
@@ -1634,7 +1899,11 @@ impl<'a> Codegen<'a> {
             Type::Uint128 => UINT128_STRUCT_TYPE_INDEX,
             Type::Float32 => BOX_FLOAT32_TYPE_INDEX,
             Type::Float64 => BOX_FLOAT64_TYPE_INDEX,
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.box_type_index_for(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.box_type_index_for(inner),
             // Never has no inhabitants; any boxing code is dead. Use I32 box since Never is stored as I32.
             Type::Never => BOX_INT32_TYPE_INDEX,
             _ => unreachable!("box_type_index_for called on non-primitive type: {}", ty),
@@ -1669,15 +1938,24 @@ impl<'a> Codegen<'a> {
             | Type::GenericEnum {
                 mangled_name: mn, ..
             } => self.type_indices[mn],
-            Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => self.type_indices[mn],
+            Type::Class(_, mn)
+            | Type::GenericClass {
+                mangled_name: mn, ..
+            } => self.type_indices[mn],
             Type::Array(elem) => self.array_type_index(elem),
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => self.wasm_type_index_for_any_cast(inner),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => self.wasm_type_index_for_any_cast(inner),
             Type::Tuple(..) => self.tuple_struct_index(ty),
             Type::Function(params, _ret) => {
                 let arity = params.len() as u32;
                 self.closure_arity_indices[&arity].1
             }
-            Type::InterfaceObject { mangled_name, .. } => self.interface_object_type_indices[mangled_name],
+            Type::InterfaceObject { mangled_name, .. } => {
+                self.interface_object_type_indices[mangled_name]
+            }
             _ => unreachable!("unsupported type for any cast: {ty}"),
         }
     }
@@ -1685,7 +1963,10 @@ impl<'a> Codegen<'a> {
     /// Get the WASM struct type index for a class type.
     fn wasm_type_index_for_class(&self, ty: &Type) -> u32 {
         match ty {
-            Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => self.type_indices[mn],
+            Type::Class(_, mn)
+            | Type::GenericClass {
+                mangled_name: mn, ..
+            } => self.type_indices[mn],
             _ => unreachable!("wasm_type_index_for_class: expected Class, got {ty}"),
         }
     }
@@ -1709,7 +1990,10 @@ impl<'a> Codegen<'a> {
         }
         func_names.append(self.func_task_return_run(), "[task-return]run");
         for i in 0..self.num_task_return_imports - 1 {
-            func_names.append(self.func_task_return_test(i), &format!("[task-return]test-n{i}"));
+            func_names.append(
+                self.func_task_return_test(i),
+                &format!("[task-return]test-n{i}"),
+            );
         }
 
         // Runtime functions
@@ -1747,7 +2031,10 @@ impl<'a> Codegen<'a> {
                 .get(&wrapper.impl_method_mangled)
                 .map(|f| f.display_name.as_str())
                 .unwrap_or(&wrapper.impl_method_mangled.0);
-            func_names.append(wrapper_base + i as u32, &format!("wrapper::{}", target_name));
+            func_names.append(
+                wrapper_base + i as u32,
+                &format!("wrapper::{}", target_name),
+            );
         }
 
         // Closure functions
@@ -1767,7 +2054,10 @@ impl<'a> Codegen<'a> {
                 .get(&tramp.target_mangled)
                 .map(|f| f.display_name.as_str())
                 .unwrap_or(&tramp.target_mangled.0);
-            func_names.append(trampoline_base + i as u32, &format!("trampoline::{}", target_name));
+            func_names.append(
+                trampoline_base + i as u32,
+                &format!("trampoline::{}", target_name),
+            );
         }
 
         // Test wrappers
@@ -1781,7 +2071,10 @@ impl<'a> Codegen<'a> {
                 .and_then(|(mn, _)| self.typed_module.functions.get(mn))
                 .map(|f| f.display_name.as_str())
                 .unwrap_or("unknown");
-            func_names.append(test_wrapper_base + i as u32, &format!("test_wrapper::{}", test_name));
+            func_names.append(
+                test_wrapper_base + i as u32,
+                &format!("test_wrapper::{}", test_name),
+            );
         }
 
         names.functions(&func_names);
@@ -1950,19 +2243,19 @@ impl<'a> Codegen<'a> {
 
         // Types 14-26: Boxing struct types for primitives (used when storing as Any)
         for box_field_type in [
-            ValType::I32,   // BoxUnit (14)
-            ValType::I32,   // BoxBool (15)
-            ValType::I32,   // BoxChar (16)
-            ValType::I32,   // BoxInt8 (17)
-            ValType::I32,   // BoxInt16 (18)
-            ValType::I32,   // BoxInt32 (19)
-            ValType::I32,   // BoxUint8 (20)
-            ValType::I32,   // BoxUint16 (21)
-            ValType::I32,   // BoxUint32 (22)
-            ValType::I64,   // BoxInt64 (23)
-            ValType::I64,   // BoxUint64 (24)
-            ValType::F32,   // BoxFloat32 (25)
-            ValType::F64,   // BoxFloat64 (26)
+            ValType::I32, // BoxUnit (14)
+            ValType::I32, // BoxBool (15)
+            ValType::I32, // BoxChar (16)
+            ValType::I32, // BoxInt8 (17)
+            ValType::I32, // BoxInt16 (18)
+            ValType::I32, // BoxInt32 (19)
+            ValType::I32, // BoxUint8 (20)
+            ValType::I32, // BoxUint16 (21)
+            ValType::I32, // BoxUint32 (22)
+            ValType::I64, // BoxInt64 (23)
+            ValType::I64, // BoxUint64 (24)
+            ValType::F32, // BoxFloat32 (25)
+            ValType::F64, // BoxFloat64 (26)
         ] {
             group.push(SubType {
                 is_final: true,
@@ -1983,14 +2276,14 @@ impl<'a> Codegen<'a> {
 
         // Types 27-31: Mutable box struct types for closure mutable captures
         for mut_box_field_type in [
-            ValType::I32,   // MutBoxI32 (27) — Unit, Bool, Char, Int8-32, Uint8-32
-            ValType::I64,   // MutBoxI64 (28) — Int64, Uint64
-            ValType::F32,   // MutBoxF32 (29) — Float32
-            ValType::F64,   // MutBoxF64 (30) — Float64
+            ValType::I32, // MutBoxI32 (27) — Unit, Bool, Char, Int8-32, Uint8-32
+            ValType::I64, // MutBoxI64 (28) — Int64, Uint64
+            ValType::F32, // MutBoxF32 (29) — Float32
+            ValType::F64, // MutBoxF64 (30) — Float64
             ValType::Ref(wasm_encoder::RefType {
                 nullable: true,
                 heap_type: wasm_encoder::HeapType::ANY,
-            }),              // MutBoxRef (31) — all reference types
+            }), // MutBoxRef (31) — all reference types
         ] {
             group.push(SubType {
                 is_final: true,
@@ -2109,7 +2402,8 @@ impl<'a> Codegen<'a> {
                             .insert((name.clone(), slot_idx as u32), idx);
                     }
                     let vtable_idx = self.next_type_index();
-                    self.class_vtable_type_indices.insert(name.clone(), vtable_idx);
+                    self.class_vtable_type_indices
+                        .insert(name.clone(), vtable_idx);
                     let class_idx = self.next_type_index();
                     self.type_indices.insert(name.clone(), class_idx);
                 }
@@ -2128,7 +2422,8 @@ impl<'a> Codegen<'a> {
                     let vtable_idx = self.next_type_index();
                     self.vtable_type_indices.insert(name.clone(), vtable_idx);
                     let object_idx = self.next_type_index();
-                    self.interface_object_type_indices.insert(name.clone(), object_idx);
+                    self.interface_object_type_indices
+                        .insert(name.clone(), object_idx);
                 }
                 TypeDef::InterfaceIntersection(_) => {
                     // Set vtable struct (one ref field per component vtable), then the
@@ -2137,7 +2432,8 @@ impl<'a> Codegen<'a> {
                     let vtable_idx = self.next_type_index();
                     self.vtable_type_indices.insert(name.clone(), vtable_idx);
                     let object_idx = self.next_type_index();
-                    self.interface_object_type_indices.insert(name.clone(), object_idx);
+                    self.interface_object_type_indices
+                        .insert(name.clone(), object_idx);
                 }
                 TypeDef::Array(_) => {
                     unreachable!("arrays are predeclared as the fixed array set, never a user type")
@@ -2155,7 +2451,12 @@ impl<'a> Codegen<'a> {
                     let enum_base_idx = self.type_indices[name];
                     group.push(enums::build_enum_base_subtype(self.id_prefix(name) != 0));
                     for variant in &e.variants {
-                        group.push(enums::build_enum_variant_subtype(variant, enum_base_idx, self.id_prefix(name) != 0, self));
+                        group.push(enums::build_enum_variant_subtype(
+                            variant,
+                            enum_base_idx,
+                            self.id_prefix(name) != 0,
+                            self,
+                        ));
                     }
                 }
                 TypeDef::Class(cls) => {
@@ -2196,10 +2497,10 @@ impl<'a> Codegen<'a> {
                 .iter()
                 .enumerate()
                 .flat_map(|(i, p)| {
-                    if i == 0 {
-                        if let Some(ref vst) = func.vtable_self_type {
-                            return smallvec::smallvec![self.single_val_type(vst)];
-                        }
+                    if i == 0
+                        && let Some(ref vst) = func.vtable_self_type
+                    {
+                        return smallvec::smallvec![self.single_val_type(vst)];
                     }
                     self.type_to_valtypes(&p.ty)
                 })
@@ -2221,9 +2522,10 @@ impl<'a> Codegen<'a> {
             let idx = *sig_dedup.entry(key).or_insert_with(|| {
                 let idx = self.next_type_index;
                 self.next_type_index += 1;
-                types
-                    .ty()
-                    .function(import.params.iter().copied(), import.results.iter().copied());
+                types.ty().function(
+                    import.params.iter().copied(),
+                    import.results.iter().copied(),
+                );
                 idx
             });
             import_type_indices.push(idx);
@@ -2313,12 +2615,10 @@ impl<'a> Codegen<'a> {
         for super_mn in &to.supers {
             let super_vtable_idx = self.vtable_type_indices[super_mn];
             vtable_field_types.push(wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::Ref(
-                    wasm_encoder::RefType {
-                        nullable: false,
-                        heap_type: wasm_encoder::HeapType::Concrete(super_vtable_idx),
-                    },
-                )),
+                element_type: wasm_encoder::StorageType::Val(ValType::Ref(wasm_encoder::RefType {
+                    nullable: false,
+                    heap_type: wasm_encoder::HeapType::Concrete(super_vtable_idx),
+                })),
                 mutable: false,
             });
         }
@@ -2340,12 +2640,10 @@ impl<'a> Codegen<'a> {
             subtypes.push(func_subtype(params, result));
 
             vtable_field_types.push(wasm_encoder::FieldType {
-                element_type: wasm_encoder::StorageType::Val(ValType::Ref(
-                    wasm_encoder::RefType {
-                        nullable: false,
-                        heap_type: wasm_encoder::HeapType::Concrete(func_type_idx),
-                    },
-                )),
+                element_type: wasm_encoder::StorageType::Val(ValType::Ref(wasm_encoder::RefType {
+                    nullable: false,
+                    heap_type: wasm_encoder::HeapType::Concrete(func_type_idx),
+                })),
                 mutable: false,
             });
         }
@@ -2509,7 +2807,7 @@ impl<'a> Codegen<'a> {
     /// untagged coercions keep the plain set key, byte-identically.
     fn coercion_global_key(
         interface_mangled_name: &MangledName,
-        vtable_methods: &[(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)],
+        vtable_methods: &[VtableMethodGroup],
     ) -> MangledName {
         let any_tagged = vtable_methods
             .iter()
@@ -2542,10 +2840,7 @@ impl<'a> Codegen<'a> {
     /// For a DFS post-order group list, the length of the subtree ending at
     /// each index (1 for a leaf; 1 + children subtree lengths otherwise —
     /// children count = the component's direct super count).
-    fn group_subtree_lengths(
-        &self,
-        groups: &[(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)],
-    ) -> Vec<usize> {
+    fn group_subtree_lengths(&self, groups: &[VtableMethodGroup]) -> Vec<usize> {
         let mut lengths: Vec<usize> = Vec::with_capacity(groups.len());
         let mut stack: Vec<usize> = Vec::new();
         for (key, _) in groups {
@@ -2578,54 +2873,59 @@ impl<'a> Codegen<'a> {
         for info in &interface_object_infos {
             let type_key = instance_key(&info.concrete_type);
             for (group_key, entries) in &info.vtable_methods {
-            let component_mn = &Self::split_group_key(group_key);
-            // The per-trait (component) TypeDef holds the erased vtable-slot signatures.
-            let slot_def = match self.typed_module.types.get(component_mn) {
-                Some(TypeDef::InterfaceObject(to)) => Some(to),
-                _ => None,
-            };
-            for (member_name, impl_mangled, _) in entries {
-                if let Some(func) = self.typed_module.functions.get(impl_mangled) {
-                    let concrete_params: Vec<Type> = func.params.iter()
-                        .skip(1)
-                        .map(|p| p.ty.clone())
-                        .collect();
-                    // Slot (erased) param/return types for this member, from the per-trait vtable.
-                    let (slot_params, slot_return): (Vec<Type>, Type) = slot_def
-                        .and_then(|to| to.vtable_members.iter().find(|(mn, _, _)| mn == member_name))
-                        .map(|(_, ps, r)| (ps.clone(), r.clone()))
-                        .unwrap_or_else(|| (concrete_params.clone(), func.return_type.clone()));
-                    // Pair each slot param with its concrete impl counterpart. (Lengths match: both
-                    // are the method's non-self params; the slot just erases generic ones.)
-                    let params: Vec<(Type, Type)> = slot_params
-                        .into_iter()
-                        .zip(concrete_params.iter().cloned())
-                        .collect();
+                let component_mn = &Self::split_group_key(group_key);
+                // The per-trait (component) TypeDef holds the erased vtable-slot signatures.
+                let slot_def = match self.typed_module.types.get(component_mn) {
+                    Some(TypeDef::InterfaceObject(to)) => Some(to),
+                    _ => None,
+                };
+                for (member_name, impl_mangled, _) in entries {
+                    if let Some(func) = self.typed_module.functions.get(impl_mangled) {
+                        let concrete_params: Vec<Type> =
+                            func.params.iter().skip(1).map(|p| p.ty.clone()).collect();
+                        // Slot (erased) param/return types for this member, from the per-trait vtable.
+                        let (slot_params, slot_return): (Vec<Type>, Type) = slot_def
+                            .and_then(|to| {
+                                to.vtable_members
+                                    .iter()
+                                    .find(|(mn, _, _)| mn == member_name)
+                            })
+                            .map(|(_, ps, r)| (ps.clone(), r.clone()))
+                            .unwrap_or_else(|| (concrete_params.clone(), func.return_type.clone()));
+                        // Pair each slot param with its concrete impl counterpart. (Lengths match: both
+                        // are the method's non-self params; the slot just erases generic ones.)
+                        let params: Vec<(Type, Type)> = slot_params
+                            .into_iter()
+                            .zip(concrete_params.iter().cloned())
+                            .collect();
 
-                    let field_idx = self.trait_method_vtable_indices
-                        [&(component_mn.clone(), member_name.clone())];
-                    let func_type_index = self.wrapper_func_type_indices
-                        [&(component_mn.clone(), field_idx)];
+                        let field_idx = self.trait_method_vtable_indices
+                            [&(component_mn.clone(), member_name.clone())];
+                        let func_type_index =
+                            self.wrapper_func_type_indices[&(component_mn.clone(), field_idx)];
 
-                    let wrapper_name = MangledName(format!(
-                        "$wrapper${}${}${}", group_key, type_key, member_name
-                    ));
+                        let wrapper_name = MangledName(format!(
+                            "$wrapper${}${}${}",
+                            group_key, type_key, member_name
+                        ));
 
-                    if let std::collections::btree_map::Entry::Vacant(e) = self.function_indices.entry(wrapper_name) {
-                        e.insert(wrapper_base + wrapper_idx);
-                        self.wrapper_funcs.push(WrapperFunc {
-                            group_key: group_key.clone(),
-                            func_type_index,
-                            impl_method_mangled: impl_mangled.clone(),
-                            concrete_type: info.concrete_type.clone(),
-                            params,
-                            slot_return,
-                            concrete_return: func.return_type.clone(),
-                        });
-                        wrapper_idx += 1;
+                        if let std::collections::btree_map::Entry::Vacant(e) =
+                            self.function_indices.entry(wrapper_name)
+                        {
+                            e.insert(wrapper_base + wrapper_idx);
+                            self.wrapper_funcs.push(WrapperFunc {
+                                group_key: group_key.clone(),
+                                func_type_index,
+                                impl_method_mangled: impl_mangled.clone(),
+                                concrete_type: info.concrete_type.clone(),
+                                params,
+                                slot_return,
+                                concrete_return: func.return_type.clone(),
+                            });
+                            wrapper_idx += 1;
+                        }
                     }
                 }
-            }
             }
         }
 
@@ -2639,7 +2939,8 @@ impl<'a> Codegen<'a> {
             return;
         }
 
-        let closure_captures: Vec<Vec<CapturedVar>> = self.closure_infos
+        let closure_captures: Vec<Vec<CapturedVar>> = self
+            .closure_infos
             .iter()
             .map(|info| info.captures.clone())
             .collect();
@@ -2654,7 +2955,9 @@ impl<'a> Codegen<'a> {
                         // Mutable capture: one field holding the mut-box ref (a `(ref $Tuple_N)` for a
                         // tuple — its own struct serves as the mut-box — else a `(ref $MutBox)`).
                         fields.push(wasm_encoder::FieldType {
-                            element_type: wasm_encoder::StorageType::Val(self.mut_box_valtype(&cap.ty)),
+                            element_type: wasm_encoder::StorageType::Val(
+                                self.mut_box_valtype(&cap.ty),
+                            ),
                             mutable: false,
                         });
                     } else {
@@ -2882,14 +3185,12 @@ impl<'a> Codegen<'a> {
         let interface_object_infos = std::mem::take(&mut self.interface_object_infos);
         let mut seen = std::collections::BTreeSet::new();
         #[allow(clippy::type_complexity)]
-        let mut deferred_via_standalones: Vec<(
-            InstanceKey,
-            Vec<(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)>,
-        )> = Vec::new();
+        let mut deferred_via_standalones: Vec<(InstanceKey, Vec<VtableMethodGroup>)> = Vec::new();
 
         for info in &interface_object_infos {
             let type_key = instance_key(&info.concrete_type);
-            let global_key = Self::coercion_global_key(&info.interface_mangled_name, &info.vtable_methods);
+            let global_key =
+                Self::coercion_global_key(&info.interface_mangled_name, &info.vtable_methods);
             let key = (type_key.clone(), global_key);
             if !seen.insert(key.clone()) {
                 continue;
@@ -2897,7 +3198,11 @@ impl<'a> Codegen<'a> {
             // Already emitted as a standalone component global of an earlier
             // intersection coercion — reuse it (keeps the map length equal to
             // the emitted-global count, which downstream bases rely on).
-            if self.vtable_global_indices.get(&key).is_some_and(|&idx| idx != u32::MAX) {
+            if self
+                .vtable_global_indices
+                .get(&key)
+                .is_some_and(|&idx| idx != u32::MAX)
+            {
                 continue;
             }
 
@@ -2926,7 +3231,8 @@ impl<'a> Codegen<'a> {
                 for (member_name, _impl_mangled, _) in entries {
                     // Find the wrapper function index
                     let wrapper_name = MangledName(format!(
-                        "$wrapper${}${}${}", group_key, type_key, member_name
+                        "$wrapper${}${}${}",
+                        group_key, type_key, member_name
                     ));
                     let wrapper_func_idx = *self.function_indices.get(&wrapper_name).unwrap_or_else(|| {
                         panic!("missing wrapper function: {wrapper_name} for trait={component_mn} type={type_key}")
@@ -2960,19 +3266,19 @@ impl<'a> Codegen<'a> {
             // root group key to the same global so Self-return re-boxes (which
             // look up by group key) can find it. Aliases don't emit a global,
             // so the emitted-count bookkeeping below must not use map length.
-            if !target_is_intersection {
-                if let Some((root_key, _)) = info.vtable_methods.last() {
-                    let main_key =
-                        Self::coercion_global_key(&info.interface_mangled_name, &info.vtable_methods);
-                    if *root_key != main_key {
-                        // Tagged root, or untagged root over a tagged subtree
-                        // (a direct impl of an extending trait): either way
-                        // the root group key is the one re-boxes look up. An
-                        // UNTAGGED root key is safe to alias — sibling direct
-                        // impls would have `$inst$`-tagged it.
-                        let alias_key = (type_key.clone(), root_key.clone());
-                        self.vtable_global_indices.entry(alias_key).or_insert(global_idx);
-                    }
+            if !target_is_intersection && let Some((root_key, _)) = info.vtable_methods.last() {
+                let main_key =
+                    Self::coercion_global_key(&info.interface_mangled_name, &info.vtable_methods);
+                if *root_key != main_key {
+                    // Tagged root, or untagged root over a tagged subtree
+                    // (a direct impl of an extending trait): either way
+                    // the root group key is the one re-boxes look up. An
+                    // UNTAGGED root key is safe to alias — sibling direct
+                    // impls would have `$inst$`-tagged it.
+                    let alias_key = (type_key.clone(), root_key.clone());
+                    self.vtable_global_indices
+                        .entry(alias_key)
+                        .or_insert(global_idx);
                 }
             }
 
@@ -2996,7 +3302,10 @@ impl<'a> Codegen<'a> {
                 for (i, (group_key, _)) in info.vtable_methods.iter().enumerate() {
                     // The root group of a single-interface target is the main
                     // global emitted above.
-                    if !target_is_intersection && i == last && subtree_lengths[i] == info.vtable_methods.len() {
+                    if !target_is_intersection
+                        && i == last
+                        && subtree_lengths[i] == info.vtable_methods.len()
+                    {
                         continue;
                     }
                     let subtree_start = i + 1 - subtree_lengths[i];
@@ -3024,7 +3333,8 @@ impl<'a> Codegen<'a> {
                         let sub_component_mn = Self::split_group_key(sub_key);
                         for (member_name, _impl_mangled, _) in sub_entries {
                             let wrapper_name = MangledName(format!(
-                                "$wrapper${}${}${}", sub_key, type_key, member_name
+                                "$wrapper${}${}${}",
+                                sub_key, type_key, member_name
                             ));
                             let wrapper_func_idx = self.function_indices[&wrapper_name];
                             comp_insns.push(wasm_encoder::Instruction::RefFunc(wrapper_func_idx));
@@ -3073,9 +3383,8 @@ impl<'a> Codegen<'a> {
             for (sub_key, sub_entries) in &subtree {
                 let sub_component_mn = Self::split_group_key(sub_key);
                 for (member_name, _impl_mangled, _) in sub_entries {
-                    let wrapper_name = MangledName(format!(
-                        "$wrapper${}${}${}", sub_key, type_key, member_name
-                    ));
+                    let wrapper_name =
+                        MangledName(format!("$wrapper${}${}${}", sub_key, type_key, member_name));
                     let wrapper_func_idx = self.function_indices[&wrapper_name];
                     comp_insns.push(wasm_encoder::Instruction::RefFunc(wrapper_func_idx));
                 }
@@ -3113,7 +3422,8 @@ impl<'a> Codegen<'a> {
 
         let num_user_globals = self.typed_module.globals.len() as u32;
         let num_trait_vtable_globals = self.num_interface_vtable_globals;
-        let class_vtable_global_base = USER_GLOBAL_BASE + num_user_globals + num_trait_vtable_globals;
+        let class_vtable_global_base =
+            USER_GLOBAL_BASE + num_user_globals + num_trait_vtable_globals;
         let mut global_idx = 0u32;
 
         // Iterate in the same order as type emission so vtable global indices line up.
@@ -3148,9 +3458,14 @@ impl<'a> Codegen<'a> {
                         // `Fiber<Fiber<Any, Never>, Never>` appear in `expr.ty` via parent-
                         // class type chains but are never `ClassNew`'d.
                         let all_methods_exist = cls.vtable_methods.iter().all(|slot| {
-                            let slot_ta = substitute_slot_type_params(&cls.type_params, &type_args, &slot.impl_type_params);
-                            let concrete_mn = MangledName::for_function(&slot.impl_fqn, &slot.param_types)
-                                .with_type_args(&slot_ta);
+                            let slot_ta = substitute_slot_type_params(
+                                &cls.type_params,
+                                &type_args,
+                                &slot.impl_type_params,
+                            );
+                            let concrete_mn =
+                                MangledName::for_function(&slot.impl_fqn, &slot.param_types)
+                                    .with_type_args(&slot_ta);
                             self.function_indices.contains_key(&concrete_mn)
                         });
                         if !all_methods_exist {
@@ -3168,9 +3483,14 @@ impl<'a> Codegen<'a> {
                         // and `with_type_args` is identity.
                         let mut insns: Vec<wasm_encoder::Instruction> = Vec::new();
                         for slot in &cls.vtable_methods {
-                            let slot_ta = substitute_slot_type_params(&cls.type_params, &type_args, &slot.impl_type_params);
-                            let concrete_mn = MangledName::for_function(&slot.impl_fqn, &slot.param_types)
-                                .with_type_args(&slot_ta);
+                            let slot_ta = substitute_slot_type_params(
+                                &cls.type_params,
+                                &type_args,
+                                &slot.impl_type_params,
+                            );
+                            let concrete_mn =
+                                MangledName::for_function(&slot.impl_fqn, &slot.param_types)
+                                    .with_type_args(&slot_ta);
                             let func_idx = *self.function_indices.get(&concrete_mn).unwrap_or_else(|| {
                                 panic!(
                                     "missing vtable function: {} method {} in class {} (type_args: {:?})",
@@ -3230,7 +3550,11 @@ impl<'a> Codegen<'a> {
         fn leaf_count(ty: &Type) -> u32 {
             match ty {
                 Type::Tuple(elems, _) => elems.iter().map(leaf_count).sum(),
-                Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => leaf_count(inner),
+                Type::Newtype(_, inner)
+                | Type::GenericNewtype {
+                    concrete_inner_type: inner,
+                    ..
+                } => leaf_count(inner),
                 Type::Uint128 => 2,
                 _ => 1,
             }
@@ -3271,7 +3595,11 @@ impl<'a> Codegen<'a> {
                         visit_type(e, f);
                     }
                 }
-                Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => {
+                Type::Newtype(_, inner)
+                | Type::GenericNewtype {
+                    concrete_inner_type: inner,
+                    ..
+                } => {
                     visit_type(inner, f);
                 }
                 Type::InterfaceObject { traits, .. } => {
@@ -3290,13 +3618,21 @@ impl<'a> Codegen<'a> {
             use crate::typechecker::types::TypedExprKind as K;
             match &e.kind {
                 K::Block(exprs) => exprs.iter().for_each(|c| visit_expr(c, f)),
-                K::Let { value, var_ty, .. } => { visit_type(var_ty, f); visit_expr(value, f); }
+                K::Let { value, var_ty, .. } => {
+                    visit_type(var_ty, f);
+                    visit_expr(value, f);
+                }
                 K::Assign { value, .. } => visit_expr(value, f),
-                K::FunctionCall { args, .. } | K::IntrinsicCall { args, .. }
-                | K::ClassNew { args, .. } | K::ClassSuperCall { args, .. }
-                | K::ClassStructCreate { fields: args, .. } | K::EnumCreate { args, .. }
-                | K::EnumVariantRecordCreate { args, .. } | K::ArrayLiteral { elements: args }
-                | K::ClosureCall { args, .. } | K::ClassVirtualCall { args, .. }
+                K::FunctionCall { args, .. }
+                | K::IntrinsicCall { args, .. }
+                | K::ClassNew { args, .. }
+                | K::ClassSuperCall { args, .. }
+                | K::ClassStructCreate { fields: args, .. }
+                | K::EnumCreate { args, .. }
+                | K::EnumVariantRecordCreate { args, .. }
+                | K::ArrayLiteral { elements: args }
+                | K::ClosureCall { args, .. }
+                | K::ClassVirtualCall { args, .. }
                 | K::InterfaceObjectMethodCall { args, .. } => {
                     args.iter().for_each(|a| visit_expr(a, f));
                     match &e.kind {
@@ -3306,51 +3642,98 @@ impl<'a> Codegen<'a> {
                         _ => {}
                     }
                 }
-                K::If { condition, then_branch, else_branch } => {
-                    visit_expr(condition, f); visit_expr(then_branch, f);
-                    if let Some(e2) = else_branch { visit_expr(e2, f); }
+                K::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    visit_expr(condition, f);
+                    visit_expr(then_branch, f);
+                    if let Some(e2) = else_branch {
+                        visit_expr(e2, f);
+                    }
                 }
-                K::While { condition, body } => { visit_expr(condition, f); visit_expr(body, f); }
-                K::NewtypeCreate { value, .. } | K::NewtypeValue { value, .. }
-                | K::TypeCast { value, .. } | K::TypeTest { value, .. }
-                | K::BoxToAny { inner: value } | K::Panic { message: value }
-                | K::Return { value, .. } | K::GlobalAssign { value, .. }
+                K::While { condition, body } => {
+                    visit_expr(condition, f);
+                    visit_expr(body, f);
+                }
+                K::NewtypeCreate { value, .. }
+                | K::NewtypeValue { value, .. }
+                | K::TypeCast { value, .. }
+                | K::TypeTest { value, .. }
+                | K::BoxToAny { inner: value }
+                | K::Panic { message: value }
+                | K::Return { value, .. }
+                | K::GlobalAssign { value, .. }
                 | K::UnaryOp { operand: value, .. } => visit_expr(value, f),
-                K::BinaryOp { left, right, .. } => { visit_expr(left, f); visit_expr(right, f); }
-                K::FieldAccess { object, .. } | K::MethodRef { object, .. } => visit_expr(object, f),
-                K::FieldAssign { object, value, .. } => { visit_expr(object, f); visit_expr(value, f); }
+                K::BinaryOp { left, right, .. } => {
+                    visit_expr(left, f);
+                    visit_expr(right, f);
+                }
+                K::FieldAccess { object, .. } | K::MethodRef { object, .. } => {
+                    visit_expr(object, f)
+                }
+                K::FieldAssign { object, value, .. } => {
+                    visit_expr(object, f);
+                    visit_expr(value, f);
+                }
                 K::Match { subject, arms } => {
                     visit_expr(subject, f);
                     for arm in arms {
-                        if let Some(g) = &arm.guard { visit_expr(g, f); }
+                        if let Some(g) = &arm.guard {
+                            visit_expr(g, f);
+                        }
                         visit_expr(&arm.body, f);
                     }
                 }
-                K::Closure { body, params, captures } => {
-                    for p in params { visit_type(&p.ty, f); }
-                    for c in captures { visit_type(&c.ty, f); }
+                K::Closure {
+                    body,
+                    params,
+                    captures,
+                } => {
+                    for p in params {
+                        visit_type(&p.ty, f);
+                    }
+                    for c in captures {
+                        visit_type(&c.ty, f);
+                    }
                     visit_expr(body, f);
                 }
                 K::Assert { condition, message } => {
                     visit_expr(condition, f);
-                    if let Some(m) = message { visit_expr(m, f); }
+                    if let Some(m) = message {
+                        visit_expr(m, f);
+                    }
                 }
                 K::RecordCreate { fields, .. } => {
-                    for (_, e2) in fields { visit_expr(e2, f); }
+                    for (_, e2) in fields {
+                        visit_expr(e2, f);
+                    }
                 }
                 K::TupleLiteral { elements } => {
-                    for e2 in elements { visit_expr(e2, f); }
+                    for e2 in elements {
+                        visit_expr(e2, f);
+                    }
                 }
-                K::RecordWith { object, overrides, .. } => {
+                K::RecordWith {
+                    object, overrides, ..
+                } => {
                     visit_expr(object, f);
-                    for (_, _, e2) in overrides { visit_expr(e2, f); }
+                    for (_, _, e2) in overrides {
+                        visit_expr(e2, f);
+                    }
                 }
                 K::LetDestructure { value, .. } => visit_expr(value, f),
-                K::InterfaceObjectCoerce { inner, .. } | K::TemplateInterfaceObjectCoerce { inner, .. } | K::InterfaceObjectUpcast { inner } => visit_expr(inner, f),
+                K::InterfaceObjectCoerce { inner, .. }
+                | K::TemplateInterfaceObjectCoerce { inner, .. }
+                | K::InterfaceObjectUpcast { inner } => visit_expr(inner, f),
                 K::ImplFunctionCall { args, .. } | K::ExtFunctionCall { args, .. } => {
                     args.iter().for_each(|a| visit_expr(a, f));
                 }
-                K::ForLoop { iterable, body, .. } => { visit_expr(iterable, f); visit_expr(body, f); }
+                K::ForLoop { iterable, body, .. } => {
+                    visit_expr(iterable, f);
+                    visit_expr(body, f);
+                }
                 K::AsyncBlock { body, .. } => visit_expr(body, f),
                 K::Try { operand, .. } | K::Await { operand, .. } => visit_expr(operand, f),
                 _ => {}
@@ -3360,28 +3743,46 @@ impl<'a> Codegen<'a> {
         for td in self.typed_module.types.values() {
             match td {
                 TypeDef::Record(r) => {
-                    for (_, ty) in &r.fields { visit_type(ty, f); }
+                    for (_, ty) in &r.fields {
+                        visit_type(ty, f);
+                    }
                 }
                 TypeDef::Enum(e) => {
                     for v in &e.variants {
-                        for ty in &v.payload_types { visit_type(ty, f); }
+                        for ty in &v.payload_types {
+                            visit_type(ty, f);
+                        }
                     }
                 }
                 TypeDef::Class(cls) => {
-                    if let Some(parent) = &cls.parent_type { visit_type(parent, f); }
-                    for fld in &cls.fields { visit_type(&fld.ty, f); }
-                    for p in &cls.constructor_params { visit_type(&p.ty, f); }
-                    for (_, ty) in &cls.initializer_fields { visit_type(ty, f); }
-                    for stmt in &cls.initializer { visit_expr(stmt, f); }
+                    if let Some(parent) = &cls.parent_type {
+                        visit_type(parent, f);
+                    }
+                    for fld in &cls.fields {
+                        visit_type(&fld.ty, f);
+                    }
+                    for p in &cls.constructor_params {
+                        visit_type(&p.ty, f);
+                    }
+                    for (_, ty) in &cls.initializer_fields {
+                        visit_type(ty, f);
+                    }
+                    for stmt in &cls.initializer {
+                        visit_expr(stmt, f);
+                    }
                     if let Some(args) = &cls.extends_args {
-                        for a in args { visit_expr(a, f); }
+                        for a in args {
+                            visit_expr(a, f);
+                        }
                     }
                 }
                 _ => {}
             }
         }
         for func in self.typed_module.functions.values() {
-            for p in &func.params { visit_type(&p.ty, f); }
+            for p in &func.params {
+                visit_type(&p.ty, f);
+            }
             visit_type(&func.return_type, f);
             visit_expr(&func.body, f);
         }
@@ -3397,7 +3798,9 @@ impl<'a> Codegen<'a> {
         for td in self.typed_module.types.values() {
             if let TypeDef::Class(cls) = td {
                 for slot in &cls.vtable_methods {
-                    for p in &slot.param_types { visit_type(p, f); }
+                    for p in &slot.param_types {
+                        visit_type(p, f);
+                    }
                     visit_type(&slot.return_type, f);
                 }
             }
@@ -3440,9 +3843,10 @@ impl<'a> Codegen<'a> {
                 is_final: true,
                 supertype_idx: None,
                 composite_type: wasm_encoder::CompositeType {
-                    inner: wasm_encoder::CompositeInnerType::Func(
-                        wasm_encoder::FuncType::new(params, vec![any_ref]),
-                    ),
+                    inner: wasm_encoder::CompositeInnerType::Func(wasm_encoder::FuncType::new(
+                        params,
+                        vec![any_ref],
+                    )),
                     shared: false,
                     describes: None,
                     descriptor: None,
@@ -3479,7 +3883,8 @@ impl<'a> Codegen<'a> {
 
             group.push(closure_func_subtype);
             group.push(closure_struct_subtype);
-            self.closure_arity_indices.insert(arity, (func_idx, struct_idx));
+            self.closure_arity_indices
+                .insert(arity, (func_idx, struct_idx));
         }
     }
 
@@ -3541,9 +3946,13 @@ impl<'a> Codegen<'a> {
     fn register_virtual_method_func_types(&mut self) {
         let instances = self.discover_class_vtable_instances();
         // For each class, accumulate its instantiations.
-        let mut by_class: std::collections::HashMap<MangledName, Vec<Vec<Type>>> = Default::default();
+        let mut by_class: std::collections::HashMap<MangledName, Vec<Vec<Type>>> =
+            Default::default();
         for (class_mn, type_args) in &instances {
-            by_class.entry(class_mn.clone()).or_default().push(type_args.clone());
+            by_class
+                .entry(class_mn.clone())
+                .or_default()
+                .push(type_args.clone());
         }
 
         for (class_mn, td) in &self.typed_module.types {
@@ -3554,10 +3963,8 @@ impl<'a> Codegen<'a> {
             // Non-generic classes without any expression-typed reference still need their
             // vtable methods registered. Treat "no discovered instantiation" as a single
             // empty-type-args instantiation for non-generic classes.
-            let mut class_instances: Vec<Vec<Type>> = by_class
-                .get(class_mn)
-                .cloned()
-                .unwrap_or_default();
+            let mut class_instances: Vec<Vec<Type>> =
+                by_class.get(class_mn).cloned().unwrap_or_default();
             if class_instances.is_empty() && cls.type_params.is_empty() {
                 class_instances.push(Vec::new());
             }
@@ -3566,12 +3973,18 @@ impl<'a> Codegen<'a> {
             }
 
             for (slot_idx, slot) in cls.vtable_methods.iter().enumerate() {
-                let func_type_idx = self.class_vtable_slot_func_types[&(class_mn.clone(), slot_idx as u32)];
+                let func_type_idx =
+                    self.class_vtable_slot_func_types[&(class_mn.clone(), slot_idx as u32)];
                 for type_args in &class_instances {
-                    let slot_ta = substitute_slot_type_params(&cls.type_params, type_args, &slot.impl_type_params);
+                    let slot_ta = substitute_slot_type_params(
+                        &cls.type_params,
+                        type_args,
+                        &slot.impl_type_params,
+                    );
                     let concrete_mn = MangledName::for_function(&slot.impl_fqn, &slot.param_types)
                         .with_type_args(&slot_ta);
-                    self.virtual_method_func_types.insert(concrete_mn.clone(), func_type_idx);
+                    self.virtual_method_func_types
+                        .insert(concrete_mn.clone(), func_type_idx);
                     self.virtual_method_slot_sigs.insert(
                         concrete_mn,
                         (slot.param_types.clone(), slot.return_type.clone()),
@@ -3595,7 +4008,11 @@ impl<'a> Codegen<'a> {
                 Type::Class(_, mn) => {
                     out.insert((mn.clone(), Vec::new()));
                 }
-                Type::GenericClass { mangled_name, type_args, .. } => {
+                Type::GenericClass {
+                    mangled_name,
+                    type_args,
+                    ..
+                } => {
                     if !type_args.iter().any(|(_, t)| t.contains_type_parameter()) {
                         let plain: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
                         out.insert((mangled_name.clone(), plain));
@@ -3621,7 +4038,11 @@ impl<'a> Codegen<'a> {
                     }
                     visit_type(ret, out);
                 }
-                Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => {
+                Type::Newtype(_, inner)
+                | Type::GenericNewtype {
+                    concrete_inner_type: inner,
+                    ..
+                } => {
                     visit_type(inner, out);
                 }
                 Type::InterfaceObject { traits, .. } => {
@@ -3640,22 +4061,37 @@ impl<'a> Codegen<'a> {
             // Recurse into immediate children; we only care about types touched by exprs.
             use crate::typechecker::types::TypedExprKind as K;
             match &e.kind {
-                K::ClassNew { mangled_name, type_params, .. }
-                | K::ClassStructCreate { target_mangled_name: mangled_name, type_params, .. }
-                    if !type_params.iter().any(Type::contains_type_parameter) => {
-                    out.insert((mangled_name.clone(),type_params.clone()));
+                K::ClassNew {
+                    mangled_name,
+                    type_params,
+                    ..
+                }
+                | K::ClassStructCreate {
+                    target_mangled_name: mangled_name,
+                    type_params,
+                    ..
+                } if !type_params.iter().any(Type::contains_type_parameter) => {
+                    out.insert((mangled_name.clone(), type_params.clone()));
                 }
                 _ => {}
             }
             match &e.kind {
                 K::Block(exprs) => exprs.iter().for_each(|c| visit_expr(c, out)),
-                K::Let { value, var_ty, .. } => { visit_type(var_ty, out); visit_expr(value, out); }
+                K::Let { value, var_ty, .. } => {
+                    visit_type(var_ty, out);
+                    visit_expr(value, out);
+                }
                 K::Assign { value, .. } => visit_expr(value, out),
-                K::FunctionCall { args, .. } | K::IntrinsicCall { args, .. }
-                | K::ClassNew { args, .. } | K::ClassSuperCall { args, .. }
-                | K::ClassStructCreate { fields: args, .. } | K::EnumCreate { args, .. }
-                | K::EnumVariantRecordCreate { args, .. } | K::ArrayLiteral { elements: args }
-                | K::ClosureCall { args, .. } | K::ClassVirtualCall { args, .. }
+                K::FunctionCall { args, .. }
+                | K::IntrinsicCall { args, .. }
+                | K::ClassNew { args, .. }
+                | K::ClassSuperCall { args, .. }
+                | K::ClassStructCreate { fields: args, .. }
+                | K::EnumCreate { args, .. }
+                | K::EnumVariantRecordCreate { args, .. }
+                | K::ArrayLiteral { elements: args }
+                | K::ClosureCall { args, .. }
+                | K::ClassVirtualCall { args, .. }
                 | K::InterfaceObjectMethodCall { args, .. } => {
                     args.iter().for_each(|a| visit_expr(a, out));
                     match &e.kind {
@@ -3665,47 +4101,86 @@ impl<'a> Codegen<'a> {
                         _ => {}
                     }
                 }
-                K::If { condition, then_branch, else_branch } => {
-                    visit_expr(condition, out); visit_expr(then_branch, out);
-                    if let Some(e2) = else_branch { visit_expr(e2, out); }
+                K::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                } => {
+                    visit_expr(condition, out);
+                    visit_expr(then_branch, out);
+                    if let Some(e2) = else_branch {
+                        visit_expr(e2, out);
+                    }
                 }
-                K::While { condition, body } => { visit_expr(condition, out); visit_expr(body, out); }
-                K::NewtypeCreate { value, .. } | K::NewtypeValue { value, .. }
-                | K::TypeCast { value, .. } | K::TypeTest { value, .. }
-                | K::BoxToAny { inner: value } | K::Panic { message: value }
-                | K::Return { value, .. } | K::GlobalAssign { value, .. }
+                K::While { condition, body } => {
+                    visit_expr(condition, out);
+                    visit_expr(body, out);
+                }
+                K::NewtypeCreate { value, .. }
+                | K::NewtypeValue { value, .. }
+                | K::TypeCast { value, .. }
+                | K::TypeTest { value, .. }
+                | K::BoxToAny { inner: value }
+                | K::Panic { message: value }
+                | K::Return { value, .. }
+                | K::GlobalAssign { value, .. }
                 | K::UnaryOp { operand: value, .. } => visit_expr(value, out),
-                K::BinaryOp { left, right, .. } => { visit_expr(left, out); visit_expr(right, out); }
-                K::FieldAccess { object, .. } | K::MethodRef { object, .. } => visit_expr(object, out),
-                K::FieldAssign { object, value, .. } => { visit_expr(object, out); visit_expr(value, out); }
+                K::BinaryOp { left, right, .. } => {
+                    visit_expr(left, out);
+                    visit_expr(right, out);
+                }
+                K::FieldAccess { object, .. } | K::MethodRef { object, .. } => {
+                    visit_expr(object, out)
+                }
+                K::FieldAssign { object, value, .. } => {
+                    visit_expr(object, out);
+                    visit_expr(value, out);
+                }
                 K::Match { subject, arms } => {
                     visit_expr(subject, out);
                     for arm in arms {
-                        if let Some(g) = &arm.guard { visit_expr(g, out); }
+                        if let Some(g) = &arm.guard {
+                            visit_expr(g, out);
+                        }
                         visit_expr(&arm.body, out);
                     }
                 }
                 K::Closure { body, .. } => visit_expr(body, out),
                 K::Assert { condition, message } => {
                     visit_expr(condition, out);
-                    if let Some(m) = message { visit_expr(m, out); }
+                    if let Some(m) = message {
+                        visit_expr(m, out);
+                    }
                 }
                 K::RecordCreate { fields, .. } => {
-                    for (_, e2) in fields { visit_expr(e2, out); }
+                    for (_, e2) in fields {
+                        visit_expr(e2, out);
+                    }
                 }
                 K::TupleLiteral { elements } => {
-                    for e2 in elements { visit_expr(e2, out); }
+                    for e2 in elements {
+                        visit_expr(e2, out);
+                    }
                 }
-                K::RecordWith { object, overrides, .. } => {
+                K::RecordWith {
+                    object, overrides, ..
+                } => {
                     visit_expr(object, out);
-                    for (_, _, e2) in overrides { visit_expr(e2, out); }
+                    for (_, _, e2) in overrides {
+                        visit_expr(e2, out);
+                    }
                 }
                 K::LetDestructure { value, .. } => visit_expr(value, out),
-                K::InterfaceObjectCoerce { inner, .. } | K::TemplateInterfaceObjectCoerce { inner, .. } | K::InterfaceObjectUpcast { inner } => visit_expr(inner, out),
+                K::InterfaceObjectCoerce { inner, .. }
+                | K::TemplateInterfaceObjectCoerce { inner, .. }
+                | K::InterfaceObjectUpcast { inner } => visit_expr(inner, out),
                 K::ImplFunctionCall { args, .. } | K::ExtFunctionCall { args, .. } => {
                     args.iter().for_each(|a| visit_expr(a, out));
                 }
-                K::ForLoop { iterable, body, .. } => { visit_expr(iterable, out); visit_expr(body, out); }
+                K::ForLoop { iterable, body, .. } => {
+                    visit_expr(iterable, out);
+                    visit_expr(body, out);
+                }
                 K::AsyncBlock { body, .. } => visit_expr(body, out),
                 K::Try { operand, .. } | K::Await { operand, .. } => visit_expr(operand, out),
                 _ => {}
@@ -3713,7 +4188,9 @@ impl<'a> Codegen<'a> {
         }
 
         for func in self.typed_module.functions.values() {
-            for p in &func.params { visit_type(&p.ty, &mut out); }
+            for p in &func.params {
+                visit_type(&p.ty, &mut out);
+            }
             visit_type(&func.return_type, &mut out);
             visit_expr(&func.body, &mut out);
         }
@@ -3731,10 +4208,16 @@ impl<'a> Codegen<'a> {
                     visit_type(parent, &mut out);
                 }
                 if let Some(args) = &cls.extends_args {
-                    for a in args { visit_expr(a, &mut out); }
+                    for a in args {
+                        visit_expr(a, &mut out);
+                    }
                 }
-                for stmt in &cls.initializer { visit_expr(stmt, &mut out); }
-                for f in &cls.fields { visit_type(&f.ty, &mut out); }
+                for stmt in &cls.initializer {
+                    visit_expr(stmt, &mut out);
+                }
+                for f in &cls.fields {
+                    visit_type(&f.ty, &mut out);
+                }
             }
         }
         out.items
@@ -3786,7 +4269,10 @@ impl<'a> Codegen<'a> {
         // `wasm_component_model_async_stackful` enabled or the component will
         // not instantiate (see `p3::configure_p3_engine`).
         exports.export(
-            &format!("[async-lift-stackful]wasi:cli/run@{}#run", component::P3_VERSION),
+            &format!(
+                "[async-lift-stackful]wasi:cli/run@{}#run",
+                component::P3_VERSION
+            ),
             ExportKind::Func,
             self.func_run(),
         );
@@ -3862,7 +4348,10 @@ impl<'a> Codegen<'a> {
         // debug_print
         add_runtime_func!(
             codes,
-            string_functions::generate_debug_print(self.func_pinned_alloc(), self.func_pinned_free())
+            string_functions::generate_debug_print(
+                self.func_pinned_alloc(),
+                self.func_pinned_free()
+            )
         );
 
         // panic_with_message
@@ -3874,19 +4363,28 @@ impl<'a> Codegen<'a> {
         // console_print (stdout, no newline)
         add_runtime_func!(
             codes,
-            string_functions::generate_console_print(self.func_pinned_alloc(), self.func_pinned_free())
+            string_functions::generate_console_print(
+                self.func_pinned_alloc(),
+                self.func_pinned_free()
+            )
         );
 
         // console_eprint (stderr, no newline)
         add_runtime_func!(
             codes,
-            string_functions::generate_console_eprint(self.func_pinned_alloc(), self.func_pinned_free())
+            string_functions::generate_console_eprint(
+                self.func_pinned_alloc(),
+                self.func_pinned_free()
+            )
         );
 
         // console_eprintln (stderr, with newline)
         add_runtime_func!(
             codes,
-            string_functions::generate_console_eprintln(self.func_pinned_alloc(), self.func_pinned_free())
+            string_functions::generate_console_eprintln(
+                self.func_pinned_alloc(),
+                self.func_pinned_free()
+            )
         );
 
         // pinned allocator
@@ -3918,14 +4416,13 @@ impl<'a> Codegen<'a> {
                 slot_sig.as_ref().map(|(p, _)| p.as_slice()),
                 self,
             );
-            if let Some(ref vst) = func.vtable_self_type {
-                if let Some(first_param) = func.params.first() {
-                    if &first_param.ty != vst {
-                        let concrete_type_idx = self.wasm_type_index_for_class(&first_param.ty);
-                        let concrete_valtype = self.single_val_type(&first_param.ty);
-                        emitter.emit_self_cast_prologue(concrete_valtype, concrete_type_idx);
-                    }
-                }
+            if let Some(ref vst) = func.vtable_self_type
+                && let Some(first_param) = func.params.first()
+                && &first_param.ty != vst
+            {
+                let concrete_type_idx = self.wasm_type_index_for_class(&first_param.ty);
+                let concrete_valtype = self.single_val_type(&first_param.ty);
+                emitter.emit_self_cast_prologue(concrete_valtype, concrete_type_idx);
             }
             // For a monomorphized class method emitted with the erased vtable slot signature, any
             // partially-erased non-self param (a type-param scalar, or a tuple with type-param
@@ -4023,11 +4520,15 @@ impl<'a> Codegen<'a> {
     /// 1. Casts anyref back to the concrete type (ref.cast for ref types, or unbox for primitives)
     /// 2. Passes all params to the impl method
     /// 3. Returns the result
-    /// Build a interface-object dispatch wrapper. Its WASM params are the erased vtable-slot signature
+    ///
+    /// Build an interface-object dispatch wrapper. Its WASM params are the erased vtable-slot signature
     /// (anyref self + erased slot params); the body bridges to the concrete impl ABI. Built with a
     /// `FunctionEmitter` so `coerce_value` handles every param/return shape — including a
     /// partially-erased tuple param like `(Int32, T)` (a width-changing per-element coercion).
-    fn build_wrapper_function(&self, wrapper: &WrapperFunc) -> (wasm_encoder::Function, FunctionDebugInfo) {
+    fn build_wrapper_function(
+        &self,
+        wrapper: &WrapperFunc,
+    ) -> (wasm_encoder::Function, FunctionDebugInfo) {
         let impl_func_idx = self.function_indices[&wrapper.impl_method_mangled];
         let mut emitter = function_emitter::FunctionEmitter::new(&[], None, self);
         emitter.self_return_group_key = Some(wrapper.group_key.clone());
@@ -4058,12 +4559,15 @@ impl<'a> Codegen<'a> {
         // otherwise it uses the direct-call ABI with flattened tuple params, so each boxed anyref
         // tuple param must be cast and exploded into its flattened values before the call. Temp locals (param
         // unbox + return rebox) sit after the `1 + arity` anyref params.
-        let boxed_params = self.virtual_method_slot_sigs.contains_key(&tramp.target_mangled);
+        let boxed_params = self
+            .virtual_method_slot_sigs
+            .contains_key(&tramp.target_mangled);
         let mut local_decls: Vec<(u32, ValType)> = vec![];
         let mut next_local = 1 + tramp.param_types.len() as u32;
 
         // Plan per-param unbox (non-vtable flattened targets only).
-        let mut param_unbox: Vec<Option<(u32, Vec<wasm_encoder::Instruction<'static>>)>> = Vec::new();
+        let mut param_unbox: Vec<Option<(u32, Vec<wasm_encoder::Instruction<'static>>)>> =
+            Vec::new();
         for declared_ty in &tramp.param_types {
             if !boxed_params && self.is_tuple(declared_ty) {
                 let base = next_local;
@@ -4160,7 +4664,10 @@ impl<'a> Codegen<'a> {
         // Primitives unbox (struct.get field 0). Reference types — and tuples / `Uint128`, which a
         // boxed-param vtable target receives as their boxed `(ref $Tuple_N)` / `(ref $Uint128)` —
         // keep the ref.
-        if !target_ty.is_reference_type() && !self.is_tuple(target_ty) && !self.is_uint128(target_ty) {
+        if !target_ty.is_reference_type()
+            && !self.is_tuple(target_ty)
+            && !self.is_uint128(target_ty)
+        {
             f.instruction(&wasm_encoder::Instruction::StructGet {
                 struct_type_index: type_idx,
                 field_index: 0,
@@ -4204,15 +4711,17 @@ impl<'a> Codegen<'a> {
         // the runtime as needed — legal because the export is async-typed),
         // delivers the result via `task.return`, then returns normally.
         let mut f = wasm_encoder::Function::new(vec![]);
-        if self.test_func_indices.is_empty() {
-            if let Some(main_idx) = self.main_func_index {
-                f.instruction(&wasm_encoder::Instruction::Call(main_idx));
-                f.instruction(&wasm_encoder::Instruction::Drop);
-            }
+        if self.test_func_indices.is_empty()
+            && let Some(main_idx) = self.main_func_index
+        {
+            f.instruction(&wasm_encoder::Instruction::Call(main_idx));
+            f.instruction(&wasm_encoder::Instruction::Drop);
         }
         // Deliver the run result (0 = ok discriminant) and finish the task.
         f.instruction(&wasm_encoder::Instruction::I32Const(0));
-        f.instruction(&wasm_encoder::Instruction::Call(self.func_task_return_run()));
+        f.instruction(&wasm_encoder::Instruction::Call(
+            self.func_task_return_run(),
+        ));
         f.instruction(&wasm_encoder::Instruction::End);
         f
     }
@@ -4230,20 +4739,41 @@ impl<'a> Codegen<'a> {
 
 fn validate_tuple_projections(module: &TypedModule) -> Result<(), CodeGenError> {
     fn unresolved(expr: &TypedExpr) -> Option<CodeGenError> {
-        if matches!(&expr.kind, TypedExprKind::IntrinsicCall { intrinsic: crate::typechecker::types::IntrinsicKind::TupleProjection(_), .. }) {
-            return Some(CodeGenError { message: format!("unresolved tuple accessor on '{}' at {}:{}; tuple shape must be known before code generation", expr.ty, expr.span.file, expr.span.line) });
+        if matches!(
+            &expr.kind,
+            TypedExprKind::IntrinsicCall {
+                intrinsic: crate::typechecker::types::IntrinsicKind::TupleProjection(_),
+                ..
+            }
+        ) {
+            return Some(CodeGenError {
+                message: format!(
+                    "unresolved tuple accessor on '{}' at {}:{}; tuple shape must be known before code generation",
+                    expr.ty, expr.span.file, expr.span.line
+                ),
+            });
         }
         let mut error = None;
         crate::monomorphize::visit_expr_children(expr, |child| {
-            if error.is_none() { error = unresolved(child); }
+            if error.is_none() {
+                error = unresolved(child);
+            }
         });
         error
     }
-    for function in module.functions.values().filter(|f| f.type_params.is_empty()) {
-        if let Some(error) = unresolved(&function.body) { return Err(error); }
+    for function in module
+        .functions
+        .values()
+        .filter(|f| f.type_params.is_empty())
+    {
+        if let Some(error) = unresolved(&function.body) {
+            return Err(error);
+        }
     }
     for global in module.globals.values().filter(|g| g.type_params.is_empty()) {
-        if let Some(error) = unresolved(&global.initializer) { return Err(error); }
+        if let Some(error) = unresolved(&global.initializer) {
+            return Err(error);
+        }
     }
     Ok(())
 }
@@ -4284,7 +4814,10 @@ pub fn generate_component(
 /// Generate core WASM module bytes (without component wrapping).
 /// Useful for debugging and testing.
 #[cfg(test)]
-pub fn generate_core_module(typed_module: &TypedModule, registry: &crate::typechecker::registry::Registry) -> Vec<u8> {
+pub fn generate_core_module(
+    typed_module: &TypedModule,
+    registry: &crate::typechecker::registry::Registry,
+) -> Vec<u8> {
     let empty = WitImportUniverse::empty();
     let codegen = Codegen::new(typed_module, &empty, registry);
     codegen.generate()
@@ -4375,24 +4908,39 @@ mod tests {
 
     #[test]
     fn type_to_valtypes_flat_pair() {
-        assert_eq!(flatten(&tuple(vec![Type::Int32, Type::Bool])), vec![ValType::I32, ValType::I32]);
+        assert_eq!(
+            flatten(&tuple(vec![Type::Int32, Type::Bool])),
+            vec![ValType::I32, ValType::I32]
+        );
     }
 
     #[test]
     fn type_to_valtypes_mixed_widths() {
-        assert_eq!(flatten(&tuple(vec![Type::Int64, Type::Float64])), vec![ValType::I64, ValType::F64]);
+        assert_eq!(
+            flatten(&tuple(vec![Type::Int64, Type::Float64])),
+            vec![ValType::I64, ValType::F64]
+        );
     }
 
     #[test]
     fn type_to_valtypes_nested_is_transitive() {
         let nested = tuple(vec![tuple(vec![Type::Int32, Type::Bool]), Type::Int64]);
-        assert_eq!(flatten(&nested), vec![ValType::I32, ValType::I32, ValType::I64]);
+        assert_eq!(
+            flatten(&nested),
+            vec![ValType::I32, ValType::I32, ValType::I64]
+        );
     }
 
     #[test]
     fn type_to_valtypes_deeply_nested() {
-        let deep = tuple(vec![Type::Int32, tuple(vec![Type::Bool, tuple(vec![Type::Int64, Type::Float32])])]);
-        assert_eq!(flatten(&deep), vec![ValType::I32, ValType::I32, ValType::I64, ValType::F32]);
+        let deep = tuple(vec![
+            Type::Int32,
+            tuple(vec![Type::Bool, tuple(vec![Type::Int64, Type::Float32])]),
+        ]);
+        assert_eq!(
+            flatten(&deep),
+            vec![ValType::I32, ValType::I32, ValType::I64, ValType::F32]
+        );
     }
 
     #[test]
@@ -4423,7 +4971,11 @@ mod tests {
     fn type_to_valtypes_tuple_with_type_param_flattens() {
         // Every tuple flattens now: a type-parameter leaf lowers to `anyref`, so `(Int32, T)`
         // is the two-value sequence `[i32, anyref]` (boxed form is the shared `$Tuple_2`).
-        let param = Type::GenericParam(crate::common::types::TypeParamName("T".to_string()), vec![], 0);
+        let param = Type::GenericParam(
+            crate::common::types::TypeParamName("T".to_string()),
+            vec![],
+            0,
+        );
         let flat = flatten(&tuple(vec![Type::Int32, param]));
         let any_ref = ValType::Ref(wasm_encoder::RefType {
             nullable: false,
@@ -4543,10 +5095,9 @@ function main(): Unit =
         crate::desugar::desugar_all(&mut tc_result.typed_module);
 
         let merged_registry = base_registry.merge(&tc_result.registry);
-        let mut mono_module = crate::monomorphize::monomorphize(
-            tc_result.typed_module,
-            &merged_registry,
-        ).expect("monomorphize");
+        let mut mono_module =
+            crate::monomorphize::monomorphize(tc_result.typed_module, &merged_registry)
+                .expect("monomorphize");
         crate::desugar::coerce_and_capture(&mut mono_module);
         crate::coerce::elaborate_coercions(&mut mono_module, &merged_registry);
         crate::monomorphize::ensure_vtable_functions(&mut mono_module, &merged_registry)
@@ -4556,7 +5107,8 @@ function main(): Unit =
 
     #[test]
     fn test_nested_closure_valid_core_wasm() {
-        let core_bytes = compile_core_with_prelude(r#"
+        let core_bytes = compile_core_with_prelude(
+            r#"
 package a
 
 function main(): Unit =
@@ -4565,7 +5117,8 @@ function main(): Unit =
         (z: Int32) => x + z
     let inner = outer(())
     assert inner(1) == 101
-"#);
+"#,
+        );
         wasmparser::Validator::new_with_features(wasmparser::WasmFeatures::all())
             .validate_all(&core_bytes)
             .expect("nested closure core module validation failed");
@@ -4580,23 +5133,23 @@ function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
     let _ = add(1, 2)
-    ()"#);
+    ()"#,
+        );
 
         // Parse the core module and extract function names from the name section
         let mut func_names: Vec<(u32, String)> = Vec::new();
         for payload in wasmparser::Parser::new(0).parse_all(&core_bytes) {
             let payload = payload.expect("valid payload");
-            if let wasmparser::Payload::CustomSection(reader) = payload {
-                if reader.name() == "name" {
-                    if let wasmparser::KnownCustom::Name(name_reader) = reader.as_known() {
-                        for name in name_reader {
-                            let name = name.expect("valid name subsection");
-                            if let wasmparser::Name::Function(map) = name {
-                                for naming in map {
-                                    let naming = naming.expect("valid naming");
-                                    func_names.push((naming.index, naming.name.to_string()));
-                                }
-                            }
+            if let wasmparser::Payload::CustomSection(reader) = payload
+                && reader.name() == "name"
+                && let wasmparser::KnownCustom::Name(name_reader) = reader.as_known()
+            {
+                for name in name_reader {
+                    let name = name.expect("valid name subsection");
+                    if let wasmparser::Name::Function(map) = name {
+                        for naming in map {
+                            let naming = naming.expect("valid naming");
+                            func_names.push((naming.index, naming.name.to_string()));
                         }
                     }
                 }
@@ -4629,12 +5182,12 @@ function main(): Unit =
             .map(|(_, name)| name.as_str())
             .collect();
         assert!(
-            user_names.iter().any(|n| *n == "a.main"),
+            user_names.contains(&"a.main"),
             "should contain 'a.main', got: {:?}",
             user_names
         );
         assert!(
-            user_names.iter().any(|n| *n == "a.add(Int32, Int32)"),
+            user_names.contains(&"a.add(Int32, Int32)"),
             "should contain 'a.add(Int32, Int32)', got: {:?}",
             user_names
         );

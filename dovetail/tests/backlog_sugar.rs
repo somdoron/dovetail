@@ -2,7 +2,8 @@ mod common;
 
 #[test]
 fn for_loop_resolves_an_iterable_type_parameter_bound() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 function total<C>(values: C): Int32 where C: Iterable<Int32> =
     let mutable sum = 0
@@ -10,7 +11,9 @@ function total<C>(values: C): Int32 where C: Iterable<Int32> =
         sum = sum + value
     sum
 function main(): Unit = assert total([1, 2, 3]) == 6
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -29,7 +32,8 @@ function main(): Unit =
 
 #[test]
 fn bound_use_rejects_an_incompatible_associated_wrapper() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 record Resource = value: Int32
 implement Usable<Int32, Never> for Resource =
@@ -39,7 +43,8 @@ function increment<C>(holder: C): Int32 where C: Usable<Int32, Never> =
     let value = use holder
     value + 1
 function main(): Unit = assert increment(Resource { value = 4 }) == 5
-"#);
+"#,
+    );
     assert!(
         errors.iter().any(|message| message.contains(
             "generic use requires a continuation returning 'C.Wrapped<U, Never>', found 'Int32'"
@@ -50,7 +55,8 @@ function main(): Unit = assert increment(Resource { value = 4 }) == 5
 
 #[test]
 fn for_loop_resolves_inherited_bounds_in_a_default_body() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 trait Numbers extends Iterable<Int32> =
     function total(self): Int32 =
@@ -62,24 +68,34 @@ record Values = items: List<Int32>
 implement Numbers for Values =
     function iterator(self): Iterator<Int32> = self.items.iterator()
 function main(): Unit = assert Values { items = [2, 3] }.total() == 5
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 }
 
 #[test]
 fn for_loop_rejects_distinct_direct_and_inherited_element_types() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 trait TextValues extends Iterable<String>
 function visit<C>(values: C): Unit where C: Iterable<Int32> + TextValues =
     for value in values do ()
 function main(): Unit = ()
-"#);
-    assert!(errors.iter().any(|message| message.contains("a for-loop needs a unique element type")), "{errors:?}");
+"#,
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|message| message.contains("a for-loop needs a unique element type")),
+        "{errors:?}"
+    );
 }
 
 #[test]
 fn any_preserves_the_boxed_interface_value() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 interface Read = function read(self): Int32
 record Rec = value: Int32
@@ -91,5 +107,7 @@ function main(): Unit =
     let concrete: Any = Rec { value = 7 }
     assert concrete is Rec
     assert (concrete as Rec).value == 7
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 }

@@ -123,10 +123,7 @@ pub(super) fn generate_dwarf_sections(
             gimli::DW_AT_name,
             AttributeValue::String(b"dovetail".to_vec()),
         );
-        root.set(
-            gimli::DW_AT_comp_dir,
-            AttributeValue::String(b".".to_vec()),
-        );
+        root.set(gimli::DW_AT_comp_dir, AttributeValue::String(b".".to_vec()));
         // low_pc = 0 (start of code section)
         root.set(
             gimli::DW_AT_low_pc,

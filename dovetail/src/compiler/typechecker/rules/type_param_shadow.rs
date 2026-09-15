@@ -2,16 +2,13 @@ use crate::common::diagnostics::Diagnostics;
 use crate::common::span::{Span, Spanned};
 use crate::parser::ast::{Declaration, Expr, FunctionDecl, Pattern, SourceFile};
 
-use super::visitor::{walk_untyped_let, walk_untyped_match, ExprVisitor};
+use super::visitor::{ExprVisitor, walk_untyped_let, walk_untyped_match};
 
 /// All type-parameter-related rules on the untyped AST:
 /// 1. `Self` cannot be used as a type parameter name.
 /// 2. Method type parameters must not shadow enclosing type parameters.
 /// 3. Variable bindings in generic function bodies must not shadow type parameters.
-pub(super) fn check_type_param_rules(
-    source_files: &[&SourceFile],
-    diagnostics: &mut Diagnostics,
-) {
+pub(super) fn check_type_param_rules(source_files: &[&SourceFile], diagnostics: &mut Diagnostics) {
     for file in source_files {
         for decl in &file.declarations {
             check_decl(decl, diagnostics);
@@ -39,7 +36,12 @@ fn check_decl(decl: &Declaration, diagnostics: &mut Diagnostics) {
                     diagnostics,
                 );
                 if let Some(body) = &method.body {
-                    check_expression_shadows(body, &method.type_params, &trait_decl.type_params, diagnostics);
+                    check_expression_shadows(
+                        body,
+                        &method.type_params,
+                        &trait_decl.type_params,
+                        diagnostics,
+                    );
                 }
             }
             for property in &trait_decl.properties {
@@ -96,16 +98,18 @@ fn check_decl(decl: &Declaration, diagnostics: &mut Diagnostics) {
                 check_body_shadows(method, &impl_decl.type_params, diagnostics);
             }
         }
-        Declaration::Record(_) | Declaration::Enum(_) | Declaration::GlobalVar(_) | Declaration::Newtype(_) | Declaration::TypeAlias(_) | Declaration::Class(_) | Declaration::Test(_) => {}
+        Declaration::Record(_)
+        | Declaration::Enum(_)
+        | Declaration::GlobalVar(_)
+        | Declaration::Newtype(_)
+        | Declaration::TypeAlias(_)
+        | Declaration::Class(_)
+        | Declaration::Test(_) => {}
     }
-
 }
 
 /// `Self` cannot be used as a type parameter name.
-fn check_self_in_type_params(
-    type_params: &[Spanned<String>],
-    diagnostics: &mut Diagnostics,
-) {
+fn check_self_in_type_params(type_params: &[Spanned<String>], diagnostics: &mut Diagnostics) {
     for tp in type_params {
         if tp.value == "Self" {
             diagnostics.error(
@@ -149,7 +153,12 @@ fn check_body_shadows(
     enclosing_type_params: &[Spanned<String>],
     diagnostics: &mut Diagnostics,
 ) {
-    check_expression_shadows(&func.body, &func.type_params, enclosing_type_params, diagnostics);
+    check_expression_shadows(
+        &func.body,
+        &func.type_params,
+        enclosing_type_params,
+        diagnostics,
+    );
 }
 
 fn check_expression_shadows(
@@ -193,9 +202,7 @@ impl BodyShadowChecker<'_> {
             Pattern::Variable(name, span) => {
                 self.check_name(name, span, diagnostics);
             }
-            Pattern::TypeAnnotated {
-                binding, span, ..
-            } => {
+            Pattern::TypeAnnotated { binding, span, .. } => {
                 self.check_name(binding, span, diagnostics);
             }
             Pattern::Record { fields, .. } => {
@@ -203,11 +210,7 @@ impl BodyShadowChecker<'_> {
                     match &field.pattern {
                         Some(pat) => self.check_pattern(pat, diagnostics),
                         // Bare field shorthand `{ x }` binds variable `x`
-                        None => self.check_name(
-                            &field.name.value,
-                            &field.span,
-                            diagnostics,
-                        ),
+                        None => self.check_name(&field.name.value, &field.span, diagnostics),
                     }
                 }
             }
@@ -267,8 +270,8 @@ mod tests {
     use super::*;
     use crate::common::diagnostics::Diagnostics;
     use crate::layout::LayoutFilter;
-    use crate::lexer::attach_doc_comments;
     use crate::lexer::Lexer;
+    use crate::lexer::attach_doc_comments;
     use crate::parser::Parser;
     use std::sync::Arc;
 
@@ -304,7 +307,7 @@ mod tests {
     #[test]
     fn extension_method_body_shadows_extension_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 extension Wrapper<T> for Int32 =
@@ -319,7 +322,7 @@ extension Wrapper<T> for Int32 =
     #[test]
     fn extension_generic_method_body_shadows_method_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 extension Wrapper<T> for Int32 =
@@ -334,7 +337,7 @@ extension Wrapper<T> for Int32 =
     #[test]
     fn extension_generic_method_body_shadows_extension_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 extension Wrapper<T> for Int32 =
@@ -349,7 +352,7 @@ extension Wrapper<T> for Int32 =
     #[test]
     fn extension_method_body_no_shadow_ok() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 extension Wrapper<T> for Int32 =
@@ -366,7 +369,7 @@ extension Wrapper<T> for Int32 =
     #[test]
     fn module_method_body_shadows_module_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 module Box<T> =
@@ -381,7 +384,7 @@ module Box<T> =
     #[test]
     fn module_generic_method_body_shadows_method_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 module Box<T> =
@@ -396,7 +399,7 @@ module Box<T> =
     #[test]
     fn module_generic_method_body_shadows_module_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 module Box<T> =
@@ -411,7 +414,7 @@ module Box<T> =
     #[test]
     fn module_method_body_no_shadow_ok() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 module Box<T> =
@@ -428,7 +431,7 @@ module Box<T> =
     #[test]
     fn extension_method_type_param_shadows_extension() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 extension Wrapper<T> for Int32 =
@@ -441,7 +444,7 @@ extension Wrapper<T> for Int32 =
     #[test]
     fn module_method_type_param_shadows_module() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 module Box<T> =
@@ -456,7 +459,7 @@ module Box<T> =
     #[test]
     fn non_generic_extension_method_body_shadows_extension_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 extension Wrapper<T> for Int32 =
@@ -471,7 +474,7 @@ extension Wrapper<T> for Int32 =
     #[test]
     fn non_generic_module_method_body_shadows_module_type_param() {
         let errors = parse_and_check(
-r#"
+            r#"
 package a
 
 module Box<T> =

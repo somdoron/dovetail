@@ -6,8 +6,8 @@ use crate::typechecker::types::{
     Type, TypedExpr, TypedExprKind, TypedExtensionBlock, TypedFunction, TypedModule, TypedParam,
 };
 
-use super::{SpecializationError, SpecializationRounds};
 use super::substitute::{apply_type_substitution, substitute_types_in_expr, unify_type};
+use super::{SpecializationError, SpecializationRounds};
 
 pub(super) fn expand_non_generic_ext_blocks(module: &mut TypedModule) {
     for block in &module.extension_blocks {
@@ -124,18 +124,16 @@ fn find_ext_block_for_call<'a>(
     // different `for_type`s). Disambiguate by `for_type`: non-generic blocks need an
     // exact match; generic blocks match if the base FQNs agree (the call site will
     // have a concrete instantiation like `Box<Int32>` and the block has `Box<T>`).
-    ext_blocks
-        .iter()
-        .find(|block| {
-            if block.ext_fqn != *ext_fqn {
-                return false;
-            }
-            if block.type_params.is_empty() {
-                block.for_type == *for_type
-            } else {
-                block.for_type.to_fqn() == for_type.to_fqn()
-            }
-        })
+    ext_blocks.iter().find(|block| {
+        if block.ext_fqn != *ext_fqn {
+            return false;
+        }
+        if block.type_params.is_empty() {
+            block.for_type == *for_type
+        } else {
+            block.for_type.to_fqn() == for_type.to_fqn()
+        }
+    })
 }
 
 fn resolve_ext_method_mangled(
@@ -155,7 +153,9 @@ fn resolve_ext_method_mangled(
         .find(|m| {
             m.name == *method_name
                 && m.params.len() == arg_types.len()
-                && m.params.iter().zip(arg_types.iter()).all(|(p, a)| p.ty == *a || a.contains_type_parameter() || p.ty.contains_type_parameter())
+                && m.params.iter().zip(arg_types.iter()).all(|(p, a)| {
+                    p.ty == *a || a.contains_type_parameter() || p.ty.contains_type_parameter()
+                })
         })
         .or_else(|| {
             // Fallback: match by name only (for cases where type params prevent exact match)
@@ -207,7 +207,11 @@ fn resolve_ext_method_mangled(
     if has_method_type_params {
         let method = method.as_ref().unwrap();
         let method_type_args = &type_args[block.type_params.len()..];
-        for (tp, ty) in method.method_type_params.iter().zip(method_type_args.iter()) {
+        for (tp, ty) in method
+            .method_type_params
+            .iter()
+            .zip(method_type_args.iter())
+        {
             bindings.insert(tp.clone(), ty.clone());
         }
         all_mangled_type_args.extend_from_slice(method_type_args);
@@ -234,40 +238,39 @@ fn resolve_ext_method_mangled(
     );
     mangled = mangled.with_type_args(&all_mangled_type_args);
 
-    if !new_functions.contains_key(&mangled) && !existing_functions.contains(&mangled) {
-        if let Some(method) = method {
-            let params: Vec<TypedParam> = method
-                .params
-                .iter()
-                .map(|p| TypedParam {
-                    name: p.name.clone(),
-                    ty: apply_type_substitution(&p.ty, &bindings),
-                    span: p.span.clone(),
-                })
-                .collect();
-            let return_type = apply_type_substitution(&method.return_type, &bindings);
-            let body = substitute_types_in_expr(method.body.clone(), &bindings);
-            let display_name = make_display_name(
-                &format!("{}.{}", block.ext_fqn, method_name),
-                &params,
-            );
-            new_functions.insert(
-                mangled.clone(),
-                TypedFunction {
-                    visibility: method.visibility,
-                    name: mangled.clone(),
-                    type_params: vec![],
-                    params,
-                    return_type,
-                    body,
-                    span: method.span.clone(),
-                    vtable_self_type: None,
-                    is_async: method.is_async,
-                    source_name: method.name.0.clone(),
-                    display_name,
-                },
-            );
-        }
+    if !new_functions.contains_key(&mangled)
+        && !existing_functions.contains(&mangled)
+        && let Some(method) = method
+    {
+        let params: Vec<TypedParam> = method
+            .params
+            .iter()
+            .map(|p| TypedParam {
+                name: p.name.clone(),
+                ty: apply_type_substitution(&p.ty, &bindings),
+                span: p.span.clone(),
+            })
+            .collect();
+        let return_type = apply_type_substitution(&method.return_type, &bindings);
+        let body = substitute_types_in_expr(method.body.clone(), &bindings);
+        let display_name =
+            make_display_name(&format!("{}.{}", block.ext_fqn, method_name), &params);
+        new_functions.insert(
+            mangled.clone(),
+            TypedFunction {
+                visibility: method.visibility,
+                name: mangled.clone(),
+                type_params: vec![],
+                params,
+                return_type,
+                body,
+                span: method.span.clone(),
+                vtable_self_type: None,
+                is_async: method.is_async,
+                source_name: method.name.0.clone(),
+                display_name,
+            },
+        );
     }
 
     mangled
@@ -291,11 +294,15 @@ fn resolve_ext_calls_in_expr(
         } => {
             let args: Vec<TypedExpr> = args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect();
             // Skip resolution if type_params or for_type contain TypeParameter types —
             // this is a template body that will be substituted later.
-            if for_type.contains_type_parameter() || type_params.iter().any(|t| t.contains_type_parameter()) {
+            if for_type.contains_type_parameter()
+                || type_params.iter().any(|t| t.contains_type_parameter())
+            {
                 TypedExprKind::ExtFunctionCall {
                     ext_fqn,
                     for_type,
@@ -335,7 +342,9 @@ fn resolve_ext_calls_in_expr(
             method_name,
             type_params,
         } => {
-            if for_type.contains_type_parameter() || type_params.iter().any(|t| t.contains_type_parameter()) {
+            if for_type.contains_type_parameter()
+                || type_params.iter().any(|t| t.contains_type_parameter())
+            {
                 TypedExprKind::ExtFunctionRef {
                     ext_fqn,
                     for_type,
@@ -348,11 +357,14 @@ fn resolve_ext_calls_in_expr(
                     &method_name,
                     &for_type,
                     &type_params,
-                    &[],  // No arg types for function refs
+                    &[], // No arg types for function refs
                     new_functions,
                     existing_functions,
                 );
-                TypedExprKind::FunctionRef { name: mangled, type_params: vec![] }
+                TypedExprKind::FunctionRef {
+                    name: mangled,
+                    type_params: vec![],
+                }
             } else {
                 TypedExprKind::ExtFunctionRef {
                     ext_fqn,
@@ -365,14 +377,22 @@ fn resolve_ext_calls_in_expr(
         TypedExprKind::Block(exprs) => TypedExprKind::Block(
             exprs
                 .into_iter()
-                .map(|e| resolve_ext_calls_in_expr(e, ext_blocks, new_functions, existing_functions))
+                .map(|e| {
+                    resolve_ext_calls_in_expr(e, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         ),
-        TypedExprKind::FunctionCall { name, args, type_params } => TypedExprKind::FunctionCall {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => TypedExprKind::FunctionCall {
             name,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
             type_params,
         },
@@ -380,7 +400,9 @@ fn resolve_ext_calls_in_expr(
             intrinsic,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
         TypedExprKind::If {
@@ -547,7 +569,11 @@ fn resolve_ext_calls_in_expr(
                 })
                 .collect(),
         },
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
             fqn,
             fields: fields
                 .into_iter()
@@ -563,7 +589,9 @@ fn resolve_ext_calls_in_expr(
         TypedExprKind::TupleLiteral { elements } => TypedExprKind::TupleLiteral {
             elements: elements
                 .into_iter()
-                .map(|e| resolve_ext_calls_in_expr(e, ext_blocks, new_functions, existing_functions))
+                .map(|e| {
+                    resolve_ext_calls_in_expr(e, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
         TypedExprKind::EnumCreate {
@@ -576,7 +604,9 @@ fn resolve_ext_calls_in_expr(
             variant_name,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
             type_params,
         },
@@ -619,7 +649,9 @@ fn resolve_ext_calls_in_expr(
             )),
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
@@ -761,10 +793,16 @@ fn resolve_ext_calls_in_expr(
             )),
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(resolve_ext_calls_in_expr(
                 *object,
                 ext_blocks,
@@ -788,7 +826,9 @@ fn resolve_ext_calls_in_expr(
             vtable_slot,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
         TypedExprKind::ClassSuperCall {
@@ -798,7 +838,9 @@ fn resolve_ext_calls_in_expr(
             method_mangled,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
         TypedExprKind::ClassStructCreate {
@@ -810,14 +852,22 @@ fn resolve_ext_calls_in_expr(
             type_params,
             fields: fields
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
             mangled_name,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
             type_params,
         },
@@ -831,7 +881,9 @@ fn resolve_ext_calls_in_expr(
             variant_name,
             args: args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
             type_params,
         },
@@ -847,7 +899,9 @@ fn resolve_ext_calls_in_expr(
         TypedExprKind::ArrayLiteral { elements } => TypedExprKind::ArrayLiteral {
             elements: elements
                 .into_iter()
-                .map(|e| resolve_ext_calls_in_expr(e, ext_blocks, new_functions, existing_functions))
+                .map(|e| {
+                    resolve_ext_calls_in_expr(e, ext_blocks, new_functions, existing_functions)
+                })
                 .collect(),
         },
         TypedExprKind::BoxToAny { inner } => TypedExprKind::BoxToAny {
@@ -858,7 +912,11 @@ fn resolve_ext_calls_in_expr(
                 existing_functions,
             )),
         },
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
             name,
             type_params,
             value: Box::new(resolve_ext_calls_in_expr(
@@ -878,7 +936,9 @@ fn resolve_ext_calls_in_expr(
         } => {
             let args: Vec<TypedExpr> = args
                 .into_iter()
-                .map(|a| resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions))
+                .map(|a| {
+                    resolve_ext_calls_in_expr(a, ext_blocks, new_functions, existing_functions)
+                })
                 .collect();
             TypedExprKind::ImplFunctionCall {
                 trait_fqn,

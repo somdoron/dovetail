@@ -70,11 +70,11 @@ impl Inference<'_> {
                         .enumerate()
                         .find(|(_, (name, _))| *name == field.value)
                     {
-                        let just_types: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
+                        let just_types: Vec<Type> =
+                            type_args.iter().map(|(_, t)| t.clone()).collect();
                         let substitution =
                             TypeParamSubstitution::from_pairs(&def.type_params, &just_types);
-                        let result_ty =
-                            apply_substitution(&substitution, def_field_ty);
+                        let result_ty = apply_substitution(&substitution, def_field_ty);
                         return Some(TypedExpr {
                             kind: TypedExprKind::FieldAccess {
                                 object: Box::new(typed_object.clone()),
@@ -102,28 +102,31 @@ impl Inference<'_> {
             }
             Type::Tuple(types, _) => {
                 // Tuple field access: _0, _1, _2, ...
-                if let Some(idx_str) = field.value.strip_prefix('_') {
-                    if let Ok(idx) = idx_str.parse::<usize>() {
-                        if idx < types.len() {
-                            return Some(TypedExpr {
-                                kind: TypedExprKind::FieldAccess {
-                                    object: Box::new(typed_object.clone()),
-                                    field_name: field.value.clone(),
-                                    field_index: idx as u32,
-                                    boxed: false,
-                                },
-                                ty: types[idx].clone(),
-                                span: span.clone(),
-                            });
-                        }
-                    }
+                if let Some(idx_str) = field.value.strip_prefix('_')
+                    && let Ok(idx) = idx_str.parse::<usize>()
+                    && idx < types.len()
+                {
+                    return Some(TypedExpr {
+                        kind: TypedExprKind::FieldAccess {
+                            object: Box::new(typed_object.clone()),
+                            field_name: field.value.clone(),
+                            field_index: idx as u32,
+                            boxed: false,
+                        },
+                        ty: types[idx].clone(),
+                        span: span.clone(),
+                    });
                 }
                 // Field not found on tuple — fall through
                 None
             }
             Type::Newtype(fqn, inner) => {
                 if field.value == "value" {
-                    let resolved_inner = if let Some(sig) = self.registry.lookup_newtype_type(fqn, &self.package_path, &self.current_file) {
+                    let resolved_inner = if let Some(sig) = self.registry.lookup_newtype_type(
+                        fqn,
+                        &self.package_path,
+                        &self.current_file,
+                    ) {
                         let sig = sig.clone();
                         if !self.check_newtype_inner_access(&sig, span, "access .value on") {
                             return Some(TypedExpr {
@@ -148,9 +151,17 @@ impl Inference<'_> {
                     None
                 }
             }
-            Type::GenericNewtype { fqn, concrete_inner_type, .. } => {
+            Type::GenericNewtype {
+                fqn,
+                concrete_inner_type,
+                ..
+            } => {
                 if field.value == "value" {
-                    if let Some(sig) = self.registry.lookup_newtype_type(fqn, &self.package_path, &self.current_file) {
+                    if let Some(sig) = self.registry.lookup_newtype_type(
+                        fqn,
+                        &self.package_path,
+                        &self.current_file,
+                    ) {
                         let sig = sig.clone();
                         if !self.check_newtype_inner_access(&sig, span, "access .value on") {
                             return Some(TypedExpr {
@@ -246,10 +257,8 @@ impl Inference<'_> {
 
                     // Set expected_type to the field's declared type
                     let prev_expected = self.expected_type.take();
-                    if let Some((_, def_field_ty)) = info
-                        .fields
-                        .iter()
-                        .find(|(name, _)| name == field_name)
+                    if let Some((_, def_field_ty)) =
+                        info.fields.iter().find(|(name, _)| name == field_name)
                     {
                         self.expected_type = Some(def_field_ty.clone());
                     }
@@ -287,7 +296,11 @@ impl Inference<'_> {
                     span: span.clone(),
                 }
             }
-            Type::GenericRecord { fqn, mangled_name: mn, type_args } => {
+            Type::GenericRecord {
+                fqn,
+                mangled_name: mn,
+                type_args,
+            } => {
                 let fqn = fqn.clone();
                 let mn = mn.clone();
                 let type_args = type_args.clone();
@@ -323,8 +336,7 @@ impl Inference<'_> {
                 );
 
                 let just_types: Vec<Type> = type_args.iter().map(|(_, t)| t.clone()).collect();
-                let substitution =
-                    TypeParamSubstitution::from_pairs(&def.type_params, &just_types);
+                let substitution = TypeParamSubstitution::from_pairs(&def.type_params, &just_types);
 
                 let mut overrides = Vec::new();
                 let mut seen = std::collections::BTreeSet::new();
@@ -341,13 +353,10 @@ impl Inference<'_> {
 
                     // Set expected_type to the substituted field type
                     let prev_expected = self.expected_type.take();
-                    if let Some((_, def_field_ty)) = def
-                        .fields
-                        .iter()
-                        .find(|(name, _)| name == field_name)
+                    if let Some((_, def_field_ty)) =
+                        def.fields.iter().find(|(name, _)| name == field_name)
                     {
-                        let field_expected =
-                            apply_substitution(&substitution, def_field_ty);
+                        let field_expected = apply_substitution(&substitution, def_field_ty);
                         self.expected_type = Some(field_expected);
                     }
                     let typed_value = self.infer_expr(&field_init.value);
@@ -359,8 +368,7 @@ impl Inference<'_> {
                         .enumerate()
                         .find(|(_, (name, _))| name == field_name)
                     {
-                        let expected_ty =
-                            apply_substitution(&substitution, def_field_ty);
+                        let expected_ty = apply_substitution(&substitution, def_field_ty);
                         self.check_assignable(
                             typed_value.span.clone(),
                             &expected_ty,
@@ -440,26 +448,23 @@ impl Inference<'_> {
 
         // Path A: Explicit type args — must be a generic record
         if !type_args.is_empty() {
-            return self.resolve_generic_record_with_type_params(type_name, type_args, fields, span);
+            return self
+                .resolve_generic_record_with_type_params(type_name, type_args, fields, span);
         }
 
         // Resolve the record name (generic or non-generic)
-        let fqn = match self.resolve_fqn(
-            &type_name.value,
-            super::types::SymbolKind::Record,
-        ) {
+        let fqn = match self.resolve_fqn(&type_name.value, super::types::SymbolKind::Record) {
             Some(fqn) => fqn,
             None => {
-                let msg = if let Some(fqn) =
-                    self.registry.suggest_import_for_record(&type_name.value)
-                {
-                    format!(
-                        "unknown record type: '{}'; try adding 'import {}'",
-                        type_name.value, fqn
-                    )
-                } else {
-                    format!("unknown record type: '{}'", type_name.value)
-                };
+                let msg =
+                    if let Some(fqn) = self.registry.suggest_import_for_record(&type_name.value) {
+                        format!(
+                            "unknown record type: '{}'; try adding 'import {}'",
+                            type_name.value, fqn
+                        )
+                    } else {
+                        format!("unknown record type: '{}'", type_name.value)
+                    };
                 self.diagnostics.error(type_name.span.clone(), msg);
                 for f in fields {
                     self.infer_expr(&f.value);
@@ -509,10 +514,7 @@ impl Inference<'_> {
         fields: &[FieldInit],
         span: &Span,
     ) -> TypedExpr {
-        let fqn = match self.resolve_fqn(
-            &type_name.value,
-            super::types::SymbolKind::Record,
-        ) {
+        let fqn = match self.resolve_fqn(&type_name.value, super::types::SymbolKind::Record) {
             Some(fqn) => fqn,
             None => {
                 self.diagnostics.error(
@@ -674,8 +676,11 @@ impl Inference<'_> {
         // Build concrete fields from the definition
         let substitution =
             TypeParamSubstitution::from_pairs(&def.type_params, &resolved_type_params);
-        let concrete_fields: Vec<(String, Type)> =
-            def.fields.iter().map(|(n, ty)| (n.clone(), apply_substitution(&substitution, ty))).collect();
+        let concrete_fields: Vec<(String, Type)> = def
+            .fields
+            .iter()
+            .map(|(n, ty)| (n.clone(), apply_substitution(&substitution, ty)))
+            .collect();
 
         let typed_fields =
             self.check_record_fields(&concrete_fields, type_name, fields, pre_inferred, span);
@@ -737,9 +742,7 @@ impl Inference<'_> {
                 typed
             };
 
-            if let Some((_, expected_ty)) =
-                def_fields.iter().find(|(name, _)| name == field_name)
-            {
+            if let Some((_, expected_ty)) = def_fields.iter().find(|(name, _)| name == field_name) {
                 self.check_assignable(typed_value.span.clone(), expected_ty, &typed_value.ty);
             } else {
                 self.diagnostics.error(

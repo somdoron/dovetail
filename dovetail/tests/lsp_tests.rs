@@ -59,7 +59,8 @@ fn file_path() -> dovetail::common::span::FilePath {
 
 #[test]
 fn find_node_function_call() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -67,7 +68,8 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     // "add(1, 2)" on line 7 (1-indexed), "add" starts at col 16
     let node = position::find_node_at_position(&tm, &file_path(), 7, 16);
     assert!(node.is_some(), "should find a node at add() call");
@@ -77,13 +79,15 @@ function main(): Unit =
 
 #[test]
 fn find_node_var_ref() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function main(): Unit =
   let x = 42
   assert x == 42
-"#);
+"#,
+    );
     // "x" on line 6, col 10
     let node = position::find_node_at_position(&tm, &file_path(), 6, 10);
     assert!(node.is_some(), "should find a node at variable ref");
@@ -93,7 +97,8 @@ function main(): Unit =
 
 #[test]
 fn find_node_record_create() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -103,7 +108,8 @@ public record Point =
 function main(): Unit =
   let p = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     // "Point { x = 1; y = 2 }" on line 9, "Point" at col 11
     let node = position::find_node_at_position(&tm, &file_path(), 9, 11);
     assert!(node.is_some(), "should find a node at record create");
@@ -113,7 +119,8 @@ function main(): Unit =
 
 #[test]
 fn find_node_field_access() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -123,7 +130,8 @@ public record Point =
 function main(): Unit =
   let p = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     // "p.x" on line 10, the field access starts around col 10-12
     // Let's target the ".x" part; the FieldAccess expression spans the entire `p.x`
     let node = position::find_node_at_position(&tm, &file_path(), 10, 12);
@@ -133,21 +141,27 @@ function main(): Unit =
 
 #[test]
 fn find_node_outside_expression() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     // Line 2 is "package a" — no typed expression there
     let node = position::find_node_at_position(&tm, &file_path(), 2, 1);
-    assert!(node.is_none(), "should not find a node on package declaration");
+    assert!(
+        node.is_none(),
+        "should not find a node on package declaration"
+    );
 }
 
 // ─── Hover ───────────────────────────────────────────────────────────
 
 #[test]
 fn hover_on_function_call() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -155,14 +169,21 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 7, 16).unwrap();
     let h = hover::hover_for_node(&node, &tm, &reg);
     assert!(h.is_some(), "should produce hover for function call");
     let h = h.unwrap();
     if let HoverContents::Markup(markup) = &h.contents {
-        assert!(markup.value.contains("add"), "hover should show function name");
-        assert!(markup.value.contains("Int32"), "hover should show param types");
+        assert!(
+            markup.value.contains("add"),
+            "hover should show function name"
+        );
+        assert!(
+            markup.value.contains("Int32"),
+            "hover should show param types"
+        );
     } else {
         panic!("expected markup hover");
     }
@@ -170,25 +191,31 @@ function main(): Unit =
 
 #[test]
 fn hover_on_variable() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function main(): Unit =
   let x = 42
   assert x == 42
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 6, 10).unwrap();
     let h = hover::hover_for_node(&node, &tm, &reg);
     assert!(h.is_some(), "should produce hover for variable");
     if let HoverContents::Markup(markup) = &h.unwrap().contents {
-        assert!(markup.value.contains("let x"), "hover should show let binding");
+        assert!(
+            markup.value.contains("let x"),
+            "hover should show let binding"
+        );
         assert!(markup.value.contains("Int32"), "hover should show type");
     }
 }
 
 #[test]
 fn hover_on_record_constructor() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -198,24 +225,30 @@ public record Point =
 function main(): Unit =
   let p = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 9, 11).unwrap();
     let h = hover::hover_for_node(&node, &tm, &reg);
     assert!(h.is_some(), "should produce hover for record");
     if let HoverContents::Markup(markup) = &h.unwrap().contents {
-        assert!(markup.value.contains("Point"), "hover should show record name");
+        assert!(
+            markup.value.contains("Point"),
+            "hover should show record name"
+        );
     }
 }
 
 #[test]
 fn hover_on_let_binding() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function main(): Unit =
   let value = 42
   assert value == 42
-"#);
+"#,
+    );
     // The let expression spans the whole "let value = 42"
     // Position at "value" on line 5, col 7
     let node = position::find_node_at_position(&tm, &file_path(), 5, 7);
@@ -230,7 +263,8 @@ function main(): Unit =
 
 #[test]
 fn goto_definition_function_call() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -238,7 +272,8 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 7, 16).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
     assert!(loc.is_some(), "should navigate to function definition");
@@ -249,7 +284,8 @@ function main(): Unit =
 
 #[test]
 fn goto_definition_record_constructor() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -259,7 +295,8 @@ public record Point =
 function main(): Unit =
   let p = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 9, 11).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
     assert!(loc.is_some(), "should navigate to record definition");
@@ -270,23 +307,29 @@ function main(): Unit =
 
 #[test]
 fn goto_definition_variable_returns_none() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function main(): Unit =
   let x = 42
   assert x == 42
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 6, 10).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
-    assert!(loc.is_none(), "VarRef should return None (local, not cross-file)");
+    assert!(
+        loc.is_none(),
+        "VarRef should return None (local, not cross-file)"
+    );
 }
 
 // ─── Go to Type Definition (via TypeRef) ─────────────────────────────
 
 #[test]
 fn goto_definition_type_annotation_record() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -296,18 +339,23 @@ public record Point =
 function main(): Unit =
   let p: Point = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     // Cursor on `Point` in the type annotation `let p: Point =` — line 9, col 10
     let node = position::find_node_at_position(&tm, &file_path(), 9, 10).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
-    assert!(loc.is_some(), "TypeRef on record type should navigate to record definition");
+    assert!(
+        loc.is_some(),
+        "TypeRef on record type should navigate to record definition"
+    );
     // Record defined on line 4 → LSP line 3
     assert_eq!(loc.unwrap().range.start.line, 3);
 }
 
 #[test]
 fn goto_definition_type_annotation_enum() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public enum Color =
@@ -318,18 +366,23 @@ public enum Color =
 function main(): Unit =
   let c: Color = Color.Red
   assert true
-"#);
+"#,
+    );
     // Cursor on `Color` in `  let c: Color =` — line 10, col 10
     let node = position::find_node_at_position(&tm, &file_path(), 10, 10).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
-    assert!(loc.is_some(), "TypeRef on enum type should navigate to enum definition");
+    assert!(
+        loc.is_some(),
+        "TypeRef on enum type should navigate to enum definition"
+    );
     // Enum defined on line 4 → LSP line 3
     assert_eq!(loc.unwrap().range.start.line, 3);
 }
 
 #[test]
 fn goto_definition_type_annotation_generic_record() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Box<T> = value: T
@@ -337,18 +390,23 @@ public record Box<T> = value: T
 function main(): Unit =
   let b: Box<Int32> = Box<Int32> { value = 42 }
   assert b.value == 42
-"#);
+"#,
+    );
     // Cursor on `Box` in `  let b: Box<Int32>` — line 7, col 10
     let node = position::find_node_at_position(&tm, &file_path(), 7, 10).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
-    assert!(loc.is_some(), "TypeRef on generic record type should navigate to template definition");
+    assert!(
+        loc.is_some(),
+        "TypeRef on generic record type should navigate to template definition"
+    );
     // Box<T> defined on line 4 → LSP line 3
     assert_eq!(loc.unwrap().range.start.line, 3);
 }
 
 #[test]
 fn goto_definition_type_annotation_class() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public class Animal(public name: String) =
@@ -359,11 +417,15 @@ function makeAnimal(): Animal = Animal("cat")
 function main(): Unit =
   let a: Animal = makeAnimal()
   assert a.speak() == "cat"
-"#);
+"#,
+    );
     // Cursor on `Animal` in `  let a: Animal =` — line 10, col 10
     let node = position::find_node_at_position(&tm, &file_path(), 10, 10).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
-    assert!(loc.is_some(), "TypeRef on class type should navigate to class definition");
+    assert!(
+        loc.is_some(),
+        "TypeRef on class type should navigate to class definition"
+    );
     // Animal defined on line 4 → LSP line 3
     assert_eq!(loc.unwrap().range.start.line, 3);
 }
@@ -372,7 +434,8 @@ function main(): Unit =
 
 #[test]
 fn goto_type_definition_record_variable() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -384,27 +447,33 @@ function makePoint(): Point = Point { x = 1; y = 2 }
 function main(): Unit =
   let p = makePoint()
   assert p.x == 1
-"#);
+"#,
+    );
     // Find `p` variable reference on line 12, col 10
     let node = position::find_node_at_position(&tm, &file_path(), 12, 10);
     if let Some(node) = node {
         let loc = navigation::goto_type_definition(&node, &reg, workspace_root());
         // Variable `p` has type Point → should navigate to record definition
-        if loc.is_some() {
-            assert_eq!(loc.unwrap().range.start.line, 3, "should navigate to Point definition");
+        if let Some(loc) = loc {
+            assert_eq!(
+                loc.range.start.line, 3,
+                "should navigate to Point definition"
+            );
         }
     }
 }
 
 #[test]
 fn goto_type_definition_primitive_returns_none() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function main(): Unit =
   let x = 42
   assert x == 42
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 6, 10).unwrap();
     let loc = navigation::goto_type_definition(&node, &reg, workspace_root());
     assert!(loc.is_none(), "primitive type should return None");
@@ -414,11 +483,13 @@ function main(): Unit =
 
 #[test]
 fn document_symbols_function() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
-"#);
+"#,
+    );
     let symbols = symbols::source_file_to_document_symbols(&sf);
     assert!(!symbols.is_empty(), "should have symbols");
     let func_sym = symbols.iter().find(|s| s.name == "add");
@@ -428,19 +499,24 @@ function add(x: Int32, y: Int32): Int32 = x + y
 
 #[test]
 fn document_symbols_record_with_fields() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 public record Point =
   x: Int32
   y: Int32
-"#);
+"#,
+    );
     let symbols = symbols::source_file_to_document_symbols(&sf);
     let rec_sym = symbols.iter().find(|s| s.name == "Point");
     assert!(rec_sym.is_some(), "should find 'Point' record symbol");
     let rec_sym = rec_sym.unwrap();
     assert_eq!(rec_sym.kind, SymbolKind::STRUCT);
-    let children = rec_sym.children.as_ref().expect("record should have field children");
+    let children = rec_sym
+        .children
+        .as_ref()
+        .expect("record should have field children");
     assert_eq!(children.len(), 2);
     assert_eq!(children[0].name, "x");
     assert_eq!(children[0].kind, SymbolKind::FIELD);
@@ -448,31 +524,38 @@ public record Point =
 
 #[test]
 fn document_symbols_enum_with_variants() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 public enum Color =
   Red
   Green
   Blue
-"#);
+"#,
+    );
     let symbols = symbols::source_file_to_document_symbols(&sf);
     let enum_sym = symbols.iter().find(|s| s.name == "Color");
     assert!(enum_sym.is_some(), "should find 'Color' enum symbol");
     let enum_sym = enum_sym.unwrap();
     assert_eq!(enum_sym.kind, SymbolKind::ENUM);
-    let children = enum_sym.children.as_ref().expect("enum should have variant children");
+    let children = enum_sym
+        .children
+        .as_ref()
+        .expect("enum should have variant children");
     assert_eq!(children.len(), 3);
     assert!(children.iter().all(|c| c.kind == SymbolKind::ENUM_MEMBER));
 }
 
 #[test]
 fn document_symbols_test() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 test "basic addition" = assert 1 + 2 == 3
-"#);
+"#,
+    );
     let symbols = symbols::source_file_to_document_symbols(&sf);
     let test_sym = symbols.iter().find(|s| s.name == "basic addition");
     assert!(test_sym.is_some(), "should find test symbol");
@@ -481,39 +564,50 @@ test "basic addition" = assert 1 + 2 == 3
 
 #[test]
 fn document_symbols_class() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 public class Counter(initial: Int32) =
   public function increment(self: Counter): Int32 = 1
-"#);
+"#,
+    );
     let symbols = symbols::source_file_to_document_symbols(&sf);
     let class_sym = symbols.iter().find(|s| s.name == "Counter");
     assert!(class_sym.is_some(), "should find 'Counter' class symbol");
     let class_sym = class_sym.unwrap();
     assert_eq!(class_sym.kind, SymbolKind::CLASS);
-    let children = class_sym.children.as_ref().expect("class should have children");
-    assert!(!children.is_empty(), "should have at least constructor param or method");
+    let children = class_sym
+        .children
+        .as_ref()
+        .expect("class should have children");
+    assert!(
+        !children.is_empty(),
+        "should have at least constructor param or method"
+    );
 }
 
 // ─── Workspace Symbols ───────────────────────────────────────────────
 
 #[test]
 fn workspace_symbols_empty_query() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit = assert add(1, 2) == 3
-"#);
+"#,
+    );
     let results = symbols::workspace_symbols("", &tm, &reg, workspace_root());
     assert!(!results.is_empty(), "empty query should return all symbols");
 }
 
 #[test]
 fn workspace_symbols_filter_by_name() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -521,7 +615,8 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function multiply(x: Int32, y: Int32): Int32 = x * y
 
 function main(): Unit = assert add(1, 2) == 3
-"#);
+"#,
+    );
     let results = symbols::workspace_symbols("add", &tm, &reg, workspace_root());
     assert!(
         results.iter().any(|s| s.name.contains("add")),
@@ -535,11 +630,13 @@ function main(): Unit = assert add(1, 2) == 3
 
 #[test]
 fn workspace_symbols_no_match() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     let results = symbols::workspace_symbols("nonexistent", &tm, &reg, workspace_root());
     assert!(results.is_empty(), "no match should return empty");
 }
@@ -548,14 +645,16 @@ function main(): Unit = assert true
 
 #[test]
 fn collect_visible_locals_in_function() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function main(): Unit =
   let x = 42
   let y = 10
   assert x + y == 52
-"#);
+"#,
+    );
     // Position inside the assert on line 7
     let visible = scope::collect_visible_locals(&tm, &file_path(), 7, 10);
     // Should see `x` and `y` as locals (no params for main)
@@ -567,7 +666,8 @@ function main(): Unit =
 
 #[test]
 fn collect_visible_locals_with_params() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function compute(a: Int32, b: Int32): Int32 =
@@ -575,7 +675,8 @@ function compute(a: Int32, b: Int32): Int32 =
   sum
 
 function main(): Unit = assert compute(1, 2) == 3
-"#);
+"#,
+    );
     // Position inside compute on line 5 (inside `let sum = a + b`)
     let visible = scope::collect_visible_locals(&tm, &file_path(), 5, 14);
     let param_names: Vec<&str> = visible.params.iter().map(|p| p.name.as_str()).collect();
@@ -585,14 +686,16 @@ function main(): Unit = assert compute(1, 2) == 3
 
 #[test]
 fn scope_completion_filters_by_prefix() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 function apply(f: Int32): Int32 = f
 
 function main(): Unit = assert add(1, 2) == 3
-"#);
+"#,
+    );
     let visible = scope::collect_visible_locals(&tm, &file_path(), 7, 25);
     let import_scope = ImportScope::new();
     let pkg = dovetail::common::types::PackagePath(vec!["a".into()]);
@@ -609,7 +712,8 @@ function main(): Unit = assert add(1, 2) == 3
 
 #[test]
 fn dot_completion_on_record() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -619,7 +723,8 @@ public record Point =
 function main(): Unit =
   let p = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     // Get the type of `p` — it should be Record(Point)
     let expr_type = position::find_expression_type_at_position(&tm, &file_path(), 10, 10);
     assert!(expr_type.is_some(), "should find expression type for p");
@@ -635,7 +740,8 @@ function main(): Unit =
 
 #[test]
 fn signature_help_inside_function_call() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -643,7 +749,8 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     // Position inside the call `add(1, 2)` — at the `1` argument, line 7, col 20
     let sig = signature_help::signature_help_at_position(&tm, &reg, &file_path(), 7, 20);
     assert!(sig.is_some(), "should produce signature help inside call");
@@ -660,7 +767,8 @@ function main(): Unit =
 
 #[test]
 fn signature_help_active_parameter_advances() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -668,23 +776,29 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     // Position at the second argument `2`, line 7, col 23
     let sig = signature_help::signature_help_at_position(&tm, &reg, &file_path(), 7, 23);
     assert!(sig.is_some(), "should produce signature help");
     let sig = sig.unwrap();
     // Active parameter should be 1 (second param, 0-indexed)
     let active = sig.active_parameter.unwrap_or(0);
-    assert!(active >= 1, "active parameter should advance to second param");
+    assert!(
+        active >= 1,
+        "active parameter should advance to second param"
+    );
 }
 
 #[test]
 fn signature_help_outside_call_returns_none() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     // Position on `assert true` — not inside a function call
     let sig = signature_help::signature_help_at_position(&tm, &reg, &file_path(), 4, 26);
     // Assert expression is not a function call, so no signature help
@@ -744,7 +858,10 @@ function main(): Unit =
         .iter()
         .filter(|h| h.kind == Some(InlayHintKind::TYPE))
         .collect();
-    assert!(type_hints.is_empty(), "explicit annotation should not produce type hint");
+    assert!(
+        type_hints.is_empty(),
+        "explicit annotation should not produce type hint"
+    );
 }
 
 #[test]
@@ -774,7 +891,8 @@ function main(): Unit =
 
 #[test]
 fn find_references_function_call() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -783,24 +901,23 @@ function main(): Unit =
   let a = add(1, 2)
   let b = add(3, 4)
   assert a + b == 10
-"#);
+"#,
+    );
     // Find node at first `add(1, 2)` call, line 7, col 11
     let node = position::find_node_at_position(&tm, &file_path(), 7, 11).unwrap();
-    let refs = references::find_references(
-        &node,
-        &tm,
-        &reg,
-        &file_path(),
-        workspace_root(),
-        false,
-    );
+    let refs = references::find_references(&node, &tm, &reg, &file_path(), workspace_root(), false);
     // Should find at least 2 call sites (add(1,2) and add(3,4))
-    assert!(refs.len() >= 2, "should find at least 2 references, found {}", refs.len());
+    assert!(
+        refs.len() >= 2,
+        "should find at least 2 references, found {}",
+        refs.len()
+    );
 }
 
 #[test]
 fn find_references_with_declaration() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -808,14 +925,13 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 7, 16).unwrap();
-    let refs_no_decl = references::find_references(
-        &node, &tm, &reg, &file_path(), workspace_root(), false,
-    );
-    let refs_with_decl = references::find_references(
-        &node, &tm, &reg, &file_path(), workspace_root(), true,
-    );
+    let refs_no_decl =
+        references::find_references(&node, &tm, &reg, &file_path(), workspace_root(), false);
+    let refs_with_decl =
+        references::find_references(&node, &tm, &reg, &file_path(), workspace_root(), true);
     assert!(
         refs_with_decl.len() > refs_no_decl.len(),
         "include_declaration should add one more location"
@@ -824,7 +940,8 @@ function main(): Unit =
 
 #[test]
 fn find_references_variable_scoped() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function foo(): Int32 =
@@ -836,20 +953,23 @@ function bar(): Int32 =
   x * x
 
 function main(): Unit = assert foo() + bar() == 6
-"#);
+"#,
+    );
     // Find `x` in foo() on line 6
     let node = position::find_node_at_position(&tm, &file_path(), 6, 3).unwrap();
-    let refs = references::find_references(
-        &node, &tm, &reg, &file_path(), workspace_root(), false,
-    );
+    let refs = references::find_references(&node, &tm, &reg, &file_path(), workspace_root(), false);
     // Should only find refs within foo(), not bar()
     // foo's x is referenced twice (x + x on line 6)
-    assert!(refs.len() >= 2, "should find variable refs within function scope");
+    assert!(
+        refs.len() >= 2,
+        "should find variable refs within function scope"
+    );
 }
 
 #[test]
 fn find_references_record_type() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -860,32 +980,36 @@ function main(): Unit =
   let p1 = Point { x = 1; y = 2 }
   let p2 = Point { x = 3; y = 4 }
   assert p1.x + p2.x == 4
-"#);
-    let node = position::find_node_at_position(&tm, &file_path(), 9, 12).unwrap();
-    let refs = references::find_references(
-        &node, &tm, &reg, &file_path(), workspace_root(), false,
+"#,
     );
+    let node = position::find_node_at_position(&tm, &file_path(), 9, 12).unwrap();
+    let refs = references::find_references(&node, &tm, &reg, &file_path(), workspace_root(), false);
     // Should find at least 2 RecordCreate sites
-    assert!(refs.len() >= 2, "should find record create sites, found {}", refs.len());
+    assert!(
+        refs.len() >= 2,
+        "should find record create sites, found {}",
+        refs.len()
+    );
 }
 
 #[test]
 fn find_references_no_references() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function unused(): Int32 = 42
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     // Find node at `unused` function — but nobody calls it
     // We need to find the function. Let's look for it via the function body.
     // Position at `42` on line 4, col 29
     let node = position::find_node_at_position(&tm, &file_path(), 4, 29);
     if let Some(node) = node {
-        let refs = references::find_references(
-            &node, &tm, &reg, &file_path(), workspace_root(), false,
-        );
+        let refs =
+            references::find_references(&node, &tm, &reg, &file_path(), workspace_root(), false);
         // The literal 42 is a TypedExpr — references returns empty for TypedExpr
         assert!(refs.is_empty(), "TypedExpr should have no references");
     }
@@ -895,7 +1019,8 @@ function main(): Unit = assert true
 
 #[test]
 fn goto_implementation_trait() {
-    let (_tm, _reg) = check_source(r#"
+    let (_tm, _reg) = check_source(
+        r#"
 package a
 
 public trait Printable =
@@ -908,7 +1033,8 @@ implement Printable for Name =
   function display(self: Name): String = "hello"
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     // Verifies that source with trait + implement blocks typechecks correctly.
     // Direct trait goto_implementation requires a trait-typed node in an expression,
     // which is tested indirectly through the integration tests.
@@ -916,7 +1042,8 @@ function main(): Unit = assert true
 
 #[test]
 fn goto_implementation_empty_for_non_trait() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 public record Point =
@@ -926,18 +1053,23 @@ public record Point =
 function main(): Unit =
   let p = Point { x = 1; y = 2 }
   assert p.x == 1
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 9, 11).unwrap();
     let locations = implementation::goto_implementation(&node, &tm, &reg, workspace_root());
     // Record is neither a trait nor a class with subclasses
-    assert!(locations.is_empty(), "record should have no implementations");
+    assert!(
+        locations.is_empty(),
+        "record should have no implementations"
+    );
 }
 
 // ─── Call Hierarchy ──────────────────────────────────────────────────
 
 #[test]
 fn prepare_call_hierarchy_on_function_call() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -945,37 +1077,40 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
-    // On `add(1, 2)` call, line 7, col 16
-    let items = call_hierarchy::prepare_call_hierarchy(
-        &tm, &file_path(), 7, 16, workspace_root(),
+"#,
     );
+    // On `add(1, 2)` call, line 7, col 16
+    let items = call_hierarchy::prepare_call_hierarchy(&tm, &file_path(), 7, 16, workspace_root());
     assert!(items.is_some(), "should prepare call hierarchy item");
     let items = items.unwrap();
     assert!(!items.is_empty());
     assert!(items[0].name.contains("add"), "item should reference 'add'");
-    assert!(items[0].data.is_some(), "item should have mangled name in data");
+    assert!(
+        items[0].data.is_some(),
+        "item should have mangled name in data"
+    );
 }
 
 #[test]
 fn prepare_call_hierarchy_inside_function_body() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit = assert add(1, 2) == 3
-"#);
-    // Inside `add` function body — line 4, col 45 (inside `x + y`)
-    let items = call_hierarchy::prepare_call_hierarchy(
-        &tm, &file_path(), 4, 45, workspace_root(),
+"#,
     );
+    // Inside `add` function body — line 4, col 45 (inside `x + y`)
+    let items = call_hierarchy::prepare_call_hierarchy(&tm, &file_path(), 4, 45, workspace_root());
     assert!(items.is_some(), "should find enclosing function");
 }
 
 #[test]
 fn incoming_calls_finds_callers() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -983,11 +1118,11 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     // Prepare call hierarchy for `add`
-    let items = call_hierarchy::prepare_call_hierarchy(
-        &tm, &file_path(), 7, 16, workspace_root(),
-    ).unwrap();
+    let items =
+        call_hierarchy::prepare_call_hierarchy(&tm, &file_path(), 7, 16, workspace_root()).unwrap();
 
     let incoming = call_hierarchy::incoming_calls(&tm, &items[0], workspace_root());
     // `main` calls `add`, so we should find at least one incoming call
@@ -996,7 +1131,8 @@ function main(): Unit =
 
 #[test]
 fn outgoing_calls_finds_callees() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
@@ -1004,11 +1140,10 @@ function add(x: Int32, y: Int32): Int32 = x + y
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
-    // Prepare call hierarchy for `main`
-    let items = call_hierarchy::prepare_call_hierarchy(
-        &tm, &file_path(), 6, 10, workspace_root(),
+"#,
     );
+    // Prepare call hierarchy for `main`
+    let items = call_hierarchy::prepare_call_hierarchy(&tm, &file_path(), 6, 10, workspace_root());
     if let Some(items) = items {
         let outgoing = call_hierarchy::outgoing_calls(&tm, &items[0], workspace_root());
         // `main` calls `add`
@@ -1022,20 +1157,23 @@ function main(): Unit =
 
 #[test]
 fn incoming_calls_empty_for_uncalled() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function unused(): Int32 = 42
 
 function main(): Unit = assert true
-"#);
-    // Prepare call hierarchy for `unused`
-    let items = call_hierarchy::prepare_call_hierarchy(
-        &tm, &file_path(), 4, 29, workspace_root(),
+"#,
     );
+    // Prepare call hierarchy for `unused`
+    let items = call_hierarchy::prepare_call_hierarchy(&tm, &file_path(), 4, 29, workspace_root());
     if let Some(items) = items {
         let incoming = call_hierarchy::incoming_calls(&tm, &items[0], workspace_root());
-        assert!(incoming.is_empty(), "uncalled function should have no incoming calls");
+        assert!(
+            incoming.is_empty(),
+            "uncalled function should have no incoming calls"
+        );
     }
 }
 
@@ -1043,11 +1181,13 @@ function main(): Unit = assert true
 
 #[test]
 fn code_lens_single_test() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 test "basic math" = assert 1 + 2 == 3
-"#);
+"#,
+    );
     let lenses = code_lens::test_code_lenses(&tm, &file_path());
     // Single test → only "Run Test" lens (no "Run All Tests")
     assert_eq!(lenses.len(), 1, "single test should have 1 lens");
@@ -1063,22 +1203,32 @@ test "basic math" = assert 1 + 2 == 3
 
 #[test]
 fn code_lens_multiple_tests() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 test "test one" = assert 1 == 1
 test "test two" = assert 2 == 2
 test "test three" = assert 3 == 3
-"#);
+"#,
+    );
     let lenses = code_lens::test_code_lenses(&tm, &file_path());
     // Multiple tests → "Run All Tests" + individual "Run Test" lenses
-    assert_eq!(lenses.len(), 4, "should have Run All Tests + 3 Run Test lenses, got {}", lenses.len());
+    assert_eq!(
+        lenses.len(),
+        4,
+        "should have Run All Tests + 3 Run Test lenses, got {}",
+        lenses.len()
+    );
 
     // First lens: "Run All Tests" with file path argument
     let run_all = &lenses[0];
     let cmd = run_all.command.as_ref().unwrap();
     assert_eq!(cmd.command, "dovetail.runTestFile");
-    assert!(cmd.title.contains("Run All Tests"), "title should contain 'Run All Tests'");
+    assert!(
+        cmd.title.contains("Run All Tests"),
+        "title should contain 'Run All Tests'"
+    );
     let args = cmd.arguments.as_ref().unwrap();
     assert_eq!(args.len(), 1);
     assert_eq!(args[0].as_str().unwrap(), "src/a.dove");
@@ -1092,19 +1242,26 @@ test "test three" = assert 3 == 3
         assert_eq!(cmd.title, "Run Test");
         assert_eq!(cmd.arguments.as_ref().unwrap().len(), 1);
     }
-    let fqtns: Vec<_> = run_tests.iter()
-        .map(|l| l.command.as_ref().unwrap().arguments.as_ref().unwrap()[0].as_str().unwrap())
+    let fqtns: Vec<_> = run_tests
+        .iter()
+        .map(|l| {
+            l.command.as_ref().unwrap().arguments.as_ref().unwrap()[0]
+                .as_str()
+                .unwrap()
+        })
         .collect();
     assert_eq!(fqtns, vec!["a test one", "a test two", "a test three"]);
 }
 
 #[test]
 fn code_lens_no_tests() {
-    let (tm, _reg) = check_source(r#"
+    let (tm, _reg) = check_source(
+        r#"
 package a
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     let lenses = code_lens::test_code_lenses(&tm, &file_path());
     assert!(lenses.is_empty(), "no tests should produce no lenses");
 }
@@ -1126,13 +1283,8 @@ function main(): Unit =
     let file_uri = Url::from_file_path("/src/a.dove").unwrap();
     // Range covering the let binding on line 7 (0-indexed: line 6)
     let range = Range::new(Position::new(6, 0), Position::new(6, 30));
-    let actions = code_actions::add_type_annotation_actions(
-        &tm,
-        &file_path(),
-        &range,
-        source,
-        &file_uri,
-    );
+    let actions =
+        code_actions::add_type_annotation_actions(&tm, &file_path(), &range, source, &file_uri);
     assert!(!actions.is_empty(), "should offer type annotation action");
     assert!(
         actions[0].title.contains("Add type annotation"),
@@ -1146,12 +1298,14 @@ function main(): Unit =
 
 #[test]
 fn code_action_organize_imports() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 import b.utils.bar
 import b.utils.foo
-"#);
+"#,
+    );
     let file_uri = Url::from_file_path("/src/a.dove").unwrap();
     let _action = code_actions::organize_imports_action(&sf, &file_uri);
     // Imports are already sorted alphabetically (bar before foo), so might return None
@@ -1160,28 +1314,38 @@ import b.utils.foo
 
 #[test]
 fn code_action_organize_imports_already_sorted() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 import b.utils.bar
 import b.utils.foo
-"#);
+"#,
+    );
     let file_uri = Url::from_file_path("/src/a.dove").unwrap();
     let action = code_actions::organize_imports_action(&sf, &file_uri);
-    assert!(action.is_none(), "already sorted imports should return None");
+    assert!(
+        action.is_none(),
+        "already sorted imports should return None"
+    );
 }
 
 #[test]
 fn code_action_organize_imports_unsorted() {
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 import b.utils.foo
 import b.utils.bar
-"#);
+"#,
+    );
     let file_uri = Url::from_file_path("/src/a.dove").unwrap();
     let action = code_actions::organize_imports_action(&sf, &file_uri);
-    assert!(action.is_some(), "unsorted imports should produce organize action");
+    assert!(
+        action.is_some(),
+        "unsorted imports should produce organize action"
+    );
     let action = action.unwrap();
     assert_eq!(action.title, "Organize Imports");
 }
@@ -1200,11 +1364,13 @@ public function helper(): Int32 = 42
     let reg = result_b.registry;
 
     // Now create a diagnostic that mimics "unknown function 'helper'"
-    let sf = parse_source(r#"
+    let sf = parse_source(
+        r#"
 package a
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     let file_uri = Url::from_file_path("/src/a.dove").unwrap();
     let diag = Diagnostic {
         range: Range::new(Position::new(3, 0), Position::new(3, 6)),
@@ -1257,12 +1423,24 @@ fn span_to_range_zero_values() {
 #[test]
 fn clamp_range_inner_within_outer() {
     let outer = Range {
-        start: Position { line: 0, character: 0 },
-        end: Position { line: 10, character: 20 },
+        start: Position {
+            line: 0,
+            character: 0,
+        },
+        end: Position {
+            line: 10,
+            character: 20,
+        },
     };
     let inner = Range {
-        start: Position { line: 2, character: 5 },
-        end: Position { line: 5, character: 10 },
+        start: Position {
+            line: 2,
+            character: 5,
+        },
+        end: Position {
+            line: 5,
+            character: 10,
+        },
     };
     let result = lsp_diag::clamp_range(inner, outer);
     assert_eq!(result.start.line, 2);
@@ -1274,12 +1452,24 @@ fn clamp_range_inner_within_outer() {
 #[test]
 fn clamp_range_inner_exceeds_outer() {
     let outer = Range {
-        start: Position { line: 2, character: 5 },
-        end: Position { line: 5, character: 10 },
+        start: Position {
+            line: 2,
+            character: 5,
+        },
+        end: Position {
+            line: 5,
+            character: 10,
+        },
     };
     let inner = Range {
-        start: Position { line: 1, character: 0 },
-        end: Position { line: 8, character: 30 },
+        start: Position {
+            line: 1,
+            character: 0,
+        },
+        end: Position {
+            line: 8,
+            character: 30,
+        },
     };
     let result = lsp_diag::clamp_range(inner, outer);
     assert_eq!(result.start.line, 2);
@@ -1292,12 +1482,24 @@ fn clamp_range_inner_exceeds_outer() {
 fn clamp_range_degenerate() {
     // After clamping, start > end → collapse to (outer.start, outer.start)
     let outer = Range {
-        start: Position { line: 5, character: 10 },
-        end: Position { line: 5, character: 20 },
+        start: Position {
+            line: 5,
+            character: 10,
+        },
+        end: Position {
+            line: 5,
+            character: 20,
+        },
     };
     let inner = Range {
-        start: Position { line: 6, character: 0 },
-        end: Position { line: 4, character: 0 },
+        start: Position {
+            line: 6,
+            character: 0,
+        },
+        end: Position {
+            line: 4,
+            character: 0,
+        },
     };
     let result = lsp_diag::clamp_range(inner, outer);
     assert_eq!(result.start, outer.start);
@@ -1334,14 +1536,8 @@ fn group_diagnostics_by_file_groups_correctly() {
 
     let root = std::path::Path::new("/");
     let mut diags = Diagnostics::new();
-    diags.error(
-        Span::new("src/a.dove".into(), 1, 1, 1, 5),
-        "error in a",
-    );
-    diags.error(
-        Span::new("src/b.dove".into(), 2, 1, 2, 5),
-        "error in b",
-    );
+    diags.error(Span::new("src/a.dove".into(), 1, 1, 1, 5), "error in a");
+    diags.error(Span::new("src/b.dove".into(), 2, 1, 2, 5), "error in b");
     diags.error(
         Span::new("src/a.dove".into(), 3, 1, 3, 5),
         "second error in a",
@@ -1363,14 +1559,8 @@ fn group_diagnostics_by_file_skips_synthetic() {
 
     let root = std::path::Path::new("/");
     let mut diags = Diagnostics::new();
-    diags.error(
-        Span::new("<prelude>".into(), 1, 1, 1, 5),
-        "prelude error",
-    );
-    diags.error(
-        Span::new("src/a.dove".into(), 1, 1, 1, 5),
-        "real error",
-    );
+    diags.error(Span::new("<prelude>".into(), 1, 1, 1, 5), "prelude error");
+    diags.error(Span::new("src/a.dove".into(), 1, 1, 1, 5), "real error");
 
     let grouped = lsp_diag::group_diagnostics_by_file(&diags, root);
     assert_eq!(grouped.len(), 1, "should only have real file");
@@ -1381,7 +1571,8 @@ fn group_diagnostics_by_file_skips_synthetic() {
 
 #[test]
 fn hover_generic_function_shows_type_params() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function identity<T>(x: T): T = x
@@ -1389,14 +1580,25 @@ function identity<T>(x: T): T = x
 function main(): Unit =
   let result = identity<Int32>(42)
   assert result == 42
-"#);
+"#,
+    );
     // Hover on the `identity` call on line 7
     let node = position::find_node_at_position(&tm, &file_path(), 7, 16).unwrap();
     let h = hover::hover_for_node(&node, &tm, &reg);
-    assert!(h.is_some(), "should produce hover for generic function call");
+    assert!(
+        h.is_some(),
+        "should produce hover for generic function call"
+    );
     if let HoverContents::Markup(markup) = &h.unwrap().contents {
-        assert!(markup.value.contains("<T>"), "hover should show type params, got: {}", markup.value);
-        assert!(markup.value.contains("identity"), "hover should show function name");
+        assert!(
+            markup.value.contains("<T>"),
+            "hover should show type params, got: {}",
+            markup.value
+        );
+        assert!(
+            markup.value.contains("identity"),
+            "hover should show function name"
+        );
     } else {
         panic!("expected markup hover");
     }
@@ -1404,7 +1606,8 @@ function main(): Unit =
 
 #[test]
 fn goto_definition_generic_function_call() {
-    let (tm, reg) = check_source(r#"
+    let (tm, reg) = check_source(
+        r#"
 package a
 
 function identity<T>(x: T): T = x
@@ -1412,11 +1615,18 @@ function identity<T>(x: T): T = x
 function main(): Unit =
   let result = identity<Int32>(42)
   assert result == 42
-"#);
+"#,
+    );
     let node = position::find_node_at_position(&tm, &file_path(), 7, 16).unwrap();
     let loc = navigation::goto_definition(&node, &tm, &reg, workspace_root());
-    assert!(loc.is_some(), "should navigate to generic function definition");
+    assert!(
+        loc.is_some(),
+        "should navigate to generic function definition"
+    );
     let loc = loc.unwrap();
     // The generic function definition is on line 4 (1-indexed) → LSP line 3
-    assert_eq!(loc.range.start.line, 3, "should navigate to definition line");
+    assert_eq!(
+        loc.range.start.line, 3,
+        "should navigate to definition line"
+    );
 }

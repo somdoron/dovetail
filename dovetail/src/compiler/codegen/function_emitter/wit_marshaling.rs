@@ -170,10 +170,7 @@ impl<'a> super::FunctionEmitter<'a> {
                     let wit_ty = &wit_param.ty;
                     let flat = flat_types(resolve, wit_ty);
                     let slot_types: Vec<ValType> = flat.iter().map(val_type).collect();
-                    let slots: Vec<u32> = slot_types
-                        .iter()
-                        .map(|vt| self.add_local(*vt))
-                        .collect();
+                    let slots: Vec<u32> = slot_types.iter().map(|vt| self.add_local(*vt)).collect();
                     let mut pos = 0usize;
                     self.wit_lower(
                         resolve,
@@ -278,7 +275,14 @@ impl<'a> super::FunctionEmitter<'a> {
             let slots: Vec<u32> = slot_types.iter().map(|vt| self.add_local(*vt)).collect();
             let mut pos = 0usize;
             self.wit_lower(
-                resolve, &sizes, wit_ty, &param.ty, *base, &slots, &slot_types, &mut pos,
+                resolve,
+                &sizes,
+                wit_ty,
+                &param.ty,
+                *base,
+                &slots,
+                &slot_types,
+                &mut pos,
             );
             all_slots.extend(slots);
         }
@@ -437,9 +441,8 @@ impl<'a> super::FunctionEmitter<'a> {
                     self.write_slot(ValType::I32, slots, slot_types, pos);
                 }
                 TypeDefKind::List(elem) => {
-                    let (ptr, len) = self.wit_lower_list_to_memory(
-                        resolve, sizes, elem, dovetail_ty, base,
-                    );
+                    let (ptr, len) =
+                        self.wit_lower_list_to_memory(resolve, sizes, elem, dovetail_ty, base);
                     self.instruction(Instruction::LocalGet(ptr));
                     self.write_slot(ValType::I32, slots, slot_types, pos);
                     self.instruction(Instruction::LocalGet(len));
@@ -453,7 +456,13 @@ impl<'a> super::FunctionEmitter<'a> {
                     let mut elem_base = base;
                     for (wit_elem, dovetail_elem) in t.types.iter().zip(elems) {
                         self.wit_lower(
-                            resolve, sizes, wit_elem, dovetail_elem, elem_base, slots, slot_types,
+                            resolve,
+                            sizes,
+                            wit_elem,
+                            dovetail_elem,
+                            elem_base,
+                            slots,
+                            slot_types,
                             pos,
                         );
                         elem_base += self.codegen.type_to_valtypes(dovetail_elem).len() as u32;
@@ -462,8 +471,7 @@ impl<'a> super::FunctionEmitter<'a> {
                 TypeDefKind::Record(record) => {
                     let (struct_idx, field_info) = self.dovetail_record_info(dovetail_ty);
                     assert_eq!(record.fields.len(), field_info.len());
-                    for (wit_field, (field_ty, flat_base)) in
-                        record.fields.iter().zip(&field_info)
+                    for (wit_field, (field_ty, flat_base)) in record.fields.iter().zip(&field_info)
                     {
                         // Materialize the field into fresh locals.
                         let vts = self.codegen.type_to_valtypes(field_ty);
@@ -511,15 +519,20 @@ impl<'a> super::FunctionEmitter<'a> {
                             let mut case_pos = start;
                             self.instruction(Instruction::I32Const(i as i32));
                             self.write_slot(ValType::I32, slots, slot_types, &mut case_pos);
-                            if let (Some(case_wit_ty), Some(concrete)) =
-                                (case_ty, concrete_payload)
+                            if let (Some(case_wit_ty), Some(concrete)) = (case_ty, concrete_payload)
                             {
                                 let def = def_payload.as_ref().unwrap();
                                 let tmp =
                                     self.materialize_variant_payload(variant_idx, def, concrete);
                                 self.wit_lower(
-                                    resolve, sizes, case_wit_ty, concrete, tmp, slots,
-                                    slot_types, &mut case_pos,
+                                    resolve,
+                                    sizes,
+                                    case_wit_ty,
+                                    concrete,
+                                    tmp,
+                                    slots,
+                                    slot_types,
+                                    &mut case_pos,
                                 );
                             }
                         }
@@ -684,9 +697,7 @@ impl<'a> super::FunctionEmitter<'a> {
                     };
                     let offsets = sizes.field_offsets(t.types.iter());
                     let mut elem_base = base;
-                    for ((field_offset, wit_elem), dovetail_elem) in
-                        offsets.iter().zip(elems)
-                    {
+                    for ((field_offset, wit_elem), dovetail_elem) in offsets.iter().zip(elems) {
                         self.wit_lower_store(
                             resolve,
                             sizes,
@@ -755,8 +766,7 @@ impl<'a> super::FunctionEmitter<'a> {
                                 2 => self.instruction(Instruction::I32Store16(mem_arg(offset))),
                                 _ => self.instruction(Instruction::I32Store(mem_arg(offset))),
                             }
-                            if let (Some(case_wit_ty), Some(concrete)) =
-                                (case_ty, concrete_payload)
+                            if let (Some(case_wit_ty), Some(concrete)) = (case_ty, concrete_payload)
                             {
                                 let def = def_payload.as_ref().unwrap();
                                 let tmp =
@@ -1056,7 +1066,12 @@ impl<'a> super::FunctionEmitter<'a> {
                         let (ptr_local, offset) =
                             payload_src.expect("payload case requires a memory source");
                         self.wit_lift_load(
-                            resolve, sizes, case_wit_ty, concrete, ptr_local, offset,
+                            resolve,
+                            sizes,
+                            case_wit_ty,
+                            concrete,
+                            ptr_local,
+                            offset,
                         );
                         self.box_payload_if_erased(def_payload.as_ref().unwrap(), concrete);
                     }
@@ -1094,10 +1109,7 @@ impl<'a> super::FunctionEmitter<'a> {
         let elem_dovetail = elem_dovetail.as_ref();
 
         // Fast path: list<u8>-shaped elements use the existing byte copier.
-        if matches!(
-            resolve_alias(resolve, elem_wit),
-            WitType::U8 | WitType::S8
-        ) {
+        if matches!(resolve_alias(resolve, elem_wit), WitType::U8 | WitType::S8) {
             self.wasi_create_u8_array_from_bytes(data_ptr, data_len);
             return;
         }
@@ -1178,7 +1190,10 @@ impl<'a> super::FunctionEmitter<'a> {
     /// Dovetail record type.
     fn dovetail_record_info(&self, dovetail_ty: &Type) -> (u32, Vec<(Type, u32)>) {
         let mn = match strip_newtype(dovetail_ty) {
-            Type::Record(_, mn) | Type::GenericRecord { mangled_name: mn, .. } => mn.clone(),
+            Type::Record(_, mn)
+            | Type::GenericRecord {
+                mangled_name: mn, ..
+            } => mn.clone(),
             other => panic!("wit record must map to a Dovetail record, got {other}"),
         };
         let struct_idx = self.codegen.type_indices[&mn];
@@ -1381,7 +1396,8 @@ fn strip_newtype(ty: &Type) -> &Type {
     match ty {
         Type::Newtype(_, inner) => strip_newtype(inner),
         Type::GenericNewtype {
-            concrete_inner_type, ..
+            concrete_inner_type,
+            ..
         } => strip_newtype(concrete_inner_type),
         _ => ty,
     }

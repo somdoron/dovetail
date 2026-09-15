@@ -116,7 +116,8 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             // statement-level handler lifts the rest of THIS block as the
             // continuation (see `expand_let_tail_use`).
             let stmts: Vec<TypedExpr> = stmts.into_iter().flat_map(expand_let_tail_use).collect();
-            let processed: Vec<TypedExpr> = stmts.into_iter().map(|s| walk(s, async_succeed)).collect();
+            let processed: Vec<TypedExpr> =
+                stmts.into_iter().map(|s| walk(s, async_succeed)).collect();
             return desugar_block(processed, ty, span, async_succeed);
         }
 
@@ -125,12 +126,24 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
         // We still walk the operand in case it contains nested Use that the
         // surrounding statement-level handler will deal with after pulling this
         // Use out via `extract_first_use`.
-        TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => TypedExprKind::Use {
+        TypedExprKind::Use {
+            operand,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
+        } => TypedExprKind::Use {
             operand: Box::new(walk(*operand, async_succeed)),
-            inner_type, source_error, target_error, from_method,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
         },
 
-        TypedExprKind::AsyncBlock { body, succeed_method } => {
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => {
             let new_body = walk(*body, Some(&succeed_method));
             TypedExprKind::AsyncBlock {
                 body: Box::new(new_body),
@@ -138,7 +151,11 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             }
         }
 
-        TypedExprKind::Closure { params, body, captures } => TypedExprKind::Closure {
+        TypedExprKind::Closure {
+            params,
+            body,
+            captures,
+        } => TypedExprKind::Closure {
             params,
             // Each closure establishes its own computation boundary. Its body
             // carries an AsyncBlock only when the closure itself is async.
@@ -153,7 +170,13 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             condition: Box::new(walk(*condition, async_succeed)),
             message: message.map(|m| Box::new(walk(*m, async_succeed))),
         },
-        TypedExprKind::Let { name, mutable, boxed, var_ty, value } => {
+        TypedExprKind::Let {
+            name,
+            mutable,
+            boxed,
+            var_ty,
+            value,
+        } => {
             let value = peel_singleton_use_blocks(*value);
             let had_use = contains_use(&value);
             let mut walked = walk(value, async_succeed);
@@ -166,17 +189,39 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
                 // the plain `U`. Await the lifted value back down.
                 walked = await_lifted_let_value(walked, &var_ty, async_succeed);
             }
-            TypedExprKind::Let { name, mutable, boxed, var_ty, value: Box::new(walked) }
+            TypedExprKind::Let {
+                name,
+                mutable,
+                boxed,
+                var_ty,
+                value: Box::new(walked),
+            }
         }
-        TypedExprKind::Assign { name, target_ty, boxed, value } => TypedExprKind::Assign {
-            name, target_ty, boxed,
+        TypedExprKind::Assign {
+            name,
+            target_ty,
+            boxed,
+            value,
+        } => TypedExprKind::Assign {
+            name,
+            target_ty,
+            boxed,
             value: Box::new(walk(*value, async_succeed)),
         },
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
-            name, type_params,
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
+            name,
+            type_params,
             value: Box::new(walk(*value, async_succeed)),
         },
-        TypedExprKind::FunctionCall { name, args, type_params } => TypedExprKind::FunctionCall {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => TypedExprKind::FunctionCall {
             name,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
             type_params,
@@ -190,7 +235,11 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             op,
             operand: Box::new(walk(*operand, async_succeed)),
         },
-        TypedExprKind::If { condition, then_branch, else_branch } => TypedExprKind::If {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => TypedExprKind::If {
             condition: Box::new(walk(*condition, async_succeed)),
             then_branch: Box::new(walk(*then_branch, async_succeed)),
             else_branch: else_branch.map(|e| Box::new(walk(*e, async_succeed))),
@@ -201,42 +250,97 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
         },
         TypedExprKind::Match { subject, arms } => TypedExprKind::Match {
             subject: Box::new(walk(*subject, async_succeed)),
-            arms: arms.into_iter().map(|arm| TypedMatchArm {
-                body: Box::new(walk(*arm.body, async_succeed)),
-                ..arm
-            }).collect(),
+            arms: arms
+                .into_iter()
+                .map(|arm| TypedMatchArm {
+                    body: Box::new(walk(*arm.body, async_succeed)),
+                    ..arm
+                })
+                .collect(),
         },
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
-            fqn, type_params,
-            fields: fields.into_iter().map(|(n, e)| (n, walk(e, async_succeed))).collect(),
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
+            fqn,
+            type_params,
+            fields: fields
+                .into_iter()
+                .map(|(n, e)| (n, walk(e, async_succeed)))
+                .collect(),
         },
         TypedExprKind::TupleLiteral { elements } => TypedExprKind::TupleLiteral {
-            elements: elements.into_iter().map(|e| walk(e, async_succeed)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| walk(e, async_succeed))
+                .collect(),
         },
-        TypedExprKind::EnumCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumCreate {
-            fqn, variant_name, type_params,
+        TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
+            type_params,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumVariantRecordCreate {
-            fqn, variant_name, type_params,
+        TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            type_params,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::FieldAccess { object, field_name, field_index, boxed } => TypedExprKind::FieldAccess {
+        TypedExprKind::FieldAccess {
+            object,
+            field_name,
+            field_index,
+            boxed,
+        } => TypedExprKind::FieldAccess {
             object: Box::new(walk(*object, async_succeed)),
-            field_name, field_index, boxed,
+            field_name,
+            field_index,
+            boxed,
         },
-        TypedExprKind::FieldAssign { object, field_name, field_index, value, boxed } => TypedExprKind::FieldAssign {
+        TypedExprKind::FieldAssign {
+            object,
+            field_name,
+            field_index,
+            value,
+            boxed,
+        } => TypedExprKind::FieldAssign {
             object: Box::new(walk(*object, async_succeed)),
-            field_name, field_index, boxed,
+            field_name,
+            field_index,
+            boxed,
             value: Box::new(walk(*value, async_succeed)),
         },
-        TypedExprKind::RecordWith { object, fqn, overrides, type_params } => TypedExprKind::RecordWith {
+        TypedExprKind::RecordWith {
+            object,
+            fqn,
+            overrides,
+            type_params,
+        } => TypedExprKind::RecordWith {
             object: Box::new(walk(*object, async_succeed)),
-            fqn, type_params,
-            overrides: overrides.into_iter().map(|(n, i, e)| (n, i, walk(e, async_succeed))).collect(),
+            fqn,
+            type_params,
+            overrides: overrides
+                .into_iter()
+                .map(|(n, i, e)| (n, i, walk(e, async_succeed)))
+                .collect(),
         },
         TypedExprKind::ArrayLiteral { elements } => TypedExprKind::ArrayLiteral {
-            elements: elements.into_iter().map(|e| walk(e, async_succeed)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| walk(e, async_succeed))
+                .collect(),
         },
         TypedExprKind::IntrinsicCall { intrinsic, args } => TypedExprKind::IntrinsicCall {
             intrinsic,
@@ -250,8 +354,13 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             value: Box::new(walk(*value, async_succeed)),
             target_type,
         },
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => TypedExprKind::LetDestructure {
-            pattern, var_ty,
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
             value: Box::new(walk(*value, async_succeed)),
         },
         TypedExprKind::NewtypeCreate { value } => TypedExprKind::NewtypeCreate {
@@ -260,37 +369,73 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
         TypedExprKind::NewtypeValue { value } => TypedExprKind::NewtypeValue {
             value: Box::new(walk(*value, async_succeed)),
         },
-        TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => TypedExprKind::InterfaceObjectCoerce {
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        } => TypedExprKind::InterfaceObjectCoerce {
             inner: Box::new(walk(*inner, async_succeed)),
-            interface_mangled_name, concrete_type, vtable_methods,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
         },
-        TypedExprKind::TemplateInterfaceObjectCoerce { inner, traits, concrete_type } => TypedExprKind::TemplateInterfaceObjectCoerce {
+        TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner,
+            traits,
+            concrete_type,
+        } => TypedExprKind::TemplateInterfaceObjectCoerce {
             inner: Box::new(walk(*inner, async_succeed)),
-            traits, concrete_type,
+            traits,
+            concrete_type,
         },
         TypedExprKind::InterfaceObjectUpcast { inner } => TypedExprKind::InterfaceObjectUpcast {
             inner: Box::new(walk(*inner, async_succeed)),
         },
-        TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver, args } => TypedExprKind::InterfaceObjectMethodCall {
-            interface_mangled_name, method_name, member_name,
+        TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver,
+            args,
+        } => TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
             receiver: Box::new(walk(*receiver, async_succeed)),
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
-            mangled_name, type_params,
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
+            mangled_name,
+            type_params,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
             fields: fields.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => TypedExprKind::ClassVirtualCall {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => TypedExprKind::ClassVirtualCall {
             object: Box::new(walk(*object, async_succeed)),
             vtable_slot,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::ClassSuperCall { method_mangled, args } => TypedExprKind::ClassSuperCall {
+        TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args,
+        } => TypedExprKind::ClassSuperCall {
             method_mangled,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
@@ -302,24 +447,67 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             callee: Box::new(walk(*callee, async_succeed)),
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(walk(*object, async_succeed)),
-            method_name, type_params,
+            method_name,
+            type_params,
         },
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => TypedExprKind::Await {
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
             operand: Box::new(walk(*operand, async_succeed)),
-            return_type, and_then_method, map_method, source_location_mn,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
         },
-        TypedExprKind::Try { operand, unwrap_method, unwrap_return_type, return_type, from_method } => TypedExprKind::Try {
+        TypedExprKind::Try {
+            operand,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
+        } => TypedExprKind::Try {
             operand: Box::new(walk(*operand, async_succeed)),
-            unwrap_method, unwrap_return_type, return_type, from_method,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
         },
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
-            trait_fqn, trait_type_params, for_type, method_name, method_type_params,
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            method_type_params,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
-            ext_fqn, for_type, method_name, type_params,
+        TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            type_params,
             args: args.into_iter().map(|a| walk(a, async_succeed)).collect(),
         },
         TypedExprKind::BoxToAny { inner } => TypedExprKind::BoxToAny {
@@ -388,7 +576,10 @@ fn desugar_block(
         let data = extract_tail_use(use_stmt);
         let var_name = fresh_use_var();
         let id_body = TypedExpr {
-            kind: TypedExprKind::VarRef { name: var_name.clone(), boxed: false },
+            kind: TypedExprKind::VarRef {
+                name: var_name.clone(),
+                boxed: false,
+            },
             ty: data.inner_type.clone(),
             span: synthetic_span(),
         };
@@ -407,19 +598,38 @@ fn desugar_block(
 
     let continuation_body = if continuation_stmts.is_empty() {
         TypedExpr {
-            kind: TypedExprKind::VarRef { name: var_name.clone(), boxed: false },
+            kind: TypedExprKind::VarRef {
+                name: var_name.clone(),
+                boxed: false,
+            },
             ty: use_data.inner_type.clone(),
             span: synthetic_span(),
         }
     } else if continuation_stmts.len() == 1 {
         let single = continuation_stmts.into_iter().next().unwrap();
-        desugar_block(vec![single], block_ty.clone(), synthetic_span(), async_succeed)
+        desugar_block(
+            vec![single],
+            block_ty.clone(),
+            synthetic_span(),
+            async_succeed,
+        )
     } else {
-        desugar_block(continuation_stmts, block_ty.clone(), synthetic_span(), async_succeed)
+        desugar_block(
+            continuation_stmts,
+            block_ty.clone(),
+            synthetic_span(),
+            async_succeed,
+        )
     };
 
     let continuation_ty = continuation_body.ty.clone();
-    let closure = build_continuation_closure(var_name, use_data.inner_type.clone(), continuation_body, continuation_ty.clone(), async_succeed);
+    let closure = build_continuation_closure(
+        var_name,
+        use_data.inner_type.clone(),
+        continuation_body,
+        continuation_ty.clone(),
+        async_succeed,
+    );
     let call = emit_use_call(use_data, closure);
     // `emit_use_call` already sets `call.ty` to the wrapped continuation type
     // (Async<continuation_ty, E> in async context, plain continuation_ty in sync
@@ -453,7 +663,11 @@ fn prepend_before(
         all.push(body);
         TypedExpr {
             kind: TypedExprKind::Block(all),
-            ty: if matches!(block_ty, Type::Unit) { Type::Unit } else { body_ty },
+            ty: if matches!(block_ty, Type::Unit) {
+                Type::Unit
+            } else {
+                body_ty
+            },
             span: block_span,
         }
     }
@@ -524,7 +738,13 @@ fn expand_let_tail_use(stmt: TypedExpr) -> Vec<TypedExpr> {
     let span = stmt.span;
     let ty = stmt.ty;
     match stmt.kind {
-        TypedExprKind::Let { name, mutable, boxed, var_ty, value } => {
+        TypedExprKind::Let {
+            name,
+            mutable,
+            boxed,
+            var_ty,
+            value,
+        } => {
             let (operand_block, parts) = split_tail_use(*value);
             let tmp = fresh_use_var();
             let operand_ty = operand_block.ty.clone();
@@ -542,7 +762,10 @@ fn expand_let_tail_use(stmt: TypedExpr) -> Vec<TypedExpr> {
             let use_expr = TypedExpr {
                 kind: TypedExprKind::Use {
                     operand: Box::new(TypedExpr {
-                        kind: TypedExprKind::VarRef { name: tmp, boxed: false },
+                        kind: TypedExprKind::VarRef {
+                            name: tmp,
+                            boxed: false,
+                        },
                         ty: operand_ty,
                         span: synthetic_span(),
                     }),
@@ -555,7 +778,13 @@ fn expand_let_tail_use(stmt: TypedExpr) -> Vec<TypedExpr> {
                 span: parts.use_span,
             };
             let let_use = TypedExpr {
-                kind: TypedExprKind::Let { name, mutable, boxed, var_ty, value: Box::new(use_expr) },
+                kind: TypedExprKind::Let {
+                    name,
+                    mutable,
+                    boxed,
+                    var_ty,
+                    value: Box::new(use_expr),
+                },
                 ty,
                 span,
             };
@@ -617,11 +846,7 @@ fn await_lifted_let_value(
 
 /// Wrap the (recursively) last statement of a block chain in a synthetic
 /// `Await`, restoring every enclosing Block's type to the awaited inner type.
-fn wrap_tail_in_await(
-    expr: TypedExpr,
-    inner_ty: &Type,
-    succeed: &ResolvedImplMethod,
-) -> TypedExpr {
+fn wrap_tail_in_await(expr: TypedExpr, inner_ty: &Type, succeed: &ResolvedImplMethod) -> TypedExpr {
     if let TypedExprKind::Block(_) = &expr.kind {
         let span = expr.span;
         let TypedExprKind::Block(mut stmts) = expr.kind else {
@@ -731,7 +956,13 @@ fn split_tail_use(expr: TypedExpr) -> (TypedExpr, TailUseParts) {
     let span = expr.span;
     let ty = expr.ty;
     match expr.kind {
-        TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => {
+        TypedExprKind::Use {
+            operand,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
+        } => {
             let parts = TailUseParts {
                 inner_type,
                 source_error,
@@ -749,7 +980,14 @@ fn split_tail_use(expr: TypedExpr) -> (TypedExpr, TailUseParts) {
             let (new_last, parts) = split_tail_use(last);
             let new_ty = new_last.ty.clone();
             stmts.push(new_last);
-            (TypedExpr { kind: TypedExprKind::Block(stmts), ty: new_ty, span }, parts)
+            (
+                TypedExpr {
+                    kind: TypedExprKind::Block(stmts),
+                    ty: new_ty,
+                    span,
+                },
+                parts,
+            )
         }
         _ => unreachable!(
             "split_tail_use: guard (is_multistmt_tail_use_block) ensures the chain's tail is a Use"
@@ -763,7 +1001,13 @@ fn is_tail_use(stmt: &TypedExpr) -> bool {
 
 fn extract_tail_use(stmt: TypedExpr) -> UseData {
     match stmt.kind {
-        TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => UseData {
+        TypedExprKind::Use {
+            operand,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
+        } => UseData {
             operand: *operand,
             inner_type,
             source_error,
@@ -779,10 +1023,13 @@ fn extract_tail_use(stmt: TypedExpr) -> UseData {
 /// call has a real source span and remains an ordinary computation value.
 fn resource_use_result_type(expr: &TypedExpr) -> Option<&Type> {
     match &expr.kind {
-        TypedExprKind::ImplFunctionCall { trait_fqn, method_name, .. }
-            if expr.span.file.is_empty()
-                && method_name.0 == "use"
-                && *trait_fqn == Fqn::from_dotted("standard.prelude.Usable").unwrap() =>
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            method_name,
+            ..
+        } if expr.span.file.is_empty()
+            && method_name.0 == "use"
+            && *trait_fqn == Fqn::from_dotted("standard.prelude.Usable").unwrap() =>
         {
             Some(&expr.ty)
         }
@@ -800,11 +1047,19 @@ pub(super) fn is_resource_use_result(expr: &TypedExpr) -> bool {
     }
     match &expr.kind {
         TypedExprKind::Block(statements) => statements.last().is_some_and(is_resource_use_result),
-        TypedExprKind::If { then_branch, else_branch, .. } => {
+        TypedExprKind::If {
+            then_branch,
+            else_branch,
+            ..
+        } => {
             is_resource_use_result(then_branch)
-                || else_branch.as_ref().is_some_and(|branch| is_resource_use_result(branch))
+                || else_branch
+                    .as_ref()
+                    .is_some_and(|branch| is_resource_use_result(branch))
         }
-        TypedExprKind::Match { arms, .. } => arms.iter().any(|arm| is_resource_use_result(&arm.body)),
+        TypedExprKind::Match { arms, .. } => {
+            arms.iter().any(|arm| is_resource_use_result(&arm.body))
+        }
         _ => false,
     }
 }
@@ -867,7 +1122,13 @@ fn build_continuation_closure(
 /// For impls with `Wrapped<U> = Async<U, E>` (e.g. `Resource<T, E>`), U is
 /// the first type argument of the closure's Async return.
 fn emit_use_call(use_data: UseData, closure: TypedExpr) -> TypedExpr {
-    let UseData { operand, inner_type, source_error, target_error, from_method } = use_data;
+    let UseData {
+        operand,
+        inner_type,
+        source_error,
+        target_error,
+        from_method,
+    } = use_data;
 
     let wrapped_ty = match &closure.ty {
         Type::Function(_, ret) => (**ret).clone(),
@@ -910,7 +1171,10 @@ fn build_error_f(
 ) -> TypedExpr {
     let var = fresh_use_var();
     let var_ref = TypedExpr {
-        kind: TypedExprKind::VarRef { name: var.clone(), boxed: false },
+        kind: TypedExprKind::VarRef {
+            name: var.clone(),
+            boxed: false,
+        },
         ty: source.clone(),
         span: synthetic_span(),
     };
@@ -939,7 +1203,9 @@ fn build_error_f(
                 span: synthetic_span(),
             };
             TypedExpr {
-                kind: TypedExprKind::Panic { message: Box::new(msg) },
+                kind: TypedExprKind::Panic {
+                    message: Box::new(msg),
+                },
                 ty: target.clone(),
                 span: synthetic_span(),
             }
@@ -949,7 +1215,11 @@ fn build_error_f(
     };
     TypedExpr {
         kind: TypedExprKind::Closure {
-            params: vec![TypedClosureParam { name: var, ty: source.clone(), span: synthetic_span() }],
+            params: vec![TypedClosureParam {
+                name: var,
+                ty: source.clone(),
+                span: synthetic_span(),
+            }],
             body: Box::new(body),
             captures: Vec::new(),
         },
@@ -981,16 +1251,18 @@ fn operand_type_args(ty: &Type) -> Vec<Type> {
 /// More impls with novel wrapped shapes will require a more general approach
 /// (storing the wrapped template on the Use node at infer time).
 fn unwrap_u_from_wrapped(wrapped: &Type) -> Type {
-    if let Type::AssociatedProjection(projection) = wrapped {
-        if projection.trait_fqn == Fqn::from_dotted("standard.prelude.Usable").unwrap()
-            && projection.member == "Wrapped" && projection.parameters.len() == 2 {
-            return projection.parameters[0].clone();
-        }
+    if let Type::AssociatedProjection(projection) = wrapped
+        && projection.trait_fqn == Fqn::from_dotted("standard.prelude.Usable").unwrap()
+        && projection.member == "Wrapped"
+        && projection.parameters.len() == 2
+    {
+        return projection.parameters[0].clone();
     }
-    if let Type::GenericClass { fqn, type_args, .. } = wrapped {
-        if fqn.symbol.0 == "Async" && !type_args.is_empty() {
-            return type_args[0].1.clone();
-        }
+    if let Type::GenericClass { fqn, type_args, .. } = wrapped
+        && fqn.symbol.0 == "Async"
+        && !type_args.is_empty()
+    {
+        return type_args[0].1.clone();
     }
     wrapped.clone()
 }
@@ -1012,11 +1284,19 @@ fn extract_use_from_stmt(
             if matches!(value.kind, TypedExprKind::Use { .. }) =>
         {
             let data = match value.kind {
-                TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => {
-                    UseData {
-                        operand: *operand, inner_type, source_error, target_error, from_method,
-                    }
-                }
+                TypedExprKind::Use {
+                    operand,
+                    inner_type,
+                    source_error,
+                    target_error,
+                    from_method,
+                } => UseData {
+                    operand: *operand,
+                    inner_type,
+                    source_error,
+                    target_error,
+                    from_method,
+                },
                 _ => unreachable!(),
             };
             (data, name, rest)
@@ -1038,7 +1318,13 @@ fn extract_first_use(expr: TypedExpr) -> Option<(UseData, VarName, TypedExpr)> {
     let span = expr.span.clone();
     let ty = expr.ty.clone();
     match expr.kind {
-        TypedExprKind::Use { operand, inner_type, source_error, target_error, from_method } => {
+        TypedExprKind::Use {
+            operand,
+            inner_type,
+            source_error,
+            target_error,
+            from_method,
+        } => {
             let var_name = fresh_use_var();
             let data = UseData {
                 operand: *operand,
@@ -1047,31 +1333,98 @@ fn extract_first_use(expr: TypedExpr) -> Option<(UseData, VarName, TypedExpr)> {
                 target_error,
                 from_method,
             };
-            Some((data, var_name.clone(), TypedExpr {
-                kind: TypedExprKind::VarRef { name: var_name, boxed: false },
-                ty: inner_type, span,
-            }))
+            Some((
+                data,
+                var_name.clone(),
+                TypedExpr {
+                    kind: TypedExprKind::VarRef {
+                        name: var_name,
+                        boxed: false,
+                    },
+                    ty: inner_type,
+                    span,
+                },
+            ))
         }
         TypedExprKind::BinaryOp { op, left, right } => {
             if contains_use(&left) {
                 let (data, vn, new_left) = extract_first_use(*left)?;
-                return Some((data, vn, TypedExpr { kind: TypedExprKind::BinaryOp { op, left: Box::new(new_left), right }, ty, span }));
+                return Some((
+                    data,
+                    vn,
+                    TypedExpr {
+                        kind: TypedExprKind::BinaryOp {
+                            op,
+                            left: Box::new(new_left),
+                            right,
+                        },
+                        ty,
+                        span,
+                    },
+                ));
             }
             if contains_use(&right) {
                 let (data, vn, new_right) = extract_first_use(*right)?;
-                return Some((data, vn, TypedExpr { kind: TypedExprKind::BinaryOp { op, left, right: Box::new(new_right) }, ty, span }));
+                return Some((
+                    data,
+                    vn,
+                    TypedExpr {
+                        kind: TypedExprKind::BinaryOp {
+                            op,
+                            left,
+                            right: Box::new(new_right),
+                        },
+                        ty,
+                        span,
+                    },
+                ));
             }
             None
         }
         TypedExprKind::UnaryOp { op, operand } => {
             let (data, vn, new_operand) = extract_first_use(*operand)?;
-            Some((data, vn, TypedExpr { kind: TypedExprKind::UnaryOp { op, operand: Box::new(new_operand) }, ty, span }))
+            Some((
+                data,
+                vn,
+                TypedExpr {
+                    kind: TypedExprKind::UnaryOp {
+                        op,
+                        operand: Box::new(new_operand),
+                    },
+                    ty,
+                    span,
+                },
+            ))
         }
-        TypedExprKind::Let { name, mutable, boxed, var_ty, value } => {
+        TypedExprKind::Let {
+            name,
+            mutable,
+            boxed,
+            var_ty,
+            value,
+        } => {
             let (data, vn, new_value) = extract_first_use(*value)?;
-            Some((data, vn, TypedExpr { kind: TypedExprKind::Let { name, mutable, boxed, var_ty, value: Box::new(new_value) }, ty, span }))
+            Some((
+                data,
+                vn,
+                TypedExpr {
+                    kind: TypedExprKind::Let {
+                        name,
+                        mutable,
+                        boxed,
+                        var_ty,
+                        value: Box::new(new_value),
+                    },
+                    ty,
+                    span,
+                },
+            ))
         }
-        TypedExprKind::FunctionCall { name, args, type_params } => {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => {
             let mut new_args = Vec::with_capacity(args.len());
             let mut extracted: Option<(UseData, VarName)> = None;
             for arg in args {
@@ -1088,7 +1441,21 @@ fn extract_first_use(expr: TypedExpr) -> Option<(UseData, VarName, TypedExpr)> {
                     new_args.push(arg);
                 }
             }
-            extracted.map(|(d, vn)| (d, vn, TypedExpr { kind: TypedExprKind::FunctionCall { name, args: new_args, type_params }, ty, span }))
+            extracted.map(|(d, vn)| {
+                (
+                    d,
+                    vn,
+                    TypedExpr {
+                        kind: TypedExprKind::FunctionCall {
+                            name,
+                            args: new_args,
+                            type_params,
+                        },
+                        ty,
+                        span,
+                    },
+                )
+            })
         }
         _ => None,
     }
@@ -1106,7 +1473,11 @@ fn contains_use(expr: &TypedExpr) -> bool {
         TypedExprKind::GlobalAssign { value, .. } => contains_use(value),
         TypedExprKind::BinaryOp { left, right, .. } => contains_use(left) || contains_use(right),
         TypedExprKind::UnaryOp { operand, .. } => contains_use(operand),
-        TypedExprKind::If { condition, then_branch, else_branch } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             contains_use(condition)
                 || contains_use(then_branch)
                 || else_branch.as_ref().is_some_and(|e| contains_use(e))
@@ -1124,15 +1495,21 @@ fn contains_use(expr: &TypedExpr) -> bool {
         | TypedExprKind::ClassSuperCall { args, .. }
         | TypedExprKind::ImplFunctionCall { args, .. }
         | TypedExprKind::ExtFunctionCall { args, .. } => args.iter().any(contains_use),
-        TypedExprKind::ClassVirtualCall { object, args, .. } => contains_use(object) || args.iter().any(contains_use),
-        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => contains_use(receiver) || args.iter().any(contains_use),
-        TypedExprKind::ClosureCall { callee, args } => contains_use(callee) || args.iter().any(contains_use),
+        TypedExprKind::ClassVirtualCall { object, args, .. } => {
+            contains_use(object) || args.iter().any(contains_use)
+        }
+        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
+            contains_use(receiver) || args.iter().any(contains_use)
+        }
+        TypedExprKind::ClosureCall { callee, args } => {
+            contains_use(callee) || args.iter().any(contains_use)
+        }
         TypedExprKind::FieldAccess { object, .. } => contains_use(object),
         TypedExprKind::RecordCreate { fields, .. } => fields.iter().any(|(_, e)| contains_use(e)),
         TypedExprKind::TupleLiteral { elements } => elements.iter().any(contains_use),
-        TypedExprKind::RecordWith { object, overrides, .. } => {
-            contains_use(object) || overrides.iter().any(|(_, _, e)| contains_use(e))
-        }
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => contains_use(object) || overrides.iter().any(|(_, _, e)| contains_use(e)),
         TypedExprKind::ArrayLiteral { elements } => elements.iter().any(contains_use),
         TypedExprKind::Panic { message } => contains_use(message),
         TypedExprKind::Assert { condition, message } => {
@@ -1141,8 +1518,12 @@ fn contains_use(expr: &TypedExpr) -> bool {
         TypedExprKind::Return { value, .. } => contains_use(value),
         TypedExprKind::Try { operand, .. } => contains_use(operand),
         TypedExprKind::Await { operand, .. } => contains_use(operand),
-        TypedExprKind::TypeTest { value, .. } | TypedExprKind::TypeCast { value, .. } => contains_use(value),
-        TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value } => contains_use(value),
+        TypedExprKind::TypeTest { value, .. } | TypedExprKind::TypeCast { value, .. } => {
+            contains_use(value)
+        }
+        TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value } => {
+            contains_use(value)
+        }
         TypedExprKind::BoxToAny { inner }
         | TypedExprKind::InterfaceObjectCoerce { inner, .. }
         | TypedExprKind::TemplateInterfaceObjectCoerce { inner, .. }
@@ -1150,7 +1531,9 @@ fn contains_use(expr: &TypedExpr) -> bool {
         TypedExprKind::AsyncBlock { body, .. } => contains_use(body),
         TypedExprKind::Closure { body, .. } => contains_use(body),
         TypedExprKind::MethodRef { object, .. } => contains_use(object),
-        TypedExprKind::ForLoop { iterable, body, .. } => contains_use(iterable) || contains_use(body),
+        TypedExprKind::ForLoop { iterable, body, .. } => {
+            contains_use(iterable) || contains_use(body)
+        }
         TypedExprKind::UnitLiteral
         | TypedExprKind::BoolLiteral(_)
         | TypedExprKind::StringLiteral(_)

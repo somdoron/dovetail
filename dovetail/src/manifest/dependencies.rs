@@ -19,6 +19,8 @@ pub enum UpdateRequest {
     Alias(String),
 }
 
+pub type DependencyProgress = dyn Fn(&str) + Send + Sync;
+
 #[derive(Clone, Default)]
 pub struct ResolveOptions {
     pub target: Option<String>,
@@ -28,7 +30,7 @@ pub struct ResolveOptions {
     pub offline: bool,
     pub update: UpdateRequest,
     pub cancelled: Option<Arc<AtomicBool>>,
-    pub progress: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub progress: Option<Arc<DependencyProgress>>,
     /// Materialize all directly declared selections, including unused projects.
     pub fetch_all: bool,
 }
@@ -690,8 +692,12 @@ mod tests {
     #[test]
     fn lock_identities_use_portable_path_separators() {
         let root = Path::new("workspace");
-        let project = root.join(".dovetail").join("deps").join("repository")
-            .join("commit").join("Dovetail.toml#library");
+        let project = root
+            .join(".dovetail")
+            .join("deps")
+            .join("repository")
+            .join("commit")
+            .join("Dovetail.toml#library");
         assert_eq!(
             lock_path(root, &project.to_string_lossy()),
             ".dovetail/deps/repository/commit/Dovetail.toml#library",
@@ -707,14 +713,21 @@ mod tests {
         std::fs::rename(
             temporary.path().join("Dovetail.toml"),
             temporary.path().join("config/workspace.toml"),
-        ).unwrap();
+        )
+        .unwrap();
         std::os::unix::fs::symlink(
-            "config/workspace.toml", temporary.path().join("Dovetail.toml"),
-        ).unwrap();
+            "config/workspace.toml",
+            temporary.path().join("Dovetail.toml"),
+        )
+        .unwrap();
 
-        let workspace = load_manifest_with_options(temporary.path(), &ResolveOptions::default()).unwrap();
+        let workspace =
+            load_manifest_with_options(temporary.path(), &ResolveOptions::default()).unwrap();
         let app = workspace.project("app").unwrap();
-        assert_eq!(app.project_dir, temporary.path().join("app").canonicalize().unwrap());
+        assert_eq!(
+            app.project_dir,
+            temporary.path().join("app").canonicalize().unwrap()
+        );
         assert!(workspace.is_local(app));
     }
 
@@ -726,16 +739,22 @@ mod tests {
         std::os::unix::fs::symlink("first", temporary.path().join("second")).unwrap();
         let manifest = temporary.path().join("Dovetail.toml");
         let mut contents = std::fs::read_to_string(&manifest).unwrap();
-        contents.push_str("\n[[project]]\nname = \"second\"\nroot_package = \"first\"\npackages = [\".\"]\n");
+        contents.push_str(
+            "\n[[project]]\nname = \"second\"\nroot_package = \"first\"\npackages = [\".\"]\n",
+        );
         std::fs::write(&manifest, contents).unwrap();
 
-        let workspace = load_manifest_with_options(temporary.path(), &ResolveOptions::default()).unwrap();
+        let workspace =
+            load_manifest_with_options(temporary.path(), &ResolveOptions::default()).unwrap();
         let first = workspace.project("first").unwrap();
         let second = workspace.project("second").unwrap();
         assert_eq!(first.project_dir, second.project_dir);
         assert_ne!(first.identity(), second.identity());
         assert_eq!(first.packages[0].source_dir, second.packages[0].source_dir);
-        assert_eq!(second.packages[0].source_dir, second.project_dir.join("src"));
+        assert_eq!(
+            second.packages[0].source_dir,
+            second.project_dir.join("src")
+        );
         assert!(workspace.is_local(first) && workspace.is_local(second));
     }
 }

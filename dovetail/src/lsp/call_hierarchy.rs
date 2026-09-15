@@ -1,8 +1,7 @@
 use std::path::Path;
 
 use tower_lsp::lsp_types::{
-    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, Range, SymbolKind,
-    Url,
+    CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, Range, SymbolKind, Url,
 };
 
 use crate::common::span::{FilePath, Span};
@@ -90,13 +89,9 @@ pub fn incoming_calls(
                 span_to_range(&func.span),
             );
 
-            let from_ranges: Vec<Range> =
-                call_sites.iter().map(span_to_range).collect();
+            let from_ranges: Vec<Range> = call_sites.iter().map(span_to_range).collect();
 
-            results.push(CallHierarchyIncomingCall {
-                from,
-                from_ranges,
-            });
+            results.push(CallHierarchyIncomingCall { from, from_ranges });
         }
     }
 
@@ -119,13 +114,9 @@ pub fn incoming_calls(
                 span_to_range(&global.span),
             );
 
-            let from_ranges: Vec<Range> =
-                call_sites.iter().map(span_to_range).collect();
+            let from_ranges: Vec<Range> = call_sites.iter().map(span_to_range).collect();
 
-            results.push(CallHierarchyIncomingCall {
-                from,
-                from_ranges,
-            });
+            results.push(CallHierarchyIncomingCall { from, from_ranges });
         }
     }
 
@@ -148,13 +139,9 @@ pub fn incoming_calls(
                 span_to_range(&test.span),
             );
 
-            let from_ranges: Vec<Range> =
-                call_sites.iter().map(span_to_range).collect();
+            let from_ranges: Vec<Range> = call_sites.iter().map(span_to_range).collect();
 
-            results.push(CallHierarchyIncomingCall {
-                from,
-                from_ranges,
-            });
+            results.push(CallHierarchyIncomingCall { from, from_ranges });
         }
     }
 
@@ -276,12 +263,13 @@ fn collect_calls_to(expr: &TypedExpr, target: &MangledName, sites: &mut Vec<Span
         TypedExprKind::FunctionCall { name, .. } if name == target => {
             sites.push(expr.span.clone());
         }
-        TypedExprKind::FunctionRef { name, type_params: _ } if name == target => {
+        TypedExprKind::FunctionRef {
+            name,
+            type_params: _,
+        } if name == target => {
             sites.push(expr.span.clone());
         }
-        TypedExprKind::ClassSuperCall {
-            method_mangled, ..
-        } if method_mangled == target => {
+        TypedExprKind::ClassSuperCall { method_mangled, .. } if method_mangled == target => {
             sites.push(expr.span.clone());
         }
         TypedExprKind::MethodRef { method_name, .. } if method_name == target => {
@@ -390,9 +378,7 @@ fn walk_children_for_calls_to(expr: &TypedExpr, target: &MangledName, sites: &mu
                 collect_calls_to(arg, target, sites);
             }
         }
-        TypedExprKind::InterfaceObjectMethodCall {
-            receiver, args, ..
-        } => {
+        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
             collect_calls_to(receiver, target, sites);
             for arg in args {
                 collect_calls_to(arg, target, sites);
@@ -421,9 +407,7 @@ fn walk_children_for_calls_to(expr: &TypedExpr, target: &MangledName, sites: &mu
             collect_calls_to(operand, target, sites);
         }
         TypedExprKind::Return { value, .. } => collect_calls_to(value, target, sites),
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => {
+        TypedExprKind::ForLoop { iterable, body, .. } => {
             collect_calls_to(iterable, target, sites);
             collect_calls_to(body, target, sites);
         }
@@ -436,8 +420,7 @@ fn walk_children_for_calls_to(expr: &TypedExpr, target: &MangledName, sites: &mu
                 collect_calls_to(arg, target, sites);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -467,12 +450,13 @@ fn collect_all_calls(expr: &TypedExpr, calls: &mut Vec<(MangledName, Span)>) {
         TypedExprKind::FunctionCall { name, .. } => {
             calls.push((name.clone(), expr.span.clone()));
         }
-        TypedExprKind::FunctionRef { name, type_params: _ } => {
+        TypedExprKind::FunctionRef {
+            name,
+            type_params: _,
+        } => {
             calls.push((name.clone(), expr.span.clone()));
         }
-        TypedExprKind::ClassSuperCall {
-            method_mangled, ..
-        } => {
+        TypedExprKind::ClassSuperCall { method_mangled, .. } => {
             calls.push((method_mangled.clone(), expr.span.clone()));
         }
         TypedExprKind::MethodRef { method_name, .. } => {
@@ -585,9 +569,7 @@ fn walk_children_for_all_calls(expr: &TypedExpr, calls: &mut Vec<(MangledName, S
                 collect_all_calls(arg, calls);
             }
         }
-        TypedExprKind::InterfaceObjectMethodCall {
-            receiver, args, ..
-        } => {
+        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
             collect_all_calls(receiver, calls);
             for arg in args {
                 collect_all_calls(arg, calls);
@@ -616,9 +598,7 @@ fn walk_children_for_all_calls(expr: &TypedExpr, calls: &mut Vec<(MangledName, S
             collect_all_calls(operand, calls);
         }
         TypedExprKind::Return { value, .. } => collect_all_calls(value, calls),
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => {
+        TypedExprKind::ForLoop { iterable, body, .. } => {
             collect_all_calls(iterable, calls);
             collect_all_calls(body, calls);
         }
@@ -631,8 +611,7 @@ fn walk_children_for_all_calls(expr: &TypedExpr, calls: &mut Vec<(MangledName, S
                 collect_all_calls(arg, calls);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -671,9 +650,7 @@ fn walk_pattern_for_calls(pattern: &TypedPattern, calls: &mut Vec<(MangledName, 
                 walk_pattern_for_calls(p, calls);
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for fp in field_patterns {
                 walk_pattern_for_calls(&fp.pattern, calls);
             }

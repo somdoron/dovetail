@@ -76,10 +76,9 @@ fn normalize_class(class: &mut ClassTypeSignature) {
     for member in &mut class.body_members {
         if let ClassBodyMemberDef::LetBinding(binding)
         | ClassBodyMemberDef::StaticLetBinding(binding) = member
+            && let Some(ty) = &mut binding.resolved_type
         {
-            if let Some(ty) = &mut binding.resolved_type {
-                normalize(ty);
-            }
+            normalize(ty);
         }
     }
 }

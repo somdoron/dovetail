@@ -345,7 +345,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -367,7 +369,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -388,7 +392,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -734,7 +740,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -839,9 +847,7 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("appears more than once")),
+        errors.iter().any(|e| e.contains("appears more than once")),
         "expected duplicate-component error, got: {:?}",
         errors
     );
@@ -1341,10 +1347,7 @@ function main(): Unit =
     takeList(l)
 "#,
     );
-    assert!(
-        !errors.is_empty(),
-        "expected container-variance rejection"
-    );
+    assert!(!errors.is_empty(), "expected container-variance rejection");
 }
 
 #[test]

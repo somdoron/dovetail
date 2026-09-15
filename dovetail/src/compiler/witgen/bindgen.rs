@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 
 use wit_parser::{FunctionKind, InterfaceId, Resolve, TypeDefKind, TypeOwner};
 
-use super::mapping::{map_wit_type, DovetailTypeSketch};
+use super::mapping::{DovetailTypeSketch, map_wit_type};
 use super::names;
 use super::{BindgenError, WitFuncKind, WitFuncRef};
 
@@ -306,9 +306,15 @@ pub fn generate_interface(
                 ),
             };
             let start_call = if matches!(func.kind, FunctionKind::AsyncMethod(_)) {
-                format!("self.{dovetail_func_name}Start({})", param_names[1..].join(", "))
+                format!(
+                    "self.{dovetail_func_name}Start({})",
+                    param_names[1..].join(", ")
+                )
             } else {
-                format!("{module_name}.{dovetail_func_name}Start({})", param_names.join(", "))
+                format!(
+                    "{module_name}.{dovetail_func_name}Start({})",
+                    param_names.join(", ")
+                )
             };
             modules[idx].lines.push(format!(
                 "    public function {dovetail_func_name}({}): Async<{t_ty}, {e_ty}> =",
@@ -320,9 +326,9 @@ pub fn generate_interface(
             modules[idx]
                 .lines
                 .push(format!("            start = () => {start_call}"));
-            modules[idx]
-                .lines
-                .push(format!("            finish = (call: AsyncCall) => {finish_expr}"));
+            modules[idx].lines.push(format!(
+                "            finish = (call: AsyncCall) => {finish_expr}"
+            ));
             modules[idx].lines.push("        })".to_string());
         } else {
             modules[idx].lines.push(format!(
@@ -347,9 +353,9 @@ pub fn generate_interface(
         }
         let module_name = names::pascal(wit_name);
         let idx = module_index(&mut modules, &module_name);
-        modules[idx]
-            .lines
-            .push(format!("    public function drop(self): Unit = {STUB_BODY}"));
+        modules[idx].lines.push(format!(
+            "    public function drop(self): Unit = {STUB_BODY}"
+        ));
         funcs.push((
             format!("{module_name}.drop"),
             WitFuncRef {

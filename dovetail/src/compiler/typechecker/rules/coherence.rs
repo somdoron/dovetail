@@ -35,7 +35,11 @@ struct Unifier<'a> {
 
 impl<'a> Unifier<'a> {
     fn new(left_params: &'a [TypeParamName], right_params: &'a [TypeParamName]) -> Self {
-        Self { left_params, right_params, bindings: BTreeMap::new() }
+        Self {
+            left_params,
+            right_params,
+            bindings: BTreeMap::new(),
+        }
     }
 
     fn var_of(&self, side: Side, t: &Type) -> Option<TypeParamName> {
@@ -57,8 +61,12 @@ impl<'a> Unifier<'a> {
         let mut t = t.clone();
         // Bounded depth: each chase step consumes one existing binding.
         for _ in 0..=self.bindings.len() {
-            let Some(name) = self.var_of(side, &t) else { break };
-            let Some((bound_side, bound)) = self.bindings.get(&(side, name)) else { break };
+            let Some(name) = self.var_of(side, &t) else {
+                break;
+            };
+            let Some((bound_side, bound)) = self.bindings.get(&(side, name)) else {
+                break;
+            };
             side = *bound_side;
             t = bound.clone();
         }
@@ -75,7 +83,8 @@ impl<'a> Unifier<'a> {
             return side == var_side && name == *var;
         }
         let check_args = |args: &[(crate::common::types::Variance, Type)]| {
-            args.iter().any(|(_, a)| self.occurs(var_side, var, side, a))
+            args.iter()
+                .any(|(_, a)| self.occurs(var_side, var, side, a))
         };
         match &t {
             Type::GenericRecord { type_args, .. }
@@ -83,8 +92,12 @@ impl<'a> Unifier<'a> {
             | Type::GenericClass { type_args, .. }
             | Type::GenericNewtype { type_args, .. } => check_args(type_args),
             Type::Array(e) | Type::TupleProjection(e, _) => self.occurs(var_side, var, side, e),
-            Type::AssociatedProjection(projection) => projection.types().any(|ty| self.occurs(var_side, var, side, ty)),
-            Type::TupleExtend(a, b) => self.occurs(var_side, var, side, a) || self.occurs(var_side, var, side, b),
+            Type::AssociatedProjection(projection) => projection
+                .types()
+                .any(|ty| self.occurs(var_side, var, side, ty)),
+            Type::TupleExtend(a, b) => {
+                self.occurs(var_side, var, side, a) || self.occurs(var_side, var, side, b)
+            }
             Type::Tuple(ts, _) => ts.iter().any(|a| self.occurs(var_side, var, side, a)),
             Type::Function(ps, r) => {
                 ps.iter().any(|a| self.occurs(var_side, var, side, a))
@@ -92,7 +105,9 @@ impl<'a> Unifier<'a> {
             }
             Type::Newtype(_, inner) => self.occurs(var_side, var, side, inner),
             Type::InterfaceObject { traits, .. } => traits.iter().any(|c| {
-                c.trait_type_args.iter().any(|a| self.occurs(var_side, var, side, a))
+                c.trait_type_args
+                    .iter()
+                    .any(|a| self.occurs(var_side, var, side, a))
             }),
             _ => false,
         }
@@ -135,48 +150,88 @@ impl<'a> Unifier<'a> {
                 self.unify_side(lside, a, rside, c) && self.unify_side(lside, b, rside, d)
             }
             (Type::TupleExtend(a, b), Type::Tuple(..)) => {
-                let Some((prefix, last)) = l.split_tuple_extension(r) else { return false };
+                let Some((prefix, last)) = l.split_tuple_extension(r) else {
+                    return false;
+                };
                 self.unify_side(lside, a, rside, &prefix) && self.unify_side(lside, b, rside, &last)
             }
             (Type::Tuple(..), Type::TupleExtend(..)) => self.unify_concrete(rside, r, lside, l),
             (
-                Type::GenericRecord { fqn: f1, type_args: a1, .. },
-                Type::GenericRecord { fqn: f2, type_args: a2, .. },
+                Type::GenericRecord {
+                    fqn: f1,
+                    type_args: a1,
+                    ..
+                },
+                Type::GenericRecord {
+                    fqn: f2,
+                    type_args: a2,
+                    ..
+                },
             )
             | (
-                Type::GenericEnum { fqn: f1, type_args: a1, .. },
-                Type::GenericEnum { fqn: f2, type_args: a2, .. },
+                Type::GenericEnum {
+                    fqn: f1,
+                    type_args: a1,
+                    ..
+                },
+                Type::GenericEnum {
+                    fqn: f2,
+                    type_args: a2,
+                    ..
+                },
             )
             | (
-                Type::GenericClass { fqn: f1, type_args: a1, .. },
-                Type::GenericClass { fqn: f2, type_args: a2, .. },
+                Type::GenericClass {
+                    fqn: f1,
+                    type_args: a1,
+                    ..
+                },
+                Type::GenericClass {
+                    fqn: f2,
+                    type_args: a2,
+                    ..
+                },
             ) => {
                 f1 == f2
                     && a1.len() == a2.len()
-                    && a1.iter().zip(a2.iter()).all(|((_, t1), (_, t2))| {
-                        self.unify_side(lside, t1, rside, t2)
-                    })
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|((_, t1), (_, t2))| self.unify_side(lside, t1, rside, t2))
             }
             (
-                Type::GenericNewtype { fqn: f1, type_args: a1, .. },
-                Type::GenericNewtype { fqn: f2, type_args: a2, .. },
+                Type::GenericNewtype {
+                    fqn: f1,
+                    type_args: a1,
+                    ..
+                },
+                Type::GenericNewtype {
+                    fqn: f2,
+                    type_args: a2,
+                    ..
+                },
             ) => {
                 f1 == f2
                     && a1.len() == a2.len()
-                    && a1.iter().zip(a2.iter()).all(|((_, t1), (_, t2))| {
-                        self.unify_side(lside, t1, rside, t2)
-                    })
+                    && a1
+                        .iter()
+                        .zip(a2.iter())
+                        .all(|((_, t1), (_, t2))| self.unify_side(lside, t1, rside, t2))
             }
             (Type::Array(e1), Type::Array(e2)) => self.unify_side(lside, e1, rside, e2),
             (Type::Tuple(ts1, _), Type::Tuple(ts2, _)) => {
                 ts1.len() == ts2.len()
-                    && ts1.iter().zip(ts2.iter()).all(|(t1, t2)| {
-                        self.unify_side(lside, t1, rside, t2)
-                    })
+                    && ts1
+                        .iter()
+                        .zip(ts2.iter())
+                        .all(|(t1, t2)| self.unify_side(lside, t1, rside, t2))
             }
             (Type::Function(p1, r1), Type::Function(p2, r2)) => {
                 p1.len() == p2.len()
-                    && p1.iter().zip(p2.iter()).all(|(t1, t2)| self.unify_side(lside, t1, rside, t2))
+                    && p1
+                        .iter()
+                        .zip(p2.iter())
+                        .all(|(t1, t2)| self.unify_side(lside, t1, rside, t2))
                     && self.unify_side(lside, r1, rside, r2)
             }
             (Type::Newtype(f1, i1), Type::Newtype(f2, i2)) => {
@@ -212,36 +267,61 @@ impl<'a> Unifier<'a> {
     fn witness(&self, side: Side, t: &Type) -> Type {
         let (side, t) = self.resolve(side, t);
         match &t {
-            Type::GenericRecord { fqn, mangled_name, type_args } => Type::GenericRecord {
+            Type::GenericRecord {
+                fqn,
+                mangled_name,
+                type_args,
+            } => Type::GenericRecord {
                 fqn: fqn.clone(),
                 mangled_name: mangled_name.clone(),
-                type_args: type_args.iter().map(|(v, a)| (*v, self.witness(side, a))).collect(),
+                type_args: type_args
+                    .iter()
+                    .map(|(v, a)| (*v, self.witness(side, a)))
+                    .collect(),
             },
-            Type::GenericEnum { fqn, mangled_name, type_args } => Type::GenericEnum {
+            Type::GenericEnum {
+                fqn,
+                mangled_name,
+                type_args,
+            } => Type::GenericEnum {
                 fqn: fqn.clone(),
                 mangled_name: mangled_name.clone(),
-                type_args: type_args.iter().map(|(v, a)| (*v, self.witness(side, a))).collect(),
+                type_args: type_args
+                    .iter()
+                    .map(|(v, a)| (*v, self.witness(side, a)))
+                    .collect(),
             },
-            Type::GenericClass { fqn, mangled_name, type_args } => Type::GenericClass {
+            Type::GenericClass {
+                fqn,
+                mangled_name,
+                type_args,
+            } => Type::GenericClass {
                 fqn: fqn.clone(),
                 mangled_name: mangled_name.clone(),
-                type_args: type_args.iter().map(|(v, a)| (*v, self.witness(side, a))).collect(),
+                type_args: type_args
+                    .iter()
+                    .map(|(v, a)| (*v, self.witness(side, a)))
+                    .collect(),
             },
             Type::Array(e) => Type::Array(Box::new(self.witness(side, e))),
-            Type::GenericNewtype { fqn, type_args, concrete_inner_type } => {
-                Type::GenericNewtype {
-                    fqn: fqn.clone(),
-                    type_args: type_args
-                        .iter()
-                        .map(|(v, a)| (*v, self.witness(side, a)))
-                        .collect(),
-                    concrete_inner_type: Box::new(self.witness(side, concrete_inner_type)),
-                }
-            }
+            Type::GenericNewtype {
+                fqn,
+                type_args,
+                concrete_inner_type,
+            } => Type::GenericNewtype {
+                fqn: fqn.clone(),
+                type_args: type_args
+                    .iter()
+                    .map(|(v, a)| (*v, self.witness(side, a)))
+                    .collect(),
+                concrete_inner_type: Box::new(self.witness(side, concrete_inner_type)),
+            },
             Type::Newtype(f, inner) => {
                 Type::Newtype(f.clone(), Box::new(self.witness(side, inner)))
             }
-            Type::TupleExtend(a, b) => Type::tuple_extend(self.witness(side, a), self.witness(side, b)),
+            Type::TupleExtend(a, b) => {
+                Type::tuple_extend(self.witness(side, a), self.witness(side, b))
+            }
             Type::Tuple(ts, boxed) => Type::Tuple(
                 ts.iter().map(|a| self.witness(side, a)).collect(),
                 boxed.clone(),
@@ -256,7 +336,10 @@ impl<'a> Unifier<'a> {
                     .map(|c| {
                         (
                             c.trait_fqn.clone(),
-                            c.trait_type_args.iter().map(|a| self.witness(side, a)).collect(),
+                            c.trait_type_args
+                                .iter()
+                                .map(|a| self.witness(side, a))
+                                .collect(),
                         )
                     })
                     .collect(),
@@ -286,7 +369,9 @@ fn overlap_witness(a: &ImplBlockSignature, b: &ImplBlockSignature) -> Option<Typ
     for (side, block) in [(Side::Left, a), (Side::Right, b)] {
         if let Type::TupleExtend(prefix, _) = &block.for_type {
             let resolved = unifier.witness(side, prefix);
-            if !resolved.is_tuple() && !matches!(resolved, Type::TypeVariable(..) | Type::GenericParam(..)) {
+            if !resolved.is_tuple()
+                && !matches!(resolved, Type::TypeVariable(..) | Type::GenericParam(..))
+            {
                 return None;
             }
         }
@@ -339,21 +424,32 @@ pub(super) fn check_coherence(
 mod tests {
     use super::*;
     use crate::common::span::Span;
-    use crate::common::types::{Fqn, MangledName, PackagePath, SymbolName};
     use crate::common::types::Variance;
+    use crate::common::types::{Fqn, MangledName, PackagePath, SymbolName};
     use crate::typechecker::types::TraitBounds;
 
     fn fqn(pkg: &str, sym: &str) -> Fqn {
-        Fqn { package: PackagePath(vec![pkg.to_string()]), symbol: SymbolName(sym.to_string()) }
+        Fqn {
+            package: PackagePath(vec![pkg.to_string()]),
+            symbol: SymbolName(sym.to_string()),
+        }
     }
 
-    fn block(trait_sym: &str, for_type: Type, params: &[&str], trait_args: Vec<Type>) -> ImplBlockSignature {
+    fn block(
+        trait_sym: &str,
+        for_type: Type,
+        params: &[&str],
+        trait_args: Vec<Type>,
+    ) -> ImplBlockSignature {
         let type_fqn = for_type.try_to_fqn().unwrap_or_else(|| fqn("a", "X"));
         ImplBlockSignature {
             trait_fqn: fqn("a", trait_sym),
             type_fqn,
             for_type,
-            type_params: params.iter().map(|p| TypeParamName(p.to_string())).collect(),
+            type_params: params
+                .iter()
+                .map(|p| TypeParamName(p.to_string()))
+                .collect(),
             trait_type_args: trait_args,
             trait_bounds: TraitBounds::default(),
             methods: vec![],

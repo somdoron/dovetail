@@ -96,7 +96,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot assign to immutable field")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot assign to immutable field")),
         "expected immutable field error, got: {:?}",
         errors
     );
@@ -117,7 +119,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("undefined") || e.contains("unknown")),
+        errors
+            .iter()
+            .any(|e| e.contains("undefined") || e.contains("unknown")),
         "expected error when referencing internal ArrayIterator, got: {:?}",
         errors
     );

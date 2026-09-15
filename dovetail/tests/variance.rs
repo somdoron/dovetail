@@ -987,7 +987,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot appear in contravariant position")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot appear in contravariant position")),
         "expected the contravariant misuse to be reported, got: {:?}",
         errors,
     );

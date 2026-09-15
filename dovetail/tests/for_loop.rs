@@ -111,7 +111,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement Iterable")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement Iterable")),
         "expected Iterable error, got: {:?}",
         errors
     );

@@ -2,13 +2,16 @@ use std::collections::BTreeMap;
 
 use crate::common::span::Span;
 use crate::common::types::{
-    Fqn, MangledName, PackagePath, SymbolName, InterfaceMemberName,
-    TypeParamName, VarName, Variance, Visibility,
+    Fqn, InterfaceMemberName, MangledName, PackagePath, SymbolName, TypeParamName, VarName,
+    Variance, Visibility,
 };
 
 /// Shape-dependent tuple projection, normalized after substitution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TupleProjection { Init, Last }
+pub enum TupleProjection {
+    Init,
+    Last,
+}
 
 pub fn is_tuple_constraint(fqn: &Fqn) -> bool {
     fqn.package.to_string() == "standard.prelude" && fqn.symbol.0 == "Tuple"
@@ -90,8 +93,8 @@ impl TraitBounds {
     pub fn insert(&mut self, tp: TypeParamName, bounds: Vec<TraitBound>) {
         let existing = self.0.entry(tp).or_default();
         for bound in bounds {
-            if let TraitBound::Named(incoming) = &bound {
-                if let Some(TraitBound::Named(current)) = existing.iter_mut().find(|b| {
+            if let TraitBound::Named(incoming) = &bound
+                && let Some(TraitBound::Named(current)) = existing.iter_mut().find(|b| {
                     b.named().is_some_and(|b| {
                         b.trait_fqn == incoming.trait_fqn
                             && b.type_args.len() == incoming.type_args.len()
@@ -106,12 +109,12 @@ impl TraitBounds {
                                     .is_none_or(|previous| super::subtyping::identical(previous, t))
                             })
                     })
-                }) {
-                    current
-                        .associated_types
-                        .extend(incoming.associated_types.clone());
-                    continue;
-                }
+                })
+            {
+                current
+                    .associated_types
+                    .extend(incoming.associated_types.clone());
+                continue;
             }
             if !existing.contains(&bound) {
                 existing.push(bound);
@@ -321,12 +324,28 @@ impl PartialEq for Type {
             (Type::Record(f1, m1), Type::Record(f2, m2)) => f1 == f2 && m1 == m2,
             (Type::Enum(f1, m1), Type::Enum(f2, m2)) => f1 == f2 && m1 == m2,
             (
-                Type::GenericRecord { fqn: f1, mangled_name: m1, type_args: a1 },
-                Type::GenericRecord { fqn: f2, mangled_name: m2, type_args: a2 },
+                Type::GenericRecord {
+                    fqn: f1,
+                    mangled_name: m1,
+                    type_args: a1,
+                },
+                Type::GenericRecord {
+                    fqn: f2,
+                    mangled_name: m2,
+                    type_args: a2,
+                },
             ) => f1 == f2 && m1 == m2 && a1 == a2,
             (
-                Type::GenericEnum { fqn: f1, mangled_name: m1, type_args: a1 },
-                Type::GenericEnum { fqn: f2, mangled_name: m2, type_args: a2 },
+                Type::GenericEnum {
+                    fqn: f1,
+                    mangled_name: m1,
+                    type_args: a1,
+                },
+                Type::GenericEnum {
+                    fqn: f2,
+                    mangled_name: m2,
+                    type_args: a2,
+                },
             ) => f1 == f2 && m1 == m2 && a1 == a2,
             (Type::AssociatedProjection(a), Type::AssociatedProjection(b)) => a == b,
             (Type::TupleProjection(a, k), Type::TupleProjection(b, l)) => k == l && a == b,
@@ -334,26 +353,56 @@ impl PartialEq for Type {
             (Type::Tuple(t1, m1), Type::Tuple(t2, m2)) => t1 == t2 && m1 == m2,
             (Type::Array(e1), Type::Array(e2)) => e1 == e2,
             (Type::TypeVariable(n1, b1), Type::TypeVariable(n2, b2)) => n1 == n2 && b1 == b2,
-            (Type::GenericParam(n1, b1, id1), Type::GenericParam(n2, b2, id2)) => n1 == n2 && b1 == b2 && id1 == id2,
+            (Type::GenericParam(n1, b1, id1), Type::GenericParam(n2, b2, id2)) => {
+                n1 == n2 && b1 == b2 && id1 == id2
+            }
             (
-                Type::InterfaceObject { traits: t1, mangled_name: m1 },
-                Type::InterfaceObject { traits: t2, mangled_name: m2 },
+                Type::InterfaceObject {
+                    traits: t1,
+                    mangled_name: m1,
+                },
+                Type::InterfaceObject {
+                    traits: t2,
+                    mangled_name: m2,
+                },
             ) => t1 == t2 && m1 == m2,
             (Type::Class(f1, m1), Type::Class(f2, m2)) => f1 == f2 && m1 == m2,
             (
-                Type::GenericClass { fqn: f1, mangled_name: m1, type_args: a1 },
-                Type::GenericClass { fqn: f2, mangled_name: m2, type_args: a2 },
+                Type::GenericClass {
+                    fqn: f1,
+                    mangled_name: m1,
+                    type_args: a1,
+                },
+                Type::GenericClass {
+                    fqn: f2,
+                    mangled_name: m2,
+                    type_args: a2,
+                },
             ) => f1 == f2 && m1 == m2 && a1 == a2,
             (Type::Newtype(f1, i1), Type::Newtype(f2, i2)) => f1 == f2 && i1 == i2,
             // GenericNewtype: ignore concrete_inner_type (it's a cached/derived value)
             (
-                Type::GenericNewtype { fqn: f1, type_args: a1, .. },
-                Type::GenericNewtype { fqn: f2, type_args: a2, .. },
+                Type::GenericNewtype {
+                    fqn: f1,
+                    type_args: a1,
+                    ..
+                },
+                Type::GenericNewtype {
+                    fqn: f2,
+                    type_args: a2,
+                    ..
+                },
             ) => f1 == f2 && a1 == a2,
             (Type::Function(p1, r1), Type::Function(p2, r2)) => p1 == p2 && r1 == r2,
             (
-                Type::TypeConstructor { name: n1, type_args: a1 },
-                Type::TypeConstructor { name: n2, type_args: a2 },
+                Type::TypeConstructor {
+                    name: n1,
+                    type_args: a1,
+                },
+                Type::TypeConstructor {
+                    name: n2,
+                    type_args: a2,
+                },
             ) => n1 == n2 && a1 == a2,
             _ => false,
         }
@@ -366,25 +415,57 @@ impl std::hash::Hash for Type {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         std::mem::discriminant(self).hash(state);
         match self {
-            Type::Unit | Type::Bool | Type::String | Type::Char
-            | Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64
-            | Type::Uint8 | Type::Uint16 | Type::Uint32 | Type::Uint64 | Type::Uint128
-            | Type::Float32 | Type::Float64
-            | Type::Never | Type::Any | Type::SelfType | Type::Error => {}
+            Type::Unit
+            | Type::Bool
+            | Type::String
+            | Type::Char
+            | Type::Int8
+            | Type::Int16
+            | Type::Int32
+            | Type::Int64
+            | Type::Uint8
+            | Type::Uint16
+            | Type::Uint32
+            | Type::Uint64
+            | Type::Uint128
+            | Type::Float32
+            | Type::Float64
+            | Type::Never
+            | Type::Any
+            | Type::SelfType
+            | Type::Error => {}
             Type::Record(f, m) | Type::Enum(f, m) | Type::Class(f, m) => {
                 f.hash(state);
                 m.hash(state);
             }
-            Type::GenericRecord { fqn, mangled_name, type_args }
-            | Type::GenericEnum { fqn, mangled_name, type_args }
-            | Type::GenericClass { fqn, mangled_name, type_args } => {
+            Type::GenericRecord {
+                fqn,
+                mangled_name,
+                type_args,
+            }
+            | Type::GenericEnum {
+                fqn,
+                mangled_name,
+                type_args,
+            }
+            | Type::GenericClass {
+                fqn,
+                mangled_name,
+                type_args,
+            } => {
                 fqn.hash(state);
                 mangled_name.hash(state);
                 type_args.hash(state);
             }
             Type::AssociatedProjection(projection) => projection.hash(state),
-            Type::TupleProjection(receiver, kind) => { receiver.hash(state); kind.hash(state); }
-            Type::TupleExtend(left, right) => { left.hash(state); right.hash(state); }
+            Type::TupleProjection(receiver, kind) => {
+                receiver.hash(state);
+                kind.hash(state);
+            }
+            Type::TupleExtend(left, right) => {
+                left.hash(state);
+                right.hash(state);
+            }
             Type::Tuple(types, mn) => {
                 types.hash(state);
                 mn.hash(state);
@@ -399,7 +480,10 @@ impl std::hash::Hash for Type {
                 bounds.hash(state);
                 id.hash(state);
             }
-            Type::InterfaceObject { traits, mangled_name } => {
+            Type::InterfaceObject {
+                traits,
+                mangled_name,
+            } => {
                 traits.hash(state);
                 mangled_name.hash(state);
             }
@@ -447,10 +531,7 @@ impl Type {
         type_params
             .iter()
             .map(|tp| {
-                let bounds: Vec<TraitBound> = trait_bounds
-                    .get(tp)
-                    .cloned()
-                    .unwrap_or_default();
+                let bounds: Vec<TraitBound> = trait_bounds.get(tp).cloned().unwrap_or_default();
                 (tp.0.clone(), Type::TypeVariable(tp.clone(), bounds))
             })
             .collect()
@@ -463,7 +544,10 @@ impl Type {
     pub fn interface_object(trait_fqn: Fqn, trait_type_args: Vec<Type>) -> Self {
         let mangled_name = MangledName::for_interface_object_per_interface(&trait_fqn);
         Type::InterfaceObject {
-            traits: vec![InterfaceComponent { trait_fqn, trait_type_args }],
+            traits: vec![InterfaceComponent {
+                trait_fqn,
+                trait_type_args,
+            }],
             mangled_name,
         }
     }
@@ -476,14 +560,20 @@ impl Type {
     pub fn interface_intersection(components: Vec<(Fqn, Vec<Type>)>) -> Self {
         let mut components: Vec<InterfaceComponent> = components
             .into_iter()
-            .map(|(trait_fqn, trait_type_args)| InterfaceComponent { trait_fqn, trait_type_args })
+            .map(|(trait_fqn, trait_type_args)| InterfaceComponent {
+                trait_fqn,
+                trait_type_args,
+            })
             .collect();
         components.sort_by(|a, b| a.trait_fqn.cmp(&b.trait_fqn));
         components.dedup();
         debug_assert!(!components.is_empty());
         let fqns: Vec<Fqn> = components.iter().map(|c| c.trait_fqn.clone()).collect();
         let mangled_name = MangledName::for_interface_object_set(&fqns);
-        Type::InterfaceObject { traits: components, mangled_name }
+        Type::InterfaceObject {
+            traits: components,
+            mangled_name,
+        }
     }
 
     /// Try to resolve a primitive type by name.
@@ -550,9 +640,16 @@ impl Type {
             Type::GenericRecord { type_args, .. } | Type::GenericEnum { type_args, .. } => {
                 type_args.iter().any(|(_, t)| t.contains_error())
             }
-            Type::GenericClass { type_args, .. } => type_args.iter().any(|(_, t)| t.contains_error()),
-            Type::GenericNewtype { type_args, concrete_inner_type, .. } => {
-                type_args.iter().any(|(_, t)| t.contains_error()) || concrete_inner_type.contains_error()
+            Type::GenericClass { type_args, .. } => {
+                type_args.iter().any(|(_, t)| t.contains_error())
+            }
+            Type::GenericNewtype {
+                type_args,
+                concrete_inner_type,
+                ..
+            } => {
+                type_args.iter().any(|(_, t)| t.contains_error())
+                    || concrete_inner_type.contains_error()
             }
             Type::TupleProjection(receiver, _) => receiver.contains_error(),
             Type::TupleExtend(left, right) => left.contains_error() || right.contains_error(),
@@ -589,9 +686,28 @@ impl Type {
     /// boxed form `(ref $Tuple_N)` is a reference, but the type itself is the flattened run.)
     pub fn is_reference_type(&self) -> bool {
         match self {
-            Type::Record(..) | Type::Enum(..) | Type::Class(..) | Type::GenericRecord { .. } | Type::GenericEnum { .. } | Type::GenericClass { .. } | Type::InterfaceObject { .. } | Type::String | Type::Array(_) | Type::Function(..) | Type::Never | Type::Error | Type::Any => true,
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => inner.is_reference_type(),
-            Type::AssociatedProjection(..) | Type::TupleProjection(..) | Type::Tuple(..) | Type::TupleExtend(..)
+            Type::Record(..)
+            | Type::Enum(..)
+            | Type::Class(..)
+            | Type::GenericRecord { .. }
+            | Type::GenericEnum { .. }
+            | Type::GenericClass { .. }
+            | Type::InterfaceObject { .. }
+            | Type::String
+            | Type::Array(_)
+            | Type::Function(..)
+            | Type::Never
+            | Type::Error
+            | Type::Any => true,
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => inner.is_reference_type(),
+            Type::AssociatedProjection(..)
+            | Type::TupleProjection(..)
+            | Type::Tuple(..)
+            | Type::TupleExtend(..)
             | Type::Unit
             | Type::Bool
             | Type::Char
@@ -616,7 +732,9 @@ impl Type {
     /// Returns true if this type contains any `TypeVariable` or `GenericParam` anywhere (including nested).
     pub fn contains_type_parameter(&self) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(Type::contains_type_parameter),
+            Type::AssociatedProjection(projection) => {
+                projection.types().any(Type::contains_type_parameter)
+            }
             Type::TypeVariable(_, _) | Type::GenericParam(_, _, _) => true,
             Type::Array(elem) => elem.contains_type_parameter(),
             Type::GenericRecord { type_args, .. }
@@ -624,9 +742,11 @@ impl Type {
             | Type::GenericClass { type_args, .. } => {
                 type_args.iter().any(|(_, t)| t.contains_type_parameter())
             }
-            Type::InterfaceObject { traits, .. } => {
-                traits.iter().any(|c| c.trait_type_args.iter().any(|t| t.contains_type_parameter()))
-            }
+            Type::InterfaceObject { traits, .. } => traits.iter().any(|c| {
+                c.trait_type_args
+                    .iter()
+                    .any(|t| t.contains_type_parameter())
+            }),
             Type::Newtype(_, inner) => inner.contains_type_parameter(),
             Type::GenericNewtype { type_args, .. } => {
                 // `concrete_inner_type` is a cached/derived value (see the type's
@@ -636,11 +756,12 @@ impl Type {
                 type_args.iter().any(|(_, t)| t.contains_type_parameter())
             }
             Type::TupleProjection(receiver, _) => receiver.contains_type_parameter(),
-            Type::TupleExtend(left, right) => left.contains_type_parameter() || right.contains_type_parameter(),
+            Type::TupleExtend(left, right) => {
+                left.contains_type_parameter() || right.contains_type_parameter()
+            }
             Type::Tuple(types, _) => types.iter().any(|t| t.contains_type_parameter()),
             Type::Function(params, ret) => {
-                params.iter().any(|t| t.contains_type_parameter())
-                    || ret.contains_type_parameter()
+                params.iter().any(|t| t.contains_type_parameter()) || ret.contains_type_parameter()
             }
             Type::TypeConstructor { type_args, .. } => {
                 type_args.iter().any(|t| t.contains_type_parameter())
@@ -652,7 +773,9 @@ impl Type {
     /// Whether Any or Never occurs anywhere in this type.
     pub fn contains_any_or_never(&self) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(Type::contains_any_or_never),
+            Type::AssociatedProjection(projection) => {
+                projection.types().any(Type::contains_any_or_never)
+            }
             Type::Any | Type::Never => true,
             Type::Array(element) | Type::Newtype(_, element) => element.contains_any_or_never(),
             Type::GenericRecord { type_args, .. }
@@ -662,13 +785,20 @@ impl Type {
                 type_args.iter().any(|(_, ty)| ty.contains_any_or_never())
             }
             Type::InterfaceObject { traits, .. } => traits.iter().any(|component| {
-                component.trait_type_args.iter().any(Type::contains_any_or_never)
+                component
+                    .trait_type_args
+                    .iter()
+                    .any(Type::contains_any_or_never)
             }),
             Type::TupleProjection(receiver, _) => receiver.contains_any_or_never(),
-            Type::TupleExtend(left, right) => left.contains_any_or_never() || right.contains_any_or_never(),
-            Type::Tuple(elements, _) | Type::TypeConstructor { type_args: elements, .. } => {
-                elements.iter().any(Type::contains_any_or_never)
+            Type::TupleExtend(left, right) => {
+                left.contains_any_or_never() || right.contains_any_or_never()
             }
+            Type::Tuple(elements, _)
+            | Type::TypeConstructor {
+                type_args: elements,
+                ..
+            } => elements.iter().any(Type::contains_any_or_never),
             Type::Function(parameters, result) => {
                 parameters.iter().any(Type::contains_any_or_never) || result.contains_any_or_never()
             }
@@ -681,7 +811,9 @@ impl Type {
     /// generic context type parameters.
     pub fn contains_type_variable(&self) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(Type::contains_type_variable),
+            Type::AssociatedProjection(projection) => {
+                projection.types().any(Type::contains_type_variable)
+            }
             Type::TypeVariable(_, _) => true,
             Type::GenericParam(_, _, _) => false,
             Type::Array(elem) => elem.contains_type_variable(),
@@ -690,20 +822,25 @@ impl Type {
             | Type::GenericClass { type_args, .. } => {
                 type_args.iter().any(|(_, t)| t.contains_type_variable())
             }
-            Type::InterfaceObject { traits, .. } => {
-                traits.iter().any(|c| c.trait_type_args.iter().any(|t| t.contains_type_variable()))
-            }
+            Type::InterfaceObject { traits, .. } => traits
+                .iter()
+                .any(|c| c.trait_type_args.iter().any(|t| t.contains_type_variable())),
             Type::Newtype(_, inner) => inner.contains_type_variable(),
-            Type::GenericNewtype { type_args, concrete_inner_type, .. } => {
+            Type::GenericNewtype {
+                type_args,
+                concrete_inner_type,
+                ..
+            } => {
                 type_args.iter().any(|(_, t)| t.contains_type_variable())
                     || concrete_inner_type.contains_type_variable()
             }
             Type::TupleProjection(receiver, _) => receiver.contains_type_variable(),
-            Type::TupleExtend(left, right) => left.contains_type_variable() || right.contains_type_variable(),
+            Type::TupleExtend(left, right) => {
+                left.contains_type_variable() || right.contains_type_variable()
+            }
             Type::Tuple(types, _) => types.iter().any(|t| t.contains_type_variable()),
             Type::Function(params, ret) => {
-                params.iter().any(|t| t.contains_type_variable())
-                    || ret.contains_type_variable()
+                params.iter().any(|t| t.contains_type_variable()) || ret.contains_type_variable()
             }
             Type::TypeConstructor { type_args, .. } => {
                 type_args.iter().any(|t| t.contains_type_variable())
@@ -716,42 +853,64 @@ impl Type {
     /// Used by the occurs check in unification to prevent infinite types like `T = Array<T>`.
     pub fn contains_type_parameter_named(&self, name: &TypeParamName) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(|ty| ty.contains_type_parameter_named(name)),
+            Type::AssociatedProjection(projection) => projection
+                .types()
+                .any(|ty| ty.contains_type_parameter_named(name)),
             Type::TypeVariable(n, _) | Type::GenericParam(n, _, _) => n == name,
             Type::Array(elem) => elem.contains_type_parameter_named(name),
             Type::GenericRecord { type_args, .. } | Type::GenericEnum { type_args, .. } => {
-                type_args.iter().any(|(_, t)| t.contains_type_parameter_named(name))
+                type_args
+                    .iter()
+                    .any(|(_, t)| t.contains_type_parameter_named(name))
             }
-            Type::GenericClass { type_args, .. } => {
-                type_args.iter().any(|(_, t)| t.contains_type_parameter_named(name))
-            }
-            Type::InterfaceObject { traits, .. } => {
-                traits.iter().any(|c| c.trait_type_args.iter().any(|t| t.contains_type_parameter_named(name)))
-            }
+            Type::GenericClass { type_args, .. } => type_args
+                .iter()
+                .any(|(_, t)| t.contains_type_parameter_named(name)),
+            Type::InterfaceObject { traits, .. } => traits.iter().any(|c| {
+                c.trait_type_args
+                    .iter()
+                    .any(|t| t.contains_type_parameter_named(name))
+            }),
             Type::Newtype(_, inner) => inner.contains_type_parameter_named(name),
-            Type::GenericNewtype { type_args, concrete_inner_type, .. } => {
-                type_args.iter().any(|(_, t)| t.contains_type_parameter_named(name))
+            Type::GenericNewtype {
+                type_args,
+                concrete_inner_type,
+                ..
+            } => {
+                type_args
+                    .iter()
+                    .any(|(_, t)| t.contains_type_parameter_named(name))
                     || concrete_inner_type.contains_type_parameter_named(name)
             }
             Type::TupleProjection(receiver, _) => receiver.contains_type_parameter_named(name),
-            Type::TupleExtend(left, right) => left.contains_type_parameter_named(name) || right.contains_type_parameter_named(name),
+            Type::TupleExtend(left, right) => {
+                left.contains_type_parameter_named(name)
+                    || right.contains_type_parameter_named(name)
+            }
             Type::Tuple(types, _) => types.iter().any(|t| t.contains_type_parameter_named(name)),
             Type::Function(params, ret) => {
                 params.iter().any(|t| t.contains_type_parameter_named(name))
                     || ret.contains_type_parameter_named(name)
             }
-            Type::TypeConstructor { name: atn, type_args } => {
-                atn == name || type_args.iter().any(|t| t.contains_type_parameter_named(name))
+            Type::TypeConstructor {
+                name: atn,
+                type_args,
+            } => {
+                atn == name
+                    || type_args
+                        .iter()
+                        .any(|t| t.contains_type_parameter_named(name))
             }
             _ => false,
         }
     }
 
-
     /// Returns true if this type contains `SelfType` anywhere (including nested).
     pub fn contains_self_type(&self) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(Type::contains_self_type),
+            Type::AssociatedProjection(projection) => {
+                projection.types().any(Type::contains_self_type)
+            }
             Type::SelfType => true,
             Type::Array(elem) => elem.contains_self_type(),
             Type::GenericRecord { type_args, .. } | Type::GenericEnum { type_args, .. } => {
@@ -760,16 +919,22 @@ impl Type {
             Type::GenericClass { type_args, .. } => {
                 type_args.iter().any(|(_, t)| t.contains_self_type())
             }
-            Type::InterfaceObject { traits, .. } => {
-                traits.iter().any(|c| c.trait_type_args.iter().any(|t| t.contains_self_type()))
-            }
+            Type::InterfaceObject { traits, .. } => traits
+                .iter()
+                .any(|c| c.trait_type_args.iter().any(|t| t.contains_self_type())),
             Type::Newtype(_, inner) => inner.contains_self_type(),
-            Type::GenericNewtype { type_args, concrete_inner_type, .. } => {
+            Type::GenericNewtype {
+                type_args,
+                concrete_inner_type,
+                ..
+            } => {
                 type_args.iter().any(|(_, t)| t.contains_self_type())
                     || concrete_inner_type.contains_self_type()
             }
             Type::TupleProjection(receiver, _) => receiver.contains_self_type(),
-            Type::TupleExtend(left, right) => left.contains_self_type() || right.contains_self_type(),
+            Type::TupleExtend(left, right) => {
+                left.contains_self_type() || right.contains_self_type()
+            }
             Type::Tuple(types, _) => types.iter().any(|t| t.contains_self_type()),
             Type::Function(params, ret) => {
                 params.iter().any(|t| t.contains_self_type()) || ret.contains_self_type()
@@ -826,7 +991,12 @@ impl Type {
 
     pub fn try_to_fqn(&self) -> Option<Fqn> {
         match self {
-            Type::TypeVariable(..) | Type::GenericParam(..) | Type::TypeConstructor { .. } | Type::SelfType | Type::TupleProjection(..) | Type::AssociatedProjection(..) => None,
+            Type::TypeVariable(..)
+            | Type::GenericParam(..)
+            | Type::TypeConstructor { .. }
+            | Type::SelfType
+            | Type::TupleProjection(..)
+            | Type::AssociatedProjection(..) => None,
             Type::TupleExtend(..) => Some(self.to_fqn()),
             // An intersection has no single FQN.
             Type::InterfaceObject { traits, .. } if traits.len() > 1 => None,
@@ -860,7 +1030,14 @@ impl Type {
             Type::TupleProjection(..) => "TupleProjection",
             Type::AssociatedProjection(..) => "AssociatedProjection",
             Type::TupleExtend(..) => "TupleExtend",
-            Type::Record(fqn, _) | Type::Enum(fqn, _) | Type::Class(fqn, _) | Type::GenericRecord { fqn, .. } | Type::GenericEnum { fqn, .. } | Type::GenericClass { fqn, .. } | Type::Newtype(fqn, _) | Type::GenericNewtype { fqn, .. } => return fqn.clone(),
+            Type::Record(fqn, _)
+            | Type::Enum(fqn, _)
+            | Type::Class(fqn, _)
+            | Type::GenericRecord { fqn, .. }
+            | Type::GenericEnum { fqn, .. }
+            | Type::GenericClass { fqn, .. }
+            | Type::Newtype(fqn, _)
+            | Type::GenericNewtype { fqn, .. } => return fqn.clone(),
             Type::Tuple(types, _) => {
                 return Fqn {
                     package: PackagePath(vec![]),
@@ -905,11 +1082,15 @@ impl Type {
     /// anywhere inside either side.
     pub fn contains_interface_object(&self) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(Type::contains_interface_object),
+            Type::AssociatedProjection(projection) => {
+                projection.types().any(Type::contains_interface_object)
+            }
             Type::InterfaceObject { .. } => true,
             Type::Array(elem) | Type::Newtype(_, elem) => elem.contains_interface_object(),
             Type::TupleProjection(receiver, _) => receiver.contains_interface_object(),
-            Type::TupleExtend(left, right) => left.contains_interface_object() || right.contains_interface_object(),
+            Type::TupleExtend(left, right) => {
+                left.contains_interface_object() || right.contains_interface_object()
+            }
             Type::Tuple(types, _) => types.iter().any(|t| t.contains_interface_object()),
             Type::Function(params, ret) => {
                 params.iter().any(|t| t.contains_interface_object())
@@ -928,54 +1109,77 @@ impl Type {
     /// Whether a deferred extension remains anywhere in the type.
     pub fn contains_tuple_extension(&self) -> bool {
         match self {
-            Type::AssociatedProjection(projection) => projection.types().any(Type::contains_tuple_extension),
+            Type::AssociatedProjection(projection) => {
+                projection.types().any(Type::contains_tuple_extension)
+            }
             Type::TupleProjection(receiver, _) => receiver.contains_tuple_extension(),
             Type::TupleExtend(..) => true,
             Type::Array(element) | Type::Newtype(_, element) => element.contains_tuple_extension(),
-            Type::Tuple(elements, _) | Type::TypeConstructor { type_args: elements, .. } => {
-                elements.iter().any(Type::contains_tuple_extension)
-            }
+            Type::Tuple(elements, _)
+            | Type::TypeConstructor {
+                type_args: elements,
+                ..
+            } => elements.iter().any(Type::contains_tuple_extension),
             Type::Function(parameters, result) => {
-                parameters.iter().any(Type::contains_tuple_extension) || result.contains_tuple_extension()
+                parameters.iter().any(Type::contains_tuple_extension)
+                    || result.contains_tuple_extension()
             }
-            Type::GenericRecord { type_args, .. } | Type::GenericEnum { type_args, .. }
-            | Type::GenericClass { type_args, .. } | Type::GenericNewtype { type_args, .. } => {
-                type_args.iter().any(|(_, ty)| ty.contains_tuple_extension())
-            }
+            Type::GenericRecord { type_args, .. }
+            | Type::GenericEnum { type_args, .. }
+            | Type::GenericClass { type_args, .. }
+            | Type::GenericNewtype { type_args, .. } => type_args
+                .iter()
+                .any(|(_, ty)| ty.contains_tuple_extension()),
             Type::InterfaceObject { traits, .. } => traits.iter().any(|component| {
-                component.trait_type_args.iter().any(Type::contains_tuple_extension)
+                component
+                    .trait_type_args
+                    .iter()
+                    .any(Type::contains_tuple_extension)
             }),
             _ => false,
         }
     }
 
     pub fn is_recursive_tuple_head(&self, parameters: &[TypeParamName]) -> bool {
-        let Type::TupleExtend(left, right) = self else { return false };
+        let Type::TupleExtend(left, right) = self else {
+            return false;
+        };
         match (&**left, &**right) {
-            (Type::TypeVariable(l, _), Type::TypeVariable(r, _)) => parameters.contains(l) && parameters.contains(r) && left.is_tuple(),
+            (Type::TypeVariable(l, _), Type::TypeVariable(r, _)) => {
+                parameters.contains(l) && parameters.contains(r) && left.is_tuple()
+            }
             _ => false,
         }
     }
 
     /// A tuple-constrained extension has one unambiguous prefix/final split.
     pub fn split_tuple_extension(&self, actual: &Type) -> Option<(Type, Type)> {
-        let Type::TupleExtend(left, _) = self else { return None };
-        if !left.is_tuple() { return None; }
+        let Type::TupleExtend(left, _) = self else {
+            return None;
+        };
+        if !left.is_tuple() {
+            return None;
+        }
         match actual {
             Type::Tuple(elements, _) if elements.len() >= 3 => Some((
                 Type::tuple_projection(actual.clone(), TupleProjection::Init),
                 Type::tuple_projection(actual.clone(), TupleProjection::Last),
             )),
-            Type::TupleExtend(prefix, last) if prefix.is_tuple() => Some(((**prefix).clone(), (**last).clone())),
+            Type::TupleExtend(prefix, last) if prefix.is_tuple() => {
+                Some(((**prefix).clone(), (**last).clone()))
+            }
             _ => None,
         }
     }
 
     /// A provably decreasing obligation does not spend the cyclic-trait budget.
     pub fn has_tuple_subterm(&self, candidate: &Type) -> bool {
-        let Type::Tuple(elements, _) = self else { return false };
-        elements.contains(candidate) || (elements.len() > 2
-            && Type::tuple_projection(self.clone(), TupleProjection::Init) == *candidate)
+        let Type::Tuple(elements, _) = self else {
+            return false;
+        };
+        elements.contains(candidate)
+            || (elements.len() > 2
+                && Type::tuple_projection(self.clone(), TupleProjection::Init) == *candidate)
     }
 
     /// Structural tuple evidence, independent of element trait implementations.
@@ -983,8 +1187,10 @@ impl Type {
         match self {
             Type::Tuple(elements, _) => elements.len() >= 2,
             Type::TupleExtend(..) => true,
-            Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) =>
-                bounds.iter().filter_map(TraitBound::named).any(|b| is_tuple_constraint(&b.trait_fqn)),
+            Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) => bounds
+                .iter()
+                .filter_map(TraitBound::named)
+                .any(|b| is_tuple_constraint(&b.trait_fqn)),
             _ => false,
         }
     }
@@ -992,10 +1198,14 @@ impl Type {
     pub fn tuple_projection(receiver: Type, kind: TupleProjection) -> Type {
         match (&receiver, kind) {
             (Type::Error, _) => Type::Error,
-            (Type::Tuple(elements, _), TupleProjection::Last) => elements.last().cloned().unwrap_or(Type::Error),
-            (Type::Tuple(elements, _), TupleProjection::Init) if elements.len() == 2 => elements[0].clone(),
+            (Type::Tuple(elements, _), TupleProjection::Last) => {
+                elements.last().cloned().unwrap_or(Type::Error)
+            }
+            (Type::Tuple(elements, _), TupleProjection::Init) if elements.len() == 2 => {
+                elements[0].clone()
+            }
             (Type::Tuple(elements, _), TupleProjection::Init) if elements.len() > 2 => {
-                let prefix = elements[..elements.len()-1].to_vec();
+                let prefix = elements[..elements.len() - 1].to_vec();
                 let name = MangledName::for_tuple(&prefix);
                 Type::Tuple(prefix, name)
             }
@@ -1007,11 +1217,18 @@ impl Type {
 
     /// Normalize extension only when the left operand's outer shape is known.
     pub fn tuple_extend(left: Type, right: Type) -> Type {
-        if left.is_error() || right.is_error() { return Type::Error; }
+        if left.is_error() || right.is_error() {
+            return Type::Error;
+        }
         let mut elements = match left {
             Type::Tuple(elements, _) => elements,
-            Type::TypeVariable(..) | Type::GenericParam(..) | Type::SelfType
-            | Type::TypeConstructor { .. } | Type::TupleExtend(..) | Type::TupleProjection(..) | Type::AssociatedProjection(..) => {
+            Type::TypeVariable(..)
+            | Type::GenericParam(..)
+            | Type::SelfType
+            | Type::TypeConstructor { .. }
+            | Type::TupleExtend(..)
+            | Type::TupleProjection(..)
+            | Type::AssociatedProjection(..) => {
                 return Type::TupleExtend(Box::new(left), Box::new(right));
             }
             _ => vec![left],
@@ -1024,19 +1241,50 @@ impl Type {
     /// Get the MangledName for a concrete type.
     pub fn mangled_name(&self) -> MangledName {
         match self {
-            Type::AssociatedProjection(projection) => MangledName(format!("$Associated${}${}${}${}${}", projection.receiver.mangled_name(), projection.trait_fqn, projection.member,
-                projection.trait_parameters.iter().map(ToString::to_string).collect::<Vec<_>>().join(","),
-                projection.parameters.iter().map(ToString::to_string).collect::<Vec<_>>().join(","))),
-            Type::TupleProjection(receiver, kind) => MangledName(format!("$Tuple{kind:?}${}", receiver.mangled_name())),
-            Type::TupleExtend(left, right) => MangledName(format!("$Extend${}${}", left.mangled_name(), right.mangled_name())),
+            Type::AssociatedProjection(projection) => MangledName(format!(
+                "$Associated${}${}${}${}${}",
+                projection.receiver.mangled_name(),
+                projection.trait_fqn,
+                projection.member,
+                projection
+                    .trait_parameters
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
+                projection
+                    .parameters
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(",")
+            )),
+            Type::TupleProjection(receiver, kind) => {
+                MangledName(format!("$Tuple{kind:?}${}", receiver.mangled_name()))
+            }
+            Type::TupleExtend(left, right) => MangledName(format!(
+                "$Extend${}${}",
+                left.mangled_name(),
+                right.mangled_name()
+            )),
             Type::Class(_, mn)
-            | Type::GenericClass { mangled_name: mn, .. }
+            | Type::GenericClass {
+                mangled_name: mn, ..
+            }
             | Type::Record(_, mn)
-            | Type::GenericRecord { mangled_name: mn, .. }
+            | Type::GenericRecord {
+                mangled_name: mn, ..
+            }
             | Type::Enum(_, mn)
-            | Type::GenericEnum { mangled_name: mn, .. }
+            | Type::GenericEnum {
+                mangled_name: mn, ..
+            }
             | Type::Tuple(_, mn) => mn.clone(),
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => inner.mangled_name(),
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => inner.mangled_name(),
             Type::Array(elem) => MangledName::for_array_type(&elem.mangled_name()),
             // Len-1 must stay byte-identical to the old `for_type(to_fqn())`
             // fallback; intersections join the component names with `&`.
@@ -1050,7 +1298,6 @@ impl Type {
             _ => MangledName::for_type(&self.to_fqn()),
         }
     }
-
 }
 
 impl std::fmt::Display for Type {
@@ -1071,9 +1318,13 @@ impl std::fmt::Display for Type {
             Type::Uint128 => write!(f, "Uint128"),
             Type::Float32 => write!(f, "Float32"),
             Type::Float64 => write!(f, "Float64"),
-            Type::Record(fqn, _) | Type::Enum(fqn, _) | Type::Class(fqn, _) | Type::Newtype(fqn, _) => write!(f, "{}", fqn.symbol),
-            Type::GenericNewtype { fqn, type_args, .. } |
-            Type::GenericRecord { fqn, type_args, .. } | Type::GenericEnum { fqn, type_args, .. } => {
+            Type::Record(fqn, _)
+            | Type::Enum(fqn, _)
+            | Type::Class(fqn, _)
+            | Type::Newtype(fqn, _) => write!(f, "{}", fqn.symbol),
+            Type::GenericNewtype { fqn, type_args, .. }
+            | Type::GenericRecord { fqn, type_args, .. }
+            | Type::GenericEnum { fqn, type_args, .. } => {
                 let args: Vec<String> = type_args.iter().map(|(_, t)| t.to_string()).collect();
                 write!(f, "{}<{}>", fqn.symbol, args.join(", "))
             }
@@ -1084,7 +1335,16 @@ impl std::fmt::Display for Type {
             Type::AssociatedProjection(projection) => {
                 write!(f, "{}.{}", projection.receiver, projection.member)?;
                 if !projection.parameters.is_empty() {
-                    write!(f, "<{}>", projection.parameters.iter().map(ToString::to_string).collect::<Vec<_>>().join(", "))?;
+                    write!(
+                        f,
+                        "<{}>",
+                        projection
+                            .parameters
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )?;
                 }
                 Ok(())
             }
@@ -1275,8 +1535,18 @@ pub struct InterfaceIntersectionTypeDef {
     pub components: Vec<(Fqn, MangledName)>,
 }
 
+/// A component key and its ordered (member, implementation, type parameters) slots.
+pub type VtableMethodGroup = (
+    MangledName,
+    Vec<(InterfaceMemberName, MangledName, Vec<Type>)>,
+);
+
 /// A type definition — codegen emits one WASM type (or a run of them) per variant.
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Keep compiler data inline without adding allocations to this representation."
+)]
 pub enum TypeDef {
     Record(RecordTypeDef),
     Enum(EnumTypeDef),
@@ -1420,7 +1690,7 @@ pub struct TypedModule {
 pub struct SyntheticInterfaceCoercion {
     pub concrete_type: Type,
     pub interface_mangled_name: MangledName,
-    pub vtable_methods: Vec<(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)>,
+    pub vtable_methods: Vec<VtableMethodGroup>,
 }
 
 /// A type-checked implement block — all method bodies fully typed.
@@ -1522,8 +1792,10 @@ impl TypedModule {
         self.extension_blocks.extend(other.extension_blocks);
         self.resources.extend(other.resources);
         self.default_templates.extend(other.default_templates);
-        self.synthetic_interface_coercions.extend(other.synthetic_interface_coercions);
-        self.direct_rebox_authorizations.extend(other.direct_rebox_authorizations);
+        self.synthetic_interface_coercions
+            .extend(other.synthetic_interface_coercions);
+        self.direct_rebox_authorizations
+            .extend(other.direct_rebox_authorizations);
     }
 }
 
@@ -1800,7 +2072,9 @@ pub enum IntrinsicKind {
     /// debug(value: String) — print string to stdout
     DebugPrint,
     /// debug<T>(value: T) where T: Display — call format then print to stdout
-    DebugPrintDisplay { format_method: MangledName },
+    DebugPrintDisplay {
+        format_method: MangledName,
+    },
     /// WallClock.now() -> Instant
     WallClockNow,
     /// Random.bytes(len: Int64) -> Array<Uint8>
@@ -1825,7 +2099,10 @@ pub enum IntrinsicKind {
     /// is resolved at typecheck time to a concrete resource registered in
     /// the calling project. Codegen lowers each call site to a single
     /// `array.new_data` over the corresponding passive data segment.
-    ResourceBytes { resource_name: String, declaring_root: PackagePath },
+    ResourceBytes {
+        resource_name: String,
+        declaring_root: PackagePath,
+    },
 }
 
 /// The kind of a typed expression.
@@ -2048,7 +2325,7 @@ pub enum TypedExprKind {
         inner: Box<TypedExpr>,
         interface_mangled_name: MangledName,
         concrete_type: Type,
-        vtable_methods: Vec<(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)>,
+        vtable_methods: Vec<VtableMethodGroup>,
     },
     /// Template version of InterfaceObjectCoerce — emitted in generic template bodies
     /// when the concrete type contains a TypeVariable/GenericParam. Monomorphize resolves this
@@ -2251,6 +2528,110 @@ pub struct TypedMatchArm {
     pub span: Span,
 }
 
+/// Native implementations of the prelude's arithmetic and concatenation traits.
+pub(crate) fn primitive_binary_operator(
+    fqn: &Fqn,
+    method: &str,
+) -> Option<crate::parser::ast::BinOp> {
+    use crate::parser::ast::BinOp;
+    if fqn.package.to_string() != "standard.prelude" {
+        return None;
+    }
+    if fqn.symbol.0 == "String" {
+        return (method == "concat").then_some(BinOp::Concat);
+    }
+    if !matches!(
+        fqn.symbol.0.as_str(),
+        "Int8"
+            | "Int16"
+            | "Int32"
+            | "Int64"
+            | "Uint8"
+            | "Uint16"
+            | "Uint32"
+            | "Uint64"
+            | "Uint128"
+            | "Float32"
+            | "Float64"
+    ) {
+        return None;
+    }
+    match method {
+        "add" => Some(BinOp::Add),
+        "sub" => Some(BinOp::Sub),
+        "mul" => Some(BinOp::Mul),
+        "div" if fqn.symbol.0 != "Uint128" => Some(BinOp::Div),
+        _ => None,
+    }
+}
+
+/// The type segment for members of an implement block (see
+/// `MangledName::for_impl_block_method`).
+///
+/// - Non-generic block: the for-type's `impl_segment` — sibling
+///   instantiations (`Tr for List<Int32>` vs `Tr for List<String>`) mangle
+///   distinctly; plain types stay byte-identical to the historical bare-FQN
+///   segment.
+/// - Generic block whose for-type is the *trivial application* of its own
+///   type params in order (`<T> Tr for List<T>` — the overwhelmingly common
+///   shape): the historical bare-FQN segment, byte-identical; the
+///   instantiation is distinguished by `with_type_args`.
+/// - Generic block with a *shaped* for-type (`<T> Tr for Pair<T, Int32>`):
+///   the shaped `impl_segment` (variables render by name) — without it, two
+///   sibling shaped blocks instantiated at the same bindings would collide
+///   (`Pair<T, Int32>` and `Pair<T, String>` both at `T := Bool`).
+pub fn impl_block_segment(for_type: &Type, type_params: &[TypeParamName]) -> String {
+    if type_params.is_empty() {
+        return for_type.impl_segment();
+    }
+    let arg_is_param = |t: &Type, p: &TypeParamName| matches!(t, Type::TypeVariable(n, _) | Type::GenericParam(n, _, _) if n == p);
+    let trivial = match for_type {
+        Type::GenericRecord { type_args, .. }
+        | Type::GenericEnum { type_args, .. }
+        | Type::GenericClass { type_args, .. }
+        | Type::GenericNewtype { type_args, .. } => {
+            type_args.len() == type_params.len()
+                && type_args
+                    .iter()
+                    .zip(type_params.iter())
+                    .all(|((_, t), p)| arg_is_param(t, p))
+        }
+        Type::Array(elem) => type_params.len() == 1 && arg_is_param(elem, &type_params[0]),
+        // Shaped tuple/function for-types are never "trivial" — their shape
+        // must appear in the segment so shaped siblings stay distinct.
+        Type::Tuple(elems, _) => {
+            elems.len() == type_params.len()
+                && elems
+                    .iter()
+                    .zip(type_params.iter())
+                    .all(|(t, p)| arg_is_param(t, p))
+        }
+        Type::Function(..) => false,
+        _ => true,
+    };
+    if trivial {
+        for_type
+            .try_to_fqn()
+            .map(|f| f.to_string())
+            .unwrap_or_else(|| for_type.impl_segment())
+    } else {
+        for_type.impl_segment()
+    }
+}
+
+/// Mangled name for a member of an implement block, aware of the block's
+/// for-type shape (see `impl_block_segment`).
+pub fn impl_member_mangled_name(
+    trait_fqn: &Fqn,
+    for_type: &Type,
+    type_params: &[TypeParamName],
+    method_name: &SymbolName,
+    trait_type_args: &[Type],
+) -> MangledName {
+    let segment = impl_block_segment(for_type, type_params);
+    MangledName::for_impl_block_method(trait_fqn, &segment, method_name, trait_type_args)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2309,110 +2690,4 @@ mod tests {
                 .contains_key(&MangledName("a.utils.helper".to_string()))
         );
     }
-}
-
-/// Native implementations of the prelude's arithmetic and concatenation traits.
-pub(crate) fn primitive_binary_operator(
-    fqn: &Fqn,
-    method: &str,
-) -> Option<crate::parser::ast::BinOp> {
-    use crate::parser::ast::BinOp;
-    if fqn.package.to_string() != "standard.prelude" {
-        return None;
-    }
-    if fqn.symbol.0 == "String" {
-        return (method == "concat").then_some(BinOp::Concat);
-    }
-    if !matches!(
-        fqn.symbol.0.as_str(),
-        "Int8"
-            | "Int16"
-            | "Int32"
-            | "Int64"
-            | "Uint8"
-            | "Uint16"
-            | "Uint32"
-            | "Uint64"
-            | "Uint128"
-            | "Float32"
-            | "Float64"
-    ) {
-        return None;
-    }
-    match method {
-        "add" => Some(BinOp::Add),
-        "sub" => Some(BinOp::Sub),
-        "mul" => Some(BinOp::Mul),
-        "div" if fqn.symbol.0 != "Uint128" => Some(BinOp::Div),
-        _ => None,
-    }
-}
-
-/// The type segment for members of an implement block (see
-/// `MangledName::for_impl_block_method`).
-///
-/// - Non-generic block: the for-type's `impl_segment` — sibling
-///   instantiations (`Tr for List<Int32>` vs `Tr for List<String>`) mangle
-///   distinctly; plain types stay byte-identical to the historical bare-FQN
-///   segment.
-/// - Generic block whose for-type is the *trivial application* of its own
-///   type params in order (`<T> Tr for List<T>` — the overwhelmingly common
-///   shape): the historical bare-FQN segment, byte-identical; the
-///   instantiation is distinguished by `with_type_args`.
-/// - Generic block with a *shaped* for-type (`<T> Tr for Pair<T, Int32>`):
-///   the shaped `impl_segment` (variables render by name) — without it, two
-///   sibling shaped blocks instantiated at the same bindings would collide
-///   (`Pair<T, Int32>` and `Pair<T, String>` both at `T := Bool`).
-pub fn impl_block_segment(for_type: &Type, type_params: &[TypeParamName]) -> String {
-    if type_params.is_empty() {
-        return for_type.impl_segment();
-    }
-    let arg_is_param = |t: &Type, p: &TypeParamName| {
-        matches!(t, Type::TypeVariable(n, _) | Type::GenericParam(n, _, _) if n == p)
-    };
-    let trivial = match for_type {
-        Type::GenericRecord { type_args, .. }
-        | Type::GenericEnum { type_args, .. }
-        | Type::GenericClass { type_args, .. }
-        | Type::GenericNewtype { type_args, .. } => {
-            type_args.len() == type_params.len()
-                && type_args
-                    .iter()
-                    .zip(type_params.iter())
-                    .all(|((_, t), p)| arg_is_param(t, p))
-        }
-        Type::Array(elem) => type_params.len() == 1 && arg_is_param(elem, &type_params[0]),
-        // Shaped tuple/function for-types are never "trivial" — their shape
-        // must appear in the segment so shaped siblings stay distinct.
-        Type::Tuple(elems, _) => {
-            elems.len() == type_params.len()
-                && elems
-                    .iter()
-                    .zip(type_params.iter())
-                    .all(|(t, p)| arg_is_param(t, p))
-        }
-        Type::Function(..) => false,
-        _ => true,
-    };
-    if trivial {
-        for_type
-            .try_to_fqn()
-            .map(|f| f.to_string())
-            .unwrap_or_else(|| for_type.impl_segment())
-    } else {
-        for_type.impl_segment()
-    }
-}
-
-/// Mangled name for a member of an implement block, aware of the block's
-/// for-type shape (see `impl_block_segment`).
-pub fn impl_member_mangled_name(
-    trait_fqn: &Fqn,
-    for_type: &Type,
-    type_params: &[TypeParamName],
-    method_name: &SymbolName,
-    trait_type_args: &[Type],
-) -> MangledName {
-    let segment = impl_block_segment(for_type, type_params);
-    MangledName::for_impl_block_method(trait_fqn, &segment, method_name, trait_type_args)
 }

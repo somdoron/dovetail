@@ -59,12 +59,25 @@ fn encode_instance_key(out: &mut String, ty: &Type) {
         Type::AssociatedProjection(projection) => {
             out.push_str("associated(");
             encode_fqn(out, &projection.trait_fqn);
-            out.push_str(&format!(";{};{};", projection.member, projection.trait_parameters.len()));
-            for parameter in projection.types() { encode_instance_key(out, parameter); }
+            out.push_str(&format!(
+                ";{};{};",
+                projection.member,
+                projection.trait_parameters.len()
+            ));
+            for parameter in projection.types() {
+                encode_instance_key(out, parameter);
+            }
             out.push(')');
-        },
-        Type::TupleProjection(receiver, kind) => { out.push_str(&format!("projection:{kind:?};")); encode_instance_key(out, receiver); }
-        Type::TupleExtend(left, right) => { out.push_str("extend;"); encode_instance_key(out, left); encode_instance_key(out, right); }
+        }
+        Type::TupleProjection(receiver, kind) => {
+            out.push_str(&format!("projection:{kind:?};"));
+            encode_instance_key(out, receiver);
+        }
+        Type::TupleExtend(left, right) => {
+            out.push_str("extend;");
+            encode_instance_key(out, left);
+            encode_instance_key(out, right);
+        }
         Type::Unit => out.push_str("u;"),
         Type::Bool => out.push_str("b;"),
         Type::String => out.push_str("s;"),
@@ -84,24 +97,50 @@ fn encode_instance_key(out: &mut String, ty: &Type) {
         Type::Any => out.push_str("*;"),
         Type::Error => out.push_str("err;"),
         Type::SelfType => out.push_str("self;"),
-        Type::Record(fqn, _) => { out.push('R'); encode_fqn(out, fqn); out.push(';'); }
-        Type::Enum(fqn, _) => { out.push('E'); encode_fqn(out, fqn); out.push(';'); }
-        Type::Class(fqn, _) => { out.push('C'); encode_fqn(out, fqn); out.push(';'); }
+        Type::Record(fqn, _) => {
+            out.push('R');
+            encode_fqn(out, fqn);
+            out.push(';');
+        }
+        Type::Enum(fqn, _) => {
+            out.push('E');
+            encode_fqn(out, fqn);
+            out.push(';');
+        }
+        Type::Class(fqn, _) => {
+            out.push('C');
+            encode_fqn(out, fqn);
+            out.push(';');
+        }
         Type::GenericRecord { fqn, type_args, .. } => encode_generic(out, "gR", fqn, type_args),
         Type::GenericEnum { fqn, type_args, .. } => encode_generic(out, "gE", fqn, type_args),
         Type::GenericClass { fqn, type_args, .. } => encode_generic(out, "gC", fqn, type_args),
         Type::GenericNewtype { fqn, type_args, .. } => encode_generic(out, "gN", fqn, type_args),
-        Type::Newtype(fqn, inner) => { out.push('N'); encode_fqn(out, fqn); out.push('{'); encode_instance_key(out, inner); out.push_str("};"); }
-        Type::Array(elem) => { out.push('['); encode_instance_key(out, elem); out.push_str("];"); }
+        Type::Newtype(fqn, inner) => {
+            out.push('N');
+            encode_fqn(out, fqn);
+            out.push('{');
+            encode_instance_key(out, inner);
+            out.push_str("};");
+        }
+        Type::Array(elem) => {
+            out.push('[');
+            encode_instance_key(out, elem);
+            out.push_str("];");
+        }
         Type::Tuple(elems, _) => {
             out.push('(');
-            for e in elems { encode_instance_key(out, e); }
+            for e in elems {
+                encode_instance_key(out, e);
+            }
             out.push_str(");");
         }
         Type::Function(params, ret) => {
             out.push('F');
             out.push('(');
-            for p in params { encode_instance_key(out, p); }
+            for p in params {
+                encode_instance_key(out, p);
+            }
             out.push_str("->");
             encode_instance_key(out, ret);
             out.push_str(");");
@@ -111,15 +150,23 @@ fn encode_instance_key(out: &mut String, ty: &Type) {
             // form; intersections join component encodings with '&'.
             out.push('O');
             for (i, c) in traits.iter().enumerate() {
-                if i > 0 { out.push('&'); }
+                if i > 0 {
+                    out.push('&');
+                }
                 encode_fqn(out, &c.trait_fqn);
                 out.push('(');
-                for t in &c.trait_type_args { encode_instance_key(out, t); }
+                for t in &c.trait_type_args {
+                    encode_instance_key(out, t);
+                }
                 out.push(')');
             }
             out.push(';');
         }
-        Type::TypeVariable(name, _) => { out.push('V'); out.push_str(&name.0); out.push(';'); }
+        Type::TypeVariable(name, _) => {
+            out.push('V');
+            out.push_str(&name.0);
+            out.push(';');
+        }
         Type::GenericParam(name, _, id) => {
             out.push('P');
             out.push_str(&name.0);
@@ -131,7 +178,9 @@ fn encode_instance_key(out: &mut String, ty: &Type) {
             out.push('K');
             out.push_str(&name.0);
             out.push('(');
-            for t in type_args { encode_instance_key(out, t); }
+            for t in type_args {
+                encode_instance_key(out, t);
+            }
             out.push_str(");");
         }
     }

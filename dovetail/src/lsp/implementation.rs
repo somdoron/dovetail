@@ -50,10 +50,10 @@ pub fn goto_implementation(
                 }
                 // Try extracting FQN from the function span's file to see if it's a trait
                 // For now, just use the function's vtable_self_type if present
-                if func.vtable_self_type.is_some() {
+                if let Some(self_type) = &func.vtable_self_type {
                     // This is a virtual method; find overrides
                     let method_short = extract_method_short_name(&name.0);
-                    if let Some(fqn) = type_to_fqn(func.vtable_self_type.as_ref().unwrap()) {
+                    if let Some(fqn) = type_to_fqn(self_type) {
                         return find_method_overrides(
                             &fqn,
                             &method_short,
@@ -101,13 +101,13 @@ fn find_trait_implementations(
     let mut locations = Vec::new();
 
     for block in registry.all_implement_blocks() {
-        if block.trait_fqn == *trait_fqn {
-            if let Some(uri) = file_path_to_uri(workspace_root, &block.span.file) {
-                locations.push(Location {
-                    uri,
-                    range: span_to_range(&block.span),
-                });
-            }
+        if block.trait_fqn == *trait_fqn
+            && let Some(uri) = file_path_to_uri(workspace_root, &block.span.file)
+        {
+            locations.push(Location {
+                uri,
+                range: span_to_range(&block.span),
+            });
         }
     }
 
@@ -115,24 +115,20 @@ fn find_trait_implementations(
 }
 
 /// Find all subclasses of a given class.
-fn find_subclasses(
-    parent_fqn: &Fqn,
-    registry: &Registry,
-    workspace_root: &Path,
-) -> Vec<Location> {
+fn find_subclasses(parent_fqn: &Fqn, registry: &Registry, workspace_root: &Path) -> Vec<Location> {
     let mut locations = Vec::new();
 
     for (child_fqn, sig) in registry.all_class_types() {
         if child_fqn == parent_fqn {
             continue;
         }
-        if registry.class_is_subtype(child_fqn, parent_fqn) {
-            if let Some(uri) = file_path_to_uri(workspace_root, &sig.span.file) {
-                locations.push(Location {
-                    uri,
-                    range: span_to_range(&sig.span),
-                });
-            }
+        if registry.class_is_subtype(child_fqn, parent_fqn)
+            && let Some(uri) = file_path_to_uri(workspace_root, &sig.span.file)
+        {
+            locations.push(Location {
+                uri,
+                range: span_to_range(&sig.span),
+            });
         }
     }
 
@@ -167,13 +163,13 @@ fn find_method_overrides(
                         &slot.impl_fqn,
                         &slot.param_types,
                     );
-                    if let Some(func) = super::source_functions::get(typed_module, &vt_mangled) {
-                        if let Some(uri) = file_path_to_uri(workspace_root, &func.span.file) {
-                            locations.push(Location {
-                                uri,
-                                range: span_to_range(&func.span),
-                            });
-                        }
+                    if let Some(func) = super::source_functions::get(typed_module, &vt_mangled)
+                        && let Some(uri) = file_path_to_uri(workspace_root, &func.span.file)
+                    {
+                        locations.push(Location {
+                            uri,
+                            range: span_to_range(&func.span),
+                        });
                     }
                 }
             }

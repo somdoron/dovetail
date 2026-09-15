@@ -1,8 +1,6 @@
 use crate::common::span::FilePath;
 use crate::common::types::VarName;
-use crate::typechecker::types::{
-    Type, TypedExpr, TypedExprKind, TypedModule, TypedPattern,
-};
+use crate::typechecker::types::{Type, TypedExpr, TypedExprKind, TypedModule, TypedPattern};
 
 use super::position::span_contains;
 
@@ -96,17 +94,22 @@ fn collect_locals_from_expr(
                 collect_locals_from_expr(value, file, line, column, locals);
             }
         }
-        TypedExprKind::If { condition, then_branch, else_branch } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             if condition.span.file == *file && span_contains(&condition.span, line, column) {
                 collect_locals_from_expr(condition, file, line, column, locals);
             } else if then_branch.span.file == *file
                 && span_contains(&then_branch.span, line, column)
             {
                 collect_locals_from_expr(then_branch, file, line, column, locals);
-            } else if let Some(eb) = else_branch {
-                if eb.span.file == *file && span_contains(&eb.span, line, column) {
-                    collect_locals_from_expr(eb, file, line, column, locals);
-                }
+            } else if let Some(eb) = else_branch
+                && eb.span.file == *file
+                && span_contains(&eb.span, line, column)
+            {
+                collect_locals_from_expr(eb, file, line, column, locals);
             }
         }
         TypedExprKind::While { condition, body } => {
@@ -130,7 +133,12 @@ fn collect_locals_from_expr(
                 }
             }
         }
-        TypedExprKind::ForLoop { pattern, iterable, body, .. } => {
+        TypedExprKind::ForLoop {
+            pattern,
+            iterable,
+            body,
+            ..
+        } => {
             if iterable.span.file == *file && span_contains(&iterable.span, line, column) {
                 collect_locals_from_expr(iterable, file, line, column, locals);
             } else if body.span.file == *file && span_contains(&body.span, line, column) {
@@ -150,10 +158,10 @@ fn collect_locals_from_expr(
                 collect_locals_from_expr(body, file, line, column, locals);
             }
         }
-        TypedExprKind::LetDestructure { value, .. } => {
-            if value.span.file == *file && span_contains(&value.span, line, column) {
-                collect_locals_from_expr(value, file, line, column, locals);
-            }
+        TypedExprKind::LetDestructure { value, .. }
+            if value.span.file == *file && span_contains(&value.span, line, column) =>
+        {
+            collect_locals_from_expr(value, file, line, column, locals);
         }
         _ => {}
     }
@@ -162,7 +170,12 @@ fn collect_locals_from_expr(
 /// Extract binding(s) from an expression if it's a Let or LetDestructure.
 fn collect_binding_from_expr(expr: &TypedExpr, locals: &mut Vec<LocalBinding>) {
     match &expr.kind {
-        TypedExprKind::Let { name, mutable, var_ty, .. } => {
+        TypedExprKind::Let {
+            name,
+            mutable,
+            var_ty,
+            ..
+        } => {
             locals.push(LocalBinding {
                 name: name.clone(),
                 ty: var_ty.clone(),
@@ -198,7 +211,9 @@ fn collect_pattern_bindings(pattern: &TypedPattern, locals: &mut Vec<LocalBindin
                 collect_pattern_bindings(&fp.pattern, locals);
             }
         }
-        TypedPattern::EnumVariant { payload_patterns, .. } => {
+        TypedPattern::EnumVariant {
+            payload_patterns, ..
+        } => {
             for p in payload_patterns {
                 collect_pattern_bindings(p, locals);
             }
@@ -208,7 +223,9 @@ fn collect_pattern_bindings(pattern: &TypedPattern, locals: &mut Vec<LocalBindin
                 collect_pattern_bindings(&fp.pattern, locals);
             }
         }
-        TypedPattern::Tuple { element_patterns, .. } => {
+        TypedPattern::Tuple {
+            element_patterns, ..
+        } => {
             for p in element_patterns {
                 collect_pattern_bindings(p, locals);
             }

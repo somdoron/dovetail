@@ -14,7 +14,11 @@ use crate::typechecker::types::{
 ///
 /// Runs after desugar_try and before the coerce pass.
 pub fn analyze_captures(module: &mut TypedModule) {
-    for func in module.functions.values_mut().chain(module.function_templates.values_mut()) {
+    for func in module
+        .functions
+        .values_mut()
+        .chain(module.function_templates.values_mut())
+    {
         let mut initial_scope = Scope::new();
         // Function params are immutable variables at depth 0
         for param in &func.params {
@@ -37,10 +41,8 @@ pub fn analyze_captures(module: &mut TypedModule) {
         let mut all_boxed = Vec::new();
         collect_all_boxed_vars(&func.body, &mut all_boxed);
         if !all_boxed.is_empty() {
-            func.body = set_boxed_flags(
-                std::mem::replace(&mut func.body, dummy_expr()),
-                &all_boxed,
-            );
+            func.body =
+                set_boxed_flags(std::mem::replace(&mut func.body, dummy_expr()), &all_boxed);
         }
     }
     for global in module.globals.values_mut() {
@@ -60,10 +62,8 @@ pub fn analyze_captures(module: &mut TypedModule) {
         let mut all_boxed = Vec::new();
         collect_all_boxed_vars(&test.body, &mut all_boxed);
         if !all_boxed.is_empty() {
-            test.body = set_boxed_flags(
-                std::mem::replace(&mut test.body, dummy_expr()),
-                &all_boxed,
-            );
+            test.body =
+                set_boxed_flags(std::mem::replace(&mut test.body, dummy_expr()), &all_boxed);
         }
     }
     for block in &mut module.implement_blocks {
@@ -126,7 +126,9 @@ pub fn analyze_captures(module: &mut TypedModule) {
     // in a function body captures its params. Without this pass their
     // `captures` stayed empty and codegen hit "undefined local: <param>".
     for type_def in module.types.values_mut() {
-        let TypeDef::Class(cls) = type_def else { continue };
+        let TypeDef::Class(cls) = type_def else {
+            continue;
+        };
         if cls.initializer.is_empty() && cls.extends_args.is_none() {
             continue;
         }
@@ -192,9 +194,12 @@ fn collect_all_boxed_vars(expr: &TypedExpr, names: &mut Vec<VarName>) {
                 collect_all_boxed_vars(e, names);
             }
         }
-        TypedExprKind::Let { value, .. } | TypedExprKind::Assign { value, .. }
-        | TypedExprKind::Panic { message: value } | TypedExprKind::BoxToAny { inner: value }
-        | TypedExprKind::NewtypeCreate { value } | TypedExprKind::NewtypeValue { value }
+        TypedExprKind::Let { value, .. }
+        | TypedExprKind::Assign { value, .. }
+        | TypedExprKind::Panic { message: value }
+        | TypedExprKind::BoxToAny { inner: value }
+        | TypedExprKind::NewtypeCreate { value }
+        | TypedExprKind::NewtypeValue { value }
         | TypedExprKind::GlobalAssign { value, .. }
         | TypedExprKind::Return { value, .. }
         | TypedExprKind::UnaryOp { operand: value, .. }
@@ -215,10 +220,16 @@ fn collect_all_boxed_vars(expr: &TypedExpr, names: &mut Vec<VarName>) {
             collect_all_boxed_vars(left, names);
             collect_all_boxed_vars(right, names);
         }
-        TypedExprKind::If { condition, then_branch, else_branch } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             collect_all_boxed_vars(condition, names);
             collect_all_boxed_vars(then_branch, names);
-            if let Some(e) = else_branch { collect_all_boxed_vars(e, names); }
+            if let Some(e) = else_branch {
+                collect_all_boxed_vars(e, names);
+            }
         }
         TypedExprKind::While { condition, body } => {
             collect_all_boxed_vars(condition, names);
@@ -226,7 +237,9 @@ fn collect_all_boxed_vars(expr: &TypedExpr, names: &mut Vec<VarName>) {
         }
         TypedExprKind::Assert { condition, message } => {
             collect_all_boxed_vars(condition, names);
-            if let Some(m) = message { collect_all_boxed_vars(m, names); }
+            if let Some(m) = message {
+                collect_all_boxed_vars(m, names);
+            }
         }
         TypedExprKind::FunctionCall { args, .. }
         | TypedExprKind::IntrinsicCall { args, .. }
@@ -235,33 +248,53 @@ fn collect_all_boxed_vars(expr: &TypedExpr, names: &mut Vec<VarName>) {
         | TypedExprKind::EnumVariantRecordCreate { args, .. }
         | TypedExprKind::ClassNew { args, .. }
         | TypedExprKind::ClassSuperCall { args, .. } => {
-            for a in args { collect_all_boxed_vars(a, names); }
+            for a in args {
+                collect_all_boxed_vars(a, names);
+            }
         }
         TypedExprKind::Match { subject, arms } => {
             collect_all_boxed_vars(subject, names);
             for arm in arms {
                 collect_all_boxed_vars(&arm.body, names);
-                if let Some(g) = &arm.guard { collect_all_boxed_vars(g, names); }
+                if let Some(g) = &arm.guard {
+                    collect_all_boxed_vars(g, names);
+                }
             }
         }
         TypedExprKind::RecordCreate { fields, .. } => {
-            for (_, e) in fields { collect_all_boxed_vars(e, names); }
+            for (_, e) in fields {
+                collect_all_boxed_vars(e, names);
+            }
         }
         TypedExprKind::TupleLiteral { elements } => {
-            for e in elements { collect_all_boxed_vars(e, names); }
+            for e in elements {
+                collect_all_boxed_vars(e, names);
+            }
         }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => {
             collect_all_boxed_vars(object, names);
-            for (_, _, e) in overrides { collect_all_boxed_vars(e, names); }
+            for (_, _, e) in overrides {
+                collect_all_boxed_vars(e, names);
+            }
         }
         TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. }
-        | TypedExprKind::ClassVirtualCall { object: receiver, args, .. } => {
+        | TypedExprKind::ClassVirtualCall {
+            object: receiver,
+            args,
+            ..
+        } => {
             collect_all_boxed_vars(receiver, names);
-            for a in args { collect_all_boxed_vars(a, names); }
+            for a in args {
+                collect_all_boxed_vars(a, names);
+            }
         }
         TypedExprKind::ClosureCall { callee, args } => {
             collect_all_boxed_vars(callee, names);
-            for a in args { collect_all_boxed_vars(a, names); }
+            for a in args {
+                collect_all_boxed_vars(a, names);
+            }
         }
         TypedExprKind::LetDestructure { value, .. } => {
             collect_all_boxed_vars(value, names);
@@ -284,8 +317,7 @@ fn collect_all_boxed_vars(expr: &TypedExpr, names: &mut Vec<VarName>) {
                 collect_all_boxed_vars(arg, names);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         _ => {}
     }
 }
@@ -334,11 +366,7 @@ fn lookup_var(scopes: &[Scope], name: &VarName) -> Option<VarInfo> {
 
 /// Two-pass approach: first collect what each closure captures, then rewrite.
 /// We do this in a single recursive walk by processing closures specially.
-fn analyze_expr(
-    expr: TypedExpr,
-    scopes: &mut Vec<Scope>,
-    closure_depth: usize,
-) -> TypedExpr {
+fn analyze_expr(expr: TypedExpr, scopes: &mut Vec<Scope>, closure_depth: usize) -> TypedExpr {
     let span = expr.span;
     let ty = expr.ty;
 
@@ -443,7 +471,6 @@ fn analyze_expr(
         }
 
         // === Recursive cases (same pattern as desugar_try.rs) ===
-
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(analyze_expr(*message, scopes, closure_depth)),
         },
@@ -465,13 +492,21 @@ fn analyze_expr(
             value: Box::new(analyze_expr(*value, scopes, closure_depth)),
         },
 
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
             name,
             type_params,
             value: Box::new(analyze_expr(*value, scopes, closure_depth)),
         },
 
-        TypedExprKind::FunctionCall { name, args, type_params } => TypedExprKind::FunctionCall {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => TypedExprKind::FunctionCall {
             name,
             args: args
                 .into_iter()
@@ -498,8 +533,7 @@ fn analyze_expr(
         } => TypedExprKind::If {
             condition: Box::new(analyze_expr(*condition, scopes, closure_depth)),
             then_branch: Box::new(analyze_expr(*then_branch, scopes, closure_depth)),
-            else_branch: else_branch
-                .map(|e| Box::new(analyze_expr(*e, scopes, closure_depth))),
+            else_branch: else_branch.map(|e| Box::new(analyze_expr(*e, scopes, closure_depth))),
         },
 
         TypedExprKind::While { condition, body } => TypedExprKind::While {
@@ -530,7 +564,11 @@ fn analyze_expr(
                 .collect(),
         },
 
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
             fqn,
             type_params,
             fields: fields
@@ -540,7 +578,10 @@ fn analyze_expr(
         },
 
         TypedExprKind::TupleLiteral { elements } => TypedExprKind::TupleLiteral {
-            elements: elements.into_iter().map(|e| analyze_expr(e, scopes, closure_depth)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| analyze_expr(e, scopes, closure_depth))
+                .collect(),
         },
 
         TypedExprKind::EnumCreate {
@@ -610,9 +651,7 @@ fn analyze_expr(
             type_params,
             overrides: overrides
                 .into_iter()
-                .map(|(name, idx, expr)| {
-                    (name, idx, analyze_expr(expr, scopes, closure_depth))
-                })
+                .map(|(name, idx, expr)| (name, idx, analyze_expr(expr, scopes, closure_depth)))
                 .collect(),
         },
 
@@ -697,7 +736,11 @@ fn analyze_expr(
                 .map(|a| analyze_expr(a, scopes, closure_depth))
                 .collect(),
         },
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
             mangled_name,
             type_params,
             args: args
@@ -705,7 +748,11 @@ fn analyze_expr(
                 .map(|a| analyze_expr(a, scopes, closure_depth))
                 .collect(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
             fields: fields
@@ -749,7 +796,11 @@ fn analyze_expr(
         TypedExprKind::BoxToAny { inner } => TypedExprKind::BoxToAny {
             inner: Box::new(analyze_expr(*inner, scopes, closure_depth)),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(analyze_expr(*object, scopes, closure_depth)),
             method_name,
             type_params,
@@ -792,7 +843,13 @@ fn analyze_expr(
             from_method,
         },
 
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => TypedExprKind::Await {
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
             operand: Box::new(analyze_expr(*operand, scopes, closure_depth)),
             return_type,
             and_then_method,
@@ -808,25 +865,47 @@ fn analyze_expr(
             unreachable!("ForLoop nodes should be desugared before capture analysis")
         }
 
-        TypedExprKind::AsyncBlock { body, succeed_method } => TypedExprKind::AsyncBlock {
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => TypedExprKind::AsyncBlock {
             body: Box::new(analyze_expr(*body, scopes, closure_depth)),
             succeed_method,
         },
 
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
+        TypedExprKind::ImplFunctionCall {
             trait_fqn,
             trait_type_params,
             for_type,
             method_name,
-            args: args.into_iter().map(|a| analyze_expr(a, scopes, closure_depth)).collect(),
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args: args
+                .into_iter()
+                .map(|a| analyze_expr(a, scopes, closure_depth))
+                .collect(),
             method_type_params,
         },
         kind @ TypedExprKind::ImplFunctionRef { .. } => kind,
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
+        TypedExprKind::ExtFunctionCall {
             ext_fqn,
             for_type,
             method_name,
-            args: args.into_iter().map(|a| analyze_expr(a, scopes, closure_depth)).collect(),
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args: args
+                .into_iter()
+                .map(|a| analyze_expr(a, scopes, closure_depth))
+                .collect(),
             type_params,
         },
         kind @ TypedExprKind::ExtFunctionRef { .. } => kind,
@@ -836,10 +915,7 @@ fn analyze_expr(
 }
 
 /// Define variables introduced by a pattern into the current scope.
-fn define_pattern_vars(
-    pattern: &TypedPattern,
-    scopes: &mut [Scope],
-) {
+fn define_pattern_vars(pattern: &TypedPattern, scopes: &mut [Scope]) {
     match pattern {
         TypedPattern::Variable(name, ty) => {
             if let Some(scope) = scopes.last_mut() {
@@ -875,9 +951,7 @@ fn define_pattern_vars(
                 define_pattern_vars(sub_pat, scopes);
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for field in field_patterns {
                 define_pattern_vars(&field.pattern, scopes);
             }
@@ -1031,9 +1105,15 @@ fn collect_captures_in_expr(
         | TypedExprKind::TypeCast { value: object, .. }
         | TypedExprKind::GlobalAssign { value: object, .. }
         | TypedExprKind::Return { value: object, .. }
-        | TypedExprKind::Try { operand: object, .. }
-        | TypedExprKind::Await { operand: object, .. }
-        | TypedExprKind::Use { operand: object, .. }
+        | TypedExprKind::Try {
+            operand: object, ..
+        }
+        | TypedExprKind::Await {
+            operand: object, ..
+        }
+        | TypedExprKind::Use {
+            operand: object, ..
+        }
         | TypedExprKind::AsyncBlock { body: object, .. } => {
             collect_captures_in_expr(object, scopes, captures);
         }
@@ -1108,8 +1188,7 @@ fn collect_captures_in_expr(
                 collect_captures_in_expr(arg, scopes, captures);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
     }
 }
 
@@ -1158,9 +1237,12 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
         }
 
         // Recursive cases
-        TypedExprKind::Block(exprs) => {
-            TypedExprKind::Block(exprs.into_iter().map(|e| set_boxed_flags(e, boxed_vars)).collect())
-        }
+        TypedExprKind::Block(exprs) => TypedExprKind::Block(
+            exprs
+                .into_iter()
+                .map(|e| set_boxed_flags(e, boxed_vars))
+                .collect(),
+        ),
         // Its captures and locals were already boxed when analyzing the closure.
         // Reapplying this body's names can mistake an immutable parameter in a
         // sibling closure for a mutable local with the same spelling.
@@ -1205,17 +1287,32 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
             condition: Box::new(set_boxed_flags(*condition, boxed_vars)),
             message: message.map(|m| Box::new(set_boxed_flags(*m, boxed_vars))),
         },
-        TypedExprKind::FunctionCall { name, args, type_params } => TypedExprKind::FunctionCall {
+        TypedExprKind::FunctionCall {
             name,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args,
+            type_params,
+        } => TypedExprKind::FunctionCall {
+            name,
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
             type_params,
         },
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
             name,
             type_params,
             value: Box::new(set_boxed_flags(*value, boxed_vars)),
         },
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
             fqn,
             type_params,
             fields: fields
@@ -1224,40 +1321,69 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
                 .collect(),
         },
         TypedExprKind::TupleLiteral { elements } => TypedExprKind::TupleLiteral {
-            elements: elements.into_iter().map(|e| set_boxed_flags(e, boxed_vars)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| set_boxed_flags(e, boxed_vars))
+                .collect(),
         },
-        TypedExprKind::EnumCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumCreate {
+        TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumCreate {
             fqn,
             variant_name,
             type_params,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
         },
-        TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, args, type_params } => {
-            TypedExprKind::EnumVariantRecordCreate {
-                fqn,
-                variant_name,
-                type_params,
-                args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
-            }
-        }
-        TypedExprKind::FieldAccess { object, field_name, field_index, boxed } => {
-            TypedExprKind::FieldAccess {
-                object: Box::new(set_boxed_flags(*object, boxed_vars)),
-                field_name,
-                field_index,
-                boxed,
-            }
-        }
-        TypedExprKind::FieldAssign { object, field_name, field_index, value, boxed } => {
-            TypedExprKind::FieldAssign {
-                object: Box::new(set_boxed_flags(*object, boxed_vars)),
-                field_name,
-                field_index,
-                value: Box::new(set_boxed_flags(*value, boxed_vars)),
-                boxed,
-            }
-        }
-        TypedExprKind::RecordWith { object, fqn, overrides, type_params } => TypedExprKind::RecordWith {
+        TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            type_params,
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
+        },
+        TypedExprKind::FieldAccess {
+            object,
+            field_name,
+            field_index,
+            boxed,
+        } => TypedExprKind::FieldAccess {
+            object: Box::new(set_boxed_flags(*object, boxed_vars)),
+            field_name,
+            field_index,
+            boxed,
+        },
+        TypedExprKind::FieldAssign {
+            object,
+            field_name,
+            field_index,
+            value,
+            boxed,
+        } => TypedExprKind::FieldAssign {
+            object: Box::new(set_boxed_flags(*object, boxed_vars)),
+            field_name,
+            field_index,
+            value: Box::new(set_boxed_flags(*value, boxed_vars)),
+            boxed,
+        },
+        TypedExprKind::RecordWith {
+            object,
+            fqn,
+            overrides,
+            type_params,
+        } => TypedExprKind::RecordWith {
             object: Box::new(set_boxed_flags(*object, boxed_vars)),
             fqn,
             type_params,
@@ -1267,11 +1393,17 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
                 .collect(),
         },
         TypedExprKind::ArrayLiteral { elements } => TypedExprKind::ArrayLiteral {
-            elements: elements.into_iter().map(|e| set_boxed_flags(e, boxed_vars)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| set_boxed_flags(e, boxed_vars))
+                .collect(),
         },
         TypedExprKind::IntrinsicCall { intrinsic, args } => TypedExprKind::IntrinsicCall {
             intrinsic,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
         },
         TypedExprKind::TypeTest { value, target_type } => TypedExprKind::TypeTest {
             value: Box::new(set_boxed_flags(*value, boxed_vars)),
@@ -1281,13 +1413,15 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
             value: Box::new(set_boxed_flags(*value, boxed_vars)),
             target_type,
         },
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => {
-            TypedExprKind::LetDestructure {
-                pattern,
-                var_ty,
-                value: Box::new(set_boxed_flags(*value, boxed_vars)),
-            }
-        }
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value: Box::new(set_boxed_flags(*value, boxed_vars)),
+        },
         TypedExprKind::NewtypeCreate { value } => TypedExprKind::NewtypeCreate {
             value: Box::new(set_boxed_flags(*value, boxed_vars)),
         },
@@ -1297,53 +1431,90 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
         TypedExprKind::BoxToAny { inner } => TypedExprKind::BoxToAny {
             inner: Box::new(set_boxed_flags(*inner, boxed_vars)),
         },
-        TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => {
-            TypedExprKind::InterfaceObjectCoerce {
-                inner: Box::new(set_boxed_flags(*inner, boxed_vars)),
-                interface_mangled_name,
-                concrete_type,
-                vtable_methods,
-            }
-        }
-        TypedExprKind::TemplateInterfaceObjectCoerce { inner, traits, concrete_type } => {
-            TypedExprKind::TemplateInterfaceObjectCoerce {
-                inner: Box::new(set_boxed_flags(*inner, boxed_vars)),
-                traits,
-                concrete_type,
-            }
-        }
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        } => TypedExprKind::InterfaceObjectCoerce {
+            inner: Box::new(set_boxed_flags(*inner, boxed_vars)),
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        },
+        TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner,
+            traits,
+            concrete_type,
+        } => TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner: Box::new(set_boxed_flags(*inner, boxed_vars)),
+            traits,
+            concrete_type,
+        },
         TypedExprKind::InterfaceObjectUpcast { inner } => TypedExprKind::InterfaceObjectUpcast {
             inner: Box::new(set_boxed_flags(*inner, boxed_vars)),
         },
-        TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver, args } => {
-            TypedExprKind::InterfaceObjectMethodCall {
-                interface_mangled_name,
-                method_name,
-                member_name,
-                receiver: Box::new(set_boxed_flags(*receiver, boxed_vars)),
-                args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
-            }
-        }
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
+        TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver,
+            args,
+        } => TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver: Box::new(set_boxed_flags(*receiver, boxed_vars)),
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
+        },
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
             mangled_name,
             type_params,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
-            fields: fields.into_iter().map(|f| set_boxed_flags(f, boxed_vars)).collect(),
+            fields: fields
+                .into_iter()
+                .map(|f| set_boxed_flags(f, boxed_vars))
+                .collect(),
         },
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => {
-            TypedExprKind::ClassVirtualCall {
-                object: Box::new(set_boxed_flags(*object, boxed_vars)),
-                vtable_slot,
-                args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
-            }
-        }
-        TypedExprKind::ClassSuperCall { method_mangled, args } => TypedExprKind::ClassSuperCall {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => TypedExprKind::ClassVirtualCall {
+            object: Box::new(set_boxed_flags(*object, boxed_vars)),
+            vtable_slot,
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
+        },
+        TypedExprKind::ClassSuperCall {
             method_mangled,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args,
+        } => TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
         },
         TypedExprKind::Return { value, return_type } => TypedExprKind::Return {
             value: Box::new(set_boxed_flags(*value, boxed_vars)),
@@ -1351,43 +1522,59 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
         },
         TypedExprKind::ClosureCall { callee, args } => TypedExprKind::ClosureCall {
             callee: Box::new(set_boxed_flags(*callee, boxed_vars)),
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(set_boxed_flags(*object, boxed_vars)),
             method_name,
             type_params,
         },
-        TypedExprKind::Try { operand, unwrap_method, unwrap_return_type, return_type, from_method } => {
-            TypedExprKind::Try {
-                operand: Box::new(set_boxed_flags(*operand, boxed_vars)),
-                unwrap_method,
-                unwrap_return_type,
-                return_type,
-                from_method,
-            }
-        }
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => {
-            TypedExprKind::Await {
-                operand: Box::new(set_boxed_flags(*operand, boxed_vars)),
-                return_type,
-                and_then_method,
-                map_method,
-                source_location_mn,
-            }
-        }
+        TypedExprKind::Try {
+            operand,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
+        } => TypedExprKind::Try {
+            operand: Box::new(set_boxed_flags(*operand, boxed_vars)),
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
+        },
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
+            operand: Box::new(set_boxed_flags(*operand, boxed_vars)),
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        },
         TypedExprKind::Use { .. } => {
             unreachable!("Use nodes should be desugared before capture analysis")
         }
         TypedExprKind::ForLoop { .. } => {
             unreachable!("ForLoop nodes should be desugared before capture analysis")
         }
-        TypedExprKind::AsyncBlock { body, succeed_method } => {
-            TypedExprKind::AsyncBlock {
-                body: Box::new(set_boxed_flags(*body, boxed_vars)),
-                succeed_method,
-            }
-        }
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => TypedExprKind::AsyncBlock {
+            body: Box::new(set_boxed_flags(*body, boxed_vars)),
+            succeed_method,
+        },
 
         // Leaf nodes — unchanged
         kind @ (TypedExprKind::UnitLiteral
@@ -1410,20 +1597,39 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
         | TypedExprKind::Break
         | TypedExprKind::Continue) => kind,
 
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
+        TypedExprKind::ImplFunctionCall {
             trait_fqn,
             trait_type_params,
             for_type,
             method_name,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
             method_type_params,
         },
         kind @ TypedExprKind::ImplFunctionRef { .. } => kind,
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
+        TypedExprKind::ExtFunctionCall {
             ext_fqn,
             for_type,
             method_name,
-            args: args.into_iter().map(|a| set_boxed_flags(a, boxed_vars)).collect(),
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args: args
+                .into_iter()
+                .map(|a| set_boxed_flags(a, boxed_vars))
+                .collect(),
             type_params,
         },
         kind @ TypedExprKind::ExtFunctionRef { .. } => kind,

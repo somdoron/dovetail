@@ -75,5 +75,7 @@ fn first_offending_type_param<'a>(
     ty: &Type,
     type_params: &'a [TypeParamName],
 ) -> Option<&'a TypeParamName> {
-    type_params.iter().find(|tp| ty.contains_type_parameter_named(tp))
+    type_params
+        .iter()
+        .find(|tp| ty.contains_type_parameter_named(tp))
 }

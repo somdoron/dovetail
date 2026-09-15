@@ -1,7 +1,9 @@
 use crate::common::types::{Fqn, MangledName, SymbolName, TypeParamName, VarName};
 use crate::parser::ast::{Expr, FunctionDecl};
 
-use crate::typechecker::types::{IntrinsicKind, TraitBounds, Type, TypedExpr, TypedExprKind, TypedFunction, TypedParam};
+use crate::typechecker::types::{
+    IntrinsicKind, TraitBounds, Type, TypedExpr, TypedExprKind, TypedFunction, TypedParam,
+};
 
 use super::Inference;
 
@@ -41,14 +43,17 @@ impl Inference<'_> {
         let Some(intrinsic) = self.class_identity_intrinsic(func) else {
             return self.infer_expr(&func.body);
         };
-        let args = params.iter().map(|param| TypedExpr {
-            kind: TypedExprKind::VarRef {
-                name: VarName(param.name.clone()),
-                boxed: false,
-            },
-            ty: param.ty.clone(),
-            span: param.span.clone(),
-        }).collect();
+        let args = params
+            .iter()
+            .map(|param| TypedExpr {
+                kind: TypedExprKind::VarRef {
+                    name: VarName(param.name.clone()),
+                    boxed: false,
+                },
+                ty: param.ty.clone(),
+                span: param.span.clone(),
+            })
+            .collect();
         TypedExpr {
             kind: TypedExprKind::IntrinsicCall { intrinsic, args },
             ty: return_type.clone(),
@@ -61,19 +66,19 @@ impl Inference<'_> {
         if !func.is_async {
             return;
         }
-        if func.return_type.is_none() {
+        let Some(declared_return_type) = &func.return_type else {
             self.diagnostics.error(
                 func.name.span.clone(),
                 "async functions must have an explicit return type".to_string(),
             );
-        } else {
-            let trait_fqn = Fqn::from_dotted("standard.prelude.Awaitable").unwrap();
-            if !self.type_satisfies_trait(&trait_fqn, &[], return_type, 0) {
-                self.diagnostics.error(
-                    func.return_type.as_ref().unwrap().span(),
-                    "async function return type must implement Awaitable".to_string(),
-                );
-            }
+            return;
+        };
+        let trait_fqn = Fqn::from_dotted("standard.prelude.Awaitable").unwrap();
+        if !self.type_satisfies_trait(&trait_fqn, &[], return_type, 0) {
+            self.diagnostics.error(
+                declared_return_type.span(),
+                "async function return type must implement Awaitable".to_string(),
+            );
         }
     }
 
@@ -82,7 +87,8 @@ impl Inference<'_> {
     /// Generic: type-check body as template, store with type_params for monomorphize.
     pub(super) fn infer_function(&mut self, func: &FunctionDecl) {
         // Other intrinsic functions are resolved directly in the call path.
-        if matches!(func.body, Expr::Intrinsic(_)) && self.class_identity_intrinsic(func).is_none() {
+        if matches!(func.body, Expr::Intrinsic(_)) && self.class_identity_intrinsic(func).is_none()
+        {
             return;
         }
         if !func.type_params.is_empty() {
@@ -113,7 +119,8 @@ impl Inference<'_> {
 
         // For async functions, body returns T (inner value), not the full Awaitable<T>
         let body_expected_type = if func.is_async {
-            self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+            self.resolve_awaitable_value_type(&return_type)
+                .unwrap_or(return_type.clone())
         } else {
             return_type.clone()
         };
@@ -221,7 +228,8 @@ impl Inference<'_> {
 
         // For async functions, body returns T (inner value), not the full Awaitable<T>
         let body_expected_type = if func.is_async {
-            self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+            self.resolve_awaitable_value_type(&return_type)
+                .unwrap_or(return_type.clone())
         } else {
             return_type.clone()
         };
@@ -269,7 +277,8 @@ impl Inference<'_> {
         let container_type_params: Vec<TypeParamName> = prev_type_params
             .iter()
             .filter(|(name, ty)| {
-                matches!(ty, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)) && !type_params.contains(name)
+                matches!(ty, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _))
+                    && !type_params.contains(name)
             })
             .map(|(name, _)| name.clone())
             .collect();

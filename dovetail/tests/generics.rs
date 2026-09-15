@@ -1401,7 +1401,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("'Self' cannot be used as a type parameter name")),
+        errors
+            .iter()
+            .any(|e| e.contains("'Self' cannot be used as a type parameter name")),
         "expected Self type param error, got: {:?}",
         errors
     );
@@ -1420,7 +1422,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("'Self' cannot be used as a type parameter name")),
+        errors
+            .iter()
+            .any(|e| e.contains("'Self' cannot be used as a type parameter name")),
         "expected Self type param error, got: {:?}",
         errors
     );
@@ -1591,7 +1595,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("references type parameter")),
+        errors
+            .iter()
+            .any(|e| e.contains("references type parameter")),
         "expected type-parameter rejection, got: {:?}",
         errors,
     );

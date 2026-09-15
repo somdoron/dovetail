@@ -5,9 +5,7 @@ use wasm_encoder::GlobalType;
 use super::Codegen;
 use super::function_emitter::{self, ExprContext};
 use crate::common::types::MangledName;
-use crate::typechecker::types::{
-    TypeDef, TypedExpr, TypedExprKind, TypedFunction, TypedPattern,
-};
+use crate::typechecker::types::{TypeDef, TypedExpr, TypedExprKind, TypedFunction, TypedPattern};
 
 impl Codegen<'_> {
     /// Emit user globals into the global section (after the bump allocator at index 0).
@@ -18,8 +16,12 @@ impl Codegen<'_> {
             let (val_type, init_expr) = match val_type {
                 wasm_encoder::ValType::I32 => (val_type, wasm_encoder::ConstExpr::i32_const(0)),
                 wasm_encoder::ValType::I64 => (val_type, wasm_encoder::ConstExpr::i64_const(0)),
-                wasm_encoder::ValType::F32 => (val_type, wasm_encoder::ConstExpr::f32_const(0.0f32.into())),
-                wasm_encoder::ValType::F64 => (val_type, wasm_encoder::ConstExpr::f64_const(0.0f64.into())),
+                wasm_encoder::ValType::F32 => {
+                    (val_type, wasm_encoder::ConstExpr::f32_const(0.0f32.into()))
+                }
+                wasm_encoder::ValType::F64 => {
+                    (val_type, wasm_encoder::ConstExpr::f64_const(0.0f64.into()))
+                }
                 wasm_encoder::ValType::Ref(ref_type) => {
                     // Globals for ref types must be nullable (initialized with ref.null).
                     // When reading, we emit ref.as_non_null to convert back.
@@ -110,11 +112,11 @@ impl Codegen<'_> {
                 &self.typed_module.types,
             );
             for dep in &deps {
-                if let Some(&dep_idx) = name_to_idx.get(dep) {
-                    if dep_idx != i {
-                        dependents[dep_idx].push(i);
-                        in_degree[i] += 1;
-                    }
+                if let Some(&dep_idx) = name_to_idx.get(dep)
+                    && dep_idx != i
+                {
+                    dependents[dep_idx].push(i);
+                    in_degree[i] += 1;
                 }
             }
         }
@@ -209,7 +211,14 @@ fn walk_called_function(
         return;
     }
     if let Some(function) = functions.get(name) {
-        walk_for_global_refs(&function.body, refs, functions, types, visited_functions, visited_classes);
+        walk_for_global_refs(
+            &function.body,
+            refs,
+            functions,
+            types,
+            visited_functions,
+            visited_classes,
+        );
     }
 }
 
@@ -238,12 +247,33 @@ fn walk_class_hierarchy(
     };
     if let (Some(extends_args), Some(parent)) = (&cls.extends_args, &cls.parent_mangled_name) {
         for arg in extends_args {
-            walk_for_global_refs(arg, refs, functions, types, visited_functions, visited_classes);
+            walk_for_global_refs(
+                arg,
+                refs,
+                functions,
+                types,
+                visited_functions,
+                visited_classes,
+            );
         }
-        walk_class_hierarchy(parent, refs, functions, types, visited_functions, visited_classes);
+        walk_class_hierarchy(
+            parent,
+            refs,
+            functions,
+            types,
+            visited_functions,
+            visited_classes,
+        );
     }
     for stmt in &cls.initializer {
-        walk_for_global_refs(stmt, refs, functions, types, visited_functions, visited_classes);
+        walk_for_global_refs(
+            stmt,
+            refs,
+            functions,
+            types,
+            visited_functions,
+            visited_classes,
+        );
     }
 }
 
@@ -259,7 +289,14 @@ fn walk_for_global_refs(
                 refs: &mut Vec<MangledName>,
                 visited_functions: &mut BTreeSet<MangledName>,
                 visited_classes: &mut BTreeSet<MangledName>| {
-        walk_for_global_refs(e, refs, functions, types, visited_functions, visited_classes);
+        walk_for_global_refs(
+            e,
+            refs,
+            functions,
+            types,
+            visited_functions,
+            visited_classes,
+        );
     };
     match &expr.kind {
         TypedExprKind::GlobalRef { name, .. } => refs.push(name.clone()),
@@ -290,7 +327,14 @@ fn walk_for_global_refs(
             for arg in args {
                 walk(arg, refs, visited_functions, visited_classes);
             }
-            walk_called_function(name, refs, functions, types, visited_functions, visited_classes);
+            walk_called_function(
+                name,
+                refs,
+                functions,
+                types,
+                visited_functions,
+                visited_classes,
+            );
         }
         TypedExprKind::ClassSuperCall {
             method_mangled,
@@ -299,10 +343,24 @@ fn walk_for_global_refs(
             for arg in args {
                 walk(arg, refs, visited_functions, visited_classes);
             }
-            walk_called_function(method_mangled, refs, functions, types, visited_functions, visited_classes);
+            walk_called_function(
+                method_mangled,
+                refs,
+                functions,
+                types,
+                visited_functions,
+                visited_classes,
+            );
         }
         TypedExprKind::FunctionRef { name, .. } => {
-            walk_called_function(name, refs, functions, types, visited_functions, visited_classes);
+            walk_called_function(
+                name,
+                refs,
+                functions,
+                types,
+                visited_functions,
+                visited_classes,
+            );
         }
         TypedExprKind::MethodRef {
             object,
@@ -310,7 +368,14 @@ fn walk_for_global_refs(
             ..
         } => {
             walk(object, refs, visited_functions, visited_classes);
-            walk_called_function(method_name, refs, functions, types, visited_functions, visited_classes);
+            walk_called_function(
+                method_name,
+                refs,
+                functions,
+                types,
+                visited_functions,
+                visited_classes,
+            );
         }
         TypedExprKind::Closure { body, .. } => {
             walk(body, refs, visited_functions, visited_classes);
@@ -368,7 +433,14 @@ fn walk_for_global_refs(
         TypedExprKind::Match { subject, arms } => {
             walk(subject, refs, visited_functions, visited_classes);
             for arm in arms {
-                walk_pattern_for_global_refs(&arm.pattern, refs, functions, types, visited_functions, visited_classes);
+                walk_pattern_for_global_refs(
+                    &arm.pattern,
+                    refs,
+                    functions,
+                    types,
+                    visited_functions,
+                    visited_classes,
+                );
                 if let Some(guard) = &arm.guard {
                     walk(guard, refs, visited_functions, visited_classes);
                 }
@@ -421,7 +493,9 @@ fn walk_for_global_refs(
         TypedExprKind::NewtypeValue { value, .. } => {
             walk(value, refs, visited_functions, visited_classes);
         }
-        TypedExprKind::ClassNew { mangled_name, args, .. } => {
+        TypedExprKind::ClassNew {
+            mangled_name, args, ..
+        } => {
             for arg in args {
                 walk(arg, refs, visited_functions, visited_classes);
             }
@@ -483,37 +557,75 @@ fn walk_pattern_for_global_refs(
     visited_classes: &mut BTreeSet<MangledName>,
 ) {
     match pattern {
-        TypedPattern::Literal(expr) => {
-            walk_for_global_refs(expr, refs, functions, types, visited_functions, visited_classes)
-        }
+        TypedPattern::Literal(expr) => walk_for_global_refs(
+            expr,
+            refs,
+            functions,
+            types,
+            visited_functions,
+            visited_classes,
+        ),
         TypedPattern::Record { fields, .. } => {
             for field in fields {
-                walk_pattern_for_global_refs(&field.pattern, refs, functions, types, visited_functions, visited_classes);
+                walk_pattern_for_global_refs(
+                    &field.pattern,
+                    refs,
+                    functions,
+                    types,
+                    visited_functions,
+                    visited_classes,
+                );
             }
         }
         TypedPattern::EnumVariant {
             payload_patterns, ..
         } => {
             for sub_pat in payload_patterns {
-                walk_pattern_for_global_refs(sub_pat, refs, functions, types, visited_functions, visited_classes);
+                walk_pattern_for_global_refs(
+                    sub_pat,
+                    refs,
+                    functions,
+                    types,
+                    visited_functions,
+                    visited_classes,
+                );
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for field in field_patterns {
-                walk_pattern_for_global_refs(&field.pattern, refs, functions, types, visited_functions, visited_classes);
+                walk_pattern_for_global_refs(
+                    &field.pattern,
+                    refs,
+                    functions,
+                    types,
+                    visited_functions,
+                    visited_classes,
+                );
             }
         }
         TypedPattern::Tuple {
             element_patterns, ..
         } => {
             for sub_pat in element_patterns {
-                walk_pattern_for_global_refs(sub_pat, refs, functions, types, visited_functions, visited_classes);
+                walk_pattern_for_global_refs(
+                    sub_pat,
+                    refs,
+                    functions,
+                    types,
+                    visited_functions,
+                    visited_classes,
+                );
             }
         }
         TypedPattern::Newtype { inner_pattern, .. } => {
-            walk_pattern_for_global_refs(inner_pattern, refs, functions, types, visited_functions, visited_classes);
+            walk_pattern_for_global_refs(
+                inner_pattern,
+                refs,
+                functions,
+                types,
+                visited_functions,
+                visited_classes,
+            );
         }
         TypedPattern::TypeAnnotated { .. }
         | TypedPattern::Wildcard

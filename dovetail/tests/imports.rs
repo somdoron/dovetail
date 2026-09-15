@@ -16,7 +16,9 @@ fn build_and_run(project: &ResolvedProject, workspace_root: &std::path::Path) {
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
 
     if result.diagnostics.has_errors() {
@@ -50,7 +52,9 @@ fn build_expecting_errors(
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     result
         .diagnostics
@@ -90,9 +94,9 @@ fn make_two_package_project(
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     (dir, project)

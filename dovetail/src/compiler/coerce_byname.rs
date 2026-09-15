@@ -4,9 +4,7 @@ use std::sync::Arc;
 use crate::common::span::Span;
 use crate::common::types::{MangledName, TypeParamName};
 use crate::typechecker::infer::types::is_byname_fqn;
-use crate::typechecker::types::{
-    Type, TypedExpr, TypedExprKind, TypedMatchArm, TypedModule,
-};
+use crate::typechecker::types::{Type, TypedExpr, TypedExprKind, TypedMatchArm, TypedModule};
 
 /// Holds function parameter info for ByName coercion lookups.
 struct FnParamInfo {
@@ -81,9 +79,16 @@ pub fn coerce_byname_args(module: &mut TypedModule) {
             )
         })
         .collect();
-    let function_params = FnParamInfo { concrete, templates };
+    let function_params = FnParamInfo {
+        concrete,
+        templates,
+    };
 
-    for func in module.functions.values_mut().chain(module.function_templates.values_mut()) {
+    for func in module
+        .functions
+        .values_mut()
+        .chain(module.function_templates.values_mut())
+    {
         func.body = walk_expr(
             std::mem::replace(&mut func.body, dummy_expr()),
             &function_params,
@@ -132,14 +137,22 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
     let ty = expr.ty;
 
     let kind = match expr.kind {
-        TypedExprKind::FunctionCall { name, args, type_params } => {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => {
             let args: Vec<TypedExpr> = args.into_iter().map(|a| walk_expr(a, fn_params)).collect();
             let args = if let Some(param_types) = fn_params.lookup(&name, &type_params) {
                 coerce_args(args, &param_types)
             } else {
                 args
             };
-            TypedExprKind::FunctionCall { name, args, type_params }
+            TypedExprKind::FunctionCall {
+                name,
+                args,
+                type_params,
+            }
         }
 
         TypedExprKind::Block(exprs) => {
@@ -155,17 +168,37 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             message: message.map(|m| Box::new(walk_expr(*m, fn_params))),
         },
 
-        TypedExprKind::Let { name, mutable, boxed, var_ty, value } => TypedExprKind::Let {
-            name, mutable, boxed, var_ty,
+        TypedExprKind::Let {
+            name,
+            mutable,
+            boxed,
+            var_ty,
+            value,
+        } => TypedExprKind::Let {
+            name,
+            mutable,
+            boxed,
+            var_ty,
             value: Box::new(walk_expr(*value, fn_params)),
         },
 
-        TypedExprKind::Assign { name, target_ty, boxed, value } => TypedExprKind::Assign {
-            name, target_ty, boxed,
+        TypedExprKind::Assign {
+            name,
+            target_ty,
+            boxed,
+            value,
+        } => TypedExprKind::Assign {
+            name,
+            target_ty,
+            boxed,
             value: Box::new(walk_expr(*value, fn_params)),
         },
 
-        TypedExprKind::GlobalAssign { name, type_params, value } => TypedExprKind::GlobalAssign {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => TypedExprKind::GlobalAssign {
             name,
             type_params,
             value: Box::new(walk_expr(*value, fn_params)),
@@ -182,7 +215,11 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             operand: Box::new(walk_expr(*operand, fn_params)),
         },
 
-        TypedExprKind::If { condition, then_branch, else_branch } => TypedExprKind::If {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => TypedExprKind::If {
             condition: Box::new(walk_expr(*condition, fn_params)),
             then_branch: Box::new(walk_expr(*then_branch, fn_params)),
             else_branch: else_branch.map(|e| Box::new(walk_expr(*e, fn_params))),
@@ -195,54 +232,105 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
 
         TypedExprKind::Match { subject, arms } => TypedExprKind::Match {
             subject: Box::new(walk_expr(*subject, fn_params)),
-            arms: arms.into_iter().map(|arm| TypedMatchArm {
-                body: Box::new(walk_expr(*arm.body, fn_params)),
-                ..arm
-            }).collect(),
+            arms: arms
+                .into_iter()
+                .map(|arm| TypedMatchArm {
+                    body: Box::new(walk_expr(*arm.body, fn_params)),
+                    ..arm
+                })
+                .collect(),
         },
 
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => TypedExprKind::RecordCreate {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => TypedExprKind::RecordCreate {
             fqn,
             type_params,
-            fields: fields.into_iter().map(|(n, e)| (n, walk_expr(e, fn_params))).collect(),
+            fields: fields
+                .into_iter()
+                .map(|(n, e)| (n, walk_expr(e, fn_params)))
+                .collect(),
         },
 
         TypedExprKind::TupleLiteral { elements } => TypedExprKind::TupleLiteral {
-            elements: elements.into_iter().map(|e| walk_expr(e, fn_params)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| walk_expr(e, fn_params))
+                .collect(),
         },
 
-        TypedExprKind::EnumCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumCreate {
-            fqn, variant_name,
+        TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumCreate {
+            fqn,
+            variant_name,
             type_params,
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
 
-        TypedExprKind::EnumVariantRecordCreate { fqn, variant_name, args, type_params } => TypedExprKind::EnumVariantRecordCreate {
-            fqn, variant_name,
+        TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
+            args,
+            type_params,
+        } => TypedExprKind::EnumVariantRecordCreate {
+            fqn,
+            variant_name,
             type_params,
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
 
-        TypedExprKind::FieldAccess { object, field_name, field_index, boxed } => TypedExprKind::FieldAccess {
+        TypedExprKind::FieldAccess {
+            object,
+            field_name,
+            field_index,
+            boxed,
+        } => TypedExprKind::FieldAccess {
             object: Box::new(walk_expr(*object, fn_params)),
-            field_name, field_index, boxed,
+            field_name,
+            field_index,
+            boxed,
         },
 
-        TypedExprKind::FieldAssign { object, field_name, field_index, value, boxed } => TypedExprKind::FieldAssign {
+        TypedExprKind::FieldAssign {
+            object,
+            field_name,
+            field_index,
+            value,
+            boxed,
+        } => TypedExprKind::FieldAssign {
             object: Box::new(walk_expr(*object, fn_params)),
-            field_name, field_index, boxed,
+            field_name,
+            field_index,
+            boxed,
             value: Box::new(walk_expr(*value, fn_params)),
         },
 
-        TypedExprKind::RecordWith { object, fqn, overrides, type_params } => TypedExprKind::RecordWith {
+        TypedExprKind::RecordWith {
+            object,
+            fqn,
+            overrides,
+            type_params,
+        } => TypedExprKind::RecordWith {
             object: Box::new(walk_expr(*object, fn_params)),
             fqn,
             type_params,
-            overrides: overrides.into_iter().map(|(name, idx, expr)| (name, idx, walk_expr(expr, fn_params))).collect(),
+            overrides: overrides
+                .into_iter()
+                .map(|(name, idx, expr)| (name, idx, walk_expr(expr, fn_params)))
+                .collect(),
         },
 
         TypedExprKind::ArrayLiteral { elements } => TypedExprKind::ArrayLiteral {
-            elements: elements.into_iter().map(|e| walk_expr(e, fn_params)).collect(),
+            elements: elements
+                .into_iter()
+                .map(|e| walk_expr(e, fn_params))
+                .collect(),
         },
 
         TypedExprKind::IntrinsicCall { intrinsic, args } => TypedExprKind::IntrinsicCall {
@@ -259,8 +347,13 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             target_type,
         },
 
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => TypedExprKind::LetDestructure {
-            pattern, var_ty,
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
             value: Box::new(walk_expr(*value, fn_params)),
         },
 
@@ -271,39 +364,77 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             value: Box::new(walk_expr(*value, fn_params)),
         },
 
-        TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => TypedExprKind::InterfaceObjectCoerce {
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        } => TypedExprKind::InterfaceObjectCoerce {
             inner: Box::new(walk_expr(*inner, fn_params)),
-            interface_mangled_name, concrete_type, vtable_methods,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
         },
-        TypedExprKind::TemplateInterfaceObjectCoerce { inner, traits, concrete_type } => TypedExprKind::TemplateInterfaceObjectCoerce {
+        TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner,
+            traits,
+            concrete_type,
+        } => TypedExprKind::TemplateInterfaceObjectCoerce {
             inner: Box::new(walk_expr(*inner, fn_params)),
-            traits, concrete_type,
+            traits,
+            concrete_type,
         },
         TypedExprKind::InterfaceObjectUpcast { inner } => TypedExprKind::InterfaceObjectUpcast {
             inner: Box::new(walk_expr(*inner, fn_params)),
         },
-        TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver, args } => TypedExprKind::InterfaceObjectMethodCall {
-            interface_mangled_name, method_name, member_name,
+        TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver,
+            args,
+        } => TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
             receiver: Box::new(walk_expr(*receiver, fn_params)),
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
 
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => TypedExprKind::ClassNew {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => TypedExprKind::ClassNew {
             mangled_name,
             type_params,
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
-            fields: fields.into_iter().map(|e| walk_expr(e, fn_params)).collect(),
+            fields: fields
+                .into_iter()
+                .map(|e| walk_expr(e, fn_params))
+                .collect(),
         },
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => TypedExprKind::ClassVirtualCall {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => TypedExprKind::ClassVirtualCall {
             object: Box::new(walk_expr(*object, fn_params)),
             vtable_slot,
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
-        TypedExprKind::ClassSuperCall { method_mangled, args } => TypedExprKind::ClassSuperCall {
+        TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args,
+        } => TypedExprKind::ClassSuperCall {
             method_mangled,
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
@@ -312,7 +443,11 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             value: Box::new(walk_expr(*value, fn_params)),
             return_type,
         },
-        TypedExprKind::Closure { params, body, captures } => TypedExprKind::Closure {
+        TypedExprKind::Closure {
+            params,
+            body,
+            captures,
+        } => TypedExprKind::Closure {
             params,
             body: Box::new(walk_expr(*body, fn_params)),
             captures,
@@ -321,24 +456,49 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             callee: Box::new(walk_expr(*callee, fn_params)),
             args: args.into_iter().map(|a| walk_expr(a, fn_params)).collect(),
         },
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(walk_expr(*object, fn_params)),
             method_name,
             type_params,
         },
 
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => TypedExprKind::Await {
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
             operand: Box::new(walk_expr(*operand, fn_params)),
-            return_type, and_then_method, map_method, source_location_mn,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
         },
-        TypedExprKind::Try { operand, unwrap_method, unwrap_return_type, return_type, from_method } => TypedExprKind::Try {
+        TypedExprKind::Try {
+            operand,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
+        } => TypedExprKind::Try {
             operand: Box::new(walk_expr(*operand, fn_params)),
-            unwrap_method, unwrap_return_type, return_type, from_method,
+            unwrap_method,
+            unwrap_return_type,
+            return_type,
+            from_method,
         },
         TypedExprKind::Use { .. } => {
             unreachable!("Use nodes should be desugared before ByName coercion pass")
         }
-        TypedExprKind::AsyncBlock { body, succeed_method } => TypedExprKind::AsyncBlock {
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => TypedExprKind::AsyncBlock {
             body: Box::new(walk_expr(*body, fn_params)),
             succeed_method,
         },
@@ -347,10 +507,19 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             inner: Box::new(walk_expr(*inner, fn_params)),
         },
 
-        TypedExprKind::ForLoop { pattern, iterable, iterator_method, iterator_type, element_type, body } => TypedExprKind::ForLoop {
+        TypedExprKind::ForLoop {
+            pattern,
+            iterable,
+            iterator_method,
+            iterator_type,
+            element_type,
+            body,
+        } => TypedExprKind::ForLoop {
             pattern,
             iterable: Box::new(walk_expr(*iterable, fn_params)),
-            iterator_method, iterator_type, element_type,
+            iterator_method,
+            iterator_type,
+            element_type,
             body: Box::new(walk_expr(*body, fn_params)),
         },
 
@@ -375,7 +544,14 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
         | TypedExprKind::Break
         | TypedExprKind::Continue) => kind,
 
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
             trait_fqn,
             trait_type_params,
             for_type,
@@ -384,7 +560,13 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
             method_type_params,
         },
         kind @ TypedExprKind::ImplFunctionRef { .. } => kind,
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
+        TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
             ext_fqn,
             for_type,
             method_name,
@@ -398,13 +580,14 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
 }
 
 fn needs_byname_coercion(actual: &Type, expected: &Type) -> bool {
-    if let Type::GenericNewtype { fqn, type_args, .. } = expected {
-        if is_byname_fqn(fqn) && !type_args.is_empty() {
-            if let Type::GenericNewtype { fqn: a_fqn, .. } = actual {
-                return !is_byname_fqn(a_fqn);
-            }
-            return true;
+    if let Type::GenericNewtype { fqn, type_args, .. } = expected
+        && is_byname_fqn(fqn)
+        && !type_args.is_empty()
+    {
+        if let Type::GenericNewtype { fqn: a_fqn, .. } = actual {
+            return !is_byname_fqn(a_fqn);
         }
+        return true;
     }
     false
 }

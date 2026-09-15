@@ -86,8 +86,8 @@ pub fn run_tests(
         }
 
         // Create a temp directory for filesystem tests, preopened as "."
-        let temp_dir = tempfile::tempdir()
-            .map_err(|e| format!("failed to create temp dir: {e}"))?;
+        let temp_dir =
+            tempfile::tempdir().map_err(|e| format!("failed to create temp dir: {e}"))?;
         let mut builder = WasiCtxBuilder::new();
         builder
             .inherit_stdio()
@@ -95,7 +95,8 @@ pub fn run_tests(
             .allow_tcp(true)
             .allow_udp(true)
             .allow_ip_name_lookup(true);
-        builder.preopened_dir(temp_dir.path(), ".", DirPerms::all(), FilePerms::all())
+        builder
+            .preopened_dir(temp_dir.path(), ".", DirPerms::all(), FilePerms::all())
             .map_err(|e| format!("failed to preopen temp dir: {e}"))?;
         let mut store = Store::new(&engine, State::new(builder.build()));
 
@@ -172,8 +173,7 @@ pub fn run_tests(
                 // its internal `Sleep` grabs the reactor at construction, and
                 // `block_on`'s argument is evaluated outside any runtime
                 // context ("there is no reactor running" panic otherwise).
-                match runtime
-                    .block_on(async { tokio::time::timeout(duration, test_future).await })
+                match runtime.block_on(async { tokio::time::timeout(duration, test_future).await })
                 {
                     Ok(result) => result,
                     Err(_elapsed) => Err(wasmtime::Error::new(wasmtime::Trap::Interrupt)),
@@ -190,9 +190,7 @@ pub fn run_tests(
 
         let status = match (&call_result, &test_info.expected_panic) {
             // No @panics: normal pass/fail
-            (Ok(()), None) => {
-                TestStatus::Pass
-            }
+            (Ok(()), None) => TestStatus::Pass,
             (Err(e), None) => {
                 // Check if this was a timeout
                 if let Some(ms) = test_info.timeout_ms {
@@ -212,17 +210,17 @@ pub fn run_tests(
                 }
             }
             // @panics: test passed (no trap) → fail
-            (Ok(()), Some(_)) => {
-                TestStatus::Fail {
-                    message: "expected panic but test passed".to_string(),
-                }
-            }
+            (Ok(()), Some(_)) => TestStatus::Fail {
+                message: "expected panic but test passed".to_string(),
+            },
             // @panics: test trapped
             (Err(e), Some(expected_msg)) => {
                 // Check if this was actually a timeout, not a panic
-                if test_info.timeout_ms.is_some() && is_epoch_interrupt(e) {
+                if let Some(timeout_ms) = test_info.timeout_ms
+                    && is_epoch_interrupt(e)
+                {
                     TestStatus::Fail {
-                        message: format!("test timed out after {}ms", test_info.timeout_ms.unwrap()),
+                        message: format!("test timed out after {}ms", timeout_ms),
                     }
                 } else {
                     match expected_msg {
@@ -268,8 +266,12 @@ fn is_epoch_interrupt(err: &wasmtime::Error) -> bool {
     // Match the trap itself, not the rendered error chain: that chain carries the
     // wasm backtrace, so a plain assertion failure inside (say) the runtime's
     // `interruptFiber` was being reported as "test timed out".
-    err.chain()
-        .any(|e| matches!(e.downcast_ref::<wasmtime::Trap>(), Some(wasmtime::Trap::Interrupt)))
+    err.chain().any(|e| {
+        matches!(
+            e.downcast_ref::<wasmtime::Trap>(),
+            Some(wasmtime::Trap::Interrupt)
+        )
+    })
 }
 
 /// Format the full error chain into a single string for message matching.

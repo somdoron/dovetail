@@ -61,7 +61,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &module.doc_comment {
-            self.package_registry.register_doc_comment(module_fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(module_fqn.clone(), doc.clone());
         }
 
         // Check for duplicate module in the same package
@@ -100,18 +101,20 @@ impl Collector<'_> {
         if let Some(trait_sig) = self
             .package_registry
             .lookup_trait(&module_fqn, &self.package_path)
-            .or_else(|| self.dependency_registry.lookup_trait(&module_fqn, &self.package_path))
+            .or_else(|| {
+                self.dependency_registry
+                    .lookup_trait(&module_fqn, &self.package_path)
+            })
+            && !trait_sig.type_params.is_empty()
         {
-            if !trait_sig.type_params.is_empty() {
-                self.diagnostics.error(
-                    module.name.span.clone(),
-                    format!(
-                        "module '{}' is for a generic trait and requires type parameters",
-                        module_name
-                    ),
-                );
-                return;
-            }
+            self.diagnostics.error(
+                module.name.span.clone(),
+                format!(
+                    "module '{}' is for a generic trait and requires type parameters",
+                    module_name
+                ),
+            );
+            return;
         }
 
         // Detect module-for-type: does a type with the same FQN exist (including intrinsics)?
@@ -144,8 +147,10 @@ impl Collector<'_> {
                     .iter()
                     .map(|tp| TypeParamName(tp.value.clone()))
                     .collect();
-                let method_trait_bounds = self.resolve_trait_bounds(&func.where_clause, &method_type_params);
-                let method_type_params_map = Type::type_param_map(&method_type_params, &method_trait_bounds);
+                let method_trait_bounds =
+                    self.resolve_trait_bounds(&func.where_clause, &method_type_params);
+                let method_type_params_map =
+                    Type::type_param_map(&method_type_params, &method_trait_bounds);
 
                 let return_type = match &func.return_type {
                     Some(type_expr) => {
@@ -252,8 +257,7 @@ impl Collector<'_> {
             }
 
             // Module-qualified FQN: e.g. { package: "a", symbol: "Math.double" }
-            let qualified_symbol =
-                SymbolName(format!("{}.{}", module_name, func.name.value));
+            let qualified_symbol = SymbolName(format!("{}.{}", module_name, func.name.value));
             let fqn = Fqn {
                 package: self.package_path.clone(),
                 symbol: qualified_symbol,
@@ -313,7 +317,8 @@ impl Collector<'_> {
                     .iter()
                     .map(|tp| TypeParamName(tp.value.clone()))
                     .collect();
-                let method_type_params_map = Type::type_param_map(&method_type_params, &TraitBounds::empty());
+                let method_type_params_map =
+                    Type::type_param_map(&method_type_params, &TraitBounds::empty());
 
                 let return_type = self.resolve_type_expr_with_type_params(
                     &property.return_type,
@@ -419,8 +424,7 @@ impl Collector<'_> {
                 }
             }
 
-            let qualified_symbol =
-                SymbolName(format!("{}.{}", module_name, property.name.value));
+            let qualified_symbol = SymbolName(format!("{}.{}", module_name, property.name.value));
             let fqn = Fqn {
                 package: self.package_path.clone(),
                 symbol: qualified_symbol,
@@ -433,7 +437,10 @@ impl Collector<'_> {
                 MangledName::for_function(&fqn, &param_types)
             };
 
-            let is_intrinsic = property.body.as_ref().is_some_and(|b| matches!(b, Expr::Intrinsic(_)));
+            let is_intrinsic = property
+                .body
+                .as_ref()
+                .is_some_and(|b| matches!(b, Expr::Intrinsic(_)));
             let sig = FunctionSignature {
                 visibility: property.visibility,
                 mangled_name,
@@ -462,8 +469,7 @@ impl Collector<'_> {
 
         // Collect globals
         for global in &module.globals {
-            let qualified_symbol =
-                SymbolName(format!("{}.{}", module_name, global.name.value));
+            let qualified_symbol = SymbolName(format!("{}.{}", module_name, global.name.value));
             let fqn = Fqn {
                 package: self.package_path.clone(),
                 symbol: qualified_symbol,
@@ -480,8 +486,7 @@ impl Collector<'_> {
                     mutable: global.mutable,
                     source_file,
                 };
-                let registered =
-                    self.package_registry.register_global(fqn, sig.clone());
+                let registered = self.package_registry.register_global(fqn, sig.clone());
                 if !registered {
                     self.diagnostics.error(
                         global.name.span.clone(),
@@ -491,9 +496,7 @@ impl Collector<'_> {
                 member_globals.insert(SymbolName(global.name.value.clone()), sig);
             } else {
                 // Reuse the existing try_infer_expr_type for untyped globals
-                if let Some(ty) =
-                    self.try_infer_expr_type(&global.value, &source_file)
-                {
+                if let Some(ty) = self.try_infer_expr_type(&global.value, &source_file) {
                     let sig = GlobalSignature {
                         visibility: global.visibility,
                         mangled_name,
@@ -501,8 +504,7 @@ impl Collector<'_> {
                         mutable: global.mutable,
                         source_file,
                     };
-                    let registered =
-                        self.package_registry.register_global(fqn, sig.clone());
+                    let registered = self.package_registry.register_global(fqn, sig.clone());
                     if !registered {
                         self.diagnostics.error(
                             global.name.span.clone(),
@@ -561,7 +563,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &module.doc_comment {
-            self.package_registry.register_doc_comment(module_fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(module_fqn.clone(), doc.clone());
         }
 
         // Check for duplicate module
@@ -580,163 +583,212 @@ impl Collector<'_> {
         }
 
         // Generic modules must be for a generic type (including intrinsic Array)
-        let (for_type, expected_type_param_count, record_trait_bounds, module_type_param_variances) = if module_name == "Array" {
-            if type_params.len() != 1 {
+        let (for_type, expected_type_param_count, record_trait_bounds, module_type_param_variances) =
+            if module_name == "Array" {
+                if type_params.len() != 1 {
+                    self.diagnostics.error(
+                        module.name.span.clone(),
+                        format!(
+                            "'Array' requires exactly 1 type parameter, found {}",
+                            type_params.len()
+                        ),
+                    );
+                    return;
+                }
+                let record_trait_bounds = TraitBounds::empty();
+                let bounds: Vec<TraitBound> = record_trait_bounds
+                    .get(&type_params[0])
+                    .cloned()
+                    .unwrap_or_default();
+                let for_type =
+                    Type::Array(Box::new(Type::TypeVariable(type_params[0].clone(), bounds)));
+                (
+                    for_type,
+                    1usize,
+                    record_trait_bounds,
+                    vec![Variance::Covariant],
+                )
+            } else if let Some(record_sig) = self
+                .package_registry
+                .lookup_generic_record_by_fqn(&module_fqn, &self.package_path)
+                .cloned()
+            {
+                let record_trait_bounds = record_sig.trait_bounds.clone();
+                let variances = record_sig.type_param_variances.clone();
+                let type_args: Vec<(Variance, Type)> = type_params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tp)| {
+                        let bounds: Vec<TraitBound> =
+                            record_trait_bounds.get(tp).cloned().unwrap_or_default();
+                        let variance = record_sig
+                            .type_param_variances
+                            .get(i)
+                            .copied()
+                            .unwrap_or(Variance::Invariant);
+                        (variance, Type::TypeVariable(tp.clone(), bounds))
+                    })
+                    .collect();
+                let for_type = Type::GenericRecord {
+                    fqn: module_fqn.clone(),
+                    mangled_name: MangledName::for_type(&module_fqn),
+                    type_args,
+                };
+                (
+                    for_type,
+                    record_sig.type_params.len(),
+                    record_trait_bounds,
+                    variances,
+                )
+            } else if let Some(enum_sig) = self
+                .package_registry
+                .lookup_generic_enum_by_fqn(&module_fqn, &self.package_path)
+                .cloned()
+            {
+                let enum_trait_bounds = enum_sig.trait_bounds.clone();
+                let variances = enum_sig.type_param_variances.clone();
+                let type_args: Vec<(Variance, Type)> = type_params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tp)| {
+                        let bounds: Vec<TraitBound> =
+                            enum_trait_bounds.get(tp).cloned().unwrap_or_default();
+                        let variance = enum_sig
+                            .type_param_variances
+                            .get(i)
+                            .copied()
+                            .unwrap_or(Variance::Invariant);
+                        (variance, Type::TypeVariable(tp.clone(), bounds))
+                    })
+                    .collect();
+                let for_type = Type::GenericEnum {
+                    fqn: module_fqn.clone(),
+                    mangled_name: MangledName::for_type(&module_fqn),
+                    type_args,
+                };
+                (
+                    for_type,
+                    enum_sig.type_params.len(),
+                    enum_trait_bounds,
+                    variances,
+                )
+            } else if let Some(newtype_sig) = self
+                .package_registry
+                .lookup_generic_newtype_by_fqn(&module_fqn, &self.package_path)
+                .cloned()
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_generic_newtype_by_fqn(&module_fqn, &self.package_path)
+                        .cloned()
+                })
+            {
+                let newtype_trait_bounds = newtype_sig.trait_bounds.clone();
+                let variances = newtype_sig.type_param_variances.clone();
+                let type_args: Vec<(Variance, Type)> = type_params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tp)| {
+                        let bounds: Vec<TraitBound> =
+                            newtype_trait_bounds.get(tp).cloned().unwrap_or_default();
+                        let variance = newtype_sig
+                            .type_param_variances
+                            .get(i)
+                            .copied()
+                            .unwrap_or(Variance::Invariant);
+                        (variance, Type::TypeVariable(tp.clone(), bounds))
+                    })
+                    .collect();
+                // Compute concrete_inner_type by substituting type params in the inner type template.
+                let inner_subst: std::collections::BTreeMap<String, Type> = newtype_sig
+                    .type_params
+                    .iter()
+                    .zip(type_args.iter())
+                    .map(|(tp, (_, ty))| (tp.0.clone(), ty.clone()))
+                    .collect();
+                let concrete_inner =
+                    super::types::substitute_type_params_in(&newtype_sig.inner_type, &inner_subst);
+                let for_type = Type::GenericNewtype {
+                    fqn: module_fqn.clone(),
+                    type_args,
+                    concrete_inner_type: Box::new(concrete_inner),
+                };
+                (
+                    for_type,
+                    newtype_sig.type_params.len(),
+                    newtype_trait_bounds,
+                    variances,
+                )
+            } else if let Some(class_sig) = self
+                .package_registry
+                .lookup_class_type(&module_fqn, &self.package_path)
+                .cloned()
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_class_type(&module_fqn, &self.package_path)
+                        .cloned()
+                })
+                .filter(|sig| !sig.type_params.is_empty())
+            {
+                let class_trait_bounds = class_sig.trait_bounds.clone();
+                let variances = class_sig.type_param_variances.clone();
+                let type_args: Vec<(Variance, Type)> = type_params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, tp)| {
+                        let bounds: Vec<TraitBound> =
+                            class_trait_bounds.get(tp).cloned().unwrap_or_default();
+                        let variance = class_sig
+                            .type_param_variances
+                            .get(i)
+                            .copied()
+                            .unwrap_or(Variance::Invariant);
+                        (variance, Type::TypeVariable(tp.clone(), bounds))
+                    })
+                    .collect();
+                let for_type = Type::GenericClass {
+                    fqn: module_fqn.clone(),
+                    mangled_name: MangledName::for_type(&module_fqn),
+                    type_args,
+                };
+                (
+                    for_type,
+                    class_sig.type_params.len(),
+                    class_trait_bounds,
+                    variances,
+                )
+            } else if let Some(trait_sig) = self
+                .package_registry
+                .lookup_trait(&module_fqn, &self.package_path)
+                .cloned()
+                .or_else(|| {
+                    self.dependency_registry
+                        .lookup_trait(&module_fqn, &self.package_path)
+                        .cloned()
+                })
+            {
+                // Generic trait module: build InterfaceObject for_type
+                let trait_type_args: Vec<Type> = type_params
+                    .iter()
+                    .map(|tp| Type::TypeVariable(tp.clone(), vec![]))
+                    .collect();
+                let for_type = Type::interface_object(module_fqn.clone(), trait_type_args);
+                let variances = vec![Variance::Invariant; trait_sig.type_params.len()];
+                (
+                    for_type,
+                    trait_sig.type_params.len(),
+                    TraitBounds::empty(),
+                    variances,
+                )
+            } else {
                 self.diagnostics.error(
                     module.name.span.clone(),
                     format!(
-                        "'Array' requires exactly 1 type parameter, found {}",
-                        type_params.len()
+                        "generic module '{}' must be for a generic type",
+                        module_name
                     ),
                 );
                 return;
-            }
-            let record_trait_bounds = TraitBounds::empty();
-            let bounds: Vec<TraitBound> = record_trait_bounds
-                .get(&type_params[0])
-                .cloned()
-                .unwrap_or_default();
-            let for_type = Type::Array(Box::new(Type::TypeVariable(type_params[0].clone(), bounds)));
-            (for_type, 1usize, record_trait_bounds, vec![Variance::Covariant])
-        } else if let Some(record_sig) = self
-            .package_registry
-            .lookup_generic_record_by_fqn(&module_fqn, &self.package_path)
-            .cloned()
-        {
-            let record_trait_bounds = record_sig.trait_bounds.clone();
-            let variances = record_sig.type_param_variances.clone();
-            let type_args: Vec<(Variance, Type)> = type_params
-                .iter()
-                .enumerate()
-                .map(|(i, tp)| {
-                    let bounds: Vec<TraitBound> = record_trait_bounds
-                        .get(tp)
-                        .cloned()
-                        .unwrap_or_default();
-                    let variance = record_sig.type_param_variances.get(i).copied().unwrap_or(Variance::Invariant);
-                    (variance, Type::TypeVariable(tp.clone(), bounds))
-                })
-                .collect();
-            let for_type = Type::GenericRecord {
-                fqn: module_fqn.clone(),
-                mangled_name: MangledName::for_type(&module_fqn),
-                type_args,
             };
-            (for_type, record_sig.type_params.len(), record_trait_bounds, variances)
-        } else if let Some(enum_sig) = self
-            .package_registry
-            .lookup_generic_enum_by_fqn(&module_fqn, &self.package_path)
-            .cloned()
-        {
-            let enum_trait_bounds = enum_sig.trait_bounds.clone();
-            let variances = enum_sig.type_param_variances.clone();
-            let type_args: Vec<(Variance, Type)> = type_params
-                .iter()
-                .enumerate()
-                .map(|(i, tp)| {
-                    let bounds: Vec<TraitBound> = enum_trait_bounds
-                        .get(tp)
-                        .cloned()
-                        .unwrap_or_default();
-                    let variance = enum_sig.type_param_variances.get(i).copied().unwrap_or(Variance::Invariant);
-                    (variance, Type::TypeVariable(tp.clone(), bounds))
-                })
-                .collect();
-            let for_type = Type::GenericEnum {
-                fqn: module_fqn.clone(),
-                mangled_name: MangledName::for_type(&module_fqn),
-                type_args,
-            };
-            (for_type, enum_sig.type_params.len(), enum_trait_bounds, variances)
-        } else if let Some(newtype_sig) = self
-            .package_registry
-            .lookup_generic_newtype_by_fqn(&module_fqn, &self.package_path)
-            .cloned()
-            .or_else(|| self.dependency_registry
-                .lookup_generic_newtype_by_fqn(&module_fqn, &self.package_path)
-                .cloned())
-        {
-            let newtype_trait_bounds = newtype_sig.trait_bounds.clone();
-            let variances = newtype_sig.type_param_variances.clone();
-            let type_args: Vec<(Variance, Type)> = type_params
-                .iter()
-                .enumerate()
-                .map(|(i, tp)| {
-                    let bounds: Vec<TraitBound> = newtype_trait_bounds
-                        .get(tp)
-                        .cloned()
-                        .unwrap_or_default();
-                    let variance = newtype_sig.type_param_variances.get(i).copied().unwrap_or(Variance::Invariant);
-                    (variance, Type::TypeVariable(tp.clone(), bounds))
-                })
-                .collect();
-            // Compute concrete_inner_type by substituting type params in the inner type template.
-            let inner_subst: std::collections::BTreeMap<String, Type> = newtype_sig.type_params.iter()
-                .zip(type_args.iter())
-                .map(|(tp, (_, ty))| (tp.0.clone(), ty.clone()))
-                .collect();
-            let concrete_inner = super::types::substitute_type_params_in(&newtype_sig.inner_type, &inner_subst);
-            let for_type = Type::GenericNewtype {
-                fqn: module_fqn.clone(),
-                type_args,
-                concrete_inner_type: Box::new(concrete_inner),
-            };
-            (for_type, newtype_sig.type_params.len(), newtype_trait_bounds, variances)
-        } else if let Some(class_sig) = self
-            .package_registry
-            .lookup_class_type(&module_fqn, &self.package_path)
-            .cloned()
-            .or_else(|| self.dependency_registry
-                .lookup_class_type(&module_fqn, &self.package_path)
-                .cloned())
-            .filter(|sig| !sig.type_params.is_empty())
-        {
-            let class_trait_bounds = class_sig.trait_bounds.clone();
-            let variances = class_sig.type_param_variances.clone();
-            let type_args: Vec<(Variance, Type)> = type_params
-                .iter()
-                .enumerate()
-                .map(|(i, tp)| {
-                    let bounds: Vec<TraitBound> = class_trait_bounds
-                        .get(tp)
-                        .cloned()
-                        .unwrap_or_default();
-                    let variance = class_sig.type_param_variances.get(i).copied().unwrap_or(Variance::Invariant);
-                    (variance, Type::TypeVariable(tp.clone(), bounds))
-                })
-                .collect();
-            let for_type = Type::GenericClass {
-                fqn: module_fqn.clone(),
-                mangled_name: MangledName::for_type(&module_fqn),
-                type_args,
-            };
-            (for_type, class_sig.type_params.len(), class_trait_bounds, variances)
-        } else if let Some(trait_sig) = self
-            .package_registry
-            .lookup_trait(&module_fqn, &self.package_path)
-            .cloned()
-            .or_else(|| self.dependency_registry
-                .lookup_trait(&module_fqn, &self.package_path)
-                .cloned())
-        {
-            // Generic trait module: build InterfaceObject for_type
-            let trait_type_args: Vec<Type> = type_params
-                .iter()
-                .map(|tp| Type::TypeVariable(tp.clone(), vec![]))
-                .collect();
-            let for_type = Type::interface_object(module_fqn.clone(), trait_type_args);
-            let variances = vec![Variance::Invariant; trait_sig.type_params.len()];
-            (for_type, trait_sig.type_params.len(), TraitBounds::empty(), variances)
-        } else {
-            self.diagnostics.error(
-                module.name.span.clone(),
-                format!(
-                    "generic module '{}' must be for a generic type",
-                    module_name
-                ),
-            );
-            return;
-        };
 
         // Validate type param count matches
         if type_params.len() != expected_type_param_count {
@@ -756,7 +808,8 @@ impl Collector<'_> {
         let type_params_map = Type::type_param_map(&type_params, &record_trait_bounds);
 
         let mut generic_members = GenericModuleMembers::new();
-        let mut member_generic_globals: BTreeMap<SymbolName, GenericModuleGlobalDef> = BTreeMap::new();
+        let mut member_generic_globals: BTreeMap<SymbolName, GenericModuleGlobalDef> =
+            BTreeMap::new();
 
         // Collect functions as GenericModuleMemberDefs
         for func in &module.functions {
@@ -770,13 +823,16 @@ impl Collector<'_> {
                 .collect();
 
             // Resolve method-level trait bounds from where clause
-            let all_func_type_params: Vec<TypeParamName> = type_params.iter()
+            let all_func_type_params: Vec<TypeParamName> = type_params
+                .iter()
                 .chain(method_type_params.iter())
                 .cloned()
                 .collect();
             let method_trait_bounds = self.resolve_method_trait_bounds(
-                &func.where_clause, &all_func_type_params,
-                &method_type_params, &record_trait_bounds,
+                &func.where_clause,
+                &all_func_type_params,
+                &method_type_params,
+                &record_trait_bounds,
             );
 
             let mut combined_bounds = record_trait_bounds.clone();
@@ -838,8 +894,7 @@ impl Collector<'_> {
 
         // Collect properties as GenericModuleMemberDefs
         for property in &module.properties {
-            let has_self =
-                !property.params.is_empty() && property.params[0].name.value == "self";
+            let has_self = !property.params.is_empty() && property.params[0].name.value == "self";
 
             // Build property-level type params (if any)
             let property_type_params: Vec<TypeParamName> = property
@@ -920,9 +975,7 @@ impl Collector<'_> {
 
             let ty = if let Some(type_expr) = &global.type_annotation {
                 self.resolve_type_expr_with_type_params(type_expr, &type_params_map)
-            } else if let Some(ty) =
-                self.try_infer_expr_type(&global.value, &source_file)
-            {
+            } else if let Some(ty) = self.try_infer_expr_type(&global.value, &source_file) {
                 ty
             } else {
                 self.diagnostics.error(

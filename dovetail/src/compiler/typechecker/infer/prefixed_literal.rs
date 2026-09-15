@@ -130,8 +130,8 @@ impl Inference<'_> {
         // so say so plainly instead of reporting a missing method.
         for name in BUILDER_METHODS {
             let sym = crate::common::types::SymbolName(name.to_string());
-            let has_method =
-                module.functions.contains_key(&sym) || module.generic_members.lookup(&sym).is_some();
+            let has_method = module.functions.contains_key(&sym)
+                || module.generic_members.lookup(&sym).is_some();
             if !has_method {
                 self.diagnostics.error(
                     span.clone(),

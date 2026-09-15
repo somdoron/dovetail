@@ -36,7 +36,10 @@ fn check_ok(source: &str) {
             .iter()
             .map(|d| d.message.clone())
             .collect();
-        panic!("expected typecheck to succeed; got errors:\n  {}", errors.join("\n  "));
+        panic!(
+            "expected typecheck to succeed; got errors:\n  {}",
+            errors.join("\n  ")
+        );
     }
 }
 
@@ -96,7 +99,7 @@ function main(): Unit =
 }
 
 #[test]
-fn test_infer_use_type_is_resource_T() {
+fn test_infer_use_type_is_resource_t() {
     // The type of `use expr` must match the trait's T parameter.
     // Here T = String — using the result as an Int32 should fail.
     check_err_contains(

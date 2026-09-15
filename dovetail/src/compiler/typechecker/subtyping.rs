@@ -41,12 +41,19 @@ pub fn project_class(registry: &Registry, actual: &Type, expected: &Fqn) -> Opti
 pub fn identical(a: &Type, b: &Type) -> bool {
     match (a, b) {
         (Type::AssociatedProjection(a), Type::AssociatedProjection(b)) => {
-            a.trait_fqn == b.trait_fqn && a.member == b.member
+            a.trait_fqn == b.trait_fqn
+                && a.member == b.member
                 && identical(&a.receiver, &b.receiver)
                 && a.trait_parameters.len() == b.trait_parameters.len()
                 && a.parameters.len() == b.parameters.len()
-                && a.trait_parameters.iter().zip(&b.trait_parameters).all(|(a, b)| identical(a, b))
-                && a.parameters.iter().zip(&b.parameters).all(|(a, b)| identical(a, b))
+                && a.trait_parameters
+                    .iter()
+                    .zip(&b.trait_parameters)
+                    .all(|(a, b)| identical(a, b))
+                && a.parameters
+                    .iter()
+                    .zip(&b.parameters)
+                    .all(|(a, b)| identical(a, b))
         }
         (Type::TupleProjection(a, k), Type::TupleProjection(b, l)) => k == l && identical(a, b),
         (Type::TupleExtend(a, b), Type::TupleExtend(c, d)) => identical(a, c) && identical(b, d),

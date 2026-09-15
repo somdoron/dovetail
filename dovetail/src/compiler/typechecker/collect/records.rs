@@ -60,7 +60,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &rec.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         let mangled_name = MangledName::for_type(&fqn);
@@ -80,7 +81,11 @@ impl Collector<'_> {
                 );
             }
             if let Some(doc) = &field.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), field.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    field.name.value.clone(),
+                    doc.clone(),
+                );
             }
             fields.push((field.name.value.clone(), ty));
         }
@@ -147,11 +152,16 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &rec.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
         for field in &rec.fields {
             if let Some(doc) = &field.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), field.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    field.name.value.clone(),
+                    doc.clone(),
+                );
             }
         }
 

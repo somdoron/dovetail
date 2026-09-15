@@ -146,12 +146,11 @@ fn collect_diagnostics(
     let mut diags = Vec::new();
     while let Ok(msg) = rx.try_recv() {
         let val = serde_json::to_value(&msg).unwrap();
-        if val.get("method").and_then(|m| m.as_str()) == Some("textDocument/publishDiagnostics") {
-            if let Some(params) = val.get("params") {
-                if let Ok(p) = serde_json::from_value::<PublishDiagnosticsParams>(params.clone()) {
-                    diags.push(p);
-                }
-            }
+        if val.get("method").and_then(|m| m.as_str()) == Some("textDocument/publishDiagnostics")
+            && let Some(params) = val.get("params")
+            && let Ok(p) = serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
+        {
+            diags.push(p);
         }
     }
     diags
@@ -175,18 +174,45 @@ async fn test_initialize_capabilities() {
     let caps = &result.capabilities;
     assert!(caps.hover_provider.is_some(), "should have hover");
     assert!(caps.definition_provider.is_some(), "should have definition");
-    assert!(caps.type_definition_provider.is_some(), "should have type definition");
+    assert!(
+        caps.type_definition_provider.is_some(),
+        "should have type definition"
+    );
     assert!(caps.completion_provider.is_some(), "should have completion");
-    assert!(caps.signature_help_provider.is_some(), "should have signature help");
+    assert!(
+        caps.signature_help_provider.is_some(),
+        "should have signature help"
+    );
     assert!(caps.references_provider.is_some(), "should have references");
-    assert!(caps.implementation_provider.is_some(), "should have implementation");
-    assert!(caps.document_symbol_provider.is_some(), "should have document symbols");
-    assert!(caps.workspace_symbol_provider.is_some(), "should have workspace symbols");
-    assert!(caps.code_action_provider.is_some(), "should have code actions");
+    assert!(
+        caps.implementation_provider.is_some(),
+        "should have implementation"
+    );
+    assert!(
+        caps.document_symbol_provider.is_some(),
+        "should have document symbols"
+    );
+    assert!(
+        caps.workspace_symbol_provider.is_some(),
+        "should have workspace symbols"
+    );
+    assert!(
+        caps.code_action_provider.is_some(),
+        "should have code actions"
+    );
     assert!(caps.code_lens_provider.is_some(), "should have code lens");
-    assert!(caps.call_hierarchy_provider.is_some(), "should have call hierarchy");
-    assert!(caps.inlay_hint_provider.is_some(), "should have inlay hints");
-    assert!(caps.document_formatting_provider.is_some(), "should have formatting");
+    assert!(
+        caps.call_hierarchy_provider.is_some(),
+        "should have call hierarchy"
+    );
+    assert!(
+        caps.inlay_hint_provider.is_some(),
+        "should have inlay hints"
+    );
+    assert!(
+        caps.document_formatting_provider.is_some(),
+        "should have formatting"
+    );
 
     // Verify server info
     let info = result.server_info.unwrap();
@@ -195,12 +221,14 @@ async fn test_initialize_capabilities() {
 
 #[tokio::test]
 async fn test_document_symbols() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit = assert add(1, 2) == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri.clone())).await;
 
@@ -239,22 +267,24 @@ function main(): Unit = assert add(1, 2) == 3
     assert!(!symbols.is_empty(), "should have symbols");
 
     // Check that we find the 'add' function
-    let has_add = symbols.iter().any(|s| {
-        s.get("name").and_then(|n| n.as_str()) == Some("add")
-    });
+    let has_add = symbols
+        .iter()
+        .any(|s| s.get("name").and_then(|n| n.as_str()) == Some("add"));
     assert!(has_add, "should find 'add' function symbol");
 }
 
 #[tokio::test]
 async fn test_hover() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -312,14 +342,16 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_completion() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -356,14 +388,16 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_goto_definition() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -407,7 +441,8 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_find_references() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
@@ -415,7 +450,8 @@ function main(): Unit =
   let a = add(1, 2)
   let b = add(3, 4)
   assert a + b == 10
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -458,11 +494,13 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_code_lens() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 test "basic math" = assert 1 + 2 == 3
 test "string check" = assert true
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -503,10 +541,12 @@ test "string check" = assert true
 
 #[tokio::test]
 async fn test_code_action() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -541,14 +581,16 @@ function main(): Unit = assert true
 
 #[tokio::test]
 async fn test_signature_help() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -591,14 +633,16 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_inlay_hint() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -644,7 +688,8 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_type_definition() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 public record Point =
     x: Int32
@@ -655,7 +700,8 @@ function makePoint(): Point = Point { x = 1; y = 2 }
 function main(): Unit =
   let p = makePoint()
   assert p.x == 1
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -698,14 +744,16 @@ function main(): Unit =
 
 #[tokio::test]
 async fn test_call_hierarchy() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 function add(x: Int32, y: Int32): Int32 = x + y
 
 function main(): Unit =
   let result = add(1, 2)
   assert result == 3
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -743,40 +791,45 @@ function main(): Unit =
         13,
     );
     let resp = service.call(req).await.unwrap();
-    assert!(resp.is_some(), "prepare call hierarchy should return a response");
+    assert!(
+        resp.is_some(),
+        "prepare call hierarchy should return a response"
+    );
 
     // If we got items, try incoming and outgoing calls
     let resp_val = resp.unwrap();
     let result = resp_val.result();
-    if let Some(result) = result {
-        if !result.is_null() {
-            let items: Vec<serde_json::Value> = serde_json::from_value(result.clone()).unwrap_or_default();
-            if let Some(item) = items.first() {
-                // Test incoming calls
-                let req = build_request(
-                    "callHierarchy/incomingCalls",
-                    serde_json::json!({ "item": item }),
-                    14,
-                );
-                let resp = service.call(req).await.unwrap();
-                assert!(resp.is_some(), "incoming calls should return a response");
+    if let Some(result) = result
+        && !result.is_null()
+    {
+        let items: Vec<serde_json::Value> =
+            serde_json::from_value(result.clone()).unwrap_or_default();
+        if let Some(item) = items.first() {
+            // Test incoming calls
+            let req = build_request(
+                "callHierarchy/incomingCalls",
+                serde_json::json!({ "item": item }),
+                14,
+            );
+            let resp = service.call(req).await.unwrap();
+            assert!(resp.is_some(), "incoming calls should return a response");
 
-                // Test outgoing calls
-                let req = build_request(
-                    "callHierarchy/outgoingCalls",
-                    serde_json::json!({ "item": item }),
-                    15,
-                );
-                let resp = service.call(req).await.unwrap();
-                assert!(resp.is_some(), "outgoing calls should return a response");
-            }
+            // Test outgoing calls
+            let req = build_request(
+                "callHierarchy/outgoingCalls",
+                serde_json::json!({ "item": item }),
+                15,
+            );
+            let resp = service.call(req).await.unwrap();
+            assert!(resp.is_some(), "outgoing calls should return a response");
         }
     }
 }
 
 #[tokio::test]
 async fn test_goto_implementation() {
-    let workspace = create_temp_workspace(r#"package a
+    let workspace = create_temp_workspace(
+        r#"package a
 
 trait Greeter =
   greet(): String
@@ -787,7 +840,8 @@ implement Greeter for Hello =
   greet(): String = "hello"
 
 function main(): Unit = assert true
-"#);
+"#,
+    );
     let root_uri = Url::from_directory_path(workspace.path()).unwrap();
     let mut service = init_service(Some(root_uri)).await;
 
@@ -825,7 +879,10 @@ function main(): Unit = assert true
         16,
     );
     let resp = service.call(req).await.unwrap();
-    assert!(resp.is_some(), "goto implementation should return a response");
+    assert!(
+        resp.is_some(),
+        "goto implementation should return a response"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -880,7 +937,10 @@ function main(): Unit = unknownFunc()
             .iter()
             .any(|diag| diag.severity == Some(DiagnosticSeverity::ERROR))
     });
-    assert!(has_errors, "should publish diagnostics with errors for invalid source");
+    assert!(
+        has_errors,
+        "should publish diagnostics with errors for invalid source"
+    );
 }
 
 #[tokio::test]
@@ -955,10 +1015,7 @@ function main(): Unit = ()
 
     let diags = collect_diagnostics(&mut rx);
     // After fix, the file's diagnostics should be cleared (empty list)
-    let file_diags: Vec<_> = diags
-        .iter()
-        .filter(|d| d.uri == file_uri)
-        .collect();
+    let file_diags: Vec<_> = diags.iter().filter(|d| d.uri == file_uri).collect();
     // Either no publish for this file, or the last publish has empty diagnostics
     if let Some(last) = file_diags.last() {
         assert!(
@@ -1021,16 +1078,17 @@ function main(): Unit = assert add(1, 2) == 3
     let resp = resp.unwrap();
     let result = resp.result().unwrap();
 
-    assert!(!result.is_null(), "workspace symbols should return a result");
+    assert!(
+        !result.is_null(),
+        "workspace symbols should return a result"
+    );
     let symbols: Vec<serde_json::Value> = serde_json::from_value(result.clone()).unwrap();
     // display_name includes package prefix and params, e.g. "a.add(Int32, Int32)"
-    let has_add = symbols
-        .iter()
-        .any(|s| {
-            s.get("name")
-                .and_then(|n| n.as_str())
-                .is_some_and(|n| n.contains("add"))
-        });
+    let has_add = symbols.iter().any(|s| {
+        s.get("name")
+            .and_then(|n| n.as_str())
+            .is_some_and(|n| n.contains("add"))
+    });
     assert!(has_add, "workspace symbols should include 'add'");
 }
 
@@ -1195,7 +1253,10 @@ function main(): Unit = unknownFunc()
     );
     let resp = service.call(req).await.unwrap();
     // Response must exist (not an RPC error) — result may be null
-    assert!(resp.is_some(), "server should respond to hover even after errors");
+    assert!(
+        resp.is_some(),
+        "server should respond to hover even after errors"
+    );
 }
 
 #[tokio::test]
@@ -1273,7 +1334,10 @@ function main(): Unit = assert add(1, 2) == 3
         25,
     );
     let resp = service.call(req).await.unwrap();
-    assert!(resp.is_some(), "server should respond to hover after recovery");
+    assert!(
+        resp.is_some(),
+        "server should respond to hover after recovery"
+    );
 
     // Verify we get actual hover info (not just null)
     let resp = resp.unwrap();

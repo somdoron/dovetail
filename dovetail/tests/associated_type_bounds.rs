@@ -52,7 +52,10 @@ function main(): Unit = ()
 "#
     );
     let result = dovetail::check(&source, "test.dove");
-    assert!(result.diagnostics.has_errors(), "an abstract output cannot be assumed to be Int32");
+    assert!(
+        result.diagnostics.has_errors(),
+        "an abstract output cannot be assumed to be Int32"
+    );
 }
 
 #[test]

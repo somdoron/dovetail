@@ -2,7 +2,9 @@ use crate::common::types::{Fqn, SymbolName, TypeParamName};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::parser::ast::{Declaration, ImportDecl, SourceFile, TraitDecl};
-use crate::typechecker::registry::{AssociatedTypeSig, TraitMethodSig, TraitPropertySig, TraitSignature, TraitSuperRef};
+use crate::typechecker::registry::{
+    AssociatedTypeSig, TraitMethodSig, TraitPropertySig, TraitSignature, TraitSuperRef,
+};
 use crate::typechecker::types::{TraitBounds, Type};
 
 use super::Collector;
@@ -16,7 +18,9 @@ impl<'a> Collector<'a> {
         let mut duplicates = Vec::new();
         for file in files {
             for decl in &file.declarations {
-                let Declaration::Trait(decl) = decl else { continue };
+                let Declaration::Trait(decl) = decl else {
+                    continue;
+                };
                 let fqn = Fqn {
                     package: self.package_path.clone(),
                     symbol: SymbolName(decl.name.value.clone()),
@@ -56,7 +60,9 @@ impl<'a> Collector<'a> {
         if !visited.insert(fqn.clone()) {
             return;
         }
-        let Some(&(decl, imports)) = declarations.get(fqn) else { return };
+        let Some(&(decl, imports)) = declarations.get(fqn) else {
+            return;
+        };
         for super_ref in &decl.supers {
             self.current_file_imports = imports;
             if let Some((super_fqn, _)) = self.resolve_trait(&super_ref.name.value) {
@@ -81,7 +87,8 @@ impl Collector<'_> {
             .iter()
             .map(|tp| TypeParamName(tp.value.clone()))
             .collect();
-        self.package_registry.pre_register_trait(fqn, type_params, trait_decl.is_interface);
+        self.package_registry
+            .pre_register_trait(fqn, type_params, trait_decl.is_interface);
     }
 
     pub(super) fn collect_trait(&mut self, trait_decl: &TraitDecl) {
@@ -91,7 +98,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &trait_decl.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         // Collect trait-level type param names
@@ -102,7 +110,8 @@ impl Collector<'_> {
             .collect();
 
         // Build trait-level type params map: "Self" + trait type params (e.g. <T>)
-        let mut trait_type_params_map = Type::type_param_map(&trait_type_params, &TraitBounds::empty());
+        let mut trait_type_params_map =
+            Type::type_param_map(&trait_type_params, &TraitBounds::empty());
         trait_type_params_map.insert("Self".to_string(), Type::SelfType);
 
         // Collect associated types and add them to the type params map
@@ -120,11 +129,17 @@ impl Collector<'_> {
                 );
                 continue;
             }
-            let gat_type_params: Vec<TypeParamName> = assoc_type.type_params.iter()
+            let gat_type_params: Vec<TypeParamName> = assoc_type
+                .type_params
+                .iter()
                 .map(|tp| TypeParamName(tp.value.clone()))
                 .collect();
             if let Some(doc) = &assoc_type.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), assoc_type.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    assoc_type.name.value.clone(),
+                    doc.clone(),
+                );
             }
             associated_type_sigs.push(AssociatedTypeSig {
                 name: assoc_type.name.value.clone(),
@@ -180,7 +195,10 @@ impl Collector<'_> {
             if supers.iter().any(|existing| existing.fqn == super_fqn) {
                 self.diagnostics.error(
                     super_ref.name.span.clone(),
-                    format!("duplicate super trait '{}' in extends clause", super_ref.name.value),
+                    format!(
+                        "duplicate super trait '{}' in extends clause",
+                        super_ref.name.value
+                    ),
                 );
                 continue;
             }
@@ -204,13 +222,20 @@ impl Collector<'_> {
             if !visited.insert(super_fqn.clone()) {
                 continue;
             }
-            let Some(super_sig) = self.package_registry.get_trait(&super_fqn)
-                .or_else(|| self.dependency_registry.get_trait(&super_fqn)) else { continue };
+            let Some(super_sig) = self
+                .package_registry
+                .get_trait(&super_fqn)
+                .or_else(|| self.dependency_registry.get_trait(&super_fqn))
+            else {
+                continue;
+            };
             pending.extend(super_sig.supers.iter().map(|s| s.fqn.clone()));
             for assoc in &super_sig.associated_types {
-                trait_type_params_map.entry(assoc.name.clone()).or_insert_with(|| {
-                    Type::TypeVariable(TypeParamName(assoc.name.clone()), vec![])
-                });
+                trait_type_params_map
+                    .entry(assoc.name.clone())
+                    .or_insert_with(|| {
+                        Type::TypeVariable(TypeParamName(assoc.name.clone()), vec![])
+                    });
             }
         }
 
@@ -242,9 +267,14 @@ impl Collector<'_> {
 
             // Resolve method-level trait bounds from where clause
             let mut bound_scope = trait_type_params_map.clone();
-            bound_scope.extend(Type::type_param_map(&method_type_params, &TraitBounds::empty()));
+            bound_scope.extend(Type::type_param_map(
+                &method_type_params,
+                &TraitBounds::empty(),
+            ));
             let method_trait_bounds = self.resolve_trait_bounds_in_scope(
-                &method.where_clause, &method_type_params, &bound_scope,
+                &method.where_clause,
+                &method_type_params,
+                &bound_scope,
             );
 
             // Per-method type params extend the trait-level map
@@ -265,14 +295,16 @@ impl Collector<'_> {
                 .collect();
 
             let return_type = match &method.return_type {
-                Some(te) => {
-                    self.resolve_type_expr_with_type_params(te, &method_type_params_map)
-                }
+                Some(te) => self.resolve_type_expr_with_type_params(te, &method_type_params_map),
                 None => Type::Unit,
             };
 
             if let Some(doc) = &method.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), method.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    method.name.value.clone(),
+                    doc.clone(),
+                );
             }
             let default_source = match &method.body {
                 None => None,
@@ -340,13 +372,15 @@ impl Collector<'_> {
                 })
                 .collect();
 
-            let return_type = self.resolve_type_expr_with_type_params(
-                &property.return_type,
-                &trait_type_params_map,
-            );
+            let return_type = self
+                .resolve_type_expr_with_type_params(&property.return_type, &trait_type_params_map);
 
             if let Some(doc) = &property.doc_comment {
-                self.package_registry.register_sub_doc_comment(fqn.clone(), property.name.value.clone(), doc.clone());
+                self.package_registry.register_sub_doc_comment(
+                    fqn.clone(),
+                    property.name.value.clone(),
+                    doc.clone(),
+                );
             }
             let default_source = match &property.body {
                 None => None,
@@ -397,7 +431,11 @@ impl Collector<'_> {
                 trait_decl.name.span.clone(),
                 format!(
                     "duplicate {}: '{}'",
-                    if trait_decl.is_interface { "interface" } else { "trait" },
+                    if trait_decl.is_interface {
+                        "interface"
+                    } else {
+                        "trait"
+                    },
                     trait_decl.name.value
                 ),
             );

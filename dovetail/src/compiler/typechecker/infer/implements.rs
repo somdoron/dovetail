@@ -3,21 +3,47 @@ use std::collections::BTreeMap;
 use crate::common::types::{Fqn, SymbolName, TypeParamName, VarName};
 use crate::parser::ast::{Expr, FunctionDecl, ImplementDecl};
 
-use crate::typechecker::types::{TraitBounds, Type, TypedImplementBlock, TypedImplMethod, TypedParam};
+use crate::typechecker::types::{
+    TraitBounds, Type, TypedImplMethod, TypedImplementBlock, TypedParam,
+};
 
 use super::Inference;
 
 impl Inference<'_> {
-    fn implementation_dispatch_name(&self, trait_fqn: &Fqn, for_type: &Type, name: &str, parameters: &[TypedParam]) -> SymbolName {
-        let Some(receiver) = for_type.try_to_fqn() else { return SymbolName(name.to_string()) };
-        self.registry.find_impl_method(&receiver, &SymbolName(name.to_string())).into_iter()
-            .find(|(block, method)| block.trait_fqn == *trait_fqn && method.params.len() == parameters.len()
-                && method.params.iter().zip(parameters).all(|((_, expected), actual)| expected.to_string() == actual.ty.to_string()))
-            .map(|(_, method)| method.dispatch_name.clone()).unwrap_or_else(|| SymbolName(name.to_string()))
+    fn implementation_dispatch_name(
+        &self,
+        trait_fqn: &Fqn,
+        for_type: &Type,
+        name: &str,
+        parameters: &[TypedParam],
+    ) -> SymbolName {
+        let Some(receiver) = for_type.try_to_fqn() else {
+            return SymbolName(name.to_string());
+        };
+        self.registry
+            .find_impl_method(&receiver, &SymbolName(name.to_string()))
+            .into_iter()
+            .find(|(block, method)| {
+                block.trait_fqn == *trait_fqn
+                    && method.params.len() == parameters.len()
+                    && method
+                        .params
+                        .iter()
+                        .zip(parameters)
+                        .all(|((_, expected), actual)| {
+                            expected.to_string() == actual.ty.to_string()
+                        })
+            })
+            .map(|(_, method)| method.dispatch_name.clone())
+            .unwrap_or_else(|| SymbolName(name.to_string()))
     }
 
     /// An implementation may rely on its block and the declared method contract,
     /// but it cannot demand additional evidence from callers of that contract.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep the compiler context parameters explicit at this call boundary."
+    )]
     pub(super) fn implementation_method_bounds(
         &mut self,
         method: &FunctionDecl,
@@ -97,9 +123,8 @@ impl Inference<'_> {
                             expected,
                             &substitution,
                         );
-                        let expected = crate::typechecker::collect::expand_gats(
-                            &expected, associated_types,
-                        );
+                        let expected =
+                            crate::typechecker::collect::expand_gats(&expected, associated_types);
                         crate::typechecker::subtyping::identical(&expected, actual)
                     },
                 ) {
@@ -173,14 +198,24 @@ impl Inference<'_> {
     ) -> BTreeMap<TypeParamName, (Vec<TypeParamName>, Type)> {
         let mut definitions = BTreeMap::new();
         for definition in &declaration.associated_types {
-            let parameters: Vec<_> = definition.type_params.iter()
-                .map(|parameter| TypeParamName(parameter.value.clone())).collect();
+            let parameters: Vec<_> = definition
+                .type_params
+                .iter()
+                .map(|parameter| TypeParamName(parameter.value.clone()))
+                .collect();
             let previous = self.current_type_params.clone();
             let scope = self.type_param_map(&parameters, &TraitBounds::empty());
-            self.current_type_params.extend(scope.into_iter().map(|(name, ty)| (TypeParamName(name), ty)));
+            self.current_type_params.extend(
+                scope
+                    .into_iter()
+                    .map(|(name, ty)| (TypeParamName(name), ty)),
+            );
             let body = self.resolve_type_expr(&definition.type_expr);
             self.current_type_params = previous;
-            definitions.insert(TypeParamName(definition.name.value.clone()), (parameters, body));
+            definitions.insert(
+                TypeParamName(definition.name.value.clone()),
+                (parameters, body),
+            );
         }
         definitions
     }
@@ -228,13 +263,27 @@ impl Inference<'_> {
             }
 
             if !method.type_params.is_empty() {
-                if let Some(typed_method) = self.typecheck_generic_impl_method(method, &for_type, &trait_fqn, &resolved_trait_type_args, &associated_types) {
+                if let Some(typed_method) = self.typecheck_generic_impl_method(
+                    method,
+                    &for_type,
+                    &trait_fqn,
+                    &resolved_trait_type_args,
+                    &associated_types,
+                ) {
                     impl_methods.push(typed_method);
                 }
                 continue;
             }
 
-            self.implementation_method_bounds(method, &for_type, &trait_fqn, &resolved_trait_type_args, &[], &TraitBounds::empty(), &associated_types);
+            self.implementation_method_bounds(
+                method,
+                &for_type,
+                &trait_fqn,
+                &resolved_trait_type_args,
+                &[],
+                &TraitBounds::empty(),
+                &associated_types,
+            );
             // Non-generic method: full inference and insert.
             let typed_params: Vec<TypedParam> = method
                 .params
@@ -260,7 +309,8 @@ impl Inference<'_> {
             };
 
             let body_expected_type = if method.is_async {
-                self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+                self.resolve_awaitable_value_type(&return_type)
+                    .unwrap_or(return_type.clone())
             } else {
                 return_type.clone()
             };
@@ -311,7 +361,12 @@ impl Inference<'_> {
 
             let body = self.wrap_async_body(body, &return_type, method.is_async);
 
-            let method_sym = self.implementation_dispatch_name(&trait_fqn, &for_type, &method.name.value, &typed_params);
+            let method_sym = self.implementation_dispatch_name(
+                &trait_fqn,
+                &for_type,
+                &method.name.value,
+                &typed_params,
+            );
             impl_methods.push(TypedImplMethod {
                 name: method_sym,
                 method_type_params: vec![],
@@ -448,7 +503,13 @@ impl Inference<'_> {
                     .cloned()
                     .collect();
                 let method_trait_bounds = self.implementation_method_bounds(
-                    method, &for_type, &trait_fqn, &resolved_trait_type_args, &impl_type_params, &impl_trait_bounds, &associated_types,
+                    method,
+                    &for_type,
+                    &trait_fqn,
+                    &resolved_trait_type_args,
+                    &impl_type_params,
+                    &impl_trait_bounds,
+                    &associated_types,
                 );
                 let mut combined_bounds = impl_trait_bounds.clone();
                 combined_bounds.merge(&method_trait_bounds);
@@ -481,7 +542,8 @@ impl Inference<'_> {
                     None => Type::Unit,
                 };
                 let body_expected_type = if method.is_async {
-                    self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+                    self.resolve_awaitable_value_type(&return_type)
+                        .unwrap_or(return_type.clone())
                 } else {
                     return_type.clone()
                 };
@@ -504,7 +566,12 @@ impl Inference<'_> {
                 self.async_return_type = prev_async_return;
                 self.function_return_type = prev_fn_return;
 
-                let method_sym = self.implementation_dispatch_name(&trait_fqn, &for_type, &method.name.value, &typed_params);
+                let method_sym = self.implementation_dispatch_name(
+                    &trait_fqn,
+                    &for_type,
+                    &method.name.value,
+                    &typed_params,
+                );
                 impl_methods.push(TypedImplMethod {
                     name: method_sym,
                     method_type_params,
@@ -603,7 +670,13 @@ impl Inference<'_> {
             .map(|tp| TypeParamName(tp.value.clone()))
             .collect();
         let method_trait_bounds = self.implementation_method_bounds(
-            method, for_type, trait_fqn, trait_type_args, &[], &TraitBounds::empty(), associated_types,
+            method,
+            for_type,
+            trait_fqn,
+            trait_type_args,
+            &[],
+            &TraitBounds::empty(),
+            associated_types,
         );
         let type_param_map = self.type_param_map(&method_type_params, &method_trait_bounds);
         let prev_type_params = std::mem::take(&mut self.current_type_params);
@@ -635,7 +708,8 @@ impl Inference<'_> {
                 None => Type::Unit,
             };
             let body_expected_type = if method.is_async {
-                self.resolve_awaitable_value_type(&return_type).unwrap_or(return_type.clone())
+                self.resolve_awaitable_value_type(&return_type)
+                    .unwrap_or(return_type.clone())
             } else {
                 return_type.clone()
             };
@@ -659,7 +733,12 @@ impl Inference<'_> {
             // Store template TypedFunction for monomorphize to instantiate.
             // Only method-level type_params (the impl block is non-generic).
             let type_fqn = for_type.to_fqn();
-            let method_sym = self.implementation_dispatch_name(&trait_fqn, &for_type, &method.name.value, &typed_params);
+            let method_sym = self.implementation_dispatch_name(
+                trait_fqn,
+                for_type,
+                &method.name.value,
+                &typed_params,
+            );
             let template_mn = crate::typechecker::types::impl_member_mangled_name(
                 trait_fqn,
                 for_type,
@@ -667,7 +746,10 @@ impl Inference<'_> {
                 &method_sym,
                 trait_type_args,
             );
-            let display_name = super::make_display_name(&format!("{}${}.{}", trait_fqn, type_fqn, method_sym), &typed_params);
+            let display_name = super::make_display_name(
+                &format!("{}${}.{}", trait_fqn, type_fqn, method_sym),
+                &typed_params,
+            );
             let typed_func = crate::typechecker::types::TypedFunction {
                 visibility: method.visibility,
                 name: template_mn.clone(),

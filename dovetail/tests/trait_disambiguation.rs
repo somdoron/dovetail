@@ -34,7 +34,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous call") && e.contains("'Alpha'") && e.contains("'Beta'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous call") && e.contains("'Alpha'") && e.contains("'Beta'")),
         "expected cross-trait ambiguity naming both traits, got: {:?}",
         errors
     );
@@ -154,7 +156,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous call") && e.contains("'FirstExt'") && e.contains("'SecondExt'")),
+        errors.iter().any(|e| e.contains("ambiguous call")
+            && e.contains("'FirstExt'")
+            && e.contains("'SecondExt'")),
         "expected cross-extension ambiguity naming both extensions, got: {:?}",
         errors
     );
@@ -191,7 +195,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous method 'tag' on type parameter 'T'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous method 'tag' on type parameter 'T'")),
         "expected type-param bound ambiguity, got: {:?}",
         errors
     );
@@ -317,7 +323,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous call to 'Maker.make'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous call to 'Maker.make'")),
         "expected trait-static ambiguity, got: {:?}",
         errors
     );
@@ -349,12 +357,16 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement trait 'Alpha'")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement trait 'Alpha'")),
         "expected 'does not implement trait', got: {:?}",
         errors
     );
     assert!(
-        !errors.iter().any(|e| e.contains("cannot be used as a type")),
+        !errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "the misleading type-position error must not leak for call receivers: {:?}",
         errors
     );
@@ -381,7 +393,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("trait 'Alpha' has no function 'missing'")),
+        errors
+            .iter()
+            .any(|e| e.contains("trait 'Alpha' has no function 'missing'")),
         "expected member-not-found error, got: {:?}",
         errors
     );
@@ -466,7 +480,8 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("the only implementations are generic; call it on a concrete type instead")),
+        errors.iter().any(|e| e
+            .contains("the only implementations are generic; call it on a concrete type instead")),
         "generic-only static impls get an honest diagnostic, got: {:?}",
         errors
     );
@@ -498,7 +513,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous property 'p'") && e.contains("'ExtA'") && e.contains("'ExtB'")),
+        errors.iter().any(|e| e.contains("ambiguous property 'p'")
+            && e.contains("'ExtA'")
+            && e.contains("'ExtB'")),
         "generic extension property ambiguity must be reported, got: {:?}",
         errors
     );
@@ -577,7 +594,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous reference to 'tag'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous reference to 'tag'")),
         "ambiguous bound refs must say so (not 'no field'), got: {:?}",
         errors
     );
@@ -630,7 +649,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("the only matching members are on generic blocks")),
+        errors
+            .iter()
+            .any(|e| e.contains("the only matching members are on generic blocks")),
         "generic-only extension statics get an honest diagnostic, got: {:?}",
         errors
     );
@@ -770,7 +791,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("named extension 'Pick' conflicts with a trait of the same name")),
+        errors
+            .iter()
+            .any(|e| e.contains("named extension 'Pick' conflicts with a trait of the same name")),
         "a trait/extension name clash must be diagnosed, got: {:?}",
         errors
     );
@@ -864,7 +887,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("'is' cannot test interface type")),
+        errors
+            .iter()
+            .any(|e| e.contains("'is' cannot test interface type")),
         "an interface target in 'is' must be rejected, got: {:?}",
         errors
     );
@@ -895,7 +920,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("implements 'Iterable' more than once")),
+        errors
+            .iter()
+            .any(|e| e.contains("implements 'Iterable' more than once")),
         "sibling Iterable impls get the honest ambiguity message, got: {:?}",
         errors
     );
@@ -928,7 +955,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type pattern cannot test interface type")),
+        errors
+            .iter()
+            .any(|e| e.contains("type pattern cannot test interface type")),
         "interface targets in type patterns must be rejected, got: {:?}",
         errors
     );
@@ -1091,7 +1120,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous property 'tag'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous property 'tag'")),
         "two applications of one trait must be ambiguous for properties too, got: {:?}",
         errors
     );
@@ -1123,7 +1154,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous static property 'zero'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous static property 'zero'")),
         "a static property provided by two traits must be ambiguous, got: {:?}",
         errors
     );
@@ -1155,12 +1188,13 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous call to 'Box.make'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous call to 'Box.make'")),
         "generic static impls from two traits must be ambiguous, got: {:?}",
         errors
     );
 }
-
 
 // ── Round-15 review regressions ─────────────────────────────────────
 
@@ -1224,7 +1258,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous property 'conv'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous property 'conv'")),
         "the property mirror must be ambiguous too, got: {:?}",
         errors
     );
@@ -1364,9 +1400,11 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous call to 'Conv.tag'")
-            && e.contains("Conv<Int32>")
-            && e.contains("Conv<Bool>")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous call to 'Conv.tag'")
+                && e.contains("Conv<Int32>")
+                && e.contains("Conv<Bool>")),
         "bound order must not decide a bare explicit call's callee, got: {:?}",
         errors
     );
@@ -1427,7 +1465,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("Conv<Int32>") && e.contains("Conv<Bool>")),
+        errors
+            .iter()
+            .any(|e| e.contains("Conv<Int32>") && e.contains("Conv<Bool>")),
         "an ambiguity between two applications must name them apart, got: {:?}",
         errors
     );
@@ -1495,12 +1535,16 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("ambiguous call to 'Box.makeIt'")),
+        errors
+            .iter()
+            .any(|e| e.contains("ambiguous call to 'Box.makeIt'")),
         "the call is genuinely ambiguous, got: {:?}",
         errors
     );
     assert!(
-        !errors.iter().any(|e| e.contains("use 'Dec.makeIt(...)' to choose one")),
+        !errors
+            .iter()
+            .any(|e| e.contains("use 'Dec.makeIt(...)' to choose one")),
         "the message must not suggest a form the compiler rejects, got: {:?}",
         errors
     );

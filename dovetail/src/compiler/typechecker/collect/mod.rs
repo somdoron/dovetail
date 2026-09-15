@@ -4,9 +4,12 @@ mod enums;
 mod extensions;
 mod functions;
 mod globals;
-mod implements;
 mod implementation_matching;
-pub(crate) use implements::{expand_gats, expand_trait_bound_gats, rename_method_bounds, substitute_trait_bounds, substitute_trait_type_params};
+mod implements;
+pub(crate) use implements::{
+    expand_gats, expand_trait_bound_gats, rename_method_bounds, substitute_trait_bounds,
+    substitute_trait_type_params,
+};
 mod modules;
 mod newtypes;
 mod records;
@@ -19,7 +22,9 @@ use std::collections::VecDeque;
 
 use crate::common::diagnostics::Diagnostics;
 use crate::common::types::{Fqn, PackagePath, SymbolName, TypeParamName};
-use crate::parser::ast::{Declaration, ImportDecl, NewtypeDecl, SourceFile, TraitConstraint, TypeAliasDecl};
+use crate::parser::ast::{
+    Declaration, ImportDecl, NewtypeDecl, SourceFile, TraitConstraint, TypeAliasDecl,
+};
 use crate::typechecker::registry::Registry;
 use crate::typechecker::types::{TraitBounds, Type};
 
@@ -66,16 +71,16 @@ impl<'a> Collector<'a> {
                 .alias
                 .as_ref()
                 .map(|a| a.value.as_str())
-                .unwrap_or_else(|| {
-                    import.path.last().map(|s| s.value.as_str()).unwrap_or("")
-                });
+                .unwrap_or_else(|| import.path.last().map(|s| s.value.as_str()).unwrap_or(""));
 
             if local_name == name && import.path.len() >= 2 {
                 let pkg_segments: Vec<String> = import.path[..import.path.len() - 1]
                     .iter()
                     .map(|s| s.value.clone())
                     .collect();
-                let Some(last) = import.path.last() else { continue };
+                let Some(last) = import.path.last() else {
+                    continue;
+                };
                 let symbol_name = &last.value;
                 let fqn = Fqn {
                     package: PackagePath(pkg_segments),
@@ -194,7 +199,7 @@ impl<'a> Collector<'a> {
                     let resolved_type_args: Vec<Type> = trait_bound
                         .type_args
                         .iter()
-                        .map(|te| self.resolve_type_expr_with_type_params(te, &preliminary_map))
+                        .map(|te| self.resolve_type_expr_with_type_params(te, preliminary_map))
                         .collect();
 
                     // Operators and associated-type bindings require a complete trait application.
@@ -242,7 +247,7 @@ impl<'a> Collector<'a> {
                                 continue;
                             }
                         }
-                        let ty = self.resolve_type_expr_with_type_params(te, &preliminary_map);
+                        let ty = self.resolve_type_expr_with_type_params(te, preliminary_map);
                         if associated_types.insert(name.value.clone(), ty).is_some() {
                             self.diagnostics.error(
                                 name.span.clone(),
@@ -258,8 +263,10 @@ impl<'a> Collector<'a> {
                             kind: crate::typechecker::types::BoundKind::HasTrait,
                         },
                     ));
-                } else if let Some(fqn) = self.resolve_class(&trait_bound.name.value)
-                    .or_else(|| Type::from_primitive(&trait_bound.name.value).map(|ty| ty.to_fqn())) {
+                } else if let Some(fqn) = self
+                    .resolve_class(&trait_bound.name.value)
+                    .or_else(|| Type::from_primitive(&trait_bound.name.value).map(|ty| ty.to_fqn()))
+                {
                     // Nominal subtype bound: a class or a prelude primitive.
                     if !trait_bound.type_args.is_empty() || !trait_bound.associated_types.is_empty()
                     {
@@ -283,7 +290,10 @@ impl<'a> Collector<'a> {
                 } else {
                     self.diagnostics.error(
                         trait_bound.name.span.clone(),
-                        format!("unknown trait, class, or primitive: '{}'", trait_bound.name.value),
+                        format!(
+                            "unknown trait, class, or primitive: '{}'",
+                            trait_bound.name.value
+                        ),
                     );
                 }
             }

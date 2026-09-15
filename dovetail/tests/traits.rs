@@ -543,14 +543,19 @@ use dovetail::typechecker::types::TypedModule;
 use tempfile::tempdir;
 
 /// Helper: build a multi-package project and return errors.
-fn build_project_errors(project: &ResolvedProject, workspace_root: &std::path::Path) -> Vec<String> {
+fn build_project_errors(
+    project: &ResolvedProject,
+    workspace_root: &std::path::Path,
+) -> Vec<String> {
     let result = dovetail::build_project(
         project,
         workspace_root,
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Build, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
     );
     result
         .diagnostics
@@ -631,14 +636,16 @@ function main(): Unit = ()
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = build_project_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("cannot implement foreign trait")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot implement foreign trait")),
         "expected orphan rule error, got: {:?}",
         errors
     );
@@ -702,9 +709,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = build_project_errors(&project, dir.path());
@@ -773,9 +780,9 @@ function main(): Unit =
         ],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
 
     let errors = build_project_errors(&project, dir.path());
@@ -801,7 +808,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("'Self' cannot be used as a type parameter name")),
+        errors
+            .iter()
+            .any(|e| e.contains("'Self' cannot be used as a type parameter name")),
         "expected Self type param error, got: {:?}",
         errors
     );
@@ -820,7 +829,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("'Self' cannot be used as a type parameter name")),
+        errors
+            .iter()
+            .any(|e| e.contains("'Self' cannot be used as a type parameter name")),
         "expected Self type param error, got: {:?}",
         errors
     );
@@ -839,7 +850,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type parameter 'T' on method 'bar' shadows type parameter 'T' on enclosing trait 'Foo'")),
+        errors.iter().any(|e| e.contains(
+            "type parameter 'T' on method 'bar' shadows type parameter 'T' on enclosing trait 'Foo'"
+        )),
         "expected shadow error, got: {:?}",
         errors
     );
@@ -1439,7 +1452,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("not declared on this item")),
+        errors
+            .iter()
+            .any(|e| e.contains("not declared on this item")),
         "expected 'not declared' error, got: {:?}",
         errors
     );
@@ -1495,7 +1510,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement trait")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement trait")),
         "expected 'does not implement trait' error, got: {:?}",
         errors
     );
@@ -1636,7 +1653,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement trait")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement trait")),
         "expected trait bound violation error, got: {:?}",
         errors
     );
@@ -1721,7 +1740,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("not declared on this item")),
+        errors
+            .iter()
+            .any(|e| e.contains("not declared on this item")),
         "expected 'not declared on this item' error, got: {:?}",
         errors
     );
@@ -2482,7 +2503,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -2931,7 +2954,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("parameter of type 'Self'")),
+        errors
+            .iter()
+            .any(|e| e.contains("parameter of type 'Self'")),
         "expected Self-parameter declaration error, got: {:?}",
         errors
     );
@@ -3439,7 +3464,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("parameter of type 'Self'")),
+        errors
+            .iter()
+            .any(|e| e.contains("parameter of type 'Self'")),
         "expected Self-parameter declaration error, got: {:?}",
         errors
     );
@@ -3466,7 +3493,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("parameter of type 'Self'")),
+        errors
+            .iter()
+            .any(|e| e.contains("parameter of type 'Self'")),
         "expected Self-parameter declaration error, got: {:?}",
         errors
     );
@@ -3570,7 +3599,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("missing associated type definition 'Output'")),
+        errors
+            .iter()
+            .any(|e| e.contains("missing associated type definition 'Output'")),
         "expected missing associated type error, got: {:?}",
         errors
     );
@@ -3596,7 +3627,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("is not declared in trait")),
+        errors
+            .iter()
+            .any(|e| e.contains("is not declared in trait")),
         "expected extra associated type error, got: {:?}",
         errors
     );
@@ -3617,7 +3650,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("duplicate associated type")),
+        errors
+            .iter()
+            .any(|e| e.contains("duplicate associated type")),
         "expected duplicate associated type error, got: {:?}",
         errors
     );
@@ -3693,7 +3728,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("does not implement trait")),
+        errors
+            .iter()
+            .any(|e| e.contains("does not implement trait")),
         "expected trait bound violation error, got: {:?}",
         errors
     );
@@ -3845,7 +3882,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot declare associated type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot declare associated type")),
         "expected associated-type declaration error, got: {:?}",
         errors
     );
@@ -3893,7 +3932,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot declare associated type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot declare associated type")),
         "expected associated-type declaration error, got: {:?}",
         errors
     );
@@ -3925,7 +3966,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -4017,7 +4060,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("expects 1 type parameter(s), but 0 were provided")),
+        errors
+            .iter()
+            .any(|e| e.contains("expects 1 type parameter(s), but 0 were provided")),
         "expected type param count mismatch error, got: {:?}",
         errors
     );
@@ -4043,7 +4088,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("expects 0 type parameter(s), but 1 were provided")),
+        errors
+            .iter()
+            .any(|e| e.contains("expects 0 type parameter(s), but 1 were provided")),
         "expected type param count mismatch error, got: {:?}",
         errors
     );
@@ -4075,7 +4122,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("cannot be used as a type")),
+        errors
+            .iter()
+            .any(|e| e.contains("cannot be used as a type")),
         "expected trait-in-type-position error, got: {:?}",
         errors
     );
@@ -4196,7 +4245,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type mismatch") || e.contains("expected 'Int32'") || e.contains("cannot assign")),
+        errors.iter().any(|e| e.contains("type mismatch")
+            || e.contains("expected 'Int32'")
+            || e.contains("cannot assign")),
         "expected type error in impl body, got: {:?}",
         errors
     );
@@ -4222,7 +4273,11 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("type parameter name mismatch") && e.contains("expected 'U'") && e.contains("found 'V'")),
+        errors
+            .iter()
+            .any(|e| e.contains("type parameter name mismatch")
+                && e.contains("expected 'U'")
+                && e.contains("found 'V'")),
         "expected type param name mismatch error, got: {:?}",
         errors
     );

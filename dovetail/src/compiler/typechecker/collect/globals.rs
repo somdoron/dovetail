@@ -35,7 +35,8 @@ impl Collector<'_> {
         };
 
         if let Some(doc) = &global.doc_comment {
-            self.package_registry.register_doc_comment(fqn.clone(), doc.clone());
+            self.package_registry
+                .register_doc_comment(fqn.clone(), doc.clone());
         }
 
         let mangled_name = MangledName::for_global(&fqn);
@@ -44,7 +45,12 @@ impl Collector<'_> {
         // Check for name collision with zero-param functions (same mangled name format)
         if self
             .package_registry
-            .lookup_function_in_package(&self.package_path, &global.name.value, &self.package_path, &source_file)
+            .lookup_function_in_package(
+                &self.package_path,
+                &global.name.value,
+                &self.package_path,
+                &source_file,
+            )
             .is_some()
         {
             self.diagnostics.error(
@@ -174,10 +180,10 @@ impl Collector<'_> {
                         };
                         sub = completed;
                     }
-                    if let Some((params, output)) = info.associated_type_defs.get("Output") {
-                        if params.is_empty() {
-                            outputs.push(apply_substitution(&sub, output));
-                        }
+                    if let Some((params, output)) = info.associated_type_defs.get("Output")
+                        && params.is_empty()
+                    {
+                        outputs.push(apply_substitution(&sub, output));
                     }
                 }
             }
@@ -235,7 +241,12 @@ impl Collector<'_> {
                     return Some((*ty).clone());
                 }
                 self.package_registry
-                    .lookup_global_in_package(&self.package_path, name, &self.package_path, caller_file)
+                    .lookup_global_in_package(
+                        &self.package_path,
+                        name,
+                        &self.package_path,
+                        caller_file,
+                    )
                     .map(|sig| sig.ty.clone())
             }
 
@@ -257,7 +268,9 @@ impl Collector<'_> {
                 if let Some(name) = operator_trait {
                     return self.try_infer_operator_output(name, &left_ty, &right_ty);
                 }
-                if *op == BinOp::TupleExtend { return Some(Type::tuple_extend(left_ty, right_ty)); }
+                if *op == BinOp::TupleExtend {
+                    return Some(Type::tuple_extend(left_ty, right_ty));
+                }
                 if left_ty != right_ty {
                     return None;
                 }

@@ -403,9 +403,7 @@ function main(): Unit = 5.process(3)
 "#,
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("ambiguous")),
+        errors.iter().any(|e| e.contains("ambiguous")),
         "expected error about ambiguous method call, got: {:?}",
         errors
     );

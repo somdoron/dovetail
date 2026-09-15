@@ -302,14 +302,14 @@ impl WorldState {
     /// Caches the merged TypedModule and Registry for navigation features.
     pub fn load_and_check_workspace(
         &self,
-        on_progress: Option<Arc<dyn Fn(usize, usize, &str) + Send + Sync>>,
+        on_progress: Option<Arc<crate::compiler::WorkspaceProgress>>,
     ) -> Option<HashMap<Url, Vec<lsp_types::Diagnostic>>> {
         self.analyze_workspace(on_progress, false, self.begin_dependency_analysis())
     }
 
     pub fn analyze_workspace(
         &self,
-        on_progress: Option<Arc<dyn Fn(usize, usize, &str) + Send + Sync>>,
+        on_progress: Option<Arc<crate::compiler::WorkspaceProgress>>,
         offline: bool,
         cancel: Arc<AtomicBool>,
     ) -> Option<HashMap<Url, Vec<lsp_types::Diagnostic>>> {

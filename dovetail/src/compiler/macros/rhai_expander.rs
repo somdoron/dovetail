@@ -75,9 +75,7 @@ impl DeriveExpander for RhaiDeriveExpander {
 
         let source: String = engine
             .eval_with_scope(&mut scope, &self.script)
-            .map_err(|e| {
-                MacroError::new(format!("rhai script error: {e}"))
-            })?;
+            .map_err(|e| MacroError::new(format!("rhai script error: {e}")))?;
 
         if std::env::var("DOVETAIL_DEBUG_RHAI").is_ok() {
             eprintln!(
@@ -155,7 +153,10 @@ fn record_fields(r: &RecordDecl) -> Array {
         .map(|f| {
             let mut m = Map::new();
             m.insert("name".into(), Dynamic::from(f.name.value.clone()));
-            m.insert("ty".into(), Dynamic::from(type_expr_to_source(&f.type_annotation)));
+            m.insert(
+                "ty".into(),
+                Dynamic::from(type_expr_to_source(&f.type_annotation)),
+            );
             Dynamic::from(m)
         })
         .collect()
@@ -226,7 +227,11 @@ fn type_expr_to_source(t: &TypeExpr) -> String {
         TypeExpr::TupleExtend(left, right, _) => {
             let operand = |ty: &TypeExpr| {
                 let text = type_expr_to_source(ty);
-                if matches!(ty, TypeExpr::Function(..)) { format!("({text})") } else { text }
+                if matches!(ty, TypeExpr::Function(..)) {
+                    format!("({text})")
+                } else {
+                    text
+                }
             };
             format!("({} ~ {})", operand(left), operand(right))
         }
@@ -322,11 +327,17 @@ mod tuple_extension_tests {
             ("type Example = (Int32 => Int32) ~ Bool", true, false),
         ] {
             let declarations = parse_decls(source, "test").unwrap();
-            let Declaration::TypeAlias(alias) = &declarations[0] else { panic!("expected alias") };
+            let Declaration::TypeAlias(alias) = &declarations[0] else {
+                panic!("expected alias")
+            };
             let rendered = type_expr_to_source(&alias.type_expr);
             let declarations = parse_decls(&format!("type Example = {rendered}"), "test").unwrap();
-            let Declaration::TypeAlias(alias) = &declarations[0] else { panic!("expected alias") };
-            let TypeExpr::TupleExtend(left, right, _) = &alias.type_expr else { panic!("extension grouping lost: {rendered}") };
+            let Declaration::TypeAlias(alias) = &declarations[0] else {
+                panic!("expected alias")
+            };
+            let TypeExpr::TupleExtend(left, right, _) = &alias.type_expr else {
+                panic!("extension grouping lost: {rendered}")
+            };
             assert_eq!(matches!(**left, TypeExpr::Function(..)), left_function);
             assert_eq!(matches!(**right, TypeExpr::Function(..)), right_function);
         }

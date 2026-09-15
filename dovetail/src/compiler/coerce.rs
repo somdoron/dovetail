@@ -1,9 +1,12 @@
+use crate::typechecker::types::VtableMethodGroup;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use crate::common::span::Span;
-use crate::common::types::{Fqn, MangledName, SymbolName, InterfaceMemberName, TypeParamName, VarName};
+use crate::common::types::{
+    Fqn, InterfaceMemberName, MangledName, SymbolName, TypeParamName, VarName,
+};
 
 use crate::typechecker::registry::Registry;
 use crate::typechecker::types::{
@@ -104,25 +107,44 @@ pub fn elaborate_coercions(module: &mut TypedModule, registry: &Registry) {
         };
 
         // Walk function bodies and apply return-type coercion.
-        for func in module.functions.values_mut().chain(module.function_templates.values_mut()) {
+        for func in module
+            .functions
+            .values_mut()
+            .chain(module.function_templates.values_mut())
+        {
             func.body = walk_expr(std::mem::replace(&mut func.body, placeholder_expr()), &ctx);
-            apply_return_coercion(&mut func.body, &func.return_type, registry, &interface_object_types);
+            apply_return_coercion(
+                &mut func.body,
+                &func.return_type,
+                registry,
+                &interface_object_types,
+            );
         }
 
         // Walk global initializers and apply declared-type coercion.
         for global in module.globals.values_mut() {
-            global.initializer =
-                walk_expr(std::mem::replace(&mut global.initializer, placeholder_expr()), &ctx);
-            apply_return_coercion(&mut global.initializer, &global.ty, registry, &interface_object_types);
+            global.initializer = walk_expr(
+                std::mem::replace(&mut global.initializer, placeholder_expr()),
+                &ctx,
+            );
+            apply_return_coercion(
+                &mut global.initializer,
+                &global.ty,
+                registry,
+                &interface_object_types,
+            );
         }
 
         for ty in module.types.values_mut() {
             if let TypeDef::Class(class) = ty {
                 for initializer in &mut class.initializer {
-                    *initializer = walk_expr(std::mem::replace(initializer, placeholder_expr()), &ctx);
+                    *initializer =
+                        walk_expr(std::mem::replace(initializer, placeholder_expr()), &ctx);
                 }
                 if let Some(args) = &mut class.extends_args {
-                    let parent_params = class.parent_mangled_name.as_ref()
+                    let parent_params = class
+                        .parent_mangled_name
+                        .as_ref()
                         .and_then(|name| ctx.types.get(name))
                         .and_then(|ty| match ty {
                             TypeDef::Class(parent) => Some(&parent.constructor_params),
@@ -131,7 +153,12 @@ pub fn elaborate_coercions(module: &mut TypedModule, registry: &Registry) {
                     for (index, arg) in args.iter_mut().enumerate() {
                         *arg = walk_expr(std::mem::replace(arg, placeholder_expr()), &ctx);
                         if let Some(param) = parent_params.and_then(|params| params.get(index)) {
-                            apply_return_coercion(arg, &param.ty, registry, &interface_object_types);
+                            apply_return_coercion(
+                                arg,
+                                &param.ty,
+                                registry,
+                                &interface_object_types,
+                            );
                         }
                     }
                 }
@@ -144,12 +171,18 @@ pub fn elaborate_coercions(module: &mut TypedModule, registry: &Registry) {
         }
         for block in &mut module.implement_blocks {
             for method in block.methods.iter_mut().chain(block.properties.iter_mut()) {
-                method.body = walk_expr(std::mem::replace(&mut method.body, placeholder_expr()), &ctx);
+                method.body = walk_expr(
+                    std::mem::replace(&mut method.body, placeholder_expr()),
+                    &ctx,
+                );
             }
         }
         for block in &mut module.extension_blocks {
             for method in block.methods.iter_mut().chain(block.properties.iter_mut()) {
-                method.body = walk_expr(std::mem::replace(&mut method.body, placeholder_expr()), &ctx);
+                method.body = walk_expr(
+                    std::mem::replace(&mut method.body, placeholder_expr()),
+                    &ctx,
+                );
             }
         }
     } // drop ctx so we can consume interface_object_types
@@ -208,7 +241,6 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
 
     let kind = match expr.kind {
         // === Coercion points ===
-
         TypedExprKind::Let {
             name,
             mutable,
@@ -218,7 +250,8 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
         } => {
             let mut value = walk_expr(*value, ctx);
             if needs_param_coercion(&value.ty, &var_ty) {
-                value = coerce_arg_to_param(value, &var_ty, ctx.registry, ctx.interface_object_types);
+                value =
+                    coerce_arg_to_param(value, &var_ty, ctx.registry, ctx.interface_object_types);
             } else if needs_any_boxing(&value.ty, &var_ty) {
                 value = box_to_any(value);
             }
@@ -239,7 +272,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
         } => {
             let mut value = walk_expr(*value, ctx);
             if needs_param_coercion(&value.ty, &target_ty) {
-                value = coerce_arg_to_param(value, &target_ty, ctx.registry, ctx.interface_object_types);
+                value = coerce_arg_to_param(
+                    value,
+                    &target_ty,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                );
             } else if needs_any_boxing(&value.ty, &target_ty) {
                 value = box_to_any(value);
             }
@@ -251,11 +289,20 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             }
         }
 
-        TypedExprKind::GlobalAssign { name, type_params, value } => {
+        TypedExprKind::GlobalAssign {
+            name,
+            type_params,
+            value,
+        } => {
             let mut value = walk_expr(*value, ctx);
             if let Some(global_ty) = ctx.globals.get(&name) {
                 if needs_param_coercion(&value.ty, global_ty) {
-                    value = coerce_arg_to_param(value, global_ty, ctx.registry, ctx.interface_object_types);
+                    value = coerce_arg_to_param(
+                        value,
+                        global_ty,
+                        ctx.registry,
+                        ctx.interface_object_types,
+                    );
                 } else if needs_any_boxing(&value.ty, global_ty) {
                     value = box_to_any(value);
                 }
@@ -267,14 +314,22 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             }
         }
 
-        TypedExprKind::FunctionCall { name, args, type_params } => {
+        TypedExprKind::FunctionCall {
+            name,
+            args,
+            type_params,
+        } => {
             let args: Vec<TypedExpr> = args.into_iter().map(|a| walk_expr(a, ctx)).collect();
             let args = if let Some(param_types) = ctx.function_params.get(&name) {
                 coerce_args(args, param_types, ctx.registry, ctx.interface_object_types)
             } else {
                 args
             };
-            TypedExprKind::FunctionCall { name, args, type_params }
+            TypedExprKind::FunctionCall {
+                name,
+                args,
+                type_params,
+            }
         }
 
         TypedExprKind::EnumCreate {
@@ -289,11 +344,19 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             // Fall back to the registry for enums defined in another package
             // (e.g. prelude `Option`/`Result`), and substitute the enum's type
             // args so interface-typed payload positions coerce their values.
-            let payload_types = lookup_enum_variant_payload(&ty, &variant_name, ctx.types)
-                .or_else(|| lookup_enum_variant_payload_from_registry(&fqn, &variant_name, ctx.registry));
+            let payload_types =
+                lookup_enum_variant_payload(&ty, &variant_name, ctx.types).or_else(|| {
+                    lookup_enum_variant_payload_from_registry(&fqn, &variant_name, ctx.registry)
+                });
             let args = if let Some(payload_types) = payload_types {
-                let payload_types = substitute_enum_payload_types(&payload_types, &ty, ctx.registry);
-                coerce_args(args, &payload_types, ctx.registry, ctx.interface_object_types)
+                let payload_types =
+                    substitute_enum_payload_types(&payload_types, &ty, ctx.registry);
+                coerce_args(
+                    args,
+                    &payload_types,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                )
             } else {
                 args
             };
@@ -315,11 +378,19 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             // Same treatment as EnumCreate: registry fallback for cross-package
             // enums + type-arg substitution so interface-typed payload
             // positions reify their coercions.
-            let payload_types = lookup_enum_variant_payload(&ty, &variant_name, ctx.types)
-                .or_else(|| lookup_enum_variant_payload_from_registry(&fqn, &variant_name, ctx.registry));
+            let payload_types =
+                lookup_enum_variant_payload(&ty, &variant_name, ctx.types).or_else(|| {
+                    lookup_enum_variant_payload_from_registry(&fqn, &variant_name, ctx.registry)
+                });
             let args = if let Some(payload_types) = payload_types {
-                let payload_types = substitute_enum_payload_types(&payload_types, &ty, ctx.registry);
-                coerce_args(args, &payload_types, ctx.registry, ctx.interface_object_types)
+                let payload_types =
+                    substitute_enum_payload_types(&payload_types, &ty, ctx.registry);
+                coerce_args(
+                    args,
+                    &payload_types,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                )
             } else {
                 args
             };
@@ -331,7 +402,11 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             }
         }
 
-        TypedExprKind::RecordCreate { fqn, fields, type_params } => {
+        TypedExprKind::RecordCreate {
+            fqn,
+            fields,
+            type_params,
+        } => {
             let fields: Vec<(String, TypedExpr)> = fields
                 .into_iter()
                 .map(|(name, expr)| (name, walk_expr(expr, ctx)))
@@ -342,7 +417,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                     .map(|(name, mut value)| {
                         if let Some(expected) = field_types.get(&name) {
                             if needs_param_coercion(&value.ty, expected) {
-                                value = coerce_arg_to_param(value, expected, ctx.registry, ctx.interface_object_types);
+                                value = coerce_arg_to_param(
+                                    value,
+                                    expected,
+                                    ctx.registry,
+                                    ctx.interface_object_types,
+                                );
                             } else if needs_any_boxing(&value.ty, expected) {
                                 value = box_to_any(value);
                             }
@@ -353,7 +433,11 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             } else {
                 fields
             };
-            TypedExprKind::RecordCreate { fqn, fields, type_params }
+            TypedExprKind::RecordCreate {
+                fqn,
+                fields,
+                type_params,
+            }
         }
 
         TypedExprKind::TupleLiteral { elements } => {
@@ -368,7 +452,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                     let mut value = walk_expr(value, ctx);
                     if let Some(expected) = elem_types.get(i) {
                         if needs_param_coercion(&value.ty, expected) {
-                            value = coerce_arg_to_param(value, expected, ctx.registry, ctx.interface_object_types);
+                            value = coerce_arg_to_param(
+                                value,
+                                expected,
+                                ctx.registry,
+                                ctx.interface_object_types,
+                            );
                         } else if needs_any_boxing(&value.ty, expected) {
                             value = box_to_any(value);
                         }
@@ -397,7 +486,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                         .map(|(name, idx, mut value)| {
                             if let Some(expected) = field_types.get(&name) {
                                 if needs_param_coercion(&value.ty, expected) {
-                                    value = coerce_arg_to_param(value, expected, ctx.registry, ctx.interface_object_types);
+                                    value = coerce_arg_to_param(
+                                        value,
+                                        expected,
+                                        ctx.registry,
+                                        ctx.interface_object_types,
+                                    );
                                 } else if needs_any_boxing(&value.ty, expected) {
                                     value = box_to_any(value);
                                 }
@@ -417,7 +511,6 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
         }
 
         // === Recursive-only (no coercion at this level) ===
-
         TypedExprKind::Block(exprs) => {
             let mut exprs: Vec<_> = exprs.into_iter().map(|e| walk_expr(e, ctx)).collect();
             if let Some(mut last) = exprs.pop() {
@@ -508,7 +601,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             let mut value = walk_expr(*value, ctx);
             if let Some(expected_ty) = lookup_field_type(&object.ty, &field_name, ctx.types) {
                 if needs_param_coercion(&value.ty, &expected_ty) {
-                    value = coerce_arg_to_param(value, &expected_ty, ctx.registry, ctx.interface_object_types);
+                    value = coerce_arg_to_param(
+                        value,
+                        &expected_ty,
+                        ctx.registry,
+                        ctx.interface_object_types,
+                    );
                 } else if needs_any_boxing(&value.ty, &expected_ty) {
                     value = box_to_any(value);
                 }
@@ -520,7 +618,7 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 value: Box::new(value),
                 boxed,
             }
-        },
+        }
 
         TypedExprKind::IntrinsicCall { intrinsic, args } => {
             let mut args: Vec<TypedExpr> = args.into_iter().map(|a| walk_expr(a, ctx)).collect();
@@ -574,7 +672,11 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             TypedExprKind::ArrayLiteral { elements }
         }
 
-        TypedExprKind::MethodRef { object, method_name, type_params } => TypedExprKind::MethodRef {
+        TypedExprKind::MethodRef {
+            object,
+            method_name,
+            type_params,
+        } => TypedExprKind::MethodRef {
             object: Box::new(walk_expr(*object, ctx)),
             method_name,
             type_params,
@@ -611,10 +713,15 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             value: Box::new(walk_expr(*value, ctx)),
             target_type,
         },
-        TypedExprKind::LetDestructure { pattern, var_ty, value } => {
+        TypedExprKind::LetDestructure {
+            pattern,
+            var_ty,
+            value,
+        } => {
             let mut value = walk_expr(*value, ctx);
             if needs_param_coercion(&value.ty, &var_ty) {
-                value = coerce_arg_to_param(value, &var_ty, ctx.registry, ctx.interface_object_types);
+                value =
+                    coerce_arg_to_param(value, &var_ty, ctx.registry, ctx.interface_object_types);
             } else if needs_any_boxing(&value.ty, &var_ty) {
                 value = box_to_any(value);
             }
@@ -633,16 +740,37 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             {
                 value = coerce_arg_to_param(value, inner, ctx.registry, ctx.interface_object_types);
             }
-            TypedExprKind::NewtypeCreate { value: Box::new(value) }
+            TypedExprKind::NewtypeCreate {
+                value: Box::new(value),
+            }
         }
         TypedExprKind::NewtypeValue { value } => TypedExprKind::NewtypeValue {
             value: Box::new(walk_expr(*value, ctx)),
         },
-        TypedExprKind::InterfaceObjectCoerce { inner, interface_mangled_name, concrete_type, vtable_methods } => {
+        TypedExprKind::InterfaceObjectCoerce {
+            inner,
+            interface_mangled_name,
+            concrete_type,
+            vtable_methods,
+        } => {
             // Register TypeDefs for inherited coercions (e.g. from monomorphized generics)
-            if let Type::InterfaceObject { traits, mangled_name } = &ty {
-                register_interface_object_set(traits, mangled_name, ctx.registry, ctx.interface_object_types);
-                synthesize_direct_super_coercions(ctx.registry, &concrete_type, traits, &vtable_methods);
+            if let Type::InterfaceObject {
+                traits,
+                mangled_name,
+            } = &ty
+            {
+                register_interface_object_set(
+                    traits,
+                    mangled_name,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                );
+                synthesize_direct_super_coercions(
+                    ctx.registry,
+                    &concrete_type,
+                    traits,
+                    &vtable_methods,
+                );
             }
             TypedExprKind::InterfaceObjectCoerce {
                 inner: Box::new(walk_expr(*inner, ctx)),
@@ -655,29 +783,73 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             // Register TypeDefs for inherited upcasts; the source set's defs are
             // registered when the upcast is created, but a monomorphized copy may
             // land here first.
-            if let Type::InterfaceObject { traits, mangled_name } = &ty {
-                register_interface_object_set(traits, mangled_name, ctx.registry, ctx.interface_object_types);
+            if let Type::InterfaceObject {
+                traits,
+                mangled_name,
+            } = &ty
+            {
+                register_interface_object_set(
+                    traits,
+                    mangled_name,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                );
             }
             let inner = walk_expr(*inner, ctx);
-            if let Type::InterfaceObject { traits, mangled_name } = &inner.ty {
-                register_interface_object_set(traits, mangled_name, ctx.registry, ctx.interface_object_types);
+            if let Type::InterfaceObject {
+                traits,
+                mangled_name,
+            } = &inner.ty
+            {
+                register_interface_object_set(
+                    traits,
+                    mangled_name,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                );
             }
-            TypedExprKind::InterfaceObjectUpcast { inner: Box::new(inner) }
+            TypedExprKind::InterfaceObjectUpcast {
+                inner: Box::new(inner),
+            }
         }
-        TypedExprKind::TemplateInterfaceObjectCoerce { inner, traits, concrete_type } => {
+        TypedExprKind::TemplateInterfaceObjectCoerce {
+            inner,
+            traits,
+            concrete_type,
+        } => {
             let walked_inner = walk_expr(*inner, ctx);
             // A substituted source that is itself an interface object needs an
             // upcast, not a vtable-building coercion (and has no single FQN).
             if matches!(&concrete_type, Type::InterfaceObject { .. }) {
                 let target = Type::interface_intersection(traits);
-                if let Type::InterfaceObject { traits: target_traits, mangled_name: set_mn } = &target {
-                    register_interface_object_set(target_traits, set_mn, ctx.registry, ctx.interface_object_types);
+                if let Type::InterfaceObject {
+                    traits: target_traits,
+                    mangled_name: set_mn,
+                } = &target
+                {
+                    register_interface_object_set(
+                        target_traits,
+                        set_mn,
+                        ctx.registry,
+                        ctx.interface_object_types,
+                    );
                 }
-                if let Type::InterfaceObject { traits: src_traits, mangled_name: src_mn } = &concrete_type {
-                    register_interface_object_set(src_traits, src_mn, ctx.registry, ctx.interface_object_types);
+                if let Type::InterfaceObject {
+                    traits: src_traits,
+                    mangled_name: src_mn,
+                } = &concrete_type
+                {
+                    register_interface_object_set(
+                        src_traits,
+                        src_mn,
+                        ctx.registry,
+                        ctx.interface_object_types,
+                    );
                 }
                 return TypedExpr {
-                    kind: TypedExprKind::InterfaceObjectUpcast { inner: Box::new(walked_inner) },
+                    kind: TypedExprKind::InterfaceObjectUpcast {
+                        inner: Box::new(walked_inner),
+                    },
                     ty,
                     span,
                 };
@@ -689,13 +861,30 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 // Rebuild the target set to get its components (sorted) and set key.
                 let target = Type::interface_intersection(traits);
                 let (target_traits, set_mn) = match &target {
-                    Type::InterfaceObject { traits, mangled_name } => (traits.clone(), mangled_name.clone()),
+                    Type::InterfaceObject {
+                        traits,
+                        mangled_name,
+                    } => (traits.clone(), mangled_name.clone()),
                     _ => unreachable!("interface_intersection returned non-InterfaceObject"),
                 };
-                let vtable_methods =
-                    compute_grouped_vtable_methods(ctx.registry, &concrete_type, &type_fqn, &target_traits);
-                register_interface_object_set(&target_traits, &set_mn, ctx.registry, ctx.interface_object_types);
-                synthesize_direct_super_coercions(ctx.registry, &concrete_type, &target_traits, &vtable_methods);
+                let vtable_methods = compute_grouped_vtable_methods(
+                    ctx.registry,
+                    &concrete_type,
+                    &type_fqn,
+                    &target_traits,
+                );
+                register_interface_object_set(
+                    &target_traits,
+                    &set_mn,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                );
+                synthesize_direct_super_coercions(
+                    ctx.registry,
+                    &concrete_type,
+                    &target_traits,
+                    &vtable_methods,
+                );
                 TypedExprKind::InterfaceObjectCoerce {
                     inner: Box::new(walked_inner),
                     interface_mangled_name: set_mn,
@@ -710,7 +899,13 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 }
             }
         }
-        TypedExprKind::InterfaceObjectMethodCall { interface_mangled_name, method_name, member_name, receiver, args } => {
+        TypedExprKind::InterfaceObjectMethodCall {
+            interface_mangled_name,
+            method_name,
+            member_name,
+            receiver,
+            args,
+        } => {
             // Walk the receiver first — its walk registers the set + component
             // TypeDefs this call relies on.
             let receiver = Box::new(walk_expr(*receiver, ctx));
@@ -734,9 +929,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 .map(|(i, a)| {
                     let a = walk_expr(a, ctx);
                     match target_params.get(i) {
-                        Some(param_ty) => {
-                            coerce_arg_to_param(a, param_ty, ctx.registry, ctx.interface_object_types)
-                        }
+                        Some(param_ty) => coerce_arg_to_param(
+                            a,
+                            param_ty,
+                            ctx.registry,
+                            ctx.interface_object_types,
+                        ),
                         _ => a,
                     }
                 })
@@ -749,14 +947,20 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 args,
             }
         }
-        TypedExprKind::ClassNew { mangled_name, args, type_params } => {
+        TypedExprKind::ClassNew {
+            mangled_name,
+            args,
+            type_params,
+        } => {
             let args: Vec<TypedExpr> = args.into_iter().map(|a| walk_expr(a, ctx)).collect();
             // Coerce constructor args against the class's declared param types
             // (interface-object params need reified conversions).
             let ctor_params: Vec<Type> = match ctx.types.get(&mangled_name) {
-                Some(TypeDef::Class(cls)) => {
-                    cls.constructor_params.iter().map(|p| p.ty.clone()).collect()
-                }
+                Some(TypeDef::Class(cls)) => cls
+                    .constructor_params
+                    .iter()
+                    .map(|p| p.ty.clone())
+                    .collect(),
                 _ => Vec::new(),
             };
             let args = if !ctor_params.is_empty() {
@@ -770,7 +974,11 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 args,
             }
         }
-        TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => TypedExprKind::ClassStructCreate {
+        TypedExprKind::ClassStructCreate {
+            target_mangled_name,
+            fields,
+            type_params,
+        } => TypedExprKind::ClassStructCreate {
             target_mangled_name,
             type_params,
             fields: fields.into_iter().map(|f| walk_expr(f, ctx)).collect(),
@@ -778,7 +986,12 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
         TypedExprKind::Return { value, return_type } => {
             let mut value = walk_expr(*value, ctx);
             if needs_param_coercion(&value.ty, &return_type) {
-                value = coerce_arg_to_param(value, &return_type, ctx.registry, ctx.interface_object_types);
+                value = coerce_arg_to_param(
+                    value,
+                    &return_type,
+                    ctx.registry,
+                    ctx.interface_object_types,
+                );
             } else if needs_any_boxing(&value.ty, &return_type) {
                 value = box_to_any(value);
             }
@@ -796,32 +1009,46 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
         TypedExprKind::Use { .. } => {
             unreachable!("Use nodes should be desugared before variance cast pass")
         }
-        TypedExprKind::Await { operand, return_type, and_then_method, map_method, source_location_mn } => TypedExprKind::Await {
+        TypedExprKind::Await {
+            operand,
+            return_type,
+            and_then_method,
+            map_method,
+            source_location_mn,
+        } => TypedExprKind::Await {
             operand: Box::new(walk_expr(*operand, ctx)),
             return_type,
             and_then_method,
             map_method,
             source_location_mn,
         },
-        TypedExprKind::AsyncBlock { body, succeed_method } => TypedExprKind::AsyncBlock {
+        TypedExprKind::AsyncBlock {
+            body,
+            succeed_method,
+        } => TypedExprKind::AsyncBlock {
             body: Box::new(walk_expr(*body, ctx)),
             succeed_method,
         },
-        TypedExprKind::ClassVirtualCall { object, vtable_slot, args } => {
+        TypedExprKind::ClassVirtualCall {
+            object,
+            vtable_slot,
+            args,
+        } => {
             let object = Box::new(walk_expr(*object, ctx));
             // Coerce args against the vtable slot's declared param types
             // (index 0 is self — left untouched).
             let slot_params: Vec<Type> = match &object.ty {
-                Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => {
-                    match ctx.types.get(mn) {
-                        Some(TypeDef::Class(cls)) => cls
-                            .vtable_methods
-                            .get(vtable_slot as usize)
-                            .map(|slot| slot.param_types.clone())
-                            .unwrap_or_default(),
-                        _ => Vec::new(),
-                    }
-                }
+                Type::Class(_, mn)
+                | Type::GenericClass {
+                    mangled_name: mn, ..
+                } => match ctx.types.get(mn) {
+                    Some(TypeDef::Class(cls)) => cls
+                        .vtable_methods
+                        .get(vtable_slot as usize)
+                        .map(|slot| slot.param_types.clone())
+                        .unwrap_or_default(),
+                    _ => Vec::new(),
+                },
                 _ => Vec::new(),
             };
             let args: Vec<TypedExpr> = args
@@ -834,21 +1061,35 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                     }
                     match slot_params.get(i) {
                         Some(param_ty) if needs_param_coercion(&a.ty, param_ty) => {
-                            coerce_arg_to_param(a, param_ty, ctx.registry, ctx.interface_object_types)
+                            coerce_arg_to_param(
+                                a,
+                                param_ty,
+                                ctx.registry,
+                                ctx.interface_object_types,
+                            )
                         }
                         _ => a,
                     }
                 })
                 .collect();
-            TypedExprKind::ClassVirtualCall { object, vtable_slot, args }
-        }
-        TypedExprKind::ClassSuperCall { method_mangled, args } => {
-            TypedExprKind::ClassSuperCall {
-                method_mangled,
-                args: args.into_iter().map(|a| walk_expr(a, ctx)).collect(),
+            TypedExprKind::ClassVirtualCall {
+                object,
+                vtable_slot,
+                args,
             }
         }
-        TypedExprKind::Closure { params, body, captures } => {
+        TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args,
+        } => TypedExprKind::ClassSuperCall {
+            method_mangled,
+            args: args.into_iter().map(|a| walk_expr(a, ctx)).collect(),
+        },
+        TypedExprKind::Closure {
+            params,
+            body,
+            captures,
+        } => {
             let mut body = walk_expr(*body, ctx);
             // Coerce the closure body to the closure's declared return type, just
             // like a named function body (see `apply_return_coercion` above). The
@@ -880,16 +1121,26 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
                 .map(|(i, a)| {
                     let a = walk_expr(a, ctx);
                     match param_tys.get(i) {
-                        Some(param_ty) => {
-                            coerce_arg_to_param(a, param_ty, ctx.registry, ctx.interface_object_types)
-                        }
+                        Some(param_ty) => coerce_arg_to_param(
+                            a,
+                            param_ty,
+                            ctx.registry,
+                            ctx.interface_object_types,
+                        ),
                         _ => a,
                     }
                 })
                 .collect();
             TypedExprKind::ClosureCall { callee, args }
         }
-        TypedExprKind::ImplFunctionCall { trait_fqn, trait_type_params, for_type, method_name, args, method_type_params } => TypedExprKind::ImplFunctionCall {
+        TypedExprKind::ImplFunctionCall {
+            trait_fqn,
+            trait_type_params,
+            for_type,
+            method_name,
+            args,
+            method_type_params,
+        } => TypedExprKind::ImplFunctionCall {
             trait_fqn,
             trait_type_params,
             for_type,
@@ -898,7 +1149,13 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             method_type_params,
         },
         kind @ TypedExprKind::ImplFunctionRef { .. } => kind,
-        TypedExprKind::ExtFunctionCall { ext_fqn, for_type, method_name, args, type_params } => TypedExprKind::ExtFunctionCall {
+        TypedExprKind::ExtFunctionCall {
+            ext_fqn,
+            for_type,
+            method_name,
+            args,
+            type_params,
+        } => TypedExprKind::ExtFunctionCall {
             ext_fqn,
             for_type,
             method_name,
@@ -917,9 +1174,7 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
 /// points, including tuples and transparent newtypes wrapping tuples. The boxed
 /// expression has type Any, so downstream slot coercion does not box it again.
 fn needs_any_boxing(actual: &Type, expected: &Type) -> bool {
-    expected.is_any()
-        && !actual.is_any()
-        && (!actual.is_reference_type() || actual.is_never())
+    expected.is_any() && !actual.is_any() && (!actual.is_reference_type() || actual.is_never())
 }
 
 /// Wrap a scalar or flattened expression in BoxToAny.
@@ -943,8 +1198,14 @@ fn needs_interface_object_coercion(actual: &Type, expected: &Type) -> bool {
         // the super closure). Identical sets need no coercion; unreachable
         // pairs were rejected by is_assignable before coercion runs.
         (
-            Type::InterfaceObject { traits: actual_traits, .. },
-            Type::InterfaceObject { traits: expected_traits, .. },
+            Type::InterfaceObject {
+                traits: actual_traits,
+                ..
+            },
+            Type::InterfaceObject {
+                traits: expected_traits,
+                ..
+            },
         ) => {
             let same_set = expected_traits.len() == actual_traits.len()
                 && expected_traits
@@ -981,7 +1242,11 @@ fn coerce_to_interface_object(
     registry: &Registry,
     interface_object_types: &RefCell<BTreeMap<MangledName, TypeDef>>,
 ) -> TypedExpr {
-    if let Type::InterfaceObject { traits, mangled_name } = target {
+    if let Type::InterfaceObject {
+        traits,
+        mangled_name,
+    } = target
+    {
         // Register the target set's TypeDefs up front — *before* the template early-return.
         // Interface objects are de-monomorphized, so the WASM type and its erased vtable signatures are
         // instantiation-independent; registering here (even for a generic `as` in a template body,
@@ -991,11 +1256,22 @@ fn coerce_to_interface_object(
 
         // Interface object → interface object: static upcast. The source set's
         // TypeDefs must also exist for codegen to extract from.
-        if let Type::InterfaceObject { traits: source_traits, mangled_name: source_mn } = &expr.ty {
-            register_interface_object_set(source_traits, source_mn, registry, interface_object_types);
+        if let Type::InterfaceObject {
+            traits: source_traits,
+            mangled_name: source_mn,
+        } = &expr.ty
+        {
+            register_interface_object_set(
+                source_traits,
+                source_mn,
+                registry,
+                interface_object_types,
+            );
             let span = expr.span.clone();
             return TypedExpr {
-                kind: TypedExprKind::InterfaceObjectUpcast { inner: Box::new(expr) },
+                kind: TypedExprKind::InterfaceObjectUpcast {
+                    inner: Box::new(expr),
+                },
                 ty: target.clone(),
                 span,
             };
@@ -1022,7 +1298,8 @@ fn coerce_to_interface_object(
         }
 
         let type_fqn = concrete_type.to_fqn();
-        let vtable_methods = compute_grouped_vtable_methods(registry, &concrete_type, &type_fqn, traits);
+        let vtable_methods =
+            compute_grouped_vtable_methods(registry, &concrete_type, &type_fqn, traits);
         synthesize_direct_super_coercions(registry, &concrete_type, traits, &vtable_methods);
 
         let span = expr.span.clone();
@@ -1080,7 +1357,9 @@ fn coerce_arg_to_param(
         return a;
     }
     // Tuple with element-level coercions.
-    let Type::Tuple(param_elems, _) = param_ty else { return a };
+    let Type::Tuple(param_elems, _) = param_ty else {
+        return a;
+    };
     let span = a.span.clone();
     match a.kind {
         TypedExprKind::TupleLiteral { elements } => {
@@ -1092,14 +1371,18 @@ fn coerce_arg_to_param(
             let new_types: Vec<Type> = new_elements.iter().map(|e| e.ty.clone()).collect();
             let mn = MangledName::for_tuple(&new_types);
             TypedExpr {
-                kind: TypedExprKind::TupleLiteral { elements: new_elements },
+                kind: TypedExprKind::TupleLiteral {
+                    elements: new_elements,
+                },
                 ty: Type::Tuple(new_types, mn),
                 span,
             }
         }
         _ => {
             // Spill: `{ let ($t0, $t1, …) = arg; (coerce($t0), coerce($t1), …) }`
-            let Type::Tuple(arg_elems, _) = a.ty.clone() else { return a };
+            let Type::Tuple(arg_elems, _) = a.ty.clone() else {
+                return a;
+            };
             let id = TUPLE_SPILL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let names: Vec<VarName> = (0..arg_elems.len())
                 .map(|i| VarName(format!("$argspill{id}${i}")))
@@ -1127,7 +1410,10 @@ fn coerce_arg_to_param(
                 .zip(param_elems.iter())
                 .map(|((n, at), pt)| {
                     let var = TypedExpr {
-                        kind: TypedExprKind::VarRef { name: n.clone(), boxed: false },
+                        kind: TypedExprKind::VarRef {
+                            name: n.clone(),
+                            boxed: false,
+                        },
                         ty: at.clone(),
                         span: span.clone(),
                     };
@@ -1138,7 +1424,9 @@ fn coerce_arg_to_param(
             let mn = MangledName::for_tuple(&new_types);
             let tuple_ty = Type::Tuple(new_types, mn);
             let literal = TypedExpr {
-                kind: TypedExprKind::TupleLiteral { elements: new_elements },
+                kind: TypedExprKind::TupleLiteral {
+                    elements: new_elements,
+                },
                 ty: tuple_ty.clone(),
                 span: span.clone(),
             };
@@ -1166,10 +1454,8 @@ fn substituted_member_params(
     let Type::InterfaceObject { traits, .. } = receiver_ty else {
         return Vec::new();
     };
-    let Some(component) = traits
-        .iter()
-        .find(|c| {
-            MangledName::for_interface_object_per_interface(&c.trait_fqn) == *component_key
+    let Some(component) = traits.iter().find(|c| {
+        MangledName::for_interface_object_per_interface(&c.trait_fqn) == *component_key
                 // Inherited member: the node is keyed by the ORIGIN trait,
                 // which lives in this component's super closure.
                 || registry
@@ -1179,11 +1465,11 @@ fn substituted_member_params(
                             MangledName::for_interface_object_per_interface(f) == *component_key
                         })
                     })
-        })
-    else {
+    }) else {
         return Vec::new();
     };
-    let Some(sig) = registry.lookup_trait(&component.trait_fqn, &component.trait_fqn.package) else {
+    let Some(sig) = registry.lookup_trait(&component.trait_fqn, &component.trait_fqn.package)
+    else {
         return Vec::new();
     };
     for method in &sig.methods {
@@ -1211,7 +1497,9 @@ fn substituted_member_params(
                 None => component.trait_type_args.to_vec(),
                 Some((_, args)) => args
                     .iter()
-                    .map(|t| crate::typechecker::collect::substitute_trait_type_params(t, &owner_subst))
+                    .map(|t| {
+                        crate::typechecker::collect::substitute_trait_type_params(t, &owner_subst)
+                    })
                     .collect(),
             };
             let subst: BTreeMap<&str, &Type> = origin_sig
@@ -1238,7 +1526,10 @@ fn substitute_named_type_params(ty: &Type, subst: &BTreeMap<&str, &Type>) -> Typ
             .unwrap_or_else(|| ty.clone()),
         Type::Array(elem) => Type::Array(Box::new(substitute_named_type_params(elem, subst))),
         Type::Function(params, ret) => Type::Function(
-            params.iter().map(|t| substitute_named_type_params(t, subst)).collect(),
+            params
+                .iter()
+                .map(|t| substitute_named_type_params(t, subst))
+                .collect(),
             Box::new(substitute_named_type_params(ret, subst)),
         ),
         Type::InterfaceObject { traits, .. } => Type::interface_intersection(
@@ -1267,7 +1558,10 @@ fn register_interface_types_in(
     interface_object_types: &RefCell<BTreeMap<MangledName, TypeDef>>,
 ) {
     match ty {
-        Type::InterfaceObject { traits, mangled_name } => {
+        Type::InterfaceObject {
+            traits,
+            mangled_name,
+        } => {
             register_interface_object_set(traits, mangled_name, registry, interface_object_types);
             for c in traits {
                 for t in &c.trait_type_args {
@@ -1313,17 +1607,28 @@ fn register_interface_object_set(
     for component in traits {
         register_interface_object_type_def(&component.trait_fqn, registry, interface_object_types);
     }
-    if traits.len() > 1 && !interface_object_types.borrow().contains_key(set_mangled_name) {
+    if traits.len() > 1
+        && !interface_object_types
+            .borrow()
+            .contains_key(set_mangled_name)
+    {
         let components: Vec<(Fqn, MangledName)> = traits
             .iter()
-            .map(|c| (c.trait_fqn.clone(), MangledName::for_interface_object_per_interface(&c.trait_fqn)))
+            .map(|c| {
+                (
+                    c.trait_fqn.clone(),
+                    MangledName::for_interface_object_per_interface(&c.trait_fqn),
+                )
+            })
             .collect();
         interface_object_types.borrow_mut().insert(
             set_mangled_name.clone(),
-            TypeDef::InterfaceIntersection(crate::typechecker::types::InterfaceIntersectionTypeDef {
-                mangled_name: set_mangled_name.clone(),
-                components,
-            }),
+            TypeDef::InterfaceIntersection(
+                crate::typechecker::types::InterfaceIntersectionTypeDef {
+                    mangled_name: set_mangled_name.clone(),
+                    components,
+                },
+            ),
         );
     }
 }
@@ -1336,7 +1641,7 @@ fn compute_grouped_vtable_methods(
     concrete_type: &Type,
     type_fqn: &Fqn,
     traits: &[crate::typechecker::types::InterfaceComponent],
-) -> Vec<(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)> {
+) -> Vec<VtableMethodGroup> {
     // One group per component — and, for extended interfaces, one group per
     // (transitive) super in DFS post-order BEFORE its extender, so the vtable
     // globals' const-expr builds nested super vtables bottom-up on the wasm
@@ -1350,7 +1655,11 @@ fn compute_grouped_vtable_methods(
     let mut groups = Vec::new();
     for c in traits {
         let provider = resolve_vtable_provider(
-            registry, &c.trait_fqn, &c.trait_type_args, type_fqn, concrete_type,
+            registry,
+            &c.trait_fqn,
+            &c.trait_type_args,
+            type_fqn,
+            concrete_type,
         );
         push_component_groups(
             registry,
@@ -1365,21 +1674,17 @@ fn compute_grouped_vtable_methods(
     groups
 }
 
+type DeduplicatedCoercions<T> = (Vec<T>, std::collections::BTreeSet<(String, MangledName)>);
+
 thread_local! {
     /// Synthetic direct super coercions accumulated while one
     /// `elaborate_coercions` run computes/visits vtable groups; drained into
     /// `TypedModule.synthetic_interface_coercions` at the end of the run.
     /// (Same per-compile-thread pattern as monomorphize's DEFAULT_RETARGET.)
-    static SYNTHETIC_DIRECT: RefCell<(
-        Vec<crate::typechecker::types::SyntheticInterfaceCoercion>,
-        std::collections::BTreeSet<(String, MangledName)>,
-    )> = RefCell::new((Vec::new(), std::collections::BTreeSet::new()));
+    static SYNTHETIC_DIRECT: RefCell<DeduplicatedCoercions<crate::typechecker::types::SyntheticInterfaceCoercion>> = const { RefCell::new((Vec::new(), std::collections::BTreeSet::new())) };
     /// (concrete type, full via group key, direct group key) re-box mappings (see
     /// `TypedModule.direct_rebox_authorizations`), with a dedup set.
-    static DIRECT_REBOX_AUTH: RefCell<(
-        Vec<(Type, MangledName, MangledName)>,
-        std::collections::BTreeSet<(String, MangledName)>,
-    )> = RefCell::new((Vec::new(), std::collections::BTreeSet::new()));
+    static DIRECT_REBOX_AUTH: RefCell<DeduplicatedCoercions<(Type, MangledName, MangledName)>> = const { RefCell::new((Vec::new(), std::collections::BTreeSet::new())) };
 }
 
 /// "The direct impl owns the (type, super) re-box global": when a coercion's
@@ -1394,21 +1699,29 @@ fn synthesize_direct_super_coercions(
     registry: &Registry,
     concrete_type: &Type,
     traits: &[crate::typechecker::types::InterfaceComponent],
-    groups: &[(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)],
+    groups: &[VtableMethodGroup],
 ) {
     if concrete_type.contains_type_parameter()
         || matches!(concrete_type, Type::InterfaceObject { .. })
     {
         return;
     }
-    let Some(type_fqn) = concrete_type.try_to_fqn() else { return };
+    let Some(type_fqn) = concrete_type.try_to_fqn() else {
+        return;
+    };
     for c in traits {
-        let Some(sig) = registry.lookup_trait(&c.trait_fqn, &c.trait_fqn.package) else { continue };
+        let Some(sig) = registry.lookup_trait(&c.trait_fqn, &c.trait_fqn.package) else {
+            continue;
+        };
         if sig.supers.is_empty() {
             continue;
         }
         let Some(root_provider) = resolve_vtable_provider(
-            registry, &c.trait_fqn, &c.trait_type_args, &type_fqn, concrete_type,
+            registry,
+            &c.trait_fqn,
+            &c.trait_type_args,
+            &type_fqn,
+            concrete_type,
         ) else {
             continue;
         };
@@ -1442,19 +1755,25 @@ fn synthesize_direct_super_coercions(
             if !has_self_return {
                 continue;
             }
-            let super_provider = resolve_vtable_provider(
-                registry, super_fqn, &super_args, &type_fqn, concrete_type,
-            );
+            let super_provider =
+                resolve_vtable_provider(registry, super_fqn, &super_args, &type_fqn, concrete_type);
             if !class_directly_implements(registry, concrete_type, super_fqn, &super_args)
-                && !super_provider.as_ref().is_some_and(|provider| provider.trait_fqn == *super_fqn)
+                && !super_provider
+                    .as_ref()
+                    .is_some_and(|provider| provider.trait_fqn == *super_fqn)
             {
                 continue; // no direct impl of the super — the via standalone stays authoritative
             }
             let mn = MangledName::for_interface_object_per_interface(super_fqn);
             let mut direct_groups = Vec::new();
             push_component_groups(
-                registry, concrete_type, &type_fqn, super_fqn, &super_args,
-                &super_provider, &mut direct_groups,
+                registry,
+                concrete_type,
+                &type_fqn,
+                super_fqn,
+                &super_args,
+                &super_provider,
+                &mut direct_groups,
             );
             let direct_key = direct_groups.last().expect("super group exists").0.clone();
             // The type directly implements THIS application of the super, so
@@ -1474,7 +1793,11 @@ fn synthesize_direct_super_coercions(
                     DIRECT_REBOX_AUTH.with(|cell| {
                         let mut st = cell.borrow_mut();
                         if st.1.insert(auth_key) {
-                            st.0.push((concrete_type.clone(), group_key.clone(), direct_key.clone()));
+                            st.0.push((
+                                concrete_type.clone(),
+                                group_key.clone(),
+                                direct_key.clone(),
+                            ));
                         }
                     });
                 }
@@ -1485,13 +1808,13 @@ fn synthesize_direct_super_coercions(
                 continue;
             }
             SYNTHETIC_DIRECT.with(|cell| {
-                cell.borrow_mut().0.push(
-                    crate::typechecker::types::SyntheticInterfaceCoercion {
+                cell.borrow_mut()
+                    .0
+                    .push(crate::typechecker::types::SyntheticInterfaceCoercion {
                         concrete_type: concrete_type.clone(),
                         interface_mangled_name: mn,
                         vtable_methods: direct_groups,
-                    },
-                )
+                    })
             });
         }
     }
@@ -1504,7 +1827,7 @@ fn push_component_groups(
     component_fqn: &Fqn,
     component_args: &[Type],
     provider: &Option<VtableProvider>,
-    groups: &mut Vec<(MangledName, Vec<(InterfaceMemberName, MangledName, Vec<Type>)>)>,
+    groups: &mut Vec<VtableMethodGroup>,
 ) {
     if let Some(sig) = registry.lookup_trait(component_fqn, &component_fqn.package) {
         let supers: Vec<(Fqn, Vec<Type>)> = sig
@@ -1527,13 +1850,24 @@ fn push_component_groups(
             .collect();
         for (super_fqn, super_args) in &supers {
             push_component_groups(
-                registry, concrete_type, type_fqn, super_fqn, super_args, provider, groups,
+                registry,
+                concrete_type,
+                type_fqn,
+                super_fqn,
+                super_args,
+                provider,
+                groups,
             );
         }
     }
 
     let entries = compute_vtable_methods(
-        registry, concrete_type, type_fqn, component_fqn, component_args, provider,
+        registry,
+        concrete_type,
+        type_fqn,
+        component_fqn,
+        component_args,
+        provider,
     );
     let base_key = MangledName::for_interface_object_per_interface(component_fqn);
     let mut key = match provider {
@@ -1548,17 +1882,17 @@ fn push_component_groups(
     // substituted trait args. Include generic blocks, whose parameter names
     // need not match across sibling declarations. A trait with only one
     // implementation can keep its historical untagged key.
-    if let Some(p) = provider {
-        if !p.trait_type_args.is_empty() {
-            let sibling_count = registry
-                .all_implement_blocks()
-                .iter()
-                .filter(|b| b.trait_fqn == p.trait_fqn)
-                .count();
-            if sibling_count > 1 {
-                let args: Vec<String> = p.trait_type_args.iter().map(|t| t.to_string()).collect();
-                key = MangledName(format!("{}$inst${}", key, args.join(",")));
-            }
+    if let Some(p) = provider
+        && !p.trait_type_args.is_empty()
+    {
+        let sibling_count = registry
+            .all_implement_blocks()
+            .iter()
+            .filter(|b| b.trait_fqn == p.trait_fqn)
+            .count();
+        if sibling_count > 1 {
+            let args: Vec<String> = p.trait_type_args.iter().map(|t| t.to_string()).collect();
+            key = MangledName(format!("{}$inst${}", key, args.join(",")));
         }
     }
     groups.push((key, entries));
@@ -1613,29 +1947,48 @@ fn register_interface_object_type_def(
     let mut vtable_members = Vec::new();
 
     for method_sig in &trait_sig.methods {
-        if method_sig.origin.is_some() { continue; }
-        if !method_sig.type_params.is_empty() { continue; }
-        if !method_sig.params.iter().any(|(name, _)| name == "self") { continue; }
-        if method_sig.params.iter()
+        if method_sig.origin.is_some() {
+            continue;
+        }
+        if !method_sig.type_params.is_empty() {
+            continue;
+        }
+        if !method_sig.params.iter().any(|(name, _)| name == "self") {
+            continue;
+        }
+        if method_sig
+            .params
+            .iter()
             .filter(|(name, _)| name != "self")
             .any(|(_, ty)| ty.contains_self_type())
-        { continue; }
+        {
+            continue;
+        }
 
-        let non_self_params: Vec<Type> = method_sig.params.iter()
+        let non_self_params: Vec<Type> = method_sig
+            .params
+            .iter()
             .filter(|(name, _)| name != "self")
             .map(|(_, ty)| ty.clone())
             .collect();
-        let non_self_param_strs: Vec<String> = non_self_params.iter().map(|t| t.to_string()).collect();
+        let non_self_param_strs: Vec<String> =
+            non_self_params.iter().map(|t| t.to_string()).collect();
         let member_name = InterfaceMemberName::new(&method_sig.name, &non_self_param_strs);
-        let return_type = slot_return_type(&method_sig.return_type, trait_fqn, &trait_sig.type_params);
+        let return_type =
+            slot_return_type(&method_sig.return_type, trait_fqn, &trait_sig.type_params);
         vtable_members.push((member_name, non_self_params, return_type));
     }
 
     for prop_sig in &trait_sig.properties {
-        if prop_sig.origin.is_some() { continue; }
-        if !prop_sig.params.iter().any(|(name, _)| name == "self") { continue; }
+        if prop_sig.origin.is_some() {
+            continue;
+        }
+        if !prop_sig.params.iter().any(|(name, _)| name == "self") {
+            continue;
+        }
         let member_name = InterfaceMemberName::new(&prop_sig.name, &[]);
-        let return_type = slot_return_type(&prop_sig.return_type, trait_fqn, &trait_sig.type_params);
+        let return_type =
+            slot_return_type(&prop_sig.return_type, trait_fqn, &trait_sig.type_params);
         vtable_members.push((member_name, vec![], return_type));
     }
 
@@ -1695,7 +2048,9 @@ fn compute_vtable_methods(
     // A closure computing the impl-function name for one member via the
     // provider block (or the historical concrete-type naming when no block
     // matched — e.g. signature-only compiles).
-    let member_entry = |member_sym: &SymbolName, member_name: &InterfaceMemberName| -> (InterfaceMemberName, MangledName, Vec<Type>) {
+    let member_entry = |member_sym: &SymbolName,
+                        member_name: &InterfaceMemberName|
+     -> (InterfaceMemberName, MangledName, Vec<Type>) {
         match provider {
             Some(p) => {
                 // Always the PROVIDER block's trait args — its functions are
@@ -1704,11 +2059,24 @@ fn compute_vtable_methods(
                 // substituted args, which may differ — e.g.
                 // `IntProducer extends Producer<Int32>` has group args
                 // `[Int32]` while the provider block's are `[]`.)
-                let dispatch_name = registry.get_trait(&p.trait_fqn).and_then(|signature| {
-                    signature.methods.iter().find(|method| method.name == member_sym.0
-                        && method.origin.as_ref().map(|(origin, _)| origin).unwrap_or(&signature.fqn) == trait_fqn)
-                        .map(|method| signature.method_dispatch_name(method))
-                }).unwrap_or_else(|| member_sym.clone());
+                let dispatch_name = registry
+                    .get_trait(&p.trait_fqn)
+                    .and_then(|signature| {
+                        signature
+                            .methods
+                            .iter()
+                            .find(|method| {
+                                method.name == member_sym.0
+                                    && method
+                                        .origin
+                                        .as_ref()
+                                        .map(|(origin, _)| origin)
+                                        .unwrap_or(&signature.fqn)
+                                        == trait_fqn
+                            })
+                            .map(|method| signature.method_dispatch_name(method))
+                    })
+                    .unwrap_or_else(|| member_sym.clone());
                 let mut mangled = crate::typechecker::types::impl_member_mangled_name(
                     &p.trait_fqn,
                     &p.for_type,
@@ -1727,7 +2095,11 @@ fn compute_vtable_methods(
             }
             None => {
                 let mangled = crate::typechecker::types::impl_member_mangled_name(
-                    trait_fqn, concrete_type, &[], member_sym, trait_type_args,
+                    trait_fqn,
+                    concrete_type,
+                    &[],
+                    member_sym,
+                    trait_type_args,
                 );
                 (member_name.clone(), mangled, vec![])
             }
@@ -1744,7 +2116,9 @@ fn compute_vtable_methods(
         if !method_sig.params.iter().any(|(name, _)| name == "self") {
             continue;
         }
-        if method_sig.params.iter()
+        if method_sig
+            .params
+            .iter()
             .filter(|(name, _)| name != "self")
             .any(|(_, ty)| ty.contains_self_type())
         {
@@ -1754,7 +2128,9 @@ fn compute_vtable_methods(
         // Member name from the *raw* (unsubstituted) param types — matches the per-trait vtable
         // registered in `register_interface_object_type_def`, so the field index resolves identically
         // for every instantiation.
-        let non_self_params: Vec<String> = method_sig.params.iter()
+        let non_self_params: Vec<String> = method_sig
+            .params
+            .iter()
             .filter(|(name, _)| name != "self")
             .map(|(_, ty)| ty.to_string())
             .collect();
@@ -1763,9 +2139,13 @@ fn compute_vtable_methods(
         let method_sym = SymbolName(method_sig.name.clone());
 
         if class_sig.is_some() && provider.is_none() {
-            if let Some((mangled, class_type_args)) =
-                resolve_class_vtable_mangled(registry, concrete_type, trait_fqn, trait_type_args, &trait_sig.method_dispatch_name(method_sig))
-            {
+            if let Some((mangled, class_type_args)) = resolve_class_vtable_mangled(
+                registry,
+                concrete_type,
+                trait_fqn,
+                trait_type_args,
+                &trait_sig.method_dispatch_name(method_sig),
+            ) {
                 methods.push((member_name, mangled, class_type_args));
             }
         } else {
@@ -1785,9 +2165,13 @@ fn compute_vtable_methods(
         let method_sym = SymbolName(prop_sig.name.clone());
 
         if class_sig.is_some() && provider.is_none() {
-            if let Some((mangled, class_type_args)) =
-                resolve_class_vtable_mangled(registry, concrete_type, trait_fqn, trait_type_args, &method_sym)
-            {
+            if let Some((mangled, class_type_args)) = resolve_class_vtable_mangled(
+                registry,
+                concrete_type,
+                trait_fqn,
+                trait_type_args,
+                &method_sym,
+            ) {
                 methods.push((member_name, mangled, class_type_args));
             }
         } else {
@@ -1822,18 +2206,27 @@ fn class_directly_implements(
     trait_fqn: &Fqn,
     trait_type_args: &[Type],
 ) -> bool {
-    let Some(class) = concrete_type.try_to_fqn().and_then(|fqn| registry.get_class_type(&fqn)) else {
+    let Some(class) = concrete_type
+        .try_to_fqn()
+        .and_then(|fqn| registry.get_class_type(&fqn))
+    else {
         return false;
     };
     let bindings: BTreeMap<_, _> = match concrete_type {
-        Type::GenericClass { type_args, .. } => class.type_params.iter().cloned()
-            .zip(type_args.iter().map(|(_, ty)| ty.clone())).collect(),
+        Type::GenericClass { type_args, .. } => class
+            .type_params
+            .iter()
+            .cloned()
+            .zip(type_args.iter().map(|(_, ty)| ty.clone()))
+            .collect(),
         _ => BTreeMap::new(),
     };
     class.trait_impls.iter().any(|(fqn, args)| {
-        fqn == trait_fqn && args.len() == trait_type_args.len()
+        fqn == trait_fqn
+            && args.len() == trait_type_args.len()
             && args.iter().zip(trait_type_args).all(|(arg, expected)| {
-                crate::typechecker::collect::substitute_trait_type_params(arg, &bindings) == *expected
+                crate::typechecker::collect::substitute_trait_type_params(arg, &bindings)
+                    == *expected
             })
     })
 }
@@ -1852,9 +2245,8 @@ fn resolve_vtable_provider(
     // `A<String> for Rec`) and via-providers of different super
     // instantiations share a base FQN — the requested component's args
     // pick among them.
-    let args_match = |candidate: &[Type]| -> bool {
-        trait_type_args.is_empty() || candidate == trait_type_args
-    };
+    let args_match =
+        |candidate: &[Type]| -> bool { trait_type_args.is_empty() || candidate == trait_type_args };
     for (block, via) in registry.find_providing_impl_blocks(trait_fqn, type_fqn) {
         if block.type_params.is_empty() {
             // Sibling instantiations share a base FQN — the block must match
@@ -1878,21 +2270,27 @@ fn resolve_vtable_provider(
                 inst_args: vec![],
             });
         }
-        let mut substitution = crate::typechecker::infer::type_param_substitution::TypeParamSubstitution::new();
+        let mut substitution =
+            crate::typechecker::infer::type_param_substitution::TypeParamSubstitution::new();
         if substitution.unify(&block.for_type, concrete_type) {
-            let provided_args = via.as_ref().map_or(&block.trait_type_args, |(_, args)| args);
+            let provided_args = via
+                .as_ref()
+                .map_or(&block.trait_type_args, |(_, args)| args);
             if !trait_type_args.is_empty()
                 && (provided_args.len() != trait_type_args.len()
-                    || !provided_args.iter().zip(trait_type_args).all(|(provided, required)| {
-                        substitution.unify(provided, required)
-                    }))
+                    || !provided_args
+                        .iter()
+                        .zip(trait_type_args)
+                        .all(|(provided, required)| substitution.unify(provided, required)))
             {
                 continue;
             }
             // Associated-type equalities can determine block parameters that
             // do not occur in the receiver or the requested interface.
             let Some(substitution) = crate::typechecker::infer::complete_impl_substitution(
-                registry, block, substitution,
+                registry,
+                block,
+                substitution,
             ) else {
                 continue;
             };
@@ -1940,9 +2338,18 @@ fn resolve_class_vtable_mangled(
     method_name: &SymbolName,
 ) -> Option<(MangledName, Vec<Type>)> {
     let (template, parameters) = crate::typechecker::class_trait_methods::resolve_template(
-        registry, trait_fqn, trait_parameters, concrete_type, method_name, &[],
+        registry,
+        trait_fqn,
+        trait_parameters,
+        concrete_type,
+        method_name,
+        &[],
     )?;
-    let name = if parameters.is_empty() { template } else { template.with_type_args(&parameters) };
+    let name = if parameters.is_empty() {
+        template
+    } else {
+        template.with_type_args(&parameters)
+    };
     Some((name, parameters))
 }
 
@@ -2014,9 +2421,15 @@ fn lookup_enum_variant_payload_from_registry(
 /// args in raw payload types, so an interface-typed payload position (e.g.
 /// `Option<Alpha>`'s `Some(T)` → `Alpha`) coerces its value instead of
 /// passing the raw concrete struct through the erased slot.
-fn substitute_enum_payload_types(payload_types: &[Type], enum_ty: &Type, registry: &Registry) -> Vec<Type> {
+fn substitute_enum_payload_types(
+    payload_types: &[Type],
+    enum_ty: &Type,
+    registry: &Registry,
+) -> Vec<Type> {
     let (fqn, type_args): (&Fqn, Vec<&Type>) = match enum_ty {
-        Type::GenericEnum { fqn, type_args, .. } => (fqn, type_args.iter().map(|(_, t)| t).collect()),
+        Type::GenericEnum { fqn, type_args, .. } => {
+            (fqn, type_args.iter().map(|(_, t)| t).collect())
+        }
         _ => return payload_types.to_vec(),
     };
     let Some(sig) = registry.get_enum_type(fqn) else {
@@ -2071,12 +2484,16 @@ fn lookup_field_type(
         _ => return None,
     };
     match types.get(mn) {
-        Some(TypeDef::Record(r)) => {
-            r.fields.iter().find(|(n, _)| n == field_name).map(|(_, ty)| ty.clone())
-        }
-        Some(TypeDef::Class(c)) => {
-            c.fields.iter().find(|f| f.name == field_name).map(|f| f.ty.clone())
-        }
+        Some(TypeDef::Record(r)) => r
+            .fields
+            .iter()
+            .find(|(n, _)| n == field_name)
+            .map(|(_, ty)| ty.clone()),
+        Some(TypeDef::Class(c)) => c
+            .fields
+            .iter()
+            .find(|f| f.name == field_name)
+            .map(|f| f.ty.clone()),
         _ => None,
     }
 }

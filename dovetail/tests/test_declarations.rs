@@ -150,9 +150,7 @@ public test "visible" = assert true
 "#,
     );
     assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("visibility")),
+        errors.iter().any(|e| e.contains("visibility")),
         "expected visibility modifier error, got: {:?}",
         errors
     );
@@ -174,7 +172,10 @@ test "x" = panic "not run"
 
     assert_eq!(run_result.results.len(), 1);
     assert!(
-        matches!(&run_result.results[0].status, dovetail::test_runner::TestStatus::Skip { .. }),
+        matches!(
+            &run_result.results[0].status,
+            dovetail::test_runner::TestStatus::Skip { .. }
+        ),
         "expected Skip status"
     );
 }
@@ -216,7 +217,10 @@ test "x" = panic "boom"
 
     assert_eq!(run_result.results.len(), 1);
     assert!(
-        matches!(&run_result.results[0].status, dovetail::test_runner::TestStatus::Pass),
+        matches!(
+            &run_result.results[0].status,
+            dovetail::test_runner::TestStatus::Pass
+        ),
         "expected Pass status for @panics test that traps"
     );
 }
@@ -311,7 +315,10 @@ test "x" = assert true
 
     assert_eq!(run_result.results.len(), 1);
     assert!(
-        matches!(&run_result.results[0].status, dovetail::test_runner::TestStatus::Pass),
+        matches!(
+            &run_result.results[0].status,
+            dovetail::test_runner::TestStatus::Pass
+        ),
         "expected Pass status for @timeout test within limit"
     );
 }
@@ -329,7 +336,9 @@ test "x" = assert true
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("unknown test attribute '@foo'")),
+        errors
+            .iter()
+            .any(|e| e.contains("unknown test attribute '@foo'")),
         "expected unknown attribute error, got: {:?}",
         errors
     );
@@ -364,7 +373,9 @@ test "x" = assert true
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("@timeout value must be greater than 0")),
+        errors
+            .iter()
+            .any(|e| e.contains("@timeout value must be greater than 0")),
         "expected timeout zero error, got: {:?}",
         errors
     );
@@ -452,26 +463,29 @@ fn make_two_file_test_project(
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     (dir, project)
 }
 
-fn build_test_expecting_errors(
-    project: &ResolvedProject,
-    workspace_root: &Path,
-) -> Vec<String> {
+fn build_test_expecting_errors(project: &ResolvedProject, workspace_root: &Path) -> Vec<String> {
     let result = dovetail::build_project(
         project,
         workspace_root,
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Test, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Test,
+        &std::collections::HashMap::new(),
+        false,
     );
-    result.diagnostics.iter().map(|d| d.message.clone()).collect()
+    result
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
 }
 
 fn build_and_run_tests(
@@ -493,19 +507,27 @@ fn build_and_run_filtered_tests(
         &Registry::new(),
         TypedModule::empty(),
         &dovetail::macros::MacroRegistry::new(),
-        dovetail::BuildMode::Test, &std::collections::HashMap::new(), false,
+        dovetail::BuildMode::Test,
+        &std::collections::HashMap::new(),
+        false,
     );
     if result.diagnostics.has_errors() {
-        let errors: Vec<String> = result.diagnostics.iter().map(|d| d.message.clone()).collect();
+        let errors: Vec<String> = result
+            .diagnostics
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
         panic!("build failed: {}", errors.join("; "));
     }
     let wasm_bytes = result.wasm.expect("expected WASM output");
-    let filtered_exports: Vec<dovetail::TestExportInfo> = result.test_exports.iter()
+    let filtered_exports: Vec<dovetail::TestExportInfo> = result
+        .test_exports
+        .iter()
         .filter(|t| {
-            if let Some(fp) = file_filter {
-                if !t.source_file.contains(fp) {
-                    return false;
-                }
+            if let Some(fp) = file_filter
+                && !t.source_file.contains(fp)
+            {
+                return false;
             }
             if !filters.is_empty() {
                 return filters.iter().any(|f| t.fqtn.contains(*f));
@@ -556,7 +578,10 @@ test "x" = assert helper() == 42
     );
     let run_result = build_and_run_tests(&project, dir.path());
     assert!(
-        run_result.results.iter().all(|r| matches!(r.status, dovetail::test_runner::TestStatus::Pass)),
+        run_result
+            .results
+            .iter()
+            .all(|r| matches!(r.status, dovetail::test_runner::TestStatus::Pass)),
         "internal function should be accessible from test in another file"
     );
 }
@@ -607,7 +632,10 @@ package a
     let run_result = build_and_run_filtered_tests(&project, dir.path(), &["addition"], None);
     assert_eq!(run_result.results.len(), 1);
     assert!(run_result.results[0].name.contains("addition"));
-    assert!(matches!(run_result.results[0].status, dovetail::test_runner::TestStatus::Pass));
+    assert!(matches!(
+        run_result.results[0].status,
+        dovetail::test_runner::TestStatus::Pass
+    ));
 }
 
 #[test]
@@ -640,11 +668,15 @@ test "multiplication" = assert 2 * 3 == 6
 package a
 "#,
     );
-    let run_result = build_and_run_filtered_tests(
-        &project, dir.path(), &["addition", "subtraction"], None,
-    );
+    let run_result =
+        build_and_run_filtered_tests(&project, dir.path(), &["addition", "subtraction"], None);
     assert_eq!(run_result.results.len(), 2);
-    assert!(run_result.results.iter().all(|r| matches!(r.status, dovetail::test_runner::TestStatus::Pass)));
+    assert!(
+        run_result
+            .results
+            .iter()
+            .all(|r| matches!(r.status, dovetail::test_runner::TestStatus::Pass))
+    );
 }
 
 #[test]
@@ -682,9 +714,8 @@ test "addition other" = assert 10 + 10 == 20
 "#,
     );
     // Filter by name "addition" AND file "impl.dove" — should only match "addition" from impl.dove
-    let run_result = build_and_run_filtered_tests(
-        &project, dir.path(), &["addition"], Some("impl.dove"),
-    );
+    let run_result =
+        build_and_run_filtered_tests(&project, dir.path(), &["addition"], Some("impl.dove"));
     assert_eq!(run_result.results.len(), 1);
     assert!(run_result.results[0].name.contains("addition"));
 }
@@ -715,9 +746,9 @@ fn make_project_with_test_dir(
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     (dir, project)
 }
@@ -741,7 +772,10 @@ test "addition" = assert add(1, 2) == 3
     let run_result = build_and_run_tests(&project, dir.path());
     assert_eq!(run_result.results.len(), 1);
     assert!(
-        matches!(run_result.results[0].status, dovetail::test_runner::TestStatus::Pass),
+        matches!(
+            run_result.results[0].status,
+            dovetail::test_runner::TestStatus::Pass
+        ),
         "integration test should pass"
     );
 }
@@ -765,7 +799,10 @@ test "internal access" = assert internal_helper() == 42
     let run_result = build_and_run_tests(&project, dir.path());
     assert_eq!(run_result.results.len(), 1);
     assert!(
-        matches!(run_result.results[0].status, dovetail::test_runner::TestStatus::Pass),
+        matches!(
+            run_result.results[0].status,
+            dovetail::test_runner::TestStatus::Pass
+        ),
         "integration test should access internal functions"
     );
 }
@@ -816,9 +853,9 @@ fn test_reserved_test_prefix_in_src() {
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     let errors = build_test_expecting_errors(&project, dir.path());
     assert!(
@@ -855,15 +892,18 @@ test "unit test" = assert 1 == 1
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     let run_result = build_and_run_tests(&project, dir.path());
     // Only the unit test from src, no integration tests
     assert_eq!(run_result.results.len(), 1);
     assert!(
-        matches!(run_result.results[0].status, dovetail::test_runner::TestStatus::Pass),
+        matches!(
+            run_result.results[0].status,
+            dovetail::test_runner::TestStatus::Pass
+        ),
         "unit test should still pass"
     );
 }
@@ -910,14 +950,21 @@ test "integration add" = assert add(10, 20) == 30
         }],
         project_dir: dir.path().join("myapp"),
         main_function: None,
-            resources: vec![],
-            macros: vec![],
-            components: vec![],
+        resources: vec![],
+        macros: vec![],
+        components: vec![],
     };
     let run_result = build_and_run_tests(&project, dir.path());
-    assert_eq!(run_result.results.len(), 2, "should have both unit and integration tests");
+    assert_eq!(
+        run_result.results.len(),
+        2,
+        "should have both unit and integration tests"
+    );
     assert!(
-        run_result.results.iter().all(|r| matches!(r.status, dovetail::test_runner::TestStatus::Pass)),
+        run_result
+            .results
+            .iter()
+            .all(|r| matches!(r.status, dovetail::test_runner::TestStatus::Pass)),
         "all tests should pass"
     );
 }

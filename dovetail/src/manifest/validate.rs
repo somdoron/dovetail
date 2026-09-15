@@ -5,7 +5,7 @@ use crate::common::types::{Fqn, PackagePath};
 
 use super::toml_schema::{RawMacro, RawProject};
 use super::{
-    ManifestError, MacroKind, ProjectName, ResolvedComponent, ResolvedMacro, ResolvedPackage,
+    MacroKind, ManifestError, ProjectName, ResolvedComponent, ResolvedMacro, ResolvedPackage,
     ResolvedProject,
 };
 
@@ -299,10 +299,7 @@ fn resolve_macros(
     let mut resolved = Vec::with_capacity(raw.macros.len());
     let mut seen_fqns: BTreeSet<String> = BTreeSet::new();
 
-    let declared_packages: BTreeSet<String> = packages
-        .iter()
-        .map(|p| p.path.to_string())
-        .collect();
+    let declared_packages: BTreeSet<String> = packages.iter().map(|p| p.path.to_string()).collect();
 
     for m in &raw.macros {
         match validate_macro(m, &declared_packages, project_dir, &raw.name) {
@@ -384,6 +381,90 @@ fn validate_macro(
     })
 }
 
+/// Resolve component file paths inside a project and their bindings packages.
+fn resolve_components(
+    raw: &RawProject,
+    project_dir: &std::path::Path,
+) -> Result<Vec<crate::manifest::ResolvedComponent>, Vec<ManifestError>> {
+    use crate::manifest::{ComponentSource, ResolvedComponent};
+
+    let mut errors = Vec::new();
+    let mut resolved = Vec::new();
+    let mut seen_packages = std::collections::BTreeSet::new();
+
+    for entry in &raw.components {
+        let package_ok = !entry.package.is_empty()
+            && entry
+                .package
+                .split('.')
+                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric()));
+        if !package_ok {
+            errors.push(ManifestError::InvalidComponent {
+                project: raw.name.clone(),
+                reason: format!(
+                    "component package `{}` is not a valid dotted package path",
+                    entry.package
+                ),
+            });
+            continue;
+        }
+        if !seen_packages.insert(entry.package.clone()) {
+            errors.push(ManifestError::InvalidComponent {
+                project: raw.name.clone(),
+                reason: format!(
+                    "two components map to the same bindings package `{}`",
+                    entry.package
+                ),
+            });
+            continue;
+        }
+        let dovetail_package =
+            PackagePath(entry.package.split('.').map(|s| s.to_string()).collect());
+
+        let path = &entry.path;
+        let has_parent_segment = std::path::Path::new(path)
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir));
+        if has_parent_segment {
+            errors.push(ManifestError::InvalidComponent {
+                project: raw.name.clone(),
+                reason: format!("component path `{path}` escapes the project directory"),
+            });
+            continue;
+        }
+        let abs = project_dir.join(path);
+        if !abs.is_file() {
+            errors.push(ManifestError::InvalidComponent {
+                project: raw.name.clone(),
+                reason: format!(
+                    "component file `{path}` not found (expected {})",
+                    abs.display()
+                ),
+            });
+            continue;
+        }
+        let display_name = std::path::Path::new(path)
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.clone());
+        let source = ComponentSource::Path(abs);
+
+        resolved.push(ResolvedComponent {
+            provider: None,
+            source,
+            dovetail_package,
+            interface: entry.interface.clone(),
+            display_name,
+        });
+    }
+
+    if errors.is_empty() {
+        Ok(resolved)
+    } else {
+        Err(errors)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,11 +485,7 @@ mod tests {
 
     /// Build a minimal `ResolvedProject` for testing component propagation.
     /// `component_pkgs` are bindings-package names, one `ResolvedComponent` each.
-    fn project_with(
-        name: &str,
-        depends: &[&str],
-        component_pkgs: &[&str],
-    ) -> ResolvedProject {
+    fn project_with(name: &str, depends: &[&str], component_pkgs: &[&str]) -> ResolvedProject {
         use crate::manifest::ComponentSource;
         ResolvedProject {
             resolved_identity: None,
@@ -423,8 +500,10 @@ mod tests {
             components: component_pkgs
                 .iter()
                 .map(|pkg| ResolvedComponent {
-            provider: None,
-                    source: ComponentSource::Path(std::path::PathBuf::from("/fake").join(format!("{pkg}.wasm"))),
+                    provider: None,
+                    source: ComponentSource::Path(
+                        std::path::PathBuf::from("/fake").join(format!("{pkg}.wasm")),
+                    ),
                     dovetail_package: PackagePath::from_dotted(pkg),
                     interface: None,
                     display_name: pkg.to_string(),
@@ -481,7 +560,11 @@ mod tests {
         ];
         propagate_transitive_components(&mut resolved);
         assert_eq!(component_pkgs(&resolved[3]), vec!["sqlite.raw"]);
-        assert_eq!(resolved[3].components.len(), 1, "diamond must not duplicate");
+        assert_eq!(
+            resolved[3].components.len(),
+            1,
+            "diamond must not duplicate"
+        );
     }
 
     #[test]
@@ -492,7 +575,10 @@ mod tests {
             project_with("app", &["lib"], &["other.iface"]),
         ];
         propagate_transitive_components(&mut resolved);
-        assert_eq!(component_pkgs(&resolved[1]), vec!["other.iface", "sqlite.raw"]);
+        assert_eq!(
+            component_pkgs(&resolved[1]),
+            vec!["other.iface", "sqlite.raw"]
+        );
     }
 
     #[test]
@@ -807,89 +893,5 @@ mod tests {
             matches!(&errors[0], ManifestError::InvalidMainFunction { project, reason, .. }
                 if project == "myapp" && reason.contains("root package"))
         );
-    }
-}
-
-/// Resolve component file paths inside a project and their bindings packages.
-fn resolve_components(
-    raw: &RawProject,
-    project_dir: &std::path::Path,
-) -> Result<Vec<crate::manifest::ResolvedComponent>, Vec<ManifestError>> {
-    use crate::manifest::{ComponentSource, ResolvedComponent};
-
-    let mut errors = Vec::new();
-    let mut resolved = Vec::new();
-    let mut seen_packages = std::collections::BTreeSet::new();
-
-    for entry in &raw.components {
-        let package_ok = !entry.package.is_empty()
-            && entry
-                .package
-                .split('.')
-                .all(|seg| !seg.is_empty() && seg.chars().all(|c| c.is_ascii_alphanumeric()));
-        if !package_ok {
-            errors.push(ManifestError::InvalidComponent {
-                project: raw.name.clone(),
-                reason: format!(
-                    "component package `{}` is not a valid dotted package path",
-                    entry.package
-                ),
-            });
-            continue;
-        }
-        if !seen_packages.insert(entry.package.clone()) {
-            errors.push(ManifestError::InvalidComponent {
-                project: raw.name.clone(),
-                reason: format!(
-                    "two components map to the same bindings package `{}`",
-                    entry.package
-                ),
-            });
-            continue;
-        }
-        let dovetail_package =
-            PackagePath(entry.package.split('.').map(|s| s.to_string()).collect());
-
-        let path = &entry.path;
-        let has_parent_segment = std::path::Path::new(path)
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir));
-        if has_parent_segment {
-            errors.push(ManifestError::InvalidComponent {
-                project: raw.name.clone(),
-                reason: format!("component path `{path}` escapes the project directory"),
-            });
-            continue;
-        }
-        let abs = project_dir.join(path);
-        if !abs.is_file() {
-            errors.push(ManifestError::InvalidComponent {
-                project: raw.name.clone(),
-                reason: format!(
-                    "component file `{path}` not found (expected {})",
-                    abs.display()
-                ),
-            });
-            continue;
-        }
-        let display_name = std::path::Path::new(path)
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| path.clone());
-        let source = ComponentSource::Path(abs);
-
-        resolved.push(ResolvedComponent {
-            provider: None,
-            source,
-            dovetail_package,
-            interface: entry.interface.clone(),
-            display_name,
-        });
-    }
-
-    if errors.is_empty() {
-        Ok(resolved)
-    } else {
-        Err(errors)
     }
 }

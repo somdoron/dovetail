@@ -13,13 +13,17 @@ use wit_parser::{PackageId, PackageName, Resolve, TypeDefKind};
 
 use dovetail::p3::{P3_VERSION, WIT_FILES};
 
-const WASI_MARSHALING_SRC: &str = include_str!(
-    "../../../dovetail/src/compiler/codegen/function_emitter/wasi_marshaling.rs"
-);
+const WASI_MARSHALING_SRC: &str =
+    include_str!("../../../dovetail/src/compiler/codegen/function_emitter/wasi_marshaling.rs");
 
 /// WIT case names of `interface`'s `type_name` (a variant or an enum), in
 /// declaration order — the order the canonical ABI numbers discriminants in.
-fn wit_case_names(resolve: &Resolve, pkg: PackageId, interface: &str, type_name: &str) -> Vec<String> {
+fn wit_case_names(
+    resolve: &Resolve,
+    pkg: PackageId,
+    interface: &str,
+    type_name: &str,
+) -> Vec<String> {
     let iface_id = resolve.packages[pkg]
         .interfaces
         .get(interface)

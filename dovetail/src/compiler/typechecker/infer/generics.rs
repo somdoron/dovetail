@@ -77,11 +77,21 @@ pub(crate) fn apply_substitution(substitution: &TypeParamSubstitution, ty: &Type
             }
         }
         Type::Array(elem) => Type::Array(Box::new(apply_substitution(substitution, elem))),
-        Type::TupleExtend(left, right) => Type::tuple_extend(apply_substitution(substitution, left), apply_substitution(substitution, right)),
-        Type::AssociatedProjection(projection) => projection.map(|ty| apply_substitution(substitution, ty)).into_type(),
-        Type::TupleProjection(receiver, kind) => Type::tuple_projection(apply_substitution(substitution, receiver), *kind),
+        Type::TupleExtend(left, right) => Type::tuple_extend(
+            apply_substitution(substitution, left),
+            apply_substitution(substitution, right),
+        ),
+        Type::AssociatedProjection(projection) => projection
+            .map(|ty| apply_substitution(substitution, ty))
+            .into_type(),
+        Type::TupleProjection(receiver, kind) => {
+            Type::tuple_projection(apply_substitution(substitution, receiver), *kind)
+        }
         Type::Tuple(types, _) => {
-            let new_types: Vec<Type> = types.iter().map(|t| apply_substitution(substitution, t)).collect();
+            let new_types: Vec<Type> = types
+                .iter()
+                .map(|t| apply_substitution(substitution, t))
+                .collect();
             let mn = crate::common::types::MangledName::for_tuple(&new_types);
             Type::Tuple(new_types, mn)
         }
@@ -91,20 +101,31 @@ pub(crate) fn apply_substitution(substitution: &TypeParamSubstitution, ty: &Type
                 .map(|c| {
                     (
                         c.trait_fqn.clone(),
-                        c.trait_type_args.iter().map(|t| apply_substitution(substitution, t)).collect(),
+                        c.trait_type_args
+                            .iter()
+                            .map(|t| apply_substitution(substitution, t))
+                            .collect(),
                     )
                 })
                 .collect(),
         ),
         Type::Function(params, ret) => {
-            let new_params: Vec<Type> = params.iter().map(|t| apply_substitution(substitution, t)).collect();
+            let new_params: Vec<Type> = params
+                .iter()
+                .map(|t| apply_substitution(substitution, t))
+                .collect();
             let new_ret = apply_substitution(substitution, ret);
             Type::Function(new_params, Box::new(new_ret))
         }
-        Type::Newtype(fqn, inner) => {
-            Type::Newtype(fqn.clone(), Box::new(apply_substitution(substitution, inner)))
-        }
-        Type::GenericNewtype { fqn, type_args, concrete_inner_type } => {
+        Type::Newtype(fqn, inner) => Type::Newtype(
+            fqn.clone(),
+            Box::new(apply_substitution(substitution, inner)),
+        ),
+        Type::GenericNewtype {
+            fqn,
+            type_args,
+            concrete_inner_type,
+        } => {
             let new_args: Vec<(Variance, Type)> = type_args
                 .iter()
                 .map(|(v, t)| (*v, apply_substitution(substitution, t)))
@@ -117,16 +138,21 @@ pub(crate) fn apply_substitution(substitution: &TypeParamSubstitution, ty: &Type
             }
         }
         Type::TypeConstructor { name, type_args } => {
-            let parameters = type_args.iter().map(|ty| apply_substitution(substitution, ty)).collect();
+            let parameters = type_args
+                .iter()
+                .map(|ty| apply_substitution(substitution, ty))
+                .collect();
             if let Some(Type::AssociatedProjection(projection)) = substitution.get(name) {
                 let mut projection = (**projection).clone();
                 projection.parameters = parameters;
                 projection.into_type()
             } else {
-                Type::TypeConstructor { name: name.clone(), type_args: parameters }
+                Type::TypeConstructor {
+                    name: name.clone(),
+                    type_args: parameters,
+                }
             }
-        },
+        }
         _ => ty.clone(),
     }
 }
-

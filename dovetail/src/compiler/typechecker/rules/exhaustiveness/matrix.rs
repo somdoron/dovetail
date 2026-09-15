@@ -29,9 +29,7 @@ const MAX_DEPTH: usize = 64;
 /// leaf beneath it.
 fn covers(cx: &PatCx<'_>, row: &Ctor, split: &Ctor) -> bool {
     match (row, split) {
-        (Ctor::ClassTest(tested), Ctor::ClassLeaf(leaf)) => {
-            leaf.covered_by(cx.registry, tested)
-        }
+        (Ctor::ClassTest(tested), Ctor::ClassLeaf(leaf)) => leaf.covered_by(cx.registry, tested),
         _ => row == split,
     }
 }
@@ -40,10 +38,10 @@ fn covers(cx: &PatCx<'_>, row: &Ctor, split: &Ctor) -> bool {
 fn head_ctors(matrix: &Matrix) -> Vec<Ctor> {
     let mut seen: Vec<Ctor> = Vec::new();
     for row in matrix {
-        if let Some(Pat::Ctor { ctor, .. }) = row.first() {
-            if !seen.contains(ctor) {
-                seen.push(ctor.clone());
-            }
+        if let Some(Pat::Ctor { ctor, .. }) = row.first()
+            && !seen.contains(ctor)
+        {
+            seen.push(ctor.clone());
         }
     }
     seen

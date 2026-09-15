@@ -128,10 +128,10 @@ impl Inference<'_> {
         inferred.unify(payload_template, &record.ty);
         // Expected types supply parameters absent from this variant's payload.
         for parameter in &enum_sig.type_params {
-            if inferred.get(parameter).is_none() {
-                if let Some(ty) = expected.get(parameter) {
-                    inferred.insert(parameter.clone(), ty.clone());
-                }
+            if inferred.get(parameter).is_none()
+                && let Some(ty) = expected.get(parameter)
+            {
+                inferred.insert(parameter.clone(), ty.clone());
             }
         }
         let parameters = inferred

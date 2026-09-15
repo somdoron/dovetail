@@ -123,7 +123,11 @@ fn constructor_function(
     statements.push(TypedExpr {
         kind: TypedExprKind::ClassStructCreate {
             target_mangled_name: class.mangled_name.clone(),
-            type_params: class.type_params.iter().map(|p|Type::TypeVariable(p.clone(),vec![])).collect(),
+            type_params: class
+                .type_params
+                .iter()
+                .map(|p| Type::TypeVariable(p.clone(), vec![]))
+                .collect(),
             fields,
         },
         ty: return_type.clone(),
@@ -313,13 +317,12 @@ fn rewrite_constructions(expr: &mut TypedExpr, names: &BTreeMap<MangledName, Man
         args,
         type_params,
     } = &mut expr.kind
+        && let Some(name) = names.get(mangled_name)
     {
-        if let Some(name) = names.get(mangled_name) {
-            expr.kind = TypedExprKind::FunctionCall {
-                name: name.clone(),
-                args: std::mem::take(args),
-                type_params: std::mem::take(type_params),
-            };
-        }
+        expr.kind = TypedExprKind::FunctionCall {
+            name: name.clone(),
+            args: std::mem::take(args),
+            type_params: std::mem::take(type_params),
+        };
     }
 }

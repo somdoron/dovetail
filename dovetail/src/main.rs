@@ -131,14 +131,15 @@ fn main() {
     let cli = Cli::parse();
 
     let options = dovetail::manifest::ResolveOptions {
-        locked: cli.locked, offline: cli.offline,
+        locked: cli.locked,
+        offline: cli.offline,
         progress: Some(std::sync::Arc::new(|message| eprintln!("{message}"))),
         ..Default::default()
     };
     match cli.command {
         Commands::Fmt { check, files } => match dovetail::formatter::files::run(&files, check) {
             Ok(true) => process::exit(1),
-            Ok(false) => {},
+            Ok(false) => {}
             Err(error) => {
                 eprintln!("{error}");
                 process::exit(2);
@@ -149,12 +150,19 @@ fn main() {
             options.fetch_all = true;
             options.update = match command {
                 DependencyCommand::Fetch => dovetail::manifest::UpdateRequest::None,
-                DependencyCommand::Update { alias: Some(alias) } => dovetail::manifest::UpdateRequest::Alias(alias),
+                DependencyCommand::Update { alias: Some(alias) } => {
+                    dovetail::manifest::UpdateRequest::Alias(alias)
+                }
                 DependencyCommand::Update { alias: None } => dovetail::manifest::UpdateRequest::All,
             };
-            let root = std::env::current_dir().unwrap_or_else(|e| { eprintln!("{e}"); process::exit(1) });
+            let root = std::env::current_dir().unwrap_or_else(|e| {
+                eprintln!("{e}");
+                process::exit(1)
+            });
             if let Err(errors) = dovetail::manifest::load_manifest_with_options(&root, &options) {
-                for error in errors { eprintln!("error: {error}"); }
+                for error in errors {
+                    eprintln!("error: {error}");
+                }
                 process::exit(1);
             }
         }
@@ -205,12 +213,14 @@ fn main() {
                 process::exit(1);
             }
         }
-        Commands::Test { project, filter, file } => {
-            match test(project.as_deref(), &filter, file.as_deref(), &options) {
-                Ok(()) => {}
-                Err(code) => process::exit(code),
-            }
-        }
+        Commands::Test {
+            project,
+            filter,
+            file,
+        } => match test(project.as_deref(), &filter, file.as_deref(), &options) {
+            Ok(()) => {}
+            Err(code) => process::exit(code),
+        },
         Commands::Init { project } => {
             if let Err(()) = init(&project) {
                 process::exit(1);
@@ -229,25 +239,43 @@ fn main() {
     }
 }
 
-fn build(project_filter: Option<&str>, output_dir: &str, options: &dovetail::manifest::ResolveOptions) -> Result<(), ()> {
+fn build(
+    project_filter: Option<&str>,
+    output_dir: &str,
+    options: &dovetail::manifest::ResolveOptions,
+) -> Result<(), ()> {
     let workspace_root = std::env::current_dir().map_err(|e| {
         eprintln!("error: cannot determine current directory: {e}");
     })?;
 
-    let workspace = dovetail::manifest::load_manifest_with_options(&workspace_root, &dovetail::manifest::ResolveOptions { target: project_filter.map(str::to_string), ..options.clone() }).map_err(|errors| {
+    let workspace = dovetail::manifest::load_manifest_with_options(
+        &workspace_root,
+        &dovetail::manifest::ResolveOptions {
+            target: project_filter.map(str::to_string),
+            ..options.clone()
+        },
+    )
+    .map_err(|errors| {
         for error in &errors {
             eprintln!("error: {error}");
         }
     })?;
 
-    if let Some(name) = project_filter {
-        if !workspace.projects.iter().any(|p| p.name.0 == name) {
-            eprintln!("error: project '{name}' not found in Dovetail.toml");
-            return Err(());
-        }
+    if let Some(name) = project_filter
+        && !workspace.projects.iter().any(|p| p.name.0 == name)
+    {
+        eprintln!("error: project '{name}' not found in Dovetail.toml");
+        return Err(());
     }
 
-    let result = dovetail::build_workspace(&workspace, project_filter, dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        project_filter,
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
 
     report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
@@ -275,25 +303,42 @@ fn build(project_filter: Option<&str>, output_dir: &str, options: &dovetail::man
     Ok(())
 }
 
-fn check(project_filter: Option<&str>, options: &dovetail::manifest::ResolveOptions) -> Result<(), ()> {
+fn check(
+    project_filter: Option<&str>,
+    options: &dovetail::manifest::ResolveOptions,
+) -> Result<(), ()> {
     let workspace_root = std::env::current_dir().map_err(|e| {
         eprintln!("error: cannot determine current directory: {e}");
     })?;
 
-    let workspace = dovetail::manifest::load_manifest_with_options(&workspace_root, &dovetail::manifest::ResolveOptions { target: project_filter.map(str::to_string), ..options.clone() }).map_err(|errors| {
+    let workspace = dovetail::manifest::load_manifest_with_options(
+        &workspace_root,
+        &dovetail::manifest::ResolveOptions {
+            target: project_filter.map(str::to_string),
+            ..options.clone()
+        },
+    )
+    .map_err(|errors| {
         for error in &errors {
             eprintln!("error: {error}");
         }
     })?;
 
-    if let Some(name) = project_filter {
-        if !workspace.projects.iter().any(|p| p.name.0 == name) {
-            eprintln!("error: project '{name}' not found in Dovetail.toml");
-            return Err(());
-        }
+    if let Some(name) = project_filter
+        && !workspace.projects.iter().any(|p| p.name.0 == name)
+    {
+        eprintln!("error: project '{name}' not found in Dovetail.toml");
+        return Err(());
     }
 
-    let result = dovetail::build_workspace(&workspace, project_filter, dovetail::BuildMode::Check, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        project_filter,
+        dovetail::BuildMode::Check,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
 
     report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
@@ -320,7 +365,14 @@ fn run(
         eprintln!("error: cannot determine current directory: {e}");
     })?;
 
-    let workspace = dovetail::manifest::load_manifest_with_options(&workspace_root, &dovetail::manifest::ResolveOptions { target: project_filter.map(str::to_string), ..options.clone() }).map_err(|errors| {
+    let workspace = dovetail::manifest::load_manifest_with_options(
+        &workspace_root,
+        &dovetail::manifest::ResolveOptions {
+            target: project_filter.map(str::to_string),
+            ..options.clone()
+        },
+    )
+    .map_err(|errors| {
         for error in &errors {
             eprintln!("error: {error}");
         }
@@ -336,18 +388,42 @@ fn run(
             name.to_string()
         }
         None => {
-            if workspace.projects.iter().filter(|p| workspace.is_local(p)).count() != 1 {
+            if workspace
+                .projects
+                .iter()
+                .filter(|p| workspace.is_local(p))
+                .count()
+                != 1
+            {
                 eprintln!(
                     "error: workspace has {} projects; specify which project to run",
-                    workspace.projects.iter().filter(|p| workspace.is_local(p)).count()
+                    workspace
+                        .projects
+                        .iter()
+                        .filter(|p| workspace.is_local(p))
+                        .count()
                 );
                 return Err(());
             }
-            workspace.projects.iter().find(|p| workspace.is_local(p)).unwrap().name.0.clone()
+            workspace
+                .projects
+                .iter()
+                .find(|p| workspace.is_local(p))
+                .unwrap()
+                .name
+                .0
+                .clone()
         }
     };
 
-    let result = dovetail::build_workspace(&workspace, Some(&project_name), dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        Some(&project_name),
+        dovetail::BuildMode::Build,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
 
     report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
@@ -422,7 +498,12 @@ fn format_summary_counts(passed: usize, failed: usize, skipped: usize, c: &Color
 
 // -- Test runner --
 
-fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&str>, options: &dovetail::manifest::ResolveOptions) -> Result<(), i32> {
+fn test(
+    project_filter: Option<&str>,
+    filters: &[String],
+    file_filter: Option<&str>,
+    options: &dovetail::manifest::ResolveOptions,
+) -> Result<(), i32> {
     let c = Colors::detect();
 
     let workspace_root = std::env::current_dir().map_err(|e| {
@@ -430,21 +511,35 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
         2
     })?;
 
-    let workspace = dovetail::manifest::load_manifest_with_options(&workspace_root, &dovetail::manifest::ResolveOptions { target: project_filter.map(str::to_string), ..options.clone() }).map_err(|errors| {
+    let workspace = dovetail::manifest::load_manifest_with_options(
+        &workspace_root,
+        &dovetail::manifest::ResolveOptions {
+            target: project_filter.map(str::to_string),
+            ..options.clone()
+        },
+    )
+    .map_err(|errors| {
         for error in &errors {
             eprintln!("error: {error}");
         }
         2
     })?;
 
-    if let Some(name) = project_filter {
-        if !workspace.projects.iter().any(|p| p.name.0 == name) {
-            eprintln!("error: project '{name}' not found in Dovetail.toml");
-            return Err(2);
-        }
+    if let Some(name) = project_filter
+        && !workspace.projects.iter().any(|p| p.name.0 == name)
+    {
+        eprintln!("error: project '{name}' not found in Dovetail.toml");
+        return Err(2);
     }
 
-    let result = dovetail::build_workspace(&workspace, project_filter, dovetail::BuildMode::Test, &std::collections::HashMap::new(), false, None);
+    let result = dovetail::build_workspace(
+        &workspace,
+        project_filter,
+        dovetail::BuildMode::Test,
+        &std::collections::HashMap::new(),
+        false,
+        None,
+    );
 
     report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
@@ -463,12 +558,14 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
             continue;
         }
 
-        let filtered_exports: Vec<dovetail::TestExportInfo> = project_result.test_exports.iter()
+        let filtered_exports: Vec<dovetail::TestExportInfo> = project_result
+            .test_exports
+            .iter()
             .filter(|t| {
-                if let Some(fp) = file_filter {
-                    if !t.source_file.contains(fp) {
-                        return false;
-                    }
+                if let Some(fp) = file_filter
+                    && !t.source_file.contains(fp)
+                {
+                    return false;
                 }
                 if !filters.is_empty() {
                     return filters.iter().any(|f| t.fqtn.contains(f.as_str()));
@@ -504,7 +601,10 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
         if let Ok(dir) = std::env::var("DOVETAIL_DUMP_TEST_WASM") {
             let path = std::path::Path::new(&dir).join(format!("{project_name}-tests.wasm"));
             if let Err(e) = std::fs::write(&path, wasm_bytes) {
-                eprintln!("warning: could not dump test wasm to {}: {e}", path.display());
+                eprintln!(
+                    "warning: could not dump test wasm to {}: {e}",
+                    path.display()
+                );
             } else {
                 eprintln!("dumped test component -> {}", path.display());
             }
@@ -518,7 +618,10 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
 
                 // Group results by source file, preserving order of first appearance
                 let mut file_order: Vec<String> = Vec::new();
-                let mut by_file: std::collections::HashMap<String, Vec<&dovetail::test_runner::TestResult>> = std::collections::HashMap::new();
+                let mut by_file: std::collections::HashMap<
+                    String,
+                    Vec<&dovetail::test_runner::TestResult>,
+                > = std::collections::HashMap::new();
                 for tr in &run_result.results {
                     let file = tr.source_file.clone();
                     by_file.entry(file.clone()).or_default().push(tr);
@@ -559,7 +662,9 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
                     if tests.len() > 1 {
                         eprintln!(
                             "    {}{}{}: {}",
-                            c.dim, file, c.reset,
+                            c.dim,
+                            file,
+                            c.reset,
                             format_summary_counts(file_passed, file_failed, file_skipped, &c),
                         );
                     }
@@ -573,7 +678,9 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
                 let status_color = if proj_failed > 0 { c.red } else { c.green };
                 eprintln!(
                     "  {}{}{project_name}{}: {}",
-                    status_color, c.bold, c.reset,
+                    status_color,
+                    c.bold,
+                    c.reset,
                     format_summary_counts(proj_passed, proj_failed, proj_skipped, &c),
                 );
 
@@ -583,7 +690,10 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
             }
             Err(e) => {
                 total_failed += filtered_exports.len();
-                eprintln!("{}error running tests for '{project_name}': {e}{}", c.red, c.reset);
+                eprintln!(
+                    "{}error running tests for '{project_name}': {e}{}",
+                    c.red, c.reset
+                );
             }
         }
     }
@@ -603,7 +713,8 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
     if total_failed > 0 {
         eprintln!(
             "{}{}{total_tests} tests: {}{}",
-            c.bold, c.red,
+            c.bold,
+            c.red,
             format_summary_counts(total_passed, total_failed, total_skipped, &c),
             c.reset,
         );

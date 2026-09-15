@@ -109,13 +109,23 @@ pub fn build_import_scopes(
                     symbol: SymbolName(symbol_name.clone()),
                 };
 
-                if registry.lookup_function(&fqn, current_package, &file_path).is_some()
-                    || registry.lookup_generic_function(&fqn, current_package).is_some()
-                    || registry.lookup_type(&fqn, current_package, &file_path).is_some()
-                    || registry.lookup_type_alias(&fqn, current_package, &file_path).is_some()
+                if registry
+                    .lookup_function(&fqn, current_package, &file_path)
+                    .is_some()
+                    || registry
+                        .lookup_generic_function(&fqn, current_package)
+                        .is_some()
+                    || registry
+                        .lookup_type(&fqn, current_package, &file_path)
+                        .is_some()
+                    || registry
+                        .lookup_type_alias(&fqn, current_package, &file_path)
+                        .is_some()
                     || registry.lookup_trait(&fqn, current_package).is_some()
                     || registry.lookup_module(&fqn).is_some()
-                    || registry.lookup_global(&fqn, current_package, &file_path).is_some()
+                    || registry
+                        .lookup_global(&fqn, current_package, &file_path)
+                        .is_some()
                 {
                     local_names.insert(local_name.clone(), import.span.clone());
                     scope.imports.push(ResolvedImport {

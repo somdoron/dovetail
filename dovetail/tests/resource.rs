@@ -24,7 +24,12 @@ fn build_and_run(project: &ResolvedProject, workspace_root: &std::path::Path) {
         let errors: Vec<String> = result
             .diagnostics
             .iter()
-            .map(|d| format!("{}:{}:{}: {}", d.span.file, d.span.line, d.span.column, d.message))
+            .map(|d| {
+                format!(
+                    "{}:{}:{}: {}",
+                    d.span.file, d.span.line, d.span.column, d.message
+                )
+            })
             .collect();
         panic!("build_project failed: {}", errors.join("; "));
     }
@@ -52,7 +57,11 @@ fn build_expecting_errors(
         &std::collections::HashMap::new(),
         false,
     );
-    result.diagnostics.iter().map(|d| d.message.clone()).collect()
+    result
+        .diagnostics
+        .iter()
+        .map(|d| d.message.clone())
+        .collect()
 }
 
 #[test]
@@ -140,7 +149,9 @@ function main(): Unit =
     };
     let errors = build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("no resource named 'missing.bin'")),
+        errors
+            .iter()
+            .any(|e| e.contains("no resource named 'missing.bin'")),
         "expected missing-resource error, got: {:?}",
         errors
     );
@@ -180,7 +191,9 @@ function main(): Unit =
     };
     let errors = build_expecting_errors(&project, dir.path());
     assert!(
-        errors.iter().any(|e| e.contains("requires a string literal")),
+        errors
+            .iter()
+            .any(|e| e.contains("requires a string literal")),
         "expected literal-required error, got: {:?}",
         errors
     );

@@ -240,7 +240,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("missing implementation of method 'name' from trait 'Greeter'")),
+        errors
+            .iter()
+            .any(|e| e.contains("missing implementation of method 'name' from trait 'Greeter'")),
         "members without defaults must still be required, got: {:?}",
         errors
     );
@@ -273,7 +275,9 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("default body of 'magic' in trait 'Bad' cannot be intrinsic")),
+        errors
+            .iter()
+            .any(|e| e.contains("default body of 'magic' in trait 'Bad' cannot be intrinsic")),
         "intrinsic defaults are rejected, got: {:?}",
         errors
     );
@@ -539,8 +543,7 @@ function main(): Unit =
     assert useIt(r) == {expected}
 "#
         );
-        common::compile_and_run(&source)
-            .unwrap_or_else(|e| panic!("supers order '{supers}': {e}"));
+        common::compile_and_run(&source).unwrap_or_else(|e| panic!("supers order '{supers}': {e}"));
     }
 }
 
@@ -569,7 +572,8 @@ function main(): Unit = ()
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("have different default implementations; override 'f' here to disambiguate")),
+        errors.iter().any(|e| e
+            .contains("have different default implementations; override 'f' here to disambiguate")),
         "conflicting defaults from distinct origins must error, got: {:?}",
         errors
     );
@@ -713,7 +717,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("exhaustive") || e.contains("not covered") || e.contains("missing")),
+        errors.iter().any(|e| e.contains("exhaustive")
+            || e.contains("not covered")
+            || e.contains("missing")),
         "rules must check default bodies (non-exhaustive match), got: {:?}",
         errors
     );
@@ -750,7 +756,8 @@ function main(): Unit =
 
 #[test]
 fn test_class_static_trait_default_diagnosed_not_miscompiled() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 trait Maker =
@@ -764,7 +771,8 @@ function callTag<T>(): Int32 where T: Maker = T.tagOf()
 
 function main(): Unit =
     assert callTag<Person>() == 9
-"#);
+"#,
+    );
     assert!(
         !errors.is_empty(),
         "a class relying on a static trait default must be diagnosed, not miscompiled"
@@ -773,7 +781,8 @@ function main(): Unit =
 
 #[test]
 fn test_class_satisfies_static_trait_member_with_own_static() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Maker =
@@ -788,12 +797,15 @@ function callTag<T>(): Int32 where T: Maker = T.tagOf()
 
 function main(): Unit =
     assert callTag<Person>() == 9
-"#).expect("a class CAN satisfy a static trait member with its own static function");
+"#,
+    )
+    .expect("a class CAN satisfy a static trait member with its own static function");
 }
 
 #[test]
 fn test_class_instance_default_still_works() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -806,12 +818,15 @@ class Person(idv: Int32) implements Greeter =
 function main(): Unit =
     let p = Person(5)
     assert p.greet() == 105
-"#).expect("instance defaults on classes still work");
+"#,
+    )
+    .expect("instance defaults on classes still work");
 }
 
 #[test]
 fn test_default_body_passes_self_to_bounded_generic() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -829,12 +844,15 @@ implement Sized for Rec =
 function main(): Unit =
     let r = Rec { x = 0 }
     assert r.viaHelper() == 5
-"#).expect("a default body may pass self to a generic function");
+"#,
+    )
+    .expect("a default body may pass self to a generic function");
 }
 
 #[test]
 fn test_default_body_passes_self_to_unbounded_generic() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 record Rec =
@@ -852,14 +870,17 @@ implement Tagged for Rec =
 function main(): Unit =
     let r = Rec { x = 0 }
     assert r.viaId() == 7
-"#).expect("an unbounded generic call from a default body works too");
+"#,
+    )
+    .expect("an unbounded generic call from a default body works too");
 }
 
 // ── Round-24 review regressions ─────────────────────────────────────
 
 #[test]
 fn test_two_traits_same_named_defaults_on_class_diagnosed() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 trait Alpha =
@@ -878,13 +899,18 @@ function main(): Unit =
     let c = C(0)
     assert ga(c) == 1
     assert gb(c) == 2
-"#);
-    assert!(!errors.is_empty(), "two traits' same-named defaults on one class must be diagnosed");
+"#,
+    );
+    assert!(
+        !errors.is_empty(),
+        "two traits' same-named defaults on one class must be diagnosed"
+    );
 }
 
 #[test]
 fn test_subclass_override_seen_by_materialized_default() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -900,12 +926,15 @@ class Derived(k: Int32) extends Base(k) implements Greeter =
 function main(): Unit =
     assert Base(0).greet() == 101
     assert Derived(0).greet() == 102
-"#).expect("a materialized default must see a subclass override");
+"#,
+    )
+    .expect("a materialized default must see a subclass override");
 }
 
 #[test]
 fn test_default_member_dispatches_virtually() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -921,12 +950,15 @@ class Derived(k: Int32) extends Base(k) implements Greeter =
 function main(): Unit =
     let b: Base = Derived(0)
     assert b.greet() == 102
-"#).expect("a default-supplied member dispatches virtually through a base-typed variable");
+"#,
+    )
+    .expect("a default-supplied member dispatches virtually through a base-typed variable");
 }
 
 #[test]
 fn test_class_static_trait_member_routing() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Maker =
@@ -942,7 +974,9 @@ function callTag<T>(): Int32 where T: Maker = T.tagOf()
 function main(): Unit =
     assert callTag<Person>() == 9
     assert Person(4).id() == 4
-"#).expect("round-23 class static routing still works");
+"#,
+    )
+    .expect("round-23 class static routing still works");
 }
 
 // ── Round-25 review regressions ─────────────────────────────────────
@@ -950,7 +984,8 @@ function main(): Unit =
 // F1: intermediate class redeclaring implements
 #[test]
 fn test_intermediate_class_redeclaring_implements() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -965,13 +1000,16 @@ class B1(k: Int32) extends A1(k) implements Greeter =
 
 function main(): Unit =
     assert B1(0).greet() == 101
-"#).expect("class default materialization is virtual and per-declaration");
+"#,
+    )
+    .expect("class default materialization is virtual and per-declaration");
 }
 
 // F2: explicit override in the middle of the chain must win
 #[test]
 fn test_mid_chain_explicit_override_wins_over_default() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -989,13 +1027,16 @@ class C1(k: Int32) extends B1(k) implements Greeter =
 
 function main(): Unit =
     assert C1(0).greet() == 500
-"#).expect("class default materialization is virtual and per-declaration");
+"#,
+    )
+    .expect("class default materialization is virtual and per-declaration");
 }
 
 // F3: defaulted PROPERTY sees subclass override
 #[test]
 fn test_defaulted_property_sees_subclass_override() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -1010,13 +1051,16 @@ class Derived(k: Int32) extends Base(k) implements Greeter =
 
 function main(): Unit =
     assert Derived(0).greeting == 102
-"#).expect("class default materialization is virtual and per-declaration");
+"#,
+    )
+    .expect("class default materialization is virtual and per-declaration");
 }
 
 // F4: one declaration reached through two applications is not a conflict
 #[test]
 fn test_one_declaration_through_two_applications_on_class() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Base0 =
@@ -1030,13 +1074,16 @@ class C(k: Int32) implements Base0 and L =
 
 function main(): Unit =
     assert C(0).tag() == 1
-"#).expect("class default materialization is virtual and per-declaration");
+"#,
+    )
+    .expect("class default materialization is virtual and per-declaration");
 }
 
 // F5: abstract class + defaulted member
 #[test]
 fn test_abstract_class_with_defaulted_member() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -1051,13 +1098,16 @@ class Derived(k: Int32) extends Base(k) implements Greeter =
 
 function main(): Unit =
     assert Derived(0).greet() == 102
-"#).expect("class default materialization is virtual and per-declaration");
+"#,
+    )
+    .expect("class default materialization is virtual and per-declaration");
 }
 
 // F6: subclass WITHOUT implements still sees its override
 #[test]
 fn test_subclass_without_implements_sees_override() {
-    common::compile_and_run(r#"
+    common::compile_and_run(
+        r#"
 package a
 
 trait Greeter =
@@ -1072,13 +1122,16 @@ class Derived(k: Int32) extends Base(k) =
 
 function main(): Unit =
     assert Derived(0).greet() == 102
-"#).expect("class default materialization is virtual and per-declaration");
+"#,
+    )
+    .expect("class default materialization is virtual and per-declaration");
 }
 
 // round-24 regressions must still hold
 #[test]
 fn test_distinct_same_named_defaults_still_rejected() {
-    let errors = common::compile_expecting_errors(r#"
+    let errors = common::compile_expecting_errors(
+        r#"
 package a
 
 trait Alpha =
@@ -1092,6 +1145,10 @@ class C(k: Int32) implements Alpha and Beta =
 
 function main(): Unit =
     assert C(0).tag() == 1
-"#);
-    assert!(!errors.is_empty(), "genuinely distinct same-named defaults must still be rejected");
+"#,
+    );
+    assert!(
+        !errors.is_empty(),
+        "genuinely distinct same-named defaults must still be rejected"
+    );
 }

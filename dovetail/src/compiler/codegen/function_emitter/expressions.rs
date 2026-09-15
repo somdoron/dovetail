@@ -229,7 +229,8 @@ impl FunctionEmitter<'_> {
                     // Mutable capture: store the value in a heap mut-box shared with the closure.
                     self.emit_expr(value, ExprContext::Value);
                     self.emit_mut_box_new(var_ty);
-                    let index = self.define_local(name.clone(), self.codegen.mut_box_valtype(var_ty));
+                    let index =
+                        self.define_local(name.clone(), self.codegen.mut_box_valtype(var_ty));
                     self.instruction(Instruction::LocalSet(index));
                 } else {
                     let valtypes = self.codegen.type_to_valtypes(var_ty);
@@ -253,7 +254,13 @@ impl FunctionEmitter<'_> {
                 }
                 self.drop_if_statement(ctx, &expr.ty);
             }
-            TypedExprKind::Assign { name, value, boxed, target_ty, .. } => {
+            TypedExprKind::Assign {
+                name,
+                value,
+                boxed,
+                target_ty,
+                ..
+            } => {
                 if *boxed {
                     // Reassign a mutably-captured variable: write the value into its shared mut-box.
                     let index = self.lookup_local(name);
@@ -345,7 +352,11 @@ impl FunctionEmitter<'_> {
                 self.emit_match_expr(expr, subject, arms, ctx);
             }
 
-            TypedExprKind::FunctionCall { name, args, type_params: _ } => {
+            TypedExprKind::FunctionCall {
+                name,
+                args,
+                type_params: _,
+            } => {
                 // If this is a direct call into a monomorphized class method whose WASM signature
                 // was erased to match the vtable slot, we must box/cast at type-param positions
                 // on the calling side too (mirroring ClassVirtualCall). The slot's signature
@@ -387,7 +398,9 @@ impl FunctionEmitter<'_> {
 
             TypedExprKind::GlobalRef { name, .. } => {
                 if ctx == ExprContext::Value {
-                    let index = *self.codegen.global_indices.get(name).unwrap_or_else(|| panic!("no global_index for GlobalRef name: {}", name.0));
+                    let index = *self.codegen.global_indices.get(name).unwrap_or_else(|| {
+                        panic!("no global_index for GlobalRef name: {}", name.0)
+                    });
                     self.instruction(Instruction::GlobalGet(index));
                     // Globals for ref types are declared nullable (initialized with ref.null),
                     // so convert to non-null when reading.
@@ -408,7 +421,10 @@ impl FunctionEmitter<'_> {
                 // In statement context, GlobalGet is effectless — emit nothing.
             }
 
-            TypedExprKind::FunctionRef { name, type_params: _ } => {
+            TypedExprKind::FunctionRef {
+                name,
+                type_params: _,
+            } => {
                 if ctx == ExprContext::Value {
                     let arity = match &expr.ty {
                         Type::Function(pts, _) => pts.len() as u32,
@@ -428,7 +444,11 @@ impl FunctionEmitter<'_> {
                 // In statement context: FunctionRef is pure, emit nothing
             }
 
-            TypedExprKind::MethodRef { object, method_name, type_params: _ } => {
+            TypedExprKind::MethodRef {
+                object,
+                method_name,
+                type_params: _,
+            } => {
                 if ctx == ExprContext::Value {
                     let arity = match &expr.ty {
                         Type::Function(pts, _) => pts.len() as u32,
@@ -452,7 +472,10 @@ impl FunctionEmitter<'_> {
             }
 
             TypedExprKind::GlobalAssign { name, value, .. } => {
-                let index = *self.codegen.global_indices.get(name).unwrap_or_else(|| panic!("no global_index for GlobalAssign name: {}", name.0));
+                let index =
+                    *self.codegen.global_indices.get(name).unwrap_or_else(|| {
+                        panic!("no global_index for GlobalAssign name: {}", name.0)
+                    });
                 self.emit_expr(value, ExprContext::Value);
                 // A tuple global holds a single boxed `(ref $Tuple)`; rebox the values. A Uint128
                 // global holds a single boxed `(ref $Uint128)`.
@@ -492,18 +515,22 @@ impl FunctionEmitter<'_> {
             TypedExprKind::RecordCreate { fields, .. } => {
                 // Record: a heap struct. Box/rebox each field value into its (single) slot.
                 let type_idx = match &expr.ty {
-                    Type::Record(_, mn) | Type::GenericRecord { mangled_name: mn, .. } => self.codegen.type_indices[mn],
+                    Type::Record(_, mn)
+                    | Type::GenericRecord {
+                        mangled_name: mn, ..
+                    } => self.codegen.type_indices[mn],
                     _ => unreachable!("RecordCreate must have Record type"),
                 };
                 let slot_types: Vec<Type> = match &expr.ty {
-                    Type::Record(_, mn) | Type::GenericRecord { mangled_name: mn, .. } => {
-                        match &self.codegen.typed_module.types[mn] {
-                            crate::typechecker::types::TypeDef::Record(r) => {
-                                r.fields.iter().map(|(_, t)| t.clone()).collect()
-                            }
-                            _ => unreachable!("RecordCreate target is not a RecordTypeDef"),
+                    Type::Record(_, mn)
+                    | Type::GenericRecord {
+                        mangled_name: mn, ..
+                    } => match &self.codegen.typed_module.types[mn] {
+                        crate::typechecker::types::TypeDef::Record(r) => {
+                            r.fields.iter().map(|(_, t)| t.clone()).collect()
                         }
-                    }
+                        _ => unreachable!("RecordCreate target is not a RecordTypeDef"),
+                    },
                     _ => unreachable!(),
                 };
                 for (i, (_, field_expr)) in fields.iter().enumerate() {
@@ -588,24 +615,24 @@ impl FunctionEmitter<'_> {
             } => {
                 // Look up the slot's declared type (for erased-slot cast-back).
                 let slot_ty: Option<Type> = match &object.ty {
-                    Type::Record(_, mn) | Type::GenericRecord { mangled_name: mn, .. } => {
-                        match &self.codegen.typed_module.types[mn] {
-                            crate::typechecker::types::TypeDef::Record(r) => r
-                                .fields
-                                .get(*field_index as usize)
-                                .map(|(_, t)| t.clone()),
-                            _ => None,
+                    Type::Record(_, mn)
+                    | Type::GenericRecord {
+                        mangled_name: mn, ..
+                    } => match &self.codegen.typed_module.types[mn] {
+                        crate::typechecker::types::TypeDef::Record(r) => {
+                            r.fields.get(*field_index as usize).map(|(_, t)| t.clone())
                         }
-                    }
-                    Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => {
-                        match &self.codegen.typed_module.types[mn] {
-                            crate::typechecker::types::TypeDef::Class(c) => c
-                                .fields
-                                .get(*field_index as usize)
-                                .map(|f| f.ty.clone()),
-                            _ => None,
+                        _ => None,
+                    },
+                    Type::Class(_, mn)
+                    | Type::GenericClass {
+                        mangled_name: mn, ..
+                    } => match &self.codegen.typed_module.types[mn] {
+                        crate::typechecker::types::TypeDef::Class(c) => {
+                            c.fields.get(*field_index as usize).map(|f| f.ty.clone())
                         }
-                    }
+                        _ => None,
+                    },
                     _ => None,
                 };
 
@@ -617,8 +644,13 @@ impl FunctionEmitter<'_> {
                     let obj_valtypes = self.codegen.type_to_valtypes(&object.ty);
                     let temp_base = self.add_value_locals(&obj_valtypes);
                     self.store_value(temp_base, &obj_valtypes);
-                    let (start, width) = self.codegen.tuple_elem_offset(&elems, *field_index as usize);
-                    self.load_value(temp_base + start, &obj_valtypes[start as usize..(start + width) as usize]);
+                    let (start, width) = self
+                        .codegen
+                        .tuple_elem_offset(&elems, *field_index as usize);
+                    self.load_value(
+                        temp_base + start,
+                        &obj_valtypes[start as usize..(start + width) as usize],
+                    );
                     self.drop_if_statement(ctx, &expr.ty);
                     return;
                 }
@@ -626,11 +658,14 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(object, ExprContext::Value);
                 match &object.ty {
                     Type::Record(_, mn)
-                    | Type::GenericRecord { mangled_name: mn, .. } => {
+                    | Type::GenericRecord {
+                        mangled_name: mn, ..
+                    } => {
                         // Records are spliced: a concrete tuple field occupies a range of WASM
                         // fields. Read the whole range as the field's values.
                         let struct_idx = self.codegen.type_indices[mn];
-                        let (start, width) = self.codegen.struct_field_range(mn, *field_index as usize);
+                        let (start, width) =
+                            self.codegen.struct_field_range(mn, *field_index as usize);
                         if width == 1 {
                             self.instruction(Instruction::StructGet {
                                 struct_type_index: struct_idx,
@@ -657,12 +692,16 @@ impl FunctionEmitter<'_> {
                             }
                         }
                     }
-                    Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => {
+                    Type::Class(_, mn)
+                    | Type::GenericClass {
+                        mangled_name: mn, ..
+                    } => {
                         // Field 0 is the vtable ref; data fields follow. An immutable tuple field is
                         // spliced into a WASM-field range (read as a flattened value); other fields are width-1
                         // at their mapped index.
                         let struct_idx = self.codegen.type_indices[mn];
-                        let (start, width) = self.codegen.struct_field_range(mn, *field_index as usize);
+                        let (start, width) =
+                            self.codegen.struct_field_range(mn, *field_index as usize);
                         if width > 1 {
                             let obj_vt = self.codegen.single_val_type(&object.ty);
                             let obj_local = self.add_local(obj_vt);
@@ -715,7 +754,10 @@ impl FunctionEmitter<'_> {
                 ..
             } => {
                 let mn = match &object.ty {
-                    Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => mn.clone(),
+                    Type::Class(_, mn)
+                    | Type::GenericClass {
+                        mangled_name: mn, ..
+                    } => mn.clone(),
                     _ => unreachable!("FieldAssign must be on a Class type"),
                 };
                 let struct_idx = self.codegen.type_indices[&mn];
@@ -836,7 +878,6 @@ impl FunctionEmitter<'_> {
                         self.emit_rebox_uint128();
                     }
                     self.drop_if_statement(ctx, &expr.ty);
-                    return;
                 } else {
                     self.emit_expr(value, ExprContext::Value);
                     self.enforce_reified_cast(target_type);
@@ -876,8 +917,15 @@ impl FunctionEmitter<'_> {
                 self.emit_expr(value, ctx);
             }
 
-            TypedExprKind::TemplateInterfaceObjectCoerce { traits, concrete_type, .. } => {
-                unreachable!("TemplateInterfaceObjectCoerce not resolved by monomorphize: traits={:?} concrete={}", traits, concrete_type)
+            TypedExprKind::TemplateInterfaceObjectCoerce {
+                traits,
+                concrete_type,
+                ..
+            } => {
+                unreachable!(
+                    "TemplateInterfaceObjectCoerce not resolved by monomorphize: traits={:?} concrete={}",
+                    traits, concrete_type
+                )
             }
 
             TypedExprKind::InterfaceObjectCoerce {
@@ -906,7 +954,8 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::GlobalGet(vtable_global));
 
                 // 4. Create interface object struct (data, vtable)
-                let traitobj_type = self.codegen.interface_object_type_indices[interface_mangled_name];
+                let traitobj_type =
+                    self.codegen.interface_object_type_indices[interface_mangled_name];
                 self.instruction(Instruction::StructNew(traitobj_type));
 
                 self.drop_if_statement(ctx, &expr.ty);
@@ -943,7 +992,10 @@ impl FunctionEmitter<'_> {
                 // SUPER of the receiver's component: dispatch then navigates the
                 // nested super-vtable refs (`nav_path`).
                 let (set_mn, component_idx, source_component) = match &receiver.ty {
-                    Type::InterfaceObject { traits, mangled_name } if traits.len() > 1 => {
+                    Type::InterfaceObject {
+                        traits,
+                        mangled_name,
+                    } if traits.len() > 1 => {
                         // Prefer the EXACT declaring component: when both a
                         // super and a sub that extends it are components, the
                         // typechecker's dedup chose one deliberately — a
@@ -971,18 +1023,27 @@ impl FunctionEmitter<'_> {
                         (mangled_name.clone(), Some(found.0), found.1)
                     }
                     Type::InterfaceObject { traits, .. } if traits.len() == 1 => {
-                        let key = crate::common::types::MangledName::for_interface_object_per_interface(&traits[0].trait_fqn);
+                        let key =
+                            crate::common::types::MangledName::for_interface_object_per_interface(
+                                &traits[0].trait_fqn,
+                            );
                         (key.clone(), None, key)
                     }
-                    _ => (interface_mangled_name.clone(), None, interface_mangled_name.clone()),
+                    _ => (
+                        interface_mangled_name.clone(),
+                        None,
+                        interface_mangled_name.clone(),
+                    ),
                 };
                 let nav_path = self
                     .codegen
                     .super_vtable_path(&source_component, interface_mangled_name)
-                    .unwrap_or_else(|| panic!(
-                        "declaring component {} unreachable from receiver component {}",
-                        interface_mangled_name, source_component
-                    ));
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "declaring component {} unreachable from receiver component {}",
+                            interface_mangled_name, source_component
+                        )
+                    });
 
                 // 1. Emit receiver (interface object on stack)
                 self.emit_expr(receiver, ExprContext::Value);
@@ -993,8 +1054,13 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::LocalSet(recv_local));
 
                 // 3. Extract data (field 0) — first arg to wrapper
-                let traitobj_type = *self.codegen.interface_object_type_indices.get(&set_mn)
-                    .unwrap_or_else(|| panic!("missing interface_object_type_index for: {}", set_mn));
+                let traitobj_type = *self
+                    .codegen
+                    .interface_object_type_indices
+                    .get(&set_mn)
+                    .unwrap_or_else(|| {
+                        panic!("missing interface_object_type_index for: {}", set_mn)
+                    });
                 self.instruction(Instruction::LocalGet(recv_local));
                 self.instruction(Instruction::StructGet {
                     struct_type_index: traitobj_type,
@@ -1043,8 +1109,8 @@ impl FunctionEmitter<'_> {
                 });
 
                 // 6. call_ref through the funcref
-                let func_type_idx =
-                    self.codegen.wrapper_func_type_indices[&(interface_mangled_name.clone(), method_index)];
+                let func_type_idx = self.codegen.wrapper_func_type_indices
+                    [&(interface_mangled_name.clone(), method_index)];
                 self.instruction(Instruction::CallRef(func_type_idx));
 
                 // Coerce the wrapper's slot-layout return back into the call's concrete static type
@@ -1058,12 +1124,22 @@ impl FunctionEmitter<'_> {
                 // Static upcast (A and B) → subset: extract the data field plus the
                 // needed component-vtable refs and rebuild the target fat pointer.
                 let (source_traits, source_mn) = match &inner.ty {
-                    Type::InterfaceObject { traits, mangled_name } => (traits.clone(), mangled_name.clone()),
-                    other => panic!("InterfaceObjectUpcast source is not an interface object: {other}"),
+                    Type::InterfaceObject {
+                        traits,
+                        mangled_name,
+                    } => (traits.clone(), mangled_name.clone()),
+                    other => {
+                        panic!("InterfaceObjectUpcast source is not an interface object: {other}")
+                    }
                 };
                 let (target_traits, target_mn) = match &expr.ty {
-                    Type::InterfaceObject { traits, mangled_name } => (traits.clone(), mangled_name.clone()),
-                    other => panic!("InterfaceObjectUpcast target is not an interface object: {other}"),
+                    Type::InterfaceObject {
+                        traits,
+                        mangled_name,
+                    } => (traits.clone(), mangled_name.clone()),
+                    other => {
+                        panic!("InterfaceObjectUpcast target is not an interface object: {other}")
+                    }
                 };
 
                 let source_obj_type = self.codegen.interface_object_type_indices[&source_mn];
@@ -1086,7 +1162,10 @@ impl FunctionEmitter<'_> {
                 // ref — either the component itself, or (extends) a nested
                 // super-vtable ref reached through `super_vtable_path`.
                 for component in &target_traits {
-                    let target_key = crate::common::types::MangledName::for_interface_object_per_interface(&component.trait_fqn);
+                    let target_key =
+                        crate::common::types::MangledName::for_interface_object_per_interface(
+                            &component.trait_fqn,
+                        );
                     // Exact source component first (see the dispatch scan
                     // above) — only fall back to a nested super-vtable ref
                     // when the target is not itself a source component.
@@ -1139,15 +1218,19 @@ impl FunctionEmitter<'_> {
 
                 self.drop_if_statement(ctx, &expr.ty);
             }
-            TypedExprKind::ClassNew { mangled_name, args, type_params } => {
+            TypedExprKind::ClassNew {
+                mangled_name,
+                args,
+                type_params,
+            } => {
                 let type_idx = self.codegen.type_indices[mangled_name];
 
                 // The vtable follows the optional type ID. For generic classes, each (class,
                 // type_args) instantiation has its own vtable global instance.
                 let type_args = type_params.clone();
                 self.emit_type_id(&self.codegen.construction_type(expr));
-                let vtable_global_idx = self.codegen.class_vtable_global_indices
-                    [&(mangled_name.clone(), type_args)];
+                let vtable_global_idx =
+                    self.codegen.class_vtable_global_indices[&(mangled_name.clone(), type_args)];
                 self.instruction(Instruction::GlobalGet(vtable_global_idx));
                 self.instruction(Instruction::I32Const(0));
 
@@ -1184,7 +1267,10 @@ impl FunctionEmitter<'_> {
                 // boxed before push; the return must be cast back if the call's static type
                 // expects a concrete value.
                 let (class_mn, class_type_idx) = match &object.ty {
-                    Type::Class(_, mn) | Type::GenericClass { mangled_name: mn, .. } => (mn.clone(), self.codegen.type_indices[mn]),
+                    Type::Class(_, mn)
+                    | Type::GenericClass {
+                        mangled_name: mn, ..
+                    } => (mn.clone(), self.codegen.type_indices[mn]),
                     _ => unreachable!("ClassVirtualCall object must have Class type"),
                 };
 
@@ -1194,7 +1280,8 @@ impl FunctionEmitter<'_> {
                     if let crate::typechecker::types::TypeDef::Class(cls) =
                         &self.codegen.typed_module.types[&class_mn]
                     {
-                        cls.vtable_methods.get(*vtable_slot as usize)
+                        cls.vtable_methods
+                            .get(*vtable_slot as usize)
                             .map(|slot| (slot.param_types.clone(), slot.return_type.clone()))
                     } else {
                         None
@@ -1235,8 +1322,8 @@ impl FunctionEmitter<'_> {
                 });
 
                 // call_ref with the func type for this slot
-                let func_type_idx = self.codegen.class_vtable_slot_func_types
-                    [&(class_mn, *vtable_slot)];
+                let func_type_idx =
+                    self.codegen.class_vtable_slot_func_types[&(class_mn, *vtable_slot)];
                 self.instruction(Instruction::CallRef(func_type_idx));
 
                 // Coerce the slot's (possibly erased) return values back to the call's concrete static
@@ -1347,7 +1434,8 @@ impl FunctionEmitter<'_> {
                     _ => unreachable!("ClosureCall callee must have Function type"),
                 };
                 let arity = param_types.len() as u32;
-                let (call_func_type_index, closure_struct_idx) = self.codegen.closure_arity_indices[&arity];
+                let (call_func_type_index, closure_struct_idx) =
+                    self.codegen.closure_arity_indices[&arity];
 
                 // Emit callee → store in temp local
                 let closure_valtype = wasm_encoder::ValType::Ref(wasm_encoder::RefType {
@@ -1416,7 +1504,11 @@ impl FunctionEmitter<'_> {
                 let depth = self.wasm_block_depth - self.return_block_depth - 1;
                 self.instruction(Instruction::Br(depth));
             }
-            TypedExprKind::ClassStructCreate { target_mangled_name, fields, type_params } => {
+            TypedExprKind::ClassStructCreate {
+                target_mangled_name,
+                fields,
+                type_params,
+            } => {
                 // Get vtable global for the target (class, type_args) instantiation.
                 let type_args = type_params.clone();
                 self.emit_type_id(&self.codegen.construction_type(expr));
@@ -1445,8 +1537,18 @@ impl FunctionEmitter<'_> {
                 self.instruction(Instruction::StructNew(type_idx));
                 self.drop_if_statement(ctx, &expr.ty);
             }
-            TypedExprKind::ImplFunctionCall { trait_fqn, for_type, method_name, trait_type_params, method_type_params, .. } => {
-                unreachable!("ImplFunctionCall not resolved by monomorphize: trait={} for_type={:?} method={} trait_type_params={:?} method_type_params={:?}", trait_fqn, for_type, method_name, trait_type_params, method_type_params)
+            TypedExprKind::ImplFunctionCall {
+                trait_fqn,
+                for_type,
+                method_name,
+                trait_type_params,
+                method_type_params,
+                ..
+            } => {
+                unreachable!(
+                    "ImplFunctionCall not resolved by monomorphize: trait={} for_type={:?} method={} trait_type_params={:?} method_type_params={:?}",
+                    trait_fqn, for_type, method_name, trait_type_params, method_type_params
+                )
             }
             TypedExprKind::ImplFunctionRef { .. }
             | TypedExprKind::ExtFunctionCall { .. }
@@ -1494,7 +1596,8 @@ impl FunctionEmitter<'_> {
     /// params are handled naturally.
     fn emit_class_hierarchy(&mut self, cls: &crate::typechecker::types::ClassTypeDef) {
         // 1. If has parent: evaluate extends_args, push parent scope, recurse, pop
-        if let (Some(extends_args), Some(parent_mn)) = (&cls.extends_args, &cls.parent_mangled_name) {
+        if let (Some(extends_args), Some(parent_mn)) = (&cls.extends_args, &cls.parent_mangled_name)
+        {
             let parent_cls = match &self.codegen.typed_module.types[parent_mn] {
                 crate::typechecker::types::TypeDef::Class(cls) => cls.clone(),
                 _ => panic!("parent is not a class type"),
@@ -1637,7 +1740,11 @@ impl FunctionEmitter<'_> {
                     self.emit_narrow(operand_ty);
                 }
                 BinOp::Shr => self.instruction(Instruction::I32ShrS),
-                BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+                BinOp::TupleExtend
+                | BinOp::Eq
+                | BinOp::LogicalAnd
+                | BinOp::LogicalOr
+                | BinOp::Concat => {
                     unreachable!("handled above")
                 }
             },
@@ -1671,7 +1778,11 @@ impl FunctionEmitter<'_> {
                     self.emit_narrow(operand_ty);
                 }
                 BinOp::Shr => self.instruction(Instruction::I32ShrU),
-                BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+                BinOp::TupleExtend
+                | BinOp::Eq
+                | BinOp::LogicalAnd
+                | BinOp::LogicalOr
+                | BinOp::Concat => {
                     unreachable!("handled above")
                 }
             },
@@ -1693,7 +1804,11 @@ impl FunctionEmitter<'_> {
                 BinOp::BitXor => self.instruction(Instruction::I64Xor),
                 BinOp::Shl => self.instruction(Instruction::I64Shl),
                 BinOp::Shr => self.instruction(Instruction::I64ShrS),
-                BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+                BinOp::TupleExtend
+                | BinOp::Eq
+                | BinOp::LogicalAnd
+                | BinOp::LogicalOr
+                | BinOp::Concat => {
                     unreachable!("handled above")
                 }
             },
@@ -1715,7 +1830,11 @@ impl FunctionEmitter<'_> {
                 BinOp::BitXor => self.instruction(Instruction::I64Xor),
                 BinOp::Shl => self.instruction(Instruction::I64Shl),
                 BinOp::Shr => self.instruction(Instruction::I64ShrU),
-                BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+                BinOp::TupleExtend
+                | BinOp::Eq
+                | BinOp::LogicalAnd
+                | BinOp::LogicalOr
+                | BinOp::Concat => {
                     unreachable!("handled above")
                 }
             },
@@ -1742,7 +1861,11 @@ impl FunctionEmitter<'_> {
                 | BinOp::Shr => {
                     unreachable!("operator {} not supported for Float32", op)
                 }
-                BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+                BinOp::TupleExtend
+                | BinOp::Eq
+                | BinOp::LogicalAnd
+                | BinOp::LogicalOr
+                | BinOp::Concat => {
                     unreachable!("handled above")
                 }
             },
@@ -1766,7 +1889,11 @@ impl FunctionEmitter<'_> {
                 | BinOp::Shr => {
                     unreachable!("operator {} not supported for Float64", op)
                 }
-                BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+                BinOp::TupleExtend
+                | BinOp::Eq
+                | BinOp::LogicalAnd
+                | BinOp::LogicalOr
+                | BinOp::Concat => {
                     unreachable!("handled above")
                 }
             },
@@ -1802,7 +1929,11 @@ impl FunctionEmitter<'_> {
             },
 
             // Newtype — delegate to inner type
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => {
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => {
                 self.emit_binary_instruction(op, inner);
             }
 
@@ -1903,7 +2034,11 @@ impl FunctionEmitter<'_> {
             BinOp::Div | BinOp::Rem => {
                 unreachable!("Uint128 division/remainder is rejected by the typechecker")
             }
-            BinOp::TupleExtend | BinOp::Eq | BinOp::LogicalAnd | BinOp::LogicalOr | BinOp::Concat => {
+            BinOp::TupleExtend
+            | BinOp::Eq
+            | BinOp::LogicalAnd
+            | BinOp::LogicalOr
+            | BinOp::Concat => {
                 unreachable!("handled by emit_eq_instruction / short-circuit path")
             }
         }
@@ -2027,16 +2162,14 @@ impl FunctionEmitter<'_> {
             intrinsic: crate::typechecker::types::IntrinsicKind::NumericConvert(target),
             args,
         } = &e.kind
+            && matches!(target, Type::Uint128)
+            && args.len() == 1
+            && matches!(
+                args[0].ty,
+                Type::Uint8 | Type::Uint16 | Type::Uint32 | Type::Uint64
+            )
         {
-            if matches!(target, Type::Uint128)
-                && args.len() == 1
-                && matches!(
-                    args[0].ty,
-                    Type::Uint8 | Type::Uint16 | Type::Uint32 | Type::Uint64
-                )
-            {
-                return Some(&args[0]);
-            }
+            return Some(&args[0]);
         }
         None
     }
@@ -2280,7 +2413,11 @@ impl FunctionEmitter<'_> {
             Type::String => {
                 self.instruction(Instruction::Call(self.codegen.func_string_eq()));
             }
-            Type::Newtype(_, inner) | Type::GenericNewtype { concrete_inner_type: inner, .. } => {
+            Type::Newtype(_, inner)
+            | Type::GenericNewtype {
+                concrete_inner_type: inner,
+                ..
+            } => {
                 self.emit_eq_instruction(inner);
             }
             _ => {
@@ -2360,7 +2497,10 @@ impl FunctionEmitter<'_> {
         // If the value's static type is itself a type parameter, it's already anyref —
         // nothing to box. (Happens in unsubstituted template-context emissions, e.g., when
         // a generic class's initializer is emitted from its canonical TypeDef.)
-        if matches!(value_ty, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)) {
+        if matches!(
+            value_ty,
+            Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)
+        ) {
             return;
         }
         // A flattened tuple must be reboxed into its `(ref $Tuple)` to occupy the single
@@ -2408,21 +2548,30 @@ impl FunctionEmitter<'_> {
         // A boxed tuple read from an erased slot: cast to `(ref $Tuple)` then explode to a flattened value.
         if self.codegen.is_tuple(target_ty) {
             let target_idx = self.codegen.wasm_type_index_for_any_cast(target_ty);
-            self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(target_idx)));
+            self.instruction(Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(target_idx),
+            ));
             self.emit_unbox_tuple(target_ty);
             return;
         }
         // A boxed `Uint128` read from an erased slot: cast to `(ref $Uint128)` then explode to `[lo, hi]`.
         if self.codegen.is_uint128(target_ty) {
             let target_idx = self.codegen.wasm_type_index_for_any_cast(target_ty);
-            self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(target_idx)));
+            self.instruction(Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(target_idx),
+            ));
             self.emit_unbox_uint128();
             return;
         }
         let target_idx = self.codegen.wasm_type_index_for_any_cast(target_ty);
-        self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(target_idx)));
+        self.instruction(Instruction::RefCastNonNull(
+            wasm_encoder::HeapType::Concrete(target_idx),
+        ));
         if !target_ty.is_reference_type() {
-            self.instruction(Instruction::StructGet { struct_type_index: target_idx, field_index: 0 });
+            self.instruction(Instruction::StructGet {
+                struct_type_index: target_idx,
+                field_index: 0,
+            });
         }
     }
 
@@ -2738,9 +2887,9 @@ impl FunctionEmitter<'_> {
         self.instruction(get_instr);
         if array_type_index == super::super::ARRAY_REF_TYPE_INDEX && !matches!(elem, Type::Any) {
             let target_idx = self.codegen.wasm_type_index_for_any_cast(elem);
-            self.instruction(Instruction::RefCastNonNull(wasm_encoder::HeapType::Concrete(
-                target_idx,
-            )));
+            self.instruction(Instruction::RefCastNonNull(
+                wasm_encoder::HeapType::Concrete(target_idx),
+            ));
         }
     }
 

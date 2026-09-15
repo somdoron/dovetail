@@ -259,7 +259,9 @@ function main(): Unit =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("3 elements") && e.contains("2")),
+        errors
+            .iter()
+            .any(|e| e.contains("3 elements") && e.contains("2")),
         "expected arity mismatch error, got: {:?}",
         errors
     );

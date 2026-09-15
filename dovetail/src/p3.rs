@@ -23,10 +23,22 @@ pub const P3_VERSION: &str = "0.3.0-rc-2026-03-15";
 /// and the import-table generator — reads this one list so a reordering cannot
 /// silently apply to only one of them.
 pub const WIT_FILES: &[(&str, &str)] = &[
-    ("wasi-p3-clocks.wit", include_str!("../wit/wasi-p3-clocks.wit")),
-    ("wasi-p3-filesystem.wit", include_str!("../wit/wasi-p3-filesystem.wit")),
-    ("wasi-p3-sockets.wit", include_str!("../wit/wasi-p3-sockets.wit")),
-    ("wasi-p3-random.wit", include_str!("../wit/wasi-p3-random.wit")),
+    (
+        "wasi-p3-clocks.wit",
+        include_str!("../wit/wasi-p3-clocks.wit"),
+    ),
+    (
+        "wasi-p3-filesystem.wit",
+        include_str!("../wit/wasi-p3-filesystem.wit"),
+    ),
+    (
+        "wasi-p3-sockets.wit",
+        include_str!("../wit/wasi-p3-sockets.wit"),
+    ),
+    (
+        "wasi-p3-random.wit",
+        include_str!("../wit/wasi-p3-random.wit"),
+    ),
     ("wasi-p3-cli.wit", include_str!("../wit/wasi-p3-cli.wit")),
 ];
 
@@ -187,9 +199,9 @@ pub fn run_cli_component_detailed<T: WasiView + Send + 'static>(
             .ok_or_else(|| {
                 RunFailure::Setup("wasi:cli/run export has no `run` function".to_string())
             })?;
-        let run = instance.get_func(&mut *store, run_idx).ok_or_else(|| {
-            RunFailure::Setup("`run` export is not a function".to_string())
-        })?;
+        let run = instance
+            .get_func(&mut *store, run_idx)
+            .ok_or_else(|| RunFailure::Setup("`run` export is not a function".to_string()))?;
 
         let mut results = [Val::Bool(false)];
         store

@@ -308,7 +308,9 @@ implement HasMagnitude for Point =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("missing implementation of property")),
+        errors
+            .iter()
+            .any(|e| e.contains("missing implementation of property")),
         "expected error about missing property, got: {:?}",
         errors
     );
@@ -328,7 +330,9 @@ trait Bad =
 "#,
     );
     assert!(
-        errors.iter().any(|e| e.contains("duplicate") || e.contains("conflicts")),
+        errors
+            .iter()
+            .any(|e| e.contains("duplicate") || e.contains("conflicts")),
         "expected error about duplicate/conflict, got: {:?}",
         errors
     );

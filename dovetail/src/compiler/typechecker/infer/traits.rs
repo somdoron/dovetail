@@ -3,14 +3,14 @@ use std::collections::BTreeMap;
 use crate::common::span::Span;
 use crate::common::types::{Fqn, SymbolName, TypeParamName};
 use crate::parser::ast::TraitConstraint;
-use crate::typechecker::registry::{ImplBlockSignature};
+use crate::typechecker::registry::ImplBlockSignature;
 use crate::typechecker::types::{
     BoundKind, NamedTraitBound, ResolvedImplMethod, TraitBound, TraitBounds, Type,
 };
 
+use super::Inference;
 use super::type_param_substitution::TypeParamSubstitution;
 use super::types::SymbolKind;
-use super::Inference;
 
 const MAX_TRAIT_CHECK_DEPTH: usize = 16;
 
@@ -25,6 +25,10 @@ pub(super) enum SugarTraitResolution<T> {
     NotFound,
 }
 
+#[allow(
+    clippy::large_enum_variant,
+    reason = "Keep compiler data inline without adding allocations to this representation."
+)]
 pub(super) enum ImplMethodResolution {
     Found {
         resolved: ResolvedImplMethod,
@@ -70,37 +74,46 @@ impl Inference<'_> {
             return None;
         }
         let type_fqn = concrete_type.try_to_fqn()?;
-        let args_compatible = |provided: &[Type]| {
-            trait_type_args.is_empty() || provided == trait_type_args
-        };
-        let applicable_blocks: Vec<_> = self.registry
+        let args_compatible =
+            |provided: &[Type]| trait_type_args.is_empty() || provided == trait_type_args;
+        let applicable_blocks: Vec<_> = self
+            .registry
             .find_providing_impl_blocks(trait_fqn, &type_fqn)
             .into_iter()
             .filter_map(|(block, via)| {
-                let args = via.as_ref().map_or(&block.trait_type_args, |(_, args)| args);
+                let args = via
+                    .as_ref()
+                    .map_or(&block.trait_type_args, |(_, args)| args);
                 let args = self.applicable_impl_args(block, concrete_type, args)?;
                 if !args_compatible(&args) {
                     return None;
                 }
-                let provider_args = self.applicable_impl_args(block, concrete_type, &block.trait_type_args)?;
+                let provider_args =
+                    self.applicable_impl_args(block, concrete_type, &block.trait_type_args)?;
                 Some(((block.trait_fqn.clone(), provider_args), via.is_none()))
             })
             .collect();
-        let class_applications: Vec<_> = self.registry.get_class_type(&type_fqn)
+        let class_applications: Vec<_> = self
+            .registry
+            .get_class_type(&type_fqn)
             .map(|sig| {
                 let concrete_args = Self::extract_type_args(concrete_type).unwrap_or_default();
                 let sub = TypeParamSubstitution::from_pairs(&sig.type_params, &concrete_args);
-                sig.trait_impls.iter().filter_map(|(fqn, args)| {
-                    let args: Vec<_> = args.iter()
-                        .map(|arg| super::generics::apply_substitution(&sub, arg))
-                        .collect();
-                    let provided_args = if fqn == trait_fqn {
-                        args.clone()
-                    } else {
-                        self.registry.super_closure_args(fqn, &args, trait_fqn)?
-                    };
-                    args_compatible(&provided_args).then_some((fqn.clone(), args))
-                }).collect()
+                sig.trait_impls
+                    .iter()
+                    .filter_map(|(fqn, args)| {
+                        let args: Vec<_> = args
+                            .iter()
+                            .map(|arg| super::generics::apply_substitution(&sub, arg))
+                            .collect();
+                        let provided_args = if fqn == trait_fqn {
+                            args.clone()
+                        } else {
+                            self.registry.super_closure_args(fqn, &args, trait_fqn)?
+                        };
+                        args_compatible(&provided_args).then_some((fqn.clone(), args))
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         if applicable_blocks.iter().any(|(_, direct)| *direct)
@@ -109,7 +122,9 @@ impl Inference<'_> {
             return None;
         }
         let mut providers = Vec::new();
-        for provider in applicable_blocks.iter().map(|(provider, _)| provider)
+        for provider in applicable_blocks
+            .iter()
+            .map(|(provider, _)| provider)
             .chain(class_applications.iter())
         {
             if !providers.contains(provider) {
@@ -143,12 +158,20 @@ impl Inference<'_> {
             };
             for bound in bounds {
                 let Some(bound) = bound.named() else {
-                    if !type_args[index].is_class_reference() { return None; }
+                    if !type_args[index].is_class_reference() {
+                        return None;
+                    }
                     continue;
                 };
                 let mut bound = bound.clone();
-                bound.associated_types = bound.associated_types.iter().map(|(n,t)| (n.clone(), super::generics::apply_substitution(&sub,t))).collect();
-                let args: Vec<_> = bound.type_args.iter()
+                bound.associated_types = bound
+                    .associated_types
+                    .iter()
+                    .map(|(n, t)| (n.clone(), super::generics::apply_substitution(&sub, t)))
+                    .collect();
+                let args: Vec<_> = bound
+                    .type_args
+                    .iter()
                     .map(|arg| super::generics::apply_substitution(&sub, arg))
                     .collect();
                 if !self.type_satisfies_bound(&bound, &args, &type_args[index], 0) {
@@ -156,9 +179,12 @@ impl Inference<'_> {
                 }
             }
         }
-        Some(provided_args.iter()
-            .map(|arg| super::generics::apply_substitution(&sub, arg))
-            .collect())
+        Some(
+            provided_args
+                .iter()
+                .map(|arg| super::generics::apply_substitution(&sub, arg))
+                .collect(),
+        )
     }
 
     fn intersection_blocks_self_returning_bound(
@@ -195,21 +221,34 @@ impl Inference<'_> {
         depth: usize,
     ) -> bool {
         if bound.kind != BoundKind::SubtypeOf {
-            return self.type_satisfies_trait_with_associated_types(&bound.trait_fqn, type_args, &bound.associated_types, concrete_type, depth);
+            return self.type_satisfies_trait_with_associated_types(
+                &bound.trait_fqn,
+                type_args,
+                &bound.associated_types,
+                concrete_type,
+                depth,
+            );
         }
         if let Some(primitive) = bound.primitive_subtype() {
-            return crate::typechecker::subtyping::is_subtype(self.registry, concrete_type, &primitive);
+            return crate::typechecker::subtyping::is_subtype(
+                self.registry,
+                concrete_type,
+                &primitive,
+            );
         }
         match concrete_type {
             Type::Class(fqn, _) | Type::GenericClass { fqn, .. } => {
                 self.registry.class_is_subtype(fqn, &bound.trait_fqn)
             }
-            Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) => {
-                bounds.iter().filter_map(TraitBound::named).any(|candidate| {
+            Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) => bounds
+                .iter()
+                .filter_map(TraitBound::named)
+                .any(|candidate| {
                     candidate.kind == BoundKind::SubtypeOf
-                        && self.registry.class_is_subtype(&candidate.trait_fqn, &bound.trait_fqn)
-                })
-            }
+                        && self
+                            .registry
+                            .class_is_subtype(&candidate.trait_fqn, &bound.trait_fqn)
+                }),
             _ => false,
         }
     }
@@ -251,7 +290,9 @@ impl Inference<'_> {
             return false;
         }
         if crate::typechecker::types::is_tuple_constraint(trait_fqn) {
-            return trait_type_args.is_empty() && associated_types.is_empty() && concrete_type.is_tuple();
+            return trait_type_args.is_empty()
+                && associated_types.is_empty()
+                && concrete_type.is_tuple();
         }
 
         // If the concrete type is a type parameter, check its declared bounds.
@@ -261,10 +302,19 @@ impl Inference<'_> {
             let args_match = |args: &[Type]| {
                 trait_type_args.is_empty()
                     || (args.len() == trait_type_args.len()
-                        && args.iter().zip(trait_type_args.iter()).all(|(x, y)| self.is_assignable(x,y) && self.is_assignable(y,x)))
+                        && args
+                            .iter()
+                            .zip(trait_type_args.iter())
+                            .all(|(x, y)| self.is_assignable(x, y) && self.is_assignable(y, x)))
             };
             return bounds.iter().filter_map(TraitBound::named).any(|b| {
-                if !associated_types.iter().all(|(name, ty)| b.associated_types.get(name).is_some_and(|actual| self.is_assignable(actual, ty) && self.is_assignable(ty, actual))) { return false; }
+                if !associated_types.iter().all(|(name, ty)| {
+                    b.associated_types.get(name).is_some_and(|actual| {
+                        self.is_assignable(actual, ty) && self.is_assignable(ty, actual)
+                    })
+                }) {
+                    return false;
+                }
                 if b.trait_fqn == *trait_fqn && args_match(&b.type_args) {
                     return true;
                 }
@@ -285,15 +335,16 @@ impl Inference<'_> {
         // Also keeps `to_fqn()` (single-FQN) off intersection types.
         if let Type::InterfaceObject { traits, .. } = concrete_type {
             // Component type args are invariant (erased slots flow both ways).
-            return associated_types.is_empty() && traits.iter().any(|c| {
-                if c.trait_fqn == *trait_fqn && c.trait_type_args == trait_type_args {
-                    return true;
-                }
-                // A `B`-object satisfies `A` when A is in B's super closure.
-                self.registry
-                    .super_closure_args(&c.trait_fqn, &c.trait_type_args, trait_fqn)
-                    .is_some_and(|args| args == trait_type_args)
-            });
+            return associated_types.is_empty()
+                && traits.iter().any(|c| {
+                    if c.trait_fqn == *trait_fqn && c.trait_type_args == trait_type_args {
+                        return true;
+                    }
+                    // A `B`-object satisfies `A` when A is in B's super closure.
+                    self.registry
+                        .super_closure_args(&c.trait_fqn, &c.trait_type_args, trait_fqn)
+                        .is_some_and(|args| args == trait_type_args)
+                });
         }
 
         let type_fqn = concrete_type.to_fqn();
@@ -322,17 +373,23 @@ impl Inference<'_> {
             );
             return (!is_indexed_or_binary_operator || outputs.len() == 1)
                 && outputs.iter().any(|output| {
-                    associated_types.iter().all(|(name, expected)| {
-                        output.get(name) == Some(expected)
-                    })
+                    associated_types
+                        .iter()
+                        .all(|(name, expected)| output.get(name) == Some(expected))
                 });
         }
 
         for info in impls {
             if info.type_params.is_empty() {
-                if info.for_type != *concrete_type || !associated_types.iter().all(|(name, ty)| {
-                    info.associated_type_defs.get(name).is_some_and(|(params, actual)| params.is_empty() && actual == ty)
-                }) { continue; }
+                if info.for_type != *concrete_type
+                    || !associated_types.iter().all(|(name, ty)| {
+                        info.associated_type_defs
+                            .get(name)
+                            .is_some_and(|(params, actual)| params.is_empty() && actual == ty)
+                    })
+                {
+                    continue;
+                }
                 // Concrete impl
                 if trait_type_args.is_empty() {
                     // No type args to check — always satisfies
@@ -381,7 +438,8 @@ impl Inference<'_> {
             if let Some(type_args) = resolved {
                 // If we have expected trait type args, substitute and verify
                 if !trait_type_args.is_empty() {
-                    let resolved_sub = TypeParamSubstitution::from_pairs(&info.type_params, &type_args);
+                    let resolved_sub =
+                        TypeParamSubstitution::from_pairs(&info.type_params, &type_args);
                     let substituted_trait_args: Vec<Type> = info
                         .trait_type_args
                         .iter()
@@ -392,7 +450,9 @@ impl Inference<'_> {
                         && substituted_trait_args
                             .iter()
                             .zip(trait_type_args.iter())
-                            .all(|(impl_arg, expected_arg)| self.is_assignable(impl_arg, expected_arg));
+                            .all(|(impl_arg, expected_arg)| {
+                                self.is_assignable(impl_arg, expected_arg)
+                            });
 
                     if !args_match {
                         continue;
@@ -423,7 +483,14 @@ impl Inference<'_> {
                         };
                         if bound.kind == BoundKind::SubtypeOf {
                             return self.is_assignable(
-                                &bound.primitive_subtype().unwrap_or_else(|| Type::Class(bound.trait_fqn.clone(), crate::common::types::MangledName::for_type(&bound.trait_fqn))),
+                                &bound.primitive_subtype().unwrap_or_else(|| {
+                                    Type::Class(
+                                        bound.trait_fqn.clone(),
+                                        crate::common::types::MangledName::for_type(
+                                            &bound.trait_fqn,
+                                        ),
+                                    )
+                                }),
                                 bound_type,
                             );
                         }
@@ -446,7 +513,11 @@ impl Inference<'_> {
                                 })
                                 .collect(),
                             bound_type,
-                            if concrete_type.has_tuple_subterm(bound_type) { depth } else { depth + 1 },
+                            if concrete_type.has_tuple_subterm(bound_type) {
+                                depth
+                            } else {
+                                depth + 1
+                            },
                         )
                     })
                 });
@@ -458,10 +529,20 @@ impl Inference<'_> {
 
         // Sub-trait providers: `implement B for T` satisfies A when A is in
         // B's super closure ("B satisfies A everywhere").
-        for (block, via) in self.registry.find_providing_impl_blocks(trait_fqn, &type_fqn) {
+        for (block, via) in self
+            .registry
+            .find_providing_impl_blocks(trait_fqn, &type_fqn)
+        {
             let Some((_, via_args)) = via else { continue }; // direct blocks handled above
             if block.type_params.is_empty() {
-                if !associated_types.iter().all(|(name,ty)| block.associated_type_defs.get(name).is_some_and(|(params,actual)|params.is_empty() && actual == ty)) { continue; }
+                if !associated_types.iter().all(|(name, ty)| {
+                    block
+                        .associated_type_defs
+                        .get(name)
+                        .is_some_and(|(params, actual)| params.is_empty() && actual == ty)
+                }) {
+                    continue;
+                }
                 if block.for_type != *concrete_type {
                     continue;
                 }
@@ -482,9 +563,24 @@ impl Inference<'_> {
             if !sub.unify(&block.for_type, concrete_type) {
                 continue;
             }
-            if !trait_type_args.is_empty() && (via_args.len() != trait_type_args.len() || !via_args.iter().zip(trait_type_args).all(|(p,a)|sub.unify(p,a))) { continue; }
-            self.infer_associated_bound_types_at_depth(&block.trait_bounds, &mut sub, depth + 1, &mut Vec::new());
-            let Some(type_args) = sub.resolve_type_params(&block.type_params) else { continue; };
+            if !trait_type_args.is_empty()
+                && (via_args.len() != trait_type_args.len()
+                    || !via_args
+                        .iter()
+                        .zip(trait_type_args)
+                        .all(|(p, a)| sub.unify(p, a)))
+            {
+                continue;
+            }
+            self.infer_associated_bound_types_at_depth(
+                &block.trait_bounds,
+                &mut sub,
+                depth + 1,
+                &mut Vec::new(),
+            );
+            let Some(type_args) = sub.resolve_type_params(&block.type_params) else {
+                continue;
+            };
             let resolved_sub = TypeParamSubstitution::from_pairs(&block.type_params, &type_args);
             if !trait_type_args.is_empty() {
                 let substituted: Vec<Type> = via_args
@@ -500,15 +596,36 @@ impl Inference<'_> {
                     continue;
                 }
             }
-            if !associated_types.iter().all(|(name,ty)| block.associated_type_defs.get(name).is_some_and(|(params,actual)| params.is_empty() && super::generics::apply_substitution(&resolved_sub,actual) == *ty)) { continue; }
+            if !associated_types.iter().all(|(name, ty)| {
+                block
+                    .associated_type_defs
+                    .get(name)
+                    .is_some_and(|(params, actual)| {
+                        params.is_empty()
+                            && super::generics::apply_substitution(&resolved_sub, actual) == *ty
+                    })
+            }) {
+                continue;
+            }
             let all_bounds_ok = block.trait_bounds.iter().all(|(tp, required_bounds)| {
                 let idx = block.type_params.iter().position(|p| p == tp);
                 let Some(i) = idx else { return true };
                 let bound_type = &type_args[i];
                 required_bounds.iter().all(|bound| {
-                    let Some(bound) = bound.named() else { return bound_type.is_class_reference(); };
+                    let Some(bound) = bound.named() else {
+                        return bound_type.is_class_reference();
+                    };
                     let mut bound = bound.clone();
-                    bound.associated_types = bound.associated_types.iter().map(|(n,t)| (n.clone(),super::generics::apply_substitution(&resolved_sub,t))).collect();
+                    bound.associated_types = bound
+                        .associated_types
+                        .iter()
+                        .map(|(n, t)| {
+                            (
+                                n.clone(),
+                                super::generics::apply_substitution(&resolved_sub, t),
+                            )
+                        })
+                        .collect();
                     let substituted_args: Vec<Type> = bound
                         .type_args
                         .iter()
@@ -527,16 +644,26 @@ impl Inference<'_> {
             }
         }
 
-        if let Some(class_sig) = self.registry.get_class_type(&type_fqn).filter(|_| associated_types.is_empty()) {
+        if let Some(class_sig) = self
+            .registry
+            .get_class_type(&type_fqn)
+            .filter(|_| associated_types.is_empty())
+        {
             for (impl_trait_fqn, impl_trait_type_args) in &class_sig.trait_impls {
                 if impl_trait_fqn != trait_fqn {
                     // `class C implements B` satisfies A via B's super closure.
                     let effective_impl_args: Vec<Type> = if !class_sig.type_params.is_empty() {
                         match concrete_type {
-                            Type::GenericClass { type_args: class_type_args, .. } => {
+                            Type::GenericClass {
+                                type_args: class_type_args,
+                                ..
+                            } => {
                                 let concrete_args: Vec<Type> =
                                     class_type_args.iter().map(|(_, t)| t.clone()).collect();
-                                let sub = TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_args);
+                                let sub = TypeParamSubstitution::from_pairs(
+                                    &class_sig.type_params,
+                                    &concrete_args,
+                                );
                                 impl_trait_type_args
                                     .iter()
                                     .map(|t| super::generics::apply_substitution(&sub, t))
@@ -551,16 +678,14 @@ impl Inference<'_> {
                         impl_trait_fqn,
                         &effective_impl_args,
                         trait_fqn,
-                    ) {
-                        if trait_type_args.is_empty()
-                            || (via_args.len() == trait_type_args.len()
-                                && via_args
-                                    .iter()
-                                    .zip(trait_type_args.iter())
-                                    .all(|(a, e)| self.is_assignable(a, e)))
-                        {
-                            return true;
-                        }
+                    ) && (trait_type_args.is_empty()
+                        || (via_args.len() == trait_type_args.len()
+                            && via_args
+                                .iter()
+                                .zip(trait_type_args.iter())
+                                .all(|(a, e)| self.is_assignable(a, e))))
+                    {
+                        return true;
                     }
                     continue;
                 }
@@ -569,10 +694,18 @@ impl Inference<'_> {
                 }
                 let effective_args = if !class_sig.type_params.is_empty() {
                     match concrete_type {
-                        Type::GenericClass { type_args: class_type_args, .. } => {
-                            let concrete_args: Vec<Type> = class_type_args.iter().map(|(_, t)| t.clone()).collect();
-                            let sub = TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_args);
-                            impl_trait_type_args.iter()
+                        Type::GenericClass {
+                            type_args: class_type_args,
+                            ..
+                        } => {
+                            let concrete_args: Vec<Type> =
+                                class_type_args.iter().map(|(_, t)| t.clone()).collect();
+                            let sub = TypeParamSubstitution::from_pairs(
+                                &class_sig.type_params,
+                                &concrete_args,
+                            );
+                            impl_trait_type_args
+                                .iter()
                                 .map(|t| super::generics::apply_substitution(&sub, t))
                                 .collect::<Vec<_>>()
                         }
@@ -582,7 +715,8 @@ impl Inference<'_> {
                     impl_trait_type_args.clone()
                 };
                 if effective_args.len() == trait_type_args.len()
-                    && effective_args.iter()
+                    && effective_args
+                        .iter()
                         .zip(trait_type_args.iter())
                         .all(|(impl_arg, expected_arg)| self.is_assignable(impl_arg, expected_arg))
                 {
@@ -605,8 +739,18 @@ impl Inference<'_> {
         method_name: &str,
         arg_types: &[&Type],
     ) -> Option<(ResolvedImplMethod, Type)> {
-        match self.resolve_trait_impl_method_for_type_detailed(receiver_ty, trait_fqn, method_name, arg_types, &[]) {
-            ImplMethodResolution::Found { resolved, return_type, .. } => Some((resolved, return_type)),
+        match self.resolve_trait_impl_method_for_type_detailed(
+            receiver_ty,
+            trait_fqn,
+            method_name,
+            arg_types,
+            &[],
+        ) {
+            ImplMethodResolution::Found {
+                resolved,
+                return_type,
+                ..
+            } => Some((resolved, return_type)),
             ImplMethodResolution::Ambiguous | ImplMethodResolution::NotFound => None,
         }
     }
@@ -645,7 +789,12 @@ impl Inference<'_> {
         }
         if let Some(bounds) = self.type_parameter_trait_applications(receiver_ty, trait_fqn) {
             return self.resolve_bound_trait_method(
-                receiver_ty, trait_fqn, &bounds, method_name, arg_types, required_trait_args,
+                receiver_ty,
+                trait_fqn,
+                &bounds,
+                method_name,
+                arg_types,
+                required_trait_args,
             );
         }
         // Intersections have no single FQN and no direct impl blocks.
@@ -659,13 +808,21 @@ impl Inference<'_> {
         // Keep only results belonging to the requested trait — the lookup is
         // name-keyed and may surface a different trait's method.
         let generic_results: Vec<_> = self
-            .resolve_generic_trait_impl_instance(receiver_ty, &method_sym, arg_types, &[], Some((trait_fqn, required_trait_args)))
+            .resolve_generic_trait_impl_instance(
+                receiver_ty,
+                &method_sym,
+                arg_types,
+                &[],
+                Some((trait_fqn, required_trait_args)),
+            )
             .into_iter()
             .filter_map(|r| match r {
-                super::ResolvedFunction::ImplMethod { resolved, return_type }
-                    if resolved.trait_fqn == *trait_fqn
-                        && (required_trait_args.is_empty()
-                            || resolved.trait_type_params == required_trait_args) =>
+                super::ResolvedFunction::ImplMethod {
+                    resolved,
+                    return_type,
+                } if resolved.trait_fqn == *trait_fqn
+                    && (required_trait_args.is_empty()
+                        || resolved.trait_type_params == required_trait_args) =>
                 {
                     Some((resolved, return_type))
                 }
@@ -683,7 +840,8 @@ impl Inference<'_> {
             .find_impl_blocks(trait_fqn, &type_fqn)
             .into_iter()
             .any(|b| {
-                self.applicable_impl_args(b, receiver_ty, &b.trait_type_args).is_some()
+                self.applicable_impl_args(b, receiver_ty, &b.trait_type_args)
+                    .is_some()
                     && (required_trait_args.is_empty() || b.trait_type_args == required_trait_args)
             })
             || self.registry.get_class_type(&type_fqn).is_some_and(|sig| {
@@ -704,7 +862,10 @@ impl Inference<'_> {
                 .find_impl_blocks(trait_fqn, &type_fqn)
                 .into_iter()
                 .any(|b| {
-                    !b.type_params.is_empty() && self.applicable_impl_args(b, receiver_ty, &b.trait_type_args).is_some()
+                    !b.type_params.is_empty()
+                        && self
+                            .applicable_impl_args(b, receiver_ty, &b.trait_type_args)
+                            .is_some()
                 })
                 || self.registry.get_class_type(&type_fqn).is_some_and(|sig| {
                     sig.trait_impls.iter().any(|(t, args)| {
@@ -741,16 +902,25 @@ impl Inference<'_> {
                     && b.type_params.is_empty()
                     && b.for_type == *receiver_ty
                     && m.method_type_params.is_empty()
-                    && (required_trait_args.is_empty()
-                        || b.trait_type_args == required_trait_args)
+                    && (required_trait_args.is_empty() || b.trait_type_args == required_trait_args)
             })
             .collect();
         let mut matching = candidates.into_iter().filter(|(_, m)| {
-            let non_self = if m.params.first().is_some_and(|p| p.0 == "self") { &m.params[1..] } else { &m.params[..] };
-            non_self.len() == arg_types.len() && non_self.iter().zip(arg_types).all(|((_,p),a)|self.is_assignable(p,a))
+            let non_self = if m.params.first().is_some_and(|p| p.0 == "self") {
+                &m.params[1..]
+            } else {
+                &m.params[..]
+            };
+            non_self.len() == arg_types.len()
+                && non_self
+                    .iter()
+                    .zip(arg_types)
+                    .all(|((_, p), a)| self.is_assignable(p, a))
         });
         let pick = matching.next();
-        if matching.next().is_some() || (pick.is_some() && generic_candidate.is_some()) { return ImplMethodResolution::Ambiguous; }
+        if matching.next().is_some() || (pick.is_some() && generic_candidate.is_some()) {
+            return ImplMethodResolution::Ambiguous;
+        }
         if let Some((block, m)) = pick {
             let resolved = ResolvedImplMethod {
                 trait_fqn: block.trait_fqn.clone(),
@@ -773,7 +943,11 @@ impl Inference<'_> {
         }
 
         if let Some((resolved, return_type)) = generic_candidate {
-            return ImplMethodResolution::Found { resolved, params: None, return_type };
+            return ImplMethodResolution::Found {
+                resolved,
+                params: None,
+                return_type,
+            };
         }
 
         if let Some(class_sig) = self.registry.get_class_type(&type_fqn) {
@@ -786,10 +960,18 @@ impl Inference<'_> {
                     return impl_trait_type_args.clone();
                 }
                 match receiver_ty {
-                    Type::GenericClass { type_args: class_type_args, .. } => {
-                        let concrete_args: Vec<Type> = class_type_args.iter().map(|(_, t)| t.clone()).collect();
-                        let sub = TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_args);
-                        impl_trait_type_args.iter()
+                    Type::GenericClass {
+                        type_args: class_type_args,
+                        ..
+                    } => {
+                        let concrete_args: Vec<Type> =
+                            class_type_args.iter().map(|(_, t)| t.clone()).collect();
+                        let sub = TypeParamSubstitution::from_pairs(
+                            &class_sig.type_params,
+                            &concrete_args,
+                        );
+                        impl_trait_type_args
+                            .iter()
                             .map(|t| super::generics::apply_substitution(&sub, t))
                             .collect()
                     }
@@ -807,23 +989,21 @@ impl Inference<'_> {
                 Some(substituted)
             });
             if let Some(trait_type_params) = matching_trait_impl {
-
                 let raw_return_type = {
                     let mut result = None;
                     let mut current_fqn = type_fqn.clone();
-                    loop {
-                        let Some(sig) = self.registry.get_class_type(&current_fqn) else { break };
-                        if let Some(overloads) = sig.instance_methods.get(&method_sym) {
-                            if let Some(s) = overloads.first() {
-                                result = Some(s.return_type.clone());
-                                break;
-                            }
+                    while let Some(sig) = self.registry.get_class_type(&current_fqn) {
+                        if let Some(overloads) = sig.instance_methods.get(&method_sym)
+                            && let Some(s) = overloads.first()
+                        {
+                            result = Some(s.return_type.clone());
+                            break;
                         }
-                        if let Some(defs) = sig.generic_instance_methods.get(&method_sym) {
-                            if let Some(d) = defs.first() {
-                                result = Some(d.return_type.clone());
-                                break;
-                            }
+                        if let Some(defs) = sig.generic_instance_methods.get(&method_sym)
+                            && let Some(d) = defs.first()
+                        {
+                            result = Some(d.return_type.clone());
+                            break;
                         }
                         match &sig.parent_class {
                             Some(parent) => current_fqn = parent.clone(),
@@ -836,9 +1016,16 @@ impl Inference<'_> {
                 if let Some(raw_return_type) = raw_return_type {
                     let return_type = if !class_sig.type_params.is_empty() {
                         match receiver_ty {
-                            Type::GenericClass { type_args: class_type_args, .. } => {
-                                let concrete_args: Vec<Type> = class_type_args.iter().map(|(_, t)| t.clone()).collect();
-                                let sub = TypeParamSubstitution::from_pairs(&class_sig.type_params, &concrete_args);
+                            Type::GenericClass {
+                                type_args: class_type_args,
+                                ..
+                            } => {
+                                let concrete_args: Vec<Type> =
+                                    class_type_args.iter().map(|(_, t)| t.clone()).collect();
+                                let sub = TypeParamSubstitution::from_pairs(
+                                    &class_sig.type_params,
+                                    &concrete_args,
+                                );
                                 super::generics::apply_substitution(&sub, &raw_return_type)
                             }
                             _ => raw_return_type,
@@ -854,7 +1041,11 @@ impl Inference<'_> {
                         method_name: method_sym,
                         method_type_params: vec![],
                     };
-                    return ImplMethodResolution::Found { resolved, params: None, return_type };
+                    return ImplMethodResolution::Found {
+                        resolved,
+                        params: None,
+                        return_type,
+                    };
                 }
             }
         }
@@ -890,19 +1081,25 @@ impl Inference<'_> {
         arg_types: &[&Type],
         required_trait_args: &[Type],
     ) -> ImplMethodResolution {
-        let args_match = |args: &[Type]| {
-            required_trait_args.is_empty() || args == required_trait_args
-        };
+        let args_match =
+            |args: &[Type]| required_trait_args.is_empty() || args == required_trait_args;
         let mut providers: Vec<(Fqn, Vec<Type>)> = Vec::new();
-        for (block, via) in self.registry.find_providing_impl_blocks(trait_fqn, type_fqn) {
-            let Some((_, closure_args)) = via else { continue };
+        for (block, via) in self
+            .registry
+            .find_providing_impl_blocks(trait_fqn, type_fqn)
+        {
+            let Some((_, closure_args)) = via else {
+                continue;
+            };
             let Some(args) = self.applicable_impl_args(block, receiver_ty, &closure_args) else {
                 continue;
             };
             if !args_match(&args) {
                 continue;
             }
-            let Some(provider_args) = self.applicable_impl_args(block, receiver_ty, &block.trait_type_args) else {
+            let Some(provider_args) =
+                self.applicable_impl_args(block, receiver_ty, &block.trait_type_args)
+            else {
                 continue;
             };
             let entry = (block.trait_fqn.clone(), provider_args);
@@ -917,10 +1114,14 @@ impl Inference<'_> {
                 if impl_trait_fqn == trait_fqn {
                     continue;
                 }
-                let impl_args: Vec<_> = impl_args.iter()
+                let impl_args: Vec<_> = impl_args
+                    .iter()
                     .map(|arg| super::generics::apply_substitution(&sub, arg))
                     .collect();
-                let Some(args) = self.registry.super_closure_args(impl_trait_fqn, &impl_args, trait_fqn) else {
+                let Some(args) =
+                    self.registry
+                        .super_closure_args(impl_trait_fqn, &impl_args, trait_fqn)
+                else {
                     continue;
                 };
                 if args_match(&args) {
@@ -975,9 +1176,10 @@ impl Inference<'_> {
             let args = if is_direct {
                 bound.type_args.clone()
             } else {
-                let Some(args) = self.registry.super_closure_args(
-                    &bound.trait_fqn, &bound.type_args, trait_fqn,
-                ) else {
+                let Some(args) =
+                    self.registry
+                        .super_closure_args(&bound.trait_fqn, &bound.type_args, trait_fqn)
+                else {
                     continue;
                 };
                 args
@@ -985,16 +1187,27 @@ impl Inference<'_> {
             let application = NamedTraitBound {
                 trait_fqn: trait_fqn.clone(),
                 type_args: args.iter().map(|arg| self.scoped_bound_type(arg)).collect(),
-                associated_types: bound.associated_types.iter()
-                    .map(|(name, ty)| (name.clone(), self.scoped_bound_type(ty))).collect(),
+                associated_types: bound
+                    .associated_types
+                    .iter()
+                    .map(|(name, ty)| (name.clone(), self.scoped_bound_type(ty)))
+                    .collect(),
                 kind: bound.kind.clone(),
             };
-            let target = if is_direct { &mut direct } else { &mut inherited };
+            let target = if is_direct {
+                &mut direct
+            } else {
+                &mut inherited
+            };
             if !target.contains(&application) {
                 target.push(application);
             }
         }
-        inherited.retain(|provided| !direct.iter().any(|bound| bound.type_args == provided.type_args));
+        inherited.retain(|provided| {
+            !direct
+                .iter()
+                .any(|bound| bound.type_args == provided.type_args)
+        });
         direct.extend(inherited);
         Some(direct)
     }
@@ -1016,36 +1229,60 @@ impl Inference<'_> {
             if !required_args.is_empty() && bound.type_args != required_args {
                 continue;
             }
-            let mut substitution = TypeParamSubstitution::from_pairs(
-                &signature.type_params, &bound.type_args,
-            ).with_self_type(receiver.clone());
+            let mut substitution =
+                TypeParamSubstitution::from_pairs(&signature.type_params, &bound.type_args)
+                    .with_self_type(receiver.clone());
             for (name, ty) in &bound.associated_types {
                 substitution.insert(TypeParamName(name.clone()), ty.clone());
             }
             for associated in &signature.associated_types {
-                let parameters = associated.type_params.iter().map(|name| Type::TypeVariable(name.clone(), vec![])).collect();
+                let parameters = associated
+                    .type_params
+                    .iter()
+                    .map(|name| Type::TypeVariable(name.clone(), vec![]))
+                    .collect();
                 if let Some(projection) = crate::typechecker::associated_types::from_bound(
-                    receiver, bound, &associated.name, parameters, self.registry,
-                ) { substitution.insert(TypeParamName(associated.name.clone()), projection); }
+                    receiver,
+                    bound,
+                    &associated.name,
+                    parameters,
+                    self.registry,
+                ) {
+                    substitution.insert(TypeParamName(associated.name.clone()), projection);
+                }
             }
             for method in &signature.methods {
                 if method.name != method_name || !method.type_params.is_empty() {
                     continue;
                 }
-                let non_self = if method.params.first().is_some_and(|(name, _)| name == "self") {
+                let non_self = if method
+                    .params
+                    .first()
+                    .is_some_and(|(name, _)| name == "self")
+                {
                     &method.params[1..]
                 } else {
                     &method.params[..]
                 };
-                let params: Vec<_> = non_self.iter().map(|(name, ty)| {
-                    (name.clone(), super::generics::apply_substitution(&substitution, ty))
-                }).collect();
+                let params: Vec<_> = non_self
+                    .iter()
+                    .map(|(name, ty)| {
+                        (
+                            name.clone(),
+                            super::generics::apply_substitution(&substitution, ty),
+                        )
+                    })
+                    .collect();
                 if params.len() != arg_types.len()
-                    || !params.iter().zip(arg_types).all(|((_, expected), actual)| self.is_assignable(expected, actual))
+                    || !params
+                        .iter()
+                        .zip(arg_types)
+                        .all(|((_, expected), actual)| self.is_assignable(expected, actual))
                 {
                     continue;
                 }
-                let return_type = super::generics::apply_substitution(&substitution, &method.return_type);
+                let return_type =
+                    super::generics::apply_substitution(&substitution, &method.return_type);
                 matches.push(ImplMethodResolution::Found {
                     resolved: ResolvedImplMethod {
                         trait_fqn: trait_fqn.clone(),
@@ -1099,12 +1336,17 @@ impl Inference<'_> {
         }
         let trait_fqn = Fqn::from_dotted("standard.prelude.Usable").unwrap();
         if let Some(bounds) = self.type_parameter_trait_applications(operand_ty, &trait_fqn) {
-            let successes = bounds.into_iter().filter_map(|bound| {
-                (bound.type_args.len() == 2).then(|| (
-                    bound.trait_fqn,
-                    (bound.type_args[0].clone(), bound.type_args[1].clone()),
-                ))
-            }).collect();
+            let successes = bounds
+                .into_iter()
+                .filter_map(|bound| {
+                    (bound.type_args.len() == 2).then(|| {
+                        (
+                            bound.trait_fqn,
+                            (bound.type_args[0].clone(), bound.type_args[1].clone()),
+                        )
+                    })
+                })
+                .collect();
             return Self::decide_sugar_resolution(successes, true);
         }
         let Some(type_fqn) = operand_ty.try_to_fqn() else {
@@ -1137,14 +1379,14 @@ impl Inference<'_> {
 
             let operand_type_args = Self::extract_type_args(operand_ty);
             let for_type_args = Self::extract_type_args(&info.for_type);
-            if let (Some(op_args), Some(ft_args)) = (&operand_type_args, &for_type_args) {
-                if op_args.len() == ft_args.len() {
-                    for (ft_arg, op_arg) in ft_args.iter().zip(op_args.iter()) {
-                        if let Type::TypeVariable(name, _) = ft_arg {
-                            if sub.get(&TypeParamName(name.0.clone())).is_none() {
-                                sub.insert(TypeParamName(name.0.clone()), op_arg.clone());
-                            }
-                        }
+            if let (Some(op_args), Some(ft_args)) = (&operand_type_args, &for_type_args)
+                && op_args.len() == ft_args.len()
+            {
+                for (ft_arg, op_arg) in ft_args.iter().zip(op_args.iter()) {
+                    if let Type::TypeVariable(name, _) = ft_arg
+                        && sub.get(&TypeParamName(name.0.clone())).is_none()
+                    {
+                        sub.insert(TypeParamName(name.0.clone()), op_arg.clone());
                     }
                 }
             }
@@ -1198,7 +1440,13 @@ impl Inference<'_> {
         trait_fqn: &Fqn,
         type_fqn: &Fqn,
         operand_ty: &Type,
-    ) -> (Vec<(&'r crate::typechecker::registry::ImplBlockSignature, Vec<Type>)>, bool) {
+    ) -> (
+        Vec<(
+            &'r crate::typechecker::registry::ImplBlockSignature,
+            Vec<Type>,
+        )>,
+        bool,
+    ) {
         // Only blocks that can apply to THIS operand count as direct — a
         // sibling block (`Usable for Wrap<Int32>` when the operand is
         // `Wrap<String>`) must not hide sub-trait providers.
@@ -1225,10 +1473,7 @@ impl Inference<'_> {
     /// Returns Some(T) if the type implements Awaitable<T>, None otherwise
     /// (including the provider-ambiguous case — the `await` expression site
     /// uses the detailed form to report that properly).
-    pub(super) fn resolve_awaitable_value_type(
-        &self,
-        operand_ty: &Type,
-    ) -> Option<Type> {
+    pub(super) fn resolve_awaitable_value_type(&self, operand_ty: &Type) -> Option<Type> {
         match self.resolve_awaitable_value_type_detailed(operand_ty) {
             SugarTraitResolution::Found(ty) => Some(ty),
             _ => None,
@@ -1272,14 +1517,14 @@ impl Inference<'_> {
             // type args that unify skips), fill them from the operand's type args directly.
             let operand_type_args = Self::extract_type_args(operand_ty);
             let for_type_args = Self::extract_type_args(&info.for_type);
-            if let (Some(op_args), Some(ft_args)) = (&operand_type_args, &for_type_args) {
-                if op_args.len() == ft_args.len() {
-                    for (ft_arg, op_arg) in ft_args.iter().zip(op_args.iter()) {
-                        if let Type::TypeVariable(name, _) = ft_arg {
-                            if sub.get(&TypeParamName(name.0.clone())).is_none() {
-                                sub.insert(TypeParamName(name.0.clone()), op_arg.clone());
-                            }
-                        }
+            if let (Some(op_args), Some(ft_args)) = (&operand_type_args, &for_type_args)
+                && op_args.len() == ft_args.len()
+            {
+                for (ft_arg, op_arg) in ft_args.iter().zip(op_args.iter()) {
+                    if let Type::TypeVariable(name, _) = ft_arg
+                        && sub.get(&TypeParamName(name.0.clone())).is_none()
+                    {
+                        sub.insert(TypeParamName(name.0.clone()), op_arg.clone());
                     }
                 }
             }
@@ -1403,16 +1648,19 @@ impl Inference<'_> {
                     actual.type_args.clone()
                 } else {
                     let Some(args) = self.registry.super_closure_args(
-                        &actual.trait_fqn, &actual.type_args, &bound.trait_fqn,
+                        &actual.trait_fqn,
+                        &actual.type_args,
+                        &bound.trait_fqn,
                     ) else {
                         continue;
                     };
                     args
                 };
                 if actual_args.len() != args.len()
-                    || !actual_args.iter().zip(args).all(|(a, b)| {
-                        self.is_assignable(a, b) && self.is_assignable(b, a)
-                    })
+                    || !actual_args
+                        .iter()
+                        .zip(args)
+                        .all(|(a, b)| self.is_assignable(a, b) && self.is_assignable(b, a))
                 {
                     continue;
                 }
@@ -1442,9 +1690,9 @@ impl Inference<'_> {
         let mut provided = Vec::new();
         for (info, via) in self.registry.find_providing_impl_blocks(trait_fqn, &fqn) {
             let patterns = via.as_ref().map_or(&info.trait_type_args, |(_, args)| args);
-            let Some(output) = self.associated_outputs_for_impl(
-                info, receiver, patterns, args, depth, active,
-            ) else {
+            let Some(output) =
+                self.associated_outputs_for_impl(info, receiver, patterns, args, depth, active)
+            else {
                 continue;
             };
             // Index expression keys permit coercions, but a generic bound
@@ -1503,9 +1751,12 @@ impl Inference<'_> {
             return None;
         }
         Some(ImplAssociatedTypes {
-            trait_args: provided_args.iter()
-                .map(|ty| super::generics::apply_substitution(&sub, ty)).collect(),
-            types: info.associated_type_defs
+            trait_args: provided_args
+                .iter()
+                .map(|ty| super::generics::apply_substitution(&sub, ty))
+                .collect(),
+            types: info
+                .associated_type_defs
                 .iter()
                 .filter(|(_, (params, _))| params.is_empty())
                 .map(|(name, (_, ty))| {
@@ -1564,7 +1815,10 @@ impl Inference<'_> {
             };
 
             // Substitute type params in bound type_args with the concrete type args
-            let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(type_params, concrete_type_params);
+            let sub = super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                type_params,
+                concrete_type_params,
+            );
 
             for bound in required_bounds {
                 let Some(bound) = bound.named() else {
@@ -1580,7 +1834,10 @@ impl Inference<'_> {
                     if !self.type_satisfies_bound(bound, &[], &concrete_type, 0) {
                         messages.push(format!(
                             "type '{}' is not a subtype of {}'{}' required by constraint on '{}'",
-                            concrete_type, if bound.is_class_bound() { "class " } else { "" }, bound.trait_fqn.symbol, tp.0
+                            concrete_type,
+                            if bound.is_class_bound() { "class " } else { "" },
+                            bound.trait_fqn.symbol,
+                            tp.0
                         ));
                     }
                 } else {
@@ -1607,25 +1864,30 @@ impl Inference<'_> {
                         let trait_display = if bound.type_args.is_empty() {
                             format!("{}", bound.trait_fqn.symbol)
                         } else {
-                            let args: Vec<String> = substituted_args.iter().map(|t| t.to_string()).collect();
+                            let args: Vec<String> =
+                                substituted_args.iter().map(|t| t.to_string()).collect();
                             format!("{}<{}>", bound.trait_fqn.symbol, args.join(", "))
                         };
                         messages.push(format!(
                             "type '{}' does not implement trait '{}' required by constraint on '{}'",
                             concrete_type, trait_display, tp.0
                         ));
-                    } else if let Some(providers) =
-                        self.ambiguous_trait_providers(&bound.trait_fqn, &substituted_args, &concrete_type)
-                    {
-                        let names: Vec<String> =
-                            providers.iter().map(|f| format!("'{}'", f.symbol)).collect();
+                    } else if let Some(providers) = self.ambiguous_trait_providers(
+                        &bound.trait_fqn,
+                        &substituted_args,
+                        &concrete_type,
+                    ) {
+                        let names: Vec<String> = providers
+                            .iter()
+                            .map(|f| format!("'{}'", f.symbol))
+                            .collect();
                         messages.push(format!(
                             "ambiguous implementations of trait '{}' for type '{}': provided by both {}; implement '{}' directly to disambiguate",
                             bound.trait_fqn.symbol, concrete_type, names.join(" and "),
                             bound.trait_fqn.symbol,
                         ));
-                    } else if let Some(member) =
-                        self.intersection_blocks_self_returning_bound(&bound.trait_fqn, &concrete_type)
+                    } else if let Some(member) = self
+                        .intersection_blocks_self_returning_bound(&bound.trait_fqn, &concrete_type)
                     {
                         // An intersection satisfies the bound via one component, but a
                         // bare-Self-returning member would have to produce the FULL
@@ -1774,9 +2036,9 @@ impl Inference<'_> {
                             kind: BoundKind::HasTrait,
                         },
                     ));
-                } else if let Some(fqn) =
-                    self.resolve_fqn(&trait_name.name.value, SymbolKind::Class)
-                        .or_else(|| Type::from_primitive(&trait_name.name.value).map(|ty| ty.to_fqn()))
+                } else if let Some(fqn) = self
+                    .resolve_fqn(&trait_name.name.value, SymbolKind::Class)
+                    .or_else(|| Type::from_primitive(&trait_name.name.value).map(|ty| ty.to_fqn()))
                 {
                     // Nominal subtype bound: a class or a prelude primitive.
                     if !trait_name.type_args.is_empty() || !trait_name.associated_types.is_empty() {
@@ -1800,7 +2062,10 @@ impl Inference<'_> {
                 } else {
                     self.diagnostics.error(
                         trait_name.name.span.clone(),
-                        format!("unknown trait, class, or primitive: '{}'", trait_name.name.value),
+                        format!(
+                            "unknown trait, class, or primitive: '{}'",
+                            trait_name.name.value
+                        ),
                     );
                 }
             }

@@ -7,7 +7,11 @@ use crate::typechecker::registry::{ClassTypeSignature, Registry, VariantPayload}
 use crate::typechecker::types::{TraitBounds, Type};
 
 /// Check that type parameters are used in positions consistent with their declared variance.
-pub(super) fn check_variance_positions(registry: &Registry, merged_registry: &Registry, diagnostics: &mut Diagnostics) {
+pub(super) fn check_variance_positions(
+    registry: &Registry,
+    merged_registry: &Registry,
+    diagnostics: &mut Diagnostics,
+) {
     // Check generic records
     for sig in registry.generic_record_types() {
         let declared = build_variance_map(&sig.type_params, &sig.type_param_variances);
@@ -91,7 +95,14 @@ pub(super) fn check_variance_positions(registry: &Registry, merged_registry: &Re
         let type_name = &sig.fqn.symbol.0;
 
         if let Some(parent) = &sig.parent_type_expr {
-            check_type_in_position(parent, Variance::Covariant, &declared, type_name, &sig.span, diagnostics);
+            check_type_in_position(
+                parent,
+                Variance::Covariant,
+                &declared,
+                type_name,
+                &sig.span,
+                diagnostics,
+            );
         }
 
         // Check fields: covariant for immutable, invariant for mutable
@@ -112,11 +123,15 @@ pub(super) fn check_variance_positions(registry: &Registry, merged_registry: &Re
         }
 
         // Check generic instance methods (on generic classes, all methods are stored here)
-        for (_method_name, overloads) in &sig.generic_instance_methods {
+        for overloads in sig.generic_instance_methods.values() {
             for def in overloads {
                 if !sig.is_final && !def.is_final_method && def.method_type_params.is_empty() {
                     check_virtual_method_bounds(
-                        &def.trait_bounds, sig, merged_registry, &declared, diagnostics,
+                        &def.trait_bounds,
+                        sig,
+                        merged_registry,
+                        &declared,
+                        diagnostics,
                     );
                 }
                 // Check params (skip "self")
@@ -158,7 +173,11 @@ fn check_virtual_method_bounds(
     diagnostics: &mut Diagnostics,
 ) {
     let evidence = Type::type_param_map(&class.type_params, &class.trait_bounds);
-    let arguments: Vec<_> = class.type_params.iter().map(|parameter| evidence[&parameter.0].clone()).collect();
+    let arguments: Vec<_> = class
+        .type_params
+        .iter()
+        .map(|parameter| evidence[&parameter.0].clone())
+        .collect();
     let type_name = &class.fqn.symbol.0;
     let span = &class.span;
     for (parameter, bounds) in method_bounds.iter() {
@@ -166,18 +185,35 @@ fn check_virtual_method_bounds(
             let mut requirement = TraitBounds::empty();
             requirement.insert(parameter.clone(), vec![bound.clone()]);
             if crate::typechecker::infer::generic_bounds_satisfied(
-                registry, &class.fqn.package, &requirement, &class.type_params, &arguments,
+                registry,
+                &class.fqn.package,
+                &requirement,
+                &class.type_params,
+                &arguments,
             ) {
                 continue;
             }
             check_type_in_position(
-                &Type::TypeVariable(parameter.clone(), vec![]), Variance::Invariant,
-                declared, type_name, span, diagnostics,
+                &Type::TypeVariable(parameter.clone(), vec![]),
+                Variance::Invariant,
+                declared,
+                type_name,
+                span,
+                diagnostics,
             );
             if let Some(bound) = bound.named() {
-                for argument in bound.type_args.iter().chain(bound.associated_types.values()) {
+                for argument in bound
+                    .type_args
+                    .iter()
+                    .chain(bound.associated_types.values())
+                {
                     check_type_in_position(
-                        argument, Variance::Invariant, declared, type_name, span, diagnostics,
+                        argument,
+                        Variance::Invariant,
+                        declared,
+                        type_name,
+                        span,
+                        diagnostics,
                     );
                 }
             }
@@ -237,68 +273,40 @@ fn check_type_in_position(
 ) {
     match ty {
         Type::TypeVariable(name, _bounds) | Type::GenericParam(name, _bounds, _) => {
-            if let Some(&decl_var) = declared.get(name) {
-                if !is_compatible(decl_var, position) {
-                    diagnostics.error(
-                        span.clone(),
-                        format!(
-                            "{} type parameter '{}' of '{}' cannot appear in {} position",
-                            decl_var, name, type_name, position,
-                        ),
-                    );
-                }
+            if let Some(&decl_var) = declared.get(name)
+                && !is_compatible(decl_var, position)
+            {
+                diagnostics.error(
+                    span.clone(),
+                    format!(
+                        "{} type parameter '{}' of '{}' cannot appear in {} position",
+                        decl_var, name, type_name, position,
+                    ),
+                );
             }
         }
         Type::GenericRecord { type_args, .. } => {
             for (arg_var, arg_ty) in type_args.iter() {
                 let composed = compose_variance(position, *arg_var);
-                check_type_in_position(
-                    arg_ty,
-                    composed,
-                    declared,
-                    type_name,
-                    span,
-                    diagnostics,
-                );
+                check_type_in_position(arg_ty, composed, declared, type_name, span, diagnostics);
             }
         }
         Type::GenericEnum { type_args, .. } => {
             for (arg_var, arg_ty) in type_args.iter() {
                 let composed = compose_variance(position, *arg_var);
-                check_type_in_position(
-                    arg_ty,
-                    composed,
-                    declared,
-                    type_name,
-                    span,
-                    diagnostics,
-                );
+                check_type_in_position(arg_ty, composed, declared, type_name, span, diagnostics);
             }
         }
         Type::GenericNewtype { type_args, .. } => {
             for (arg_var, arg_ty) in type_args.iter() {
                 let composed = compose_variance(position, *arg_var);
-                check_type_in_position(
-                    arg_ty,
-                    composed,
-                    declared,
-                    type_name,
-                    span,
-                    diagnostics,
-                );
+                check_type_in_position(arg_ty, composed, declared, type_name, span, diagnostics);
             }
         }
         Type::GenericClass { type_args, .. } => {
             for (arg_var, arg_ty) in type_args.iter() {
                 let composed = compose_variance(position, *arg_var);
-                check_type_in_position(
-                    arg_ty,
-                    composed,
-                    declared,
-                    type_name,
-                    span,
-                    diagnostics,
-                );
+                check_type_in_position(arg_ty, composed, declared, type_name, span, diagnostics);
             }
         }
         Type::Array(elem) => {
@@ -320,47 +328,47 @@ fn check_type_in_position(
                 Variance::Invariant => Variance::Invariant,
             };
             for param in params {
+                check_type_in_position(param, flipped, declared, type_name, span, diagnostics);
+            }
+            check_type_in_position(ret, position, declared, type_name, span, diagnostics);
+        }
+        Type::AssociatedProjection(projection) => {
+            for parameter in projection.types() {
                 check_type_in_position(
-                    param,
-                    flipped,
+                    parameter,
+                    Variance::Invariant,
                     declared,
                     type_name,
                     span,
                     diagnostics,
                 );
             }
+        }
+        Type::TupleProjection(receiver, _) => {
             check_type_in_position(
-                ret,
-                position,
+                receiver,
+                Variance::Invariant,
                 declared,
                 type_name,
                 span,
                 diagnostics,
             );
         }
-        Type::AssociatedProjection(projection) => {
-            for parameter in projection.types() {
-                check_type_in_position(parameter, Variance::Invariant, declared, type_name, span, diagnostics);
-            }
-        }
-        Type::TupleProjection(receiver, _) => {
-            check_type_in_position(receiver, Variance::Invariant, declared, type_name, span, diagnostics);
-        }
         Type::TupleExtend(left, right) => {
             // Changing the left shape can change arity: extension is not covariant there.
-            check_type_in_position(left, Variance::Invariant, declared, type_name, span, diagnostics);
+            check_type_in_position(
+                left,
+                Variance::Invariant,
+                declared,
+                type_name,
+                span,
+                diagnostics,
+            );
             check_type_in_position(right, position, declared, type_name, span, diagnostics);
         }
         Type::Tuple(types, _) => {
             for t in types {
-                check_type_in_position(
-                    t,
-                    position,
-                    declared,
-                    type_name,
-                    span,
-                    diagnostics,
-                );
+                check_type_in_position(t, position, declared, type_name, span, diagnostics);
             }
         }
         // Primitives, Unit, Never, Any, Record, Enum, etc. — no type parameters to check

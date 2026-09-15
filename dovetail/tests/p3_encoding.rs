@@ -177,9 +177,7 @@ const CORE_WAT: &str = r#"
 
 fn encode_component() -> Vec<u8> {
     let mut resolve = Resolve::default();
-    let pkg = resolve
-        .push_str("gate.wit", WIT)
-        .expect("parse gate WIT");
+    let pkg = resolve.push_str("gate.wit", WIT).expect("parse gate WIT");
     let world = resolve
         .select_world(&[pkg], Some("gate"))
         .expect("select gate world");

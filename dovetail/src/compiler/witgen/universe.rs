@@ -4,7 +4,7 @@
 
 use crate::common::types::PackagePath;
 
-use super::bindgen::{generate_interface, GeneratedBindings};
+use super::bindgen::{GeneratedBindings, generate_interface};
 use super::{BindgenError, WitImportUniverse, WitImportedInterface};
 
 /// One WIT interface to import, before resolution.
@@ -97,20 +97,19 @@ pub fn build_universe(
             }
         };
 
-        let wit_name = universe.resolve.id_of(interface_id).ok_or_else(|| BindgenError {
-            message: format!(
-                "cannot derive canonical name for interface in `{}`",
-                decl.filename
-            ),
-        })?;
+        let wit_name = universe
+            .resolve
+            .id_of(interface_id)
+            .ok_or_else(|| BindgenError {
+                message: format!(
+                    "cannot derive canonical name for interface in `{}`",
+                    decl.filename
+                ),
+            })?;
 
         let dovetail_package_str = decl.dovetail_package.0.join(".");
-        let bindings = generate_interface(
-            &universe.resolve,
-            interface_id,
-            idx,
-            &dovetail_package_str,
-        )?;
+        let bindings =
+            generate_interface(&universe.resolve, interface_id, idx, &dovetail_package_str)?;
 
         universe.interfaces.push(WitImportedInterface {
             interface_id,
@@ -187,9 +186,7 @@ pub fn decl_from_component(
             [only] => *only,
             [] => {
                 return Err(BindgenError {
-                    message: format!(
-                        "component `{component_name}` exports no interfaces"
-                    ),
+                    message: format!("component `{component_name}` exports no interfaces"),
                 });
             }
             _ => {
@@ -225,11 +222,13 @@ pub fn decl_from_component(
 
     // Print the owning package back to WIT text.
     let mut printer = wit_component::WitPrinter::default();
-    printer.print(&resolve, owner_pkg, &[]).map_err(|e| BindgenError {
-        message: format!(
-            "component `{component_name}`: failed to print WIT for its interface: {e:#}"
-        ),
-    })?;
+    printer
+        .print(&resolve, owner_pkg, &[])
+        .map_err(|e| BindgenError {
+            message: format!(
+                "component `{component_name}`: failed to print WIT for its interface: {e:#}"
+            ),
+        })?;
     let wit_text: String = printer.output.into();
 
     Ok(WitImportDecl {

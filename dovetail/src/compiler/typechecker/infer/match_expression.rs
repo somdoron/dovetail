@@ -6,15 +6,16 @@ use crate::typechecker::types::{
     Type, TypedExpr, TypedExprKind, TypedFieldPattern, TypedMatchArm, TypedPattern,
 };
 
-use super::generics::apply_substitution;
 use super::Inference;
+use super::generics::apply_substitution;
 
 impl Inference<'_> {
     fn infer_literal_pattern(&mut self, expr: &Expr) -> TypedExpr {
         if matches!(expr, Expr::ExactNumberLiteral(..)) {
             self.diagnostics.error(
                 expr.span(),
-                "BigInt and Decimal literal patterns are not supported; use an equality guard".to_string(),
+                "BigInt and Decimal literal patterns are not supported; use an equality guard"
+                    .to_string(),
             );
         }
         self.infer_expr(expr)
@@ -27,46 +28,80 @@ impl Inference<'_> {
     #[allow(clippy::only_used_in_recursion)]
     fn is_assignable_for_pattern(&self, expected: &Type, actual: &Type) -> bool {
         // Subject (expected) is a type parameter: runtime type unknown at type-check time.
-        if matches!(expected, Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)) {
+        if matches!(
+            expected,
+            Type::TypeVariable(_, _) | Type::GenericParam(_, _, _)
+        ) {
             return true;
         }
-        if actual == expected || actual.is_error() || expected.is_error() || actual.is_never() || expected.is_any() {
+        if actual == expected
+            || actual.is_error()
+            || expected.is_error()
+            || actual.is_never()
+            || expected.is_any()
+        {
             return true;
         }
         // TypeParameter identity: same name → assignable (used in generic bodies)
-        if let (Type::TypeVariable(a, _) | Type::GenericParam(a, _, _), Type::TypeVariable(b, _) | Type::GenericParam(b, _, _)) = (expected, actual) {
+        if let (
+            Type::TypeVariable(a, _) | Type::GenericParam(a, _, _),
+            Type::TypeVariable(b, _) | Type::GenericParam(b, _, _),
+        ) = (expected, actual)
+        {
             return a == b;
         }
         // Structural comparison for GenericRecord types: match FQN + type args with variance.
         if let (
-            Type::GenericRecord { fqn: fqn_e, type_args: args_e, .. },
-            Type::GenericRecord { fqn: fqn_a, type_args: args_a, .. },
+            Type::GenericRecord {
+                fqn: fqn_e,
+                type_args: args_e,
+                ..
+            },
+            Type::GenericRecord {
+                fqn: fqn_a,
+                type_args: args_a,
+                ..
+            },
         ) = (expected, actual)
         {
             if fqn_e != fqn_a || args_e.len() != args_a.len() {
                 return false;
             }
-            return args_e.iter().zip(args_a.iter()).all(|((v_e, e), (_, a))| {
-                self.check_variance_for_pattern(*v_e, e, a)
-            });
+            return args_e
+                .iter()
+                .zip(args_a.iter())
+                .all(|((v_e, e), (_, a))| self.check_variance_for_pattern(*v_e, e, a));
         }
         // Structural comparison for GenericEnum types: match FQN + type args with variance.
         if let (
-            Type::GenericEnum { fqn: fqn_e, type_args: args_e, .. },
-            Type::GenericEnum { fqn: fqn_a, type_args: args_a, .. },
+            Type::GenericEnum {
+                fqn: fqn_e,
+                type_args: args_e,
+                ..
+            },
+            Type::GenericEnum {
+                fqn: fqn_a,
+                type_args: args_a,
+                ..
+            },
         ) = (expected, actual)
         {
             if fqn_e != fqn_a || args_e.len() != args_a.len() {
                 return false;
             }
-            return args_e.iter().zip(args_a.iter()).all(|((v_e, e), (_, a))| {
-                self.check_variance_for_pattern(*v_e, e, a)
-            });
+            return args_e
+                .iter()
+                .zip(args_a.iter())
+                .all(|((v_e, e), (_, a))| self.check_variance_for_pattern(*v_e, e, a));
         }
         // Interface object → interface object: superset → subset (see is_assignable).
         if let (
-            Type::InterfaceObject { traits: traits_e, .. },
-            Type::InterfaceObject { traits: traits_a, .. },
+            Type::InterfaceObject {
+                traits: traits_e, ..
+            },
+            Type::InterfaceObject {
+                traits: traits_a, ..
+            },
         ) = (expected, actual)
         {
             // Component type args are invariant (see is_assignable); the
@@ -90,25 +125,41 @@ impl Inference<'_> {
             if types_e.len() != types_a.len() {
                 return false;
             }
-            return types_e.iter().zip(types_a.iter()).all(|(e, a)| self.is_assignable_for_pattern(e, a));
+            return types_e
+                .iter()
+                .zip(types_a.iter())
+                .all(|(e, a)| self.is_assignable_for_pattern(e, a));
         }
         // Implicit coercion: concrete type → interface object type (all
         // components; a type parameter satisfies via its declared bounds).
-        if let Type::InterfaceObject { traits, .. } = expected {
-            if traits
+        if let Type::InterfaceObject { traits, .. } = expected
+            && traits
                 .iter()
                 .all(|c| self.type_satisfies_trait(&c.trait_fqn, &c.trait_type_args, actual, 0))
-            {
-                return true;
-            }
+        {
+            return true;
         }
         false
     }
 
     /// Check assignability for a single type argument position given its variance.
-    fn check_variance_for_pattern(&self, variance: Variance, expected: &Type, actual: &Type) -> bool {
-        if !actual.contains_type_parameter() && !expected.contains_type_parameter() && !actual.is_error() && !expected.is_error() {
-            return crate::typechecker::subtyping::argument(self.registry, variance, expected, actual);
+    fn check_variance_for_pattern(
+        &self,
+        variance: Variance,
+        expected: &Type,
+        actual: &Type,
+    ) -> bool {
+        if !actual.contains_type_parameter()
+            && !expected.contains_type_parameter()
+            && !actual.is_error()
+            && !expected.is_error()
+        {
+            return crate::typechecker::subtyping::argument(
+                self.registry,
+                variance,
+                expected,
+                actual,
+            );
         }
         // See check_variance: exact matches whenever an interface object
         // appears at any depth; Never/Error still flow through.
@@ -144,13 +195,11 @@ impl Inference<'_> {
         let has_literal_pattern = arms
             .iter()
             .any(|arm| matches!(arm.pattern, Pattern::Literal(_, _)));
-        if has_literal_pattern {
-            if let Type::String = subject_ty {
-                self.diagnostics.error(
-                    span.clone(),
-                    "match with literal patterns on 'String' is not supported yet".to_string(),
-                );
-            }
+        if has_literal_pattern && let Type::String = subject_ty {
+            self.diagnostics.error(
+                span.clone(),
+                "match with literal patterns on 'String' is not supported yet".to_string(),
+            );
         }
 
         let mut typed_arms = Vec::new();
@@ -166,7 +215,8 @@ impl Inference<'_> {
                 Pattern::Wildcard(_) => Some(TypedPattern::Wildcard),
                 Pattern::Variable(name, _pat_span) => {
                     // Check if this is a bare no-payload variant of the scrutinee's enum
-                    if let Some(typed_pat) = self.try_promote_variable_to_variant(name, &subject_ty) {
+                    if let Some(typed_pat) = self.try_promote_variable_to_variant(name, &subject_ty)
+                    {
                         Some(typed_pat)
                     } else {
                         let var_name = VarName(name.clone());
@@ -196,23 +246,24 @@ impl Inference<'_> {
                     binding,
                     type_expr,
                     span: pat_span,
-                } => self.infer_type_annotated_pattern(
-                    binding, type_expr, pat_span, &subject_ty,
-                ),
+                } => self.infer_type_annotated_pattern(binding, type_expr, pat_span, &subject_ty),
                 Pattern::Record {
                     type_name,
                     type_params,
                     fields,
                     span: pat_span,
-                } => self.infer_record_pattern(
-                    type_name, type_params, fields, pat_span, &subject_ty,
-                ),
+                } => {
+                    self.infer_record_pattern(type_name, type_params, fields, pat_span, &subject_ty)
+                }
                 Pattern::EnumVariant {
                     type_name,
                     variant_name,
                     span: pat_span,
                 } => self.infer_enum_variant_no_args_pattern(
-                    type_name, variant_name, pat_span, &subject_ty,
+                    type_name,
+                    variant_name,
+                    pat_span,
+                    &subject_ty,
                 ),
                 Pattern::EnumVariantTuple {
                     type_name,
@@ -220,7 +271,11 @@ impl Inference<'_> {
                     payload_patterns,
                     span: pat_span,
                 } => self.infer_enum_variant_pattern(
-                    type_name, variant_name, payload_patterns, pat_span, &subject_ty,
+                    type_name,
+                    variant_name,
+                    payload_patterns,
+                    pat_span,
+                    &subject_ty,
                 ),
                 Pattern::EnumVariantRecord {
                     type_name,
@@ -228,46 +283,48 @@ impl Inference<'_> {
                     fields,
                     span: pat_span,
                 } => self.infer_enum_variant_record_pattern(
-                    type_name, variant_name, fields, pat_span, &subject_ty,
+                    type_name,
+                    variant_name,
+                    fields,
+                    pat_span,
+                    &subject_ty,
                 ),
-                Pattern::Tuple(sub_pats, pat_span) => {
-                    match &subject_ty {
-                        Type::Tuple(elem_types, _mn) => {
-                            if sub_pats.len() != elem_types.len() {
-                                self.diagnostics.error(
-                                    pat_span.clone(),
-                                    format!(
-                                        "tuple pattern has {} elements but the tuple has {}",
-                                        sub_pats.len(),
-                                        elem_types.len()
-                                    ),
-                                );
-                                Some(TypedPattern::Wildcard)
-                            } else {
-                                let element_patterns: Vec<TypedPattern> = sub_pats
-                                    .iter()
-                                    .zip(elem_types.iter())
-                                    .map(|(sp, et)| self.infer_sub_pattern(sp, et))
-                                    .collect();
-                                Some(TypedPattern::Tuple {
-                                    element_patterns,
-                                    tuple_type: subject_ty.clone(),
-                                })
-                            }
-                        }
-                        Type::Error => Some(TypedPattern::Wildcard),
-                        _ => {
+                Pattern::Tuple(sub_pats, pat_span) => match &subject_ty {
+                    Type::Tuple(elem_types, _mn) => {
+                        if sub_pats.len() != elem_types.len() {
                             self.diagnostics.error(
                                 pat_span.clone(),
                                 format!(
-                                    "cannot match tuple pattern against non-tuple type '{}'",
-                                    subject_ty
+                                    "tuple pattern has {} elements but the tuple has {}",
+                                    sub_pats.len(),
+                                    elem_types.len()
                                 ),
                             );
                             Some(TypedPattern::Wildcard)
+                        } else {
+                            let element_patterns: Vec<TypedPattern> = sub_pats
+                                .iter()
+                                .zip(elem_types.iter())
+                                .map(|(sp, et)| self.infer_sub_pattern(sp, et))
+                                .collect();
+                            Some(TypedPattern::Tuple {
+                                element_patterns,
+                                tuple_type: subject_ty.clone(),
+                            })
                         }
                     }
-                }
+                    Type::Error => Some(TypedPattern::Wildcard),
+                    _ => {
+                        self.diagnostics.error(
+                            pat_span.clone(),
+                            format!(
+                                "cannot match tuple pattern against non-tuple type '{}'",
+                                subject_ty
+                            ),
+                        );
+                        Some(TypedPattern::Wildcard)
+                    }
+                },
             };
 
             // Skip unreachable arms (pattern type can never match the scrutinee)
@@ -363,7 +420,7 @@ impl Inference<'_> {
                     let new_body = self.infer_expr(&orig_arm.body);
                     self.expected_type = saved;
                     self.pop_scope();
-                    typed_arm.body = Box::new(new_body);
+                    *typed_arm.body = new_body;
                 }
             }
         }
@@ -386,12 +443,16 @@ impl Inference<'_> {
             TypedPattern::Variable(name, ty) => {
                 self.define_variable(name.clone(), ty.clone(), false);
             }
-            TypedPattern::Tuple { element_patterns, .. } => {
+            TypedPattern::Tuple {
+                element_patterns, ..
+            } => {
                 for sub_pat in element_patterns {
                     self.define_pattern_bindings(sub_pat);
                 }
             }
-            TypedPattern::EnumVariant { payload_patterns, .. } => {
+            TypedPattern::EnumVariant {
+                payload_patterns, ..
+            } => {
                 for sub_pat in payload_patterns {
                     self.define_pattern_bindings(sub_pat);
                 }
@@ -496,7 +557,9 @@ impl Inference<'_> {
                 );
                 return Some(TypedPattern::Wildcard);
             }
-            if !self.registry.class_is_subtype(&target_fqn, &subject_fqn) && !self.registry.class_is_subtype(&subject_fqn, &target_fqn) {
+            if !self.registry.class_is_subtype(&target_fqn, &subject_fqn)
+                && !self.registry.class_is_subtype(&subject_fqn, &target_fqn)
+            {
                 self.diagnostics.error(
                     pat_span.clone(),
                     format!(
@@ -550,7 +613,10 @@ impl Inference<'_> {
             // Bare variant pattern: check if scrutinee is a newtype first
             if matches!(subject_ty, Type::Newtype(..) | Type::GenericNewtype { .. }) {
                 return self.infer_newtype_pattern(
-                    variant_name, payload_patterns, pat_span, subject_ty,
+                    variant_name,
+                    payload_patterns,
+                    pat_span,
+                    subject_ty,
                 );
             }
             // Bare variant pattern: resolve from scrutinee type
@@ -567,7 +633,11 @@ impl Inference<'_> {
                     return Some(TypedPattern::Wildcard);
                 }
             };
-            match self.registry.lookup_enum_type(&scrutinee_fqn, &self.package_path, &self.current_file) {
+            match self.registry.lookup_enum_type(
+                &scrutinee_fqn,
+                &self.package_path,
+                &self.current_file,
+            ) {
                 Some(sig) => sig.clone(),
                 None => {
                     self.diagnostics.error(
@@ -611,8 +681,7 @@ impl Inference<'_> {
                             pat_span.clone(),
                             format!(
                                 "variant '{}.{}' has no fields; use '{}.{}' without parentheses",
-                                display_enum, variant_name.value,
-                                display_enum, variant_name.value
+                                display_enum, variant_name.value, display_enum, variant_name.value
                             ),
                         );
                         return Some(TypedPattern::Wildcard);
@@ -627,8 +696,7 @@ impl Inference<'_> {
                             pat_span.clone(),
                             format!(
                                 "variant '{}.{}' requires record-style pattern with {{ }}, not ()",
-                                display_enum,
-                                variant_name.value
+                                display_enum, variant_name.value
                             ),
                         );
                         return Some(TypedPattern::Wildcard);
@@ -675,15 +743,18 @@ impl Inference<'_> {
 
         // Build substitution from scrutinee's type args for generic enums
         let substitution = match subject_ty {
-            Type::GenericEnum { type_args: scrutinee_type_args, .. } => {
-                let stripped_args: Vec<Type> = scrutinee_type_args
-                    .iter()
-                    .map(|(_, t)| t.clone())
-                    .collect();
-                Some(super::type_param_substitution::TypeParamSubstitution::from_pairs(
-                    &enum_sig.type_params,
-                    &stripped_args,
-                ))
+            Type::GenericEnum {
+                type_args: scrutinee_type_args,
+                ..
+            } => {
+                let stripped_args: Vec<Type> =
+                    scrutinee_type_args.iter().map(|(_, t)| t.clone()).collect();
+                Some(
+                    super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                        &enum_sig.type_params,
+                        &stripped_args,
+                    ),
+                )
             }
             _ => None,
         };
@@ -710,7 +781,11 @@ impl Inference<'_> {
                     format!(
                         "type mismatch in enum pattern: expected '{}', found '{}'",
                         subject_ty,
-                        if type_name.value.is_empty() { &fqn.symbol.0 } else { &type_name.value }
+                        if type_name.value.is_empty() {
+                            &fqn.symbol.0
+                        } else {
+                            &type_name.value
+                        }
                     ),
                 );
                 return Some(TypedPattern::Wildcard);
@@ -747,9 +822,11 @@ impl Inference<'_> {
             Type::Enum(fqn, _) | Type::GenericEnum { fqn, .. } => fqn,
             _ => return None,
         };
-        let enum_sig = self
-            .registry
-            .lookup_enum_type(scrutinee_fqn, &self.package_path, &self.current_file)?;
+        let enum_sig = self.registry.lookup_enum_type(
+            scrutinee_fqn,
+            &self.package_path,
+            &self.current_file,
+        )?;
         let variant_pos = enum_sig
             .variants
             .iter()
@@ -776,12 +853,19 @@ impl Inference<'_> {
     ) -> Option<TypedPattern> {
         let (nt_fqn, inner_ty) = match subject_ty {
             Type::Newtype(fqn, inner) => (fqn.clone(), inner.as_ref().clone()),
-            Type::GenericNewtype { fqn, concrete_inner_type, .. } => (fqn.clone(), concrete_inner_type.as_ref().clone()),
+            Type::GenericNewtype {
+                fqn,
+                concrete_inner_type,
+                ..
+            } => (fqn.clone(), concrete_inner_type.as_ref().clone()),
             _ => unreachable!(),
         };
 
         // Check private newtype access
-        if let Some(sig) = self.registry.lookup_newtype_type(&nt_fqn, &self.package_path, &self.current_file) {
+        if let Some(sig) =
+            self.registry
+                .lookup_newtype_type(&nt_fqn, &self.package_path, &self.current_file)
+        {
             let sig = sig.clone();
             if !self.check_newtype_inner_access(&sig, pat_span, "pattern match on") {
                 return Some(TypedPattern::Wildcard);
@@ -806,7 +890,8 @@ impl Inference<'_> {
                 pat_span.clone(),
                 format!(
                     "newtype '{}' pattern expects 1 sub-pattern, found {}",
-                    nt_fqn.symbol.0, payload_patterns.len()
+                    nt_fqn.symbol.0,
+                    payload_patterns.len()
                 ),
             );
             return Some(TypedPattern::Wildcard);
@@ -843,7 +928,11 @@ impl Inference<'_> {
                     return Some(TypedPattern::Wildcard);
                 }
             };
-            match self.registry.lookup_enum_type(&scrutinee_fqn, &self.package_path, &self.current_file) {
+            match self.registry.lookup_enum_type(
+                &scrutinee_fqn,
+                &self.package_path,
+                &self.current_file,
+            ) {
                 Some(sig) => sig.clone(),
                 None => {
                     self.diagnostics.error(
@@ -899,8 +988,7 @@ impl Inference<'_> {
                             pat_span.clone(),
                             format!(
                                 "variant '{}.{}' has record-style fields; use '{}.{}' with {{ }}",
-                                display_enum, variant_name.value,
-                                display_enum, variant_name.value
+                                display_enum, variant_name.value, display_enum, variant_name.value
                             ),
                         );
                         return Some(TypedPattern::Wildcard);
@@ -972,15 +1060,11 @@ impl Inference<'_> {
     ) -> Option<TypedPattern> {
         // Bare brace patterns are disambiguated by the scrutinee, just like
         // bare positional variant patterns.
-        if type_args.is_empty() && matches!(subject_ty, Type::Enum(..) | Type::GenericEnum { .. })
-        {
-            let enum_name = crate::common::span::Spanned::new(String::new(), type_name.span.clone());
+        if type_args.is_empty() && matches!(subject_ty, Type::Enum(..) | Type::GenericEnum { .. }) {
+            let enum_name =
+                crate::common::span::Spanned::new(String::new(), type_name.span.clone());
             return self.infer_enum_variant_record_pattern(
-                &enum_name,
-                type_name,
-                fields,
-                pat_span,
-                subject_ty,
+                &enum_name, type_name, fields, pat_span, subject_ty,
             );
         }
 
@@ -1002,7 +1086,9 @@ impl Inference<'_> {
             }
         };
 
-        self.infer_resolved_record_pattern(&info, type_name, type_args, fields, pat_span, subject_ty)
+        self.infer_resolved_record_pattern(
+            &info, type_name, type_args, fields, pat_span, subject_ty,
+        )
     }
 
     pub(super) fn infer_resolved_record_pattern(
@@ -1046,21 +1132,30 @@ impl Inference<'_> {
                 &info.type_params,
                 &resolved,
             );
-            let concrete_fields = info.fields.iter().map(|(n, ty)| (n.clone(), apply_substitution(&substitution, ty))).collect();
+            let concrete_fields = info
+                .fields
+                .iter()
+                .map(|(n, ty)| (n.clone(), apply_substitution(&substitution, ty)))
+                .collect();
 
             (instantiated_ty, concrete_fields)
-        } else if let Type::GenericRecord { type_args: scrutinee_type_args, .. } = subject_ty
+        } else if let Type::GenericRecord {
+            type_args: scrutinee_type_args,
+            ..
+        } = subject_ty
         {
             // Static path: infer type args from scrutinee type
-            let stripped_args: Vec<Type> = scrutinee_type_args
-                .iter()
-                .map(|(_, t)| t.clone())
-                .collect();
+            let stripped_args: Vec<Type> =
+                scrutinee_type_args.iter().map(|(_, t)| t.clone()).collect();
             let substitution = super::type_param_substitution::TypeParamSubstitution::from_pairs(
                 &info.type_params,
                 &stripped_args,
             );
-            let concrete_fields = info.fields.iter().map(|(n, ty)| (n.clone(), apply_substitution(&substitution, ty))).collect();
+            let concrete_fields = info
+                .fields
+                .iter()
+                .map(|(n, ty)| (n.clone(), apply_substitution(&substitution, ty)))
+                .collect();
             (subject_ty.clone(), concrete_fields)
         } else {
             // Non-generic record
@@ -1115,11 +1210,8 @@ impl Inference<'_> {
                 .enumerate()
                 .find(|(_, (name, _))| name == field_name)
             {
-                let typed_sub_pattern = self.infer_field_sub_pattern(
-                    &field_pat.pattern,
-                    field_name,
-                    field_ty,
-                );
+                let typed_sub_pattern =
+                    self.infer_field_sub_pattern(&field_pat.pattern, field_name, field_ty);
 
                 typed_fields.push(TypedFieldPattern {
                     field_name: field_name.clone(),
@@ -1165,7 +1257,11 @@ impl Inference<'_> {
                     return Some(TypedPattern::Wildcard);
                 }
             };
-            match self.registry.lookup_enum_type(&scrutinee_fqn, &self.package_path, &self.current_file) {
+            match self.registry.lookup_enum_type(
+                &scrutinee_fqn,
+                &self.package_path,
+                &self.current_file,
+            ) {
                 Some(sig) => sig.clone(),
                 None => {
                     self.diagnostics.error(
@@ -1235,7 +1331,10 @@ impl Inference<'_> {
                 };
                 self.diagnostics.error(
                     variant_name.span.clone(),
-                    format!("no variant '{}' in enum '{}'", variant_name.value, display_enum),
+                    format!(
+                        "no variant '{}' in enum '{}'",
+                        variant_name.value, display_enum
+                    ),
                 );
                 return Some(TypedPattern::Wildcard);
             }
@@ -1243,15 +1342,18 @@ impl Inference<'_> {
 
         // Build substitution from scrutinee's type args for generic enums
         let substitution = match subject_ty {
-            Type::GenericEnum { type_args: scrutinee_type_args, .. } => {
-                let stripped_args: Vec<Type> = scrutinee_type_args
-                    .iter()
-                    .map(|(_, t)| t.clone())
-                    .collect();
-                Some(super::type_param_substitution::TypeParamSubstitution::from_pairs(
-                    &enum_sig.type_params,
-                    &stripped_args,
-                ))
+            Type::GenericEnum {
+                type_args: scrutinee_type_args,
+                ..
+            } => {
+                let stripped_args: Vec<Type> =
+                    scrutinee_type_args.iter().map(|(_, t)| t.clone()).collect();
+                Some(
+                    super::type_param_substitution::TypeParamSubstitution::from_pairs(
+                        &enum_sig.type_params,
+                        &stripped_args,
+                    ),
+                )
             }
             _ => None,
         };
@@ -1278,7 +1380,11 @@ impl Inference<'_> {
                     format!(
                         "type mismatch in enum pattern: expected '{}', found '{}'",
                         subject_ty,
-                        if type_name.value.is_empty() { &fqn.symbol.0 } else { &type_name.value }
+                        if type_name.value.is_empty() {
+                            &fqn.symbol.0
+                        } else {
+                            &type_name.value
+                        }
                     ),
                 );
                 return Some(TypedPattern::Wildcard);
@@ -1294,11 +1400,8 @@ impl Inference<'_> {
                 .enumerate()
                 .find(|(_, (name, _))| name == field_name)
             {
-                let typed_sub_pattern = self.infer_field_sub_pattern(
-                    &field_pat.pattern,
-                    field_name,
-                    field_ty,
-                );
+                let typed_sub_pattern =
+                    self.infer_field_sub_pattern(&field_pat.pattern, field_name, field_ty);
                 typed_fields.push(TypedFieldPattern {
                     field_name: field_name.clone(),
                     field_index: idx as u32,
@@ -1310,7 +1413,11 @@ impl Inference<'_> {
                     format!(
                         "no field '{}' in variant '{}.{}'",
                         field_name,
-                        if type_name.value.is_empty() { &fqn.symbol.0 } else { &type_name.value },
+                        if type_name.value.is_empty() {
+                            &fqn.symbol.0
+                        } else {
+                            &type_name.value
+                        },
                         variant_name.value
                     ),
                 );
@@ -1332,7 +1439,11 @@ impl Inference<'_> {
 
     /// Infer a sub-pattern inside a tuple payload or as a direct nested pattern.
     /// `expected_ty` is the type the sub-pattern must match against.
-    pub(super) fn infer_sub_pattern(&mut self, sub_pat: &Pattern, expected_ty: &Type) -> TypedPattern {
+    pub(super) fn infer_sub_pattern(
+        &mut self,
+        sub_pat: &Pattern,
+        expected_ty: &Type,
+    ) -> TypedPattern {
         match sub_pat {
             Pattern::Wildcard(_) => TypedPattern::Wildcard,
             Pattern::Variable(name, _) => {
@@ -1401,44 +1512,42 @@ impl Inference<'_> {
             } => self
                 .infer_type_annotated_pattern(binding, type_expr, span, expected_ty)
                 .unwrap_or(TypedPattern::Wildcard),
-            Pattern::Tuple(sub_pats, pat_span) => {
-                match expected_ty {
-                    Type::Tuple(elem_types, _mn) => {
-                        if sub_pats.len() != elem_types.len() {
-                            self.diagnostics.error(
-                                pat_span.clone(),
-                                format!(
-                                    "tuple pattern has {} elements but the tuple has {}",
-                                    sub_pats.len(),
-                                    elem_types.len()
-                                ),
-                            );
-                            TypedPattern::Wildcard
-                        } else {
-                            let element_patterns: Vec<TypedPattern> = sub_pats
-                                .iter()
-                                .zip(elem_types.iter())
-                                .map(|(sp, et)| self.infer_sub_pattern(sp, et))
-                                .collect();
-                            TypedPattern::Tuple {
-                                element_patterns,
-                                tuple_type: expected_ty.clone(),
-                            }
-                        }
-                    }
-                    Type::Error => TypedPattern::Wildcard,
-                    _ => {
+            Pattern::Tuple(sub_pats, pat_span) => match expected_ty {
+                Type::Tuple(elem_types, _mn) => {
+                    if sub_pats.len() != elem_types.len() {
                         self.diagnostics.error(
                             pat_span.clone(),
                             format!(
-                                "cannot match tuple pattern against non-tuple type '{}'",
-                                expected_ty
+                                "tuple pattern has {} elements but the tuple has {}",
+                                sub_pats.len(),
+                                elem_types.len()
                             ),
                         );
                         TypedPattern::Wildcard
+                    } else {
+                        let element_patterns: Vec<TypedPattern> = sub_pats
+                            .iter()
+                            .zip(elem_types.iter())
+                            .map(|(sp, et)| self.infer_sub_pattern(sp, et))
+                            .collect();
+                        TypedPattern::Tuple {
+                            element_patterns,
+                            tuple_type: expected_ty.clone(),
+                        }
                     }
                 }
-            }
+                Type::Error => TypedPattern::Wildcard,
+                _ => {
+                    self.diagnostics.error(
+                        pat_span.clone(),
+                        format!(
+                            "cannot match tuple pattern against non-tuple type '{}'",
+                            expected_ty
+                        ),
+                    );
+                    TypedPattern::Wildcard
+                }
+            },
         }
     }
 

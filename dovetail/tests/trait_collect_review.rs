@@ -2,7 +2,8 @@ mod common;
 
 #[test]
 fn trait_collection_preserves_associated_bound_declaration_order() {
-    common::check_no_errors(r#"
+    common::check_no_errors(
+        r#"
 package a
 
 trait ZProducer =
@@ -16,7 +17,8 @@ trait Child extends AConsumer =
     function extra(self): Int32
 
 function main(): Unit = ()
-"#);
+"#,
+    );
 }
 
 #[test]
@@ -225,8 +227,10 @@ trait Parent =
         package_path: dovetail::common::types::PackagePath(vec!["a".into()]),
         files,
     };
-    let result =
-        dovetail::typechecker::typecheck(&package, &dovetail::typechecker::registry::Registry::new());
+    let result = dovetail::typechecker::typecheck(
+        &package,
+        &dovetail::typechecker::registry::Registry::new(),
+    );
     let errors: Vec<_> = result
         .diagnostics
         .iter()

@@ -11,7 +11,13 @@ static TEMPORARY_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 /// Generic templates retain the binary node until substitution reveals its shape.
 pub(crate) fn lower(expr: TypedExpr) -> TypedExpr {
-    if matches!(&expr.kind, TypedExprKind::IntrinsicCall { intrinsic: IntrinsicKind::TupleProjection(_), .. }) {
+    if matches!(
+        &expr.kind,
+        TypedExprKind::IntrinsicCall {
+            intrinsic: IntrinsicKind::TupleProjection(_),
+            ..
+        }
+    ) {
         return lower_projection(expr);
     }
     let TypedExprKind::BinaryOp {
@@ -100,21 +106,49 @@ fn bind_receiver(value: TypedExpr, span: &Span) -> (TypedExpr, TypedExpr) {
 }
 
 fn lower_projection(expr: TypedExpr) -> TypedExpr {
-    let TypedExprKind::IntrinsicCall { intrinsic: IntrinsicKind::TupleProjection(kind), args } = &expr.kind else {
+    let TypedExprKind::IntrinsicCall {
+        intrinsic: IntrinsicKind::TupleProjection(kind),
+        args,
+    } = &expr.kind
+    else {
         return expr;
     };
-    let Some(receiver) = args.first() else { return expr };
-    let Type::Tuple(elements, _) = &receiver.ty else { return expr };
+    let Some(receiver) = args.first() else {
+        return expr;
+    };
+    let Type::Tuple(elements, _) = &receiver.ty else {
+        return expr;
+    };
     let ty = Type::tuple_projection(receiver.ty.clone(), *kind);
     if *kind == TupleProjection::Last || elements.len() == 2 {
-        let index = if *kind == TupleProjection::Last { elements.len()-1 } else { 0 };
+        let index = if *kind == TupleProjection::Last {
+            elements.len() - 1
+        } else {
+            0
+        };
         return TypedExpr {
-            kind: TypedExprKind::FieldAccess { object: Box::new(receiver.clone()), field_name: format!("_{index}"), field_index: index as u32, boxed: false },
-            ty, span: expr.span,
+            kind: TypedExprKind::FieldAccess {
+                object: Box::new(receiver.clone()),
+                field_name: format!("_{index}"),
+                field_index: index as u32,
+                boxed: false,
+            },
+            ty,
+            span: expr.span,
         };
     }
-    let prefix = elements[..elements.len()-1].to_vec();
+    let prefix = elements[..elements.len() - 1].to_vec();
     let (binding, receiver) = bind_receiver(receiver.clone(), &expr.span);
-    let tuple = TypedExpr { kind: TypedExprKind::TupleLiteral { elements: tuple_fields(&receiver, &prefix) }, ty: ty.clone(), span: expr.span.clone() };
-    TypedExpr { kind: TypedExprKind::Block(vec![binding, tuple]), ty, span: expr.span }
+    let tuple = TypedExpr {
+        kind: TypedExprKind::TupleLiteral {
+            elements: tuple_fields(&receiver, &prefix),
+        },
+        ty: ty.clone(),
+        span: expr.span.clone(),
+    };
+    TypedExpr {
+        kind: TypedExprKind::Block(vec![binding, tuple]),
+        ty,
+        span: expr.span,
+    }
 }

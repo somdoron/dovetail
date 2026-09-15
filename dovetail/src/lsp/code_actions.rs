@@ -142,24 +142,26 @@ fn extract_unknown_symbol(message: &str) -> Option<String> {
         "undeclared function '",
         "undeclared variable '",
     ] {
-        if let Some(rest) = message.strip_prefix(prefix) {
-            if let Some(end) = rest.find('\'') {
-                return Some(rest[..end].to_string());
-            }
+        if let Some(rest) = message.strip_prefix(prefix)
+            && let Some(end) = rest.find('\'')
+        {
+            return Some(rest[..end].to_string());
         }
     }
 
     // Also match "... 'name' ..." pattern anywhere in the message for
     // messages like "function 'foo' not found"
-    if message.contains("not found") || message.contains("unknown") || message.contains("undeclared") {
-        if let Some(start) = message.find('\'') {
-            let rest = &message[start + 1..];
-            if let Some(end) = rest.find('\'') {
-                let name = &rest[..end];
-                // Only return if it looks like a valid identifier
-                if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    return Some(name.to_string());
-                }
+    if (message.contains("not found")
+        || message.contains("unknown")
+        || message.contains("undeclared"))
+        && let Some(start) = message.find('\'')
+    {
+        let rest = &message[start + 1..];
+        if let Some(end) = rest.find('\'') {
+            let name = &rest[..end];
+            // Only return if it looks like a valid identifier
+            if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Some(name.to_string());
             }
         }
     }
@@ -280,7 +282,10 @@ fn collect_type_annotation_actions(
     }
 
     if let TypedExprKind::Let {
-        name, var_ty, value, ..
+        name,
+        var_ty,
+        value,
+        ..
     } = &expr.kind
     {
         // Skip Error/Never types
@@ -359,7 +364,15 @@ fn walk_for_type_annotations(
     actions: &mut Vec<CodeAction>,
 ) {
     let recurse = |e: &TypedExpr, actions: &mut Vec<CodeAction>| {
-        collect_type_annotation_actions(e, file, start_line, end_line, document_content, file_uri, actions);
+        collect_type_annotation_actions(
+            e,
+            file,
+            start_line,
+            end_line,
+            document_content,
+            file_uri,
+            actions,
+        );
     };
 
     match &expr.kind {
@@ -394,7 +407,11 @@ fn walk_for_type_annotations(
                 recurse(arg, actions);
             }
         }
-        TypedExprKind::If { condition, then_branch, else_branch } => {
+        TypedExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
             recurse(condition, actions);
             recurse(then_branch, actions);
             if let Some(eb) = else_branch {
@@ -426,7 +443,9 @@ fn walk_for_type_annotations(
             recurse(object, actions);
             recurse(value, actions);
         }
-        TypedExprKind::RecordWith { object, overrides, .. } => {
+        TypedExprKind::RecordWith {
+            object, overrides, ..
+        } => {
             recurse(object, actions);
             for (_, _, val) in overrides {
                 recurse(val, actions);
@@ -489,8 +508,7 @@ fn walk_for_type_annotations(
                 recurse(arg, actions);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -518,10 +536,7 @@ fn walk_for_type_annotations(
 ///
 /// Sorts imports alphabetically and groups them by top-level package,
 /// inserting blank lines between groups.
-pub fn organize_imports_action(
-    source_file: &SourceFile,
-    file_uri: &Url,
-) -> Option<CodeAction> {
+pub fn organize_imports_action(source_file: &SourceFile, file_uri: &Url) -> Option<CodeAction> {
     let imports = &source_file.imports;
     if imports.is_empty() {
         return None;

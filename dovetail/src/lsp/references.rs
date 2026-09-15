@@ -37,8 +37,9 @@ pub fn find_references(
     include_declaration: bool,
 ) -> Vec<Location> {
     let target = match node {
-        NodeAtPosition::FunctionCall { name, .. }
-        | NodeAtPosition::FunctionRef { name, .. } => ReferenceTarget::Function(name.clone()),
+        NodeAtPosition::FunctionCall { name, .. } | NodeAtPosition::FunctionRef { name, .. } => {
+            ReferenceTarget::Function(name.clone())
+        }
         NodeAtPosition::MethodRef { method_name, .. } => {
             ReferenceTarget::Function(method_name.clone())
         }
@@ -79,10 +80,10 @@ pub fn find_references(
     let mut spans = Vec::new();
 
     // Optionally include the declaration site
-    if include_declaration {
-        if let Some(decl_span) = find_declaration_span(&target, typed_module, registry) {
-            spans.push(decl_span);
-        }
+    if include_declaration
+        && let Some(decl_span) = find_declaration_span(&target, typed_module, registry)
+    {
+        spans.push(decl_span);
     }
 
     // Walk all bodies for references
@@ -162,10 +163,8 @@ fn expr_contains_var(expr: &TypedExpr, var_name: &VarName) -> bool {
                 return true;
             }
         }
-        TypedExprKind::Assign { name, .. } => {
-            if name == var_name {
-                return true;
-            }
+        TypedExprKind::Assign { name, .. } if name == var_name => {
+            return true;
         }
         _ => {}
     }
@@ -216,9 +215,7 @@ fn expr_children_contain_var(expr: &TypedExpr, var_name: &VarName) -> bool {
             expr_contains_var(object, var_name)
                 || args.iter().any(|a| expr_contains_var(a, var_name))
         }
-        TypedExprKind::InterfaceObjectMethodCall {
-            receiver, args, ..
-        } => {
+        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
             expr_contains_var(receiver, var_name)
                 || args.iter().any(|a| expr_contains_var(a, var_name))
         }
@@ -226,17 +223,16 @@ fn expr_children_contain_var(expr: &TypedExpr, var_name: &VarName) -> bool {
             expr_contains_var(callee, var_name)
                 || args.iter().any(|a| expr_contains_var(a, var_name))
         }
-        TypedExprKind::Closure { body, .. }
-        | TypedExprKind::AsyncBlock { body, .. } => expr_contains_var(body, var_name),
+        TypedExprKind::Closure { body, .. } | TypedExprKind::AsyncBlock { body, .. } => {
+            expr_contains_var(body, var_name)
+        }
         TypedExprKind::Return { value, .. } => expr_contains_var(value, var_name),
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => expr_contains_var(iterable, var_name) || expr_contains_var(body, var_name),
+        TypedExprKind::ForLoop { iterable, body, .. } => {
+            expr_contains_var(iterable, var_name) || expr_contains_var(body, var_name)
+        }
         TypedExprKind::Await { operand, .. }
         | TypedExprKind::Try { operand, .. }
-        | TypedExprKind::Use { operand, .. } => {
-            expr_contains_var(operand, var_name)
-        }
+        | TypedExprKind::Use { operand, .. } => expr_contains_var(operand, var_name),
         TypedExprKind::Panic { message } => expr_contains_var(message, var_name),
         TypedExprKind::Assert {
             condition, message, ..
@@ -292,9 +288,7 @@ fn find_declaration_span(
         ReferenceTarget::Function(name) => {
             super::source_functions::get(typed_module, name).map(|f| f.span.clone())
         }
-        ReferenceTarget::Global(name) => {
-            typed_module.globals.get(name).map(|g| g.span.clone())
-        }
+        ReferenceTarget::Global(name) => typed_module.globals.get(name).map(|g| g.span.clone()),
         ReferenceTarget::Variable {
             name,
             function_name,
@@ -328,10 +322,10 @@ fn find_declaration_span(
 }
 
 fn find_let_span(expr: &TypedExpr, var_name: &VarName) -> Option<Span> {
-    if let TypedExprKind::Let { name, .. } = &expr.kind {
-        if name == var_name {
-            return Some(expr.span.clone());
-        }
+    if let TypedExprKind::Let { name, .. } = &expr.kind
+        && name == var_name
+    {
+        return Some(expr.span.clone());
     }
     find_let_span_in_children(expr, var_name)
 }
@@ -353,14 +347,16 @@ fn find_let_span_in_children(expr: &TypedExpr, var_name: &VarName) -> Option<Spa
             else_branch,
         } => find_let_span(condition, var_name)
             .or_else(|| find_let_span(then_branch, var_name))
-            .or_else(|| else_branch.as_ref().and_then(|eb| find_let_span(eb, var_name))),
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|eb| find_let_span(eb, var_name))
+            }),
         TypedExprKind::While { condition, body } => {
             find_let_span(condition, var_name).or_else(|| find_let_span(body, var_name))
         }
-        TypedExprKind::Match { subject, arms } => find_let_span(subject, var_name).or_else(|| {
-            arms.iter()
-                .find_map(|a| find_let_span(&a.body, var_name))
-        }),
+        TypedExprKind::Match { subject, arms } => find_let_span(subject, var_name)
+            .or_else(|| arms.iter().find_map(|a| find_let_span(&a.body, var_name))),
         TypedExprKind::ForLoop { body, .. } => find_let_span(body, var_name),
         TypedExprKind::Closure { body, .. } | TypedExprKind::AsyncBlock { body, .. } => {
             find_let_span(body, var_name)
@@ -489,9 +485,7 @@ fn walk_children_for_refs(expr: &TypedExpr, var_name: &VarName, spans: &mut Vec<
                 collect_variable_refs(arg, var_name, spans);
             }
         }
-        TypedExprKind::InterfaceObjectMethodCall {
-            receiver, args, ..
-        } => {
+        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
             collect_variable_refs(receiver, var_name, spans);
             for arg in args {
                 collect_variable_refs(arg, var_name, spans);
@@ -522,9 +516,7 @@ fn walk_children_for_refs(expr: &TypedExpr, var_name: &VarName, spans: &mut Vec<
             collect_variable_refs(operand, var_name, spans);
         }
         TypedExprKind::Return { value, .. } => collect_variable_refs(value, var_name, spans),
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => {
+        TypedExprKind::ForLoop { iterable, body, .. } => {
             collect_variable_refs(iterable, var_name, spans);
             collect_variable_refs(body, var_name, spans);
         }
@@ -537,8 +529,7 @@ fn walk_children_for_refs(expr: &TypedExpr, var_name: &VarName, spans: &mut Vec<
                 collect_variable_refs(arg, var_name, spans);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }
@@ -577,9 +568,7 @@ fn collect_pattern_refs(pattern: &TypedPattern, var_name: &VarName, spans: &mut 
                 collect_pattern_refs(p, var_name, spans);
             }
         }
-        TypedPattern::EnumVariantRecord {
-            field_patterns, ..
-        } => {
+        TypedPattern::EnumVariantRecord { field_patterns, .. } => {
             for fp in field_patterns {
                 collect_pattern_refs(&fp.pattern, var_name, spans);
             }
@@ -605,7 +594,13 @@ fn collect_references(expr: &TypedExpr, target: &ReferenceTarget, spans: &mut Ve
     match (&expr.kind, target) {
         // Function references
         (TypedExprKind::FunctionCall { name, .. }, ReferenceTarget::Function(target_name))
-        | (TypedExprKind::FunctionRef { name, type_params: _ }, ReferenceTarget::Function(target_name))
+        | (
+            TypedExprKind::FunctionRef {
+                name,
+                type_params: _,
+            },
+            ReferenceTarget::Function(target_name),
+        )
         | (
             TypedExprKind::ClassSuperCall {
                 method_mangled: name,
@@ -630,10 +625,7 @@ fn collect_references(expr: &TypedExpr, target: &ReferenceTarget, spans: &mut Ve
 
         // Global references
         (TypedExprKind::GlobalRef { name, .. }, ReferenceTarget::Global(target_name))
-        | (
-            TypedExprKind::GlobalAssign { name, .. },
-            ReferenceTarget::Global(target_name),
-        ) => {
+        | (TypedExprKind::GlobalAssign { name, .. }, ReferenceTarget::Global(target_name)) => {
             if name == target_name {
                 spans.push(expr.span.clone());
             }
@@ -642,10 +634,7 @@ fn collect_references(expr: &TypedExpr, target: &ReferenceTarget, spans: &mut Ve
         // Type references
         (TypedExprKind::RecordCreate { fqn, .. }, ReferenceTarget::Type(target_fqn))
         | (TypedExprKind::EnumCreate { fqn, .. }, ReferenceTarget::Type(target_fqn))
-        | (
-            TypedExprKind::EnumVariantRecordCreate { fqn, .. },
-            ReferenceTarget::Type(target_fqn),
-        )
+        | (TypedExprKind::EnumVariantRecordCreate { fqn, .. }, ReferenceTarget::Type(target_fqn))
         | (TypedExprKind::RecordWith { fqn, .. }, ReferenceTarget::Type(target_fqn)) => {
             if fqn == target_fqn {
                 spans.push(expr.span.clone());
@@ -665,11 +654,7 @@ fn collect_references(expr: &TypedExpr, target: &ReferenceTarget, spans: &mut Ve
     walk_children_for_references(expr, target, spans);
 }
 
-fn walk_children_for_references(
-    expr: &TypedExpr,
-    target: &ReferenceTarget,
-    spans: &mut Vec<Span>,
-) {
+fn walk_children_for_references(expr: &TypedExpr, target: &ReferenceTarget, spans: &mut Vec<Span>) {
     match &expr.kind {
         TypedExprKind::BinaryOp { left, right, .. } => {
             collect_references(left, target, spans);
@@ -766,9 +751,7 @@ fn walk_children_for_references(
                 collect_references(arg, target, spans);
             }
         }
-        TypedExprKind::InterfaceObjectMethodCall {
-            receiver, args, ..
-        } => {
+        TypedExprKind::InterfaceObjectMethodCall { receiver, args, .. } => {
             collect_references(receiver, target, spans);
             for arg in args {
                 collect_references(arg, target, spans);
@@ -797,9 +780,7 @@ fn walk_children_for_references(
             collect_references(operand, target, spans);
         }
         TypedExprKind::Return { value, .. } => collect_references(value, target, spans),
-        TypedExprKind::ForLoop {
-            iterable, body, ..
-        } => {
+        TypedExprKind::ForLoop { iterable, body, .. } => {
             collect_references(iterable, target, spans);
             collect_references(body, target, spans);
         }
@@ -812,8 +793,7 @@ fn walk_children_for_references(
                 collect_references(arg, target, spans);
             }
         }
-        TypedExprKind::ImplFunctionRef { .. }
-        | TypedExprKind::ExtFunctionRef { .. } => {}
+        TypedExprKind::ImplFunctionRef { .. } | TypedExprKind::ExtFunctionRef { .. } => {}
         TypedExprKind::FunctionRef { .. }
         | TypedExprKind::VarRef { .. }
         | TypedExprKind::GlobalRef { .. }

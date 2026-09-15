@@ -119,7 +119,11 @@ struct ParkOnceWriter {
 }
 
 impl AsyncWrite for ParkOnceWriter {
-    fn poll_write(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         if !self.parked {
             // Park, then wake ourselves from a timer task: `Poll::Pending` here
             // is what turns the guest's `stream.write` into BLOCKED.
@@ -133,7 +137,10 @@ impl AsyncWrite for ParkOnceWriter {
         }
         self.parked = false;
         let n = buf.len().min(4096);
-        self.written.lock().expect("written").extend_from_slice(&buf[..n]);
+        self.written
+            .lock()
+            .expect("written")
+            .extend_from_slice(&buf[..n]);
         Poll::Ready(Ok(n))
     }
 
@@ -173,7 +180,11 @@ impl StdoutStream for CapturingStream {
 struct CapturingWriter(Written);
 
 impl AsyncWrite for CapturingWriter {
-    fn poll_write(self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         self.0.lock().expect("written").extend_from_slice(buf);
         Poll::Ready(Ok(buf.len()))
     }
@@ -232,7 +243,11 @@ where
 {
     let result = dovetail::compile(source, "test.dove");
     if result.diagnostics.has_errors() {
-        let errors: Vec<String> = result.diagnostics.iter().map(|d| d.message.clone()).collect();
+        let errors: Vec<String> = result
+            .diagnostics
+            .iter()
+            .map(|d| d.message.clone())
+            .collect();
         return Err(format!("compilation failed: {}", errors.join("; ")));
     }
     let wasm_bytes = result.wasm.ok_or("compilation produced no WASM output")?;
@@ -275,8 +290,16 @@ function main(): Unit =
         "blocked debug",
     );
     let expected: Vec<u8> = "abcdefgh".repeat(8192).into_bytes();
-    assert_eq!(written.len(), expected.len() + 1, "wrote a different number of bytes");
-    assert_eq!(&written[..expected.len()], &expected[..], "bytes came back reordered or corrupted");
+    assert_eq!(
+        written.len(),
+        expected.len() + 1,
+        "wrote a different number of bytes"
+    );
+    assert_eq!(
+        &written[..expected.len()],
+        &expected[..],
+        "bytes came back reordered or corrupted"
+    );
     assert_eq!(written[expected.len()], b'\n');
 }
 
@@ -299,7 +322,10 @@ function main(): Unit =
     );
     let one: String = "0123456789".repeat(1024) + "\n";
     let expected = one.repeat(3).into_bytes();
-    assert_eq!(written, expected, "three blocked writes did not concatenate cleanly");
+    assert_eq!(
+        written, expected,
+        "three blocked writes did not concatenate cleanly"
+    );
 }
 
 // ── A stdout that goes away mid-write ───────────────────────────────────────
@@ -339,12 +365,22 @@ struct BreakAfterWriter {
 }
 
 impl AsyncWrite for BreakAfterWriter {
-    fn poll_write(mut self: Pin<&mut Self>, _cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
         if self.remaining == 0 {
-            return Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, "reader is gone")));
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "reader is gone",
+            )));
         }
         let n = buf.len().min(self.remaining);
-        self.written.lock().expect("written").extend_from_slice(&buf[..n]);
+        self.written
+            .lock()
+            .expect("written")
+            .extend_from_slice(&buf[..n]);
         self.remaining -= n;
         Poll::Ready(Ok(n))
     }
@@ -383,7 +419,11 @@ function main(): Unit =
     );
     let bytes = result.expect("a broken stdout pipe must not fail the run");
     // Best-effort: what the reader took before it left, and nothing after.
-    assert_eq!(bytes.len(), 4096, "the reader's accepted prefix should still arrive");
+    assert_eq!(
+        bytes.len(),
+        4096,
+        "the reader's accepted prefix should still arrive"
+    );
     assert_eq!(&bytes[..8], b"abcdefgh");
 }
 
@@ -506,7 +546,10 @@ fn a_stdin_that_fails_mid_stream_is_not_end_of_input() {
     let out = String::from_utf8_lossy(&stdout_bytes.lock().expect("stdout")).to_string();
     let err = String::from_utf8_lossy(&stderr_bytes.lock().expect("stderr")).to_string();
     // The complete line before the failure is still the program's to process.
-    assert!(out.contains("line: hello"), "the complete line should still be delivered: {out:?}");
+    assert!(
+        out.contains("line: hello"),
+        "the complete line should still be delivered: {out:?}"
+    );
     assert!(
         !out.contains("line: world"),
         "the truncated tail is not a line and must not be reported as one: {out:?}"
@@ -620,6 +663,12 @@ fn a_second_reader_takes_the_line_already_buffered() {
     )
     .expect("both readers should be satisfied by the one chunk");
     let out = String::from_utf8_lossy(&stdout_bytes.lock().expect("stdout")).to_string();
-    assert!(out.contains("first: alpha"), "first reader got the wrong line: {out:?}");
-    assert!(out.contains("second: beta"), "second reader got the wrong line: {out:?}");
+    assert!(
+        out.contains("first: alpha"),
+        "first reader got the wrong line: {out:?}"
+    );
+    assert!(
+        out.contains("second: beta"),
+        "second reader got the wrong line: {out:?}"
+    );
 }

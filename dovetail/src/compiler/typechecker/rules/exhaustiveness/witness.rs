@@ -23,10 +23,8 @@ pub(super) fn render(cx: &PatCx<'_>, w: &Witness, ty: &Type) -> String {
             Type::Enum(fqn, _) | Type::GenericEnum { fqn, .. } => fqn == list_fqn,
             _ => false,
         };
-        if is_list {
-            if let Some(rendered) = render_list(cx, w, ty) {
-                return rendered;
-            }
+        if is_list && let Some(rendered) = render_list(cx, w, ty) {
+            return rendered;
         }
     }
     render_plain(cx, w, ty)

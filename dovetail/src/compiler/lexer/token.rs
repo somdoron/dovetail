@@ -208,10 +208,7 @@ impl TokenKind {
     pub fn is_closing_delimiter(&self) -> bool {
         matches!(
             self,
-            TokenKind::RParen
-                | TokenKind::RBrace
-                | TokenKind::RBracket
-                | TokenKind::PipeRBracket
+            TokenKind::RParen | TokenKind::RBrace | TokenKind::RBracket | TokenKind::PipeRBracket
         )
     }
 }

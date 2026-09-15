@@ -30,9 +30,7 @@ pub fn test_code_lenses(typed_module: &TypedModule, file: &FilePath) -> Vec<Code
             command: Some(Command {
                 title: format!("Run All Tests ({})", file_tests.len()),
                 command: "dovetail.runTestFile".to_string(),
-                arguments: Some(vec![serde_json::Value::String(
-                    first.span.file.to_string(),
-                )]),
+                arguments: Some(vec![serde_json::Value::String(first.span.file.to_string())]),
             }),
             data: None,
         });

@@ -33,7 +33,10 @@ fn check_interface(trait_sig: &TraitSignature, diagnostics: &mut Diagnostics) {
     for method in &trait_sig.methods {
         // A vtable dispatches on a receiver; a method without `self` has
         // nothing to dispatch on.
-        let takes_self = method.params.first().is_some_and(|(name, _)| name == "self");
+        let takes_self = method
+            .params
+            .first()
+            .is_some_and(|(name, _)| name == "self");
         if !takes_self {
             diagnostics.error(
                 method.span.clone(),
@@ -82,7 +85,10 @@ fn check_interface(trait_sig: &TraitSignature, diagnostics: &mut Diagnostics) {
     }
 
     for property in &trait_sig.properties {
-        let takes_self = property.params.first().is_some_and(|(name, _)| name == "self");
+        let takes_self = property
+            .params
+            .first()
+            .is_some_and(|(name, _)| name == "self");
         if !takes_self {
             diagnostics.error(
                 property.span.clone(),

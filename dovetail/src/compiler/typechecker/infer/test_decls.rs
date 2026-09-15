@@ -18,31 +18,40 @@ impl Inference<'_> {
             match attr {
                 TestAttribute::Skip { reason, span } => {
                     if skip_reason.is_some() {
-                        self.diagnostics.error(span.clone(), "duplicate @skip attribute".to_string());
+                        self.diagnostics
+                            .error(span.clone(), "duplicate @skip attribute".to_string());
                     } else {
                         skip_reason = Some(reason.as_ref().map(|r| r.value.clone()));
                     }
                 }
                 TestAttribute::Panics { message, span } => {
                     if expected_panic.is_some() {
-                        self.diagnostics.error(span.clone(), "duplicate @panics attribute".to_string());
+                        self.diagnostics
+                            .error(span.clone(), "duplicate @panics attribute".to_string());
                     } else {
                         expected_panic = Some(message.as_ref().map(|m| m.value.clone()));
                     }
                 }
                 TestAttribute::Timeout { millis, span } => {
                     if timeout_ms.is_some() {
-                        self.diagnostics.error(span.clone(), "duplicate @timeout attribute".to_string());
+                        self.diagnostics
+                            .error(span.clone(), "duplicate @timeout attribute".to_string());
                     } else {
                         match millis.value.parse::<u64>() {
                             Ok(ms) if ms > 0 => {
                                 timeout_ms = Some(ms);
                             }
                             Ok(_) => {
-                                self.diagnostics.error(span.clone(), "@timeout value must be greater than 0".to_string());
+                                self.diagnostics.error(
+                                    span.clone(),
+                                    "@timeout value must be greater than 0".to_string(),
+                                );
                             }
                             Err(_) => {
-                                self.diagnostics.error(span.clone(), "@timeout value must be a positive integer".to_string());
+                                self.diagnostics.error(
+                                    span.clone(),
+                                    "@timeout value must be a positive integer".to_string(),
+                                );
                             }
                         }
                     }

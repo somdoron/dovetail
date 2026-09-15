@@ -135,13 +135,11 @@ fn collect_with_projection_evidence(
             break;
         }
     }
-    if !converged {
-        if let Some(file) = files.first() {
-            diagnostics.error(
-                file.package.span.clone(),
-                "associated-type collection did not converge",
-            );
-        }
+    if !converged && let Some(file) = files.first() {
+        diagnostics.error(
+            file.package.span.clone(),
+            "associated-type collection did not converge",
+        );
     }
 
     // Only the stable, strict pass contributes user diagnostics. Provisional

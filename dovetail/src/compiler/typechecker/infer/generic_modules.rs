@@ -8,8 +8,8 @@ use crate::typechecker::types::Type;
 
 use super::function_expressions::resolve_intrinsic_kind;
 use super::generic_functions::MethodKind;
-use super::type_param_substitution::TypeParamSubstitution;
 use super::generics::apply_substitution;
+use super::type_param_substitution::TypeParamSubstitution;
 use super::{Inference, ResolvedFunction};
 
 impl Inference<'_> {
@@ -41,23 +41,21 @@ impl Inference<'_> {
         let Some(type_fqn) = receiver_ty.try_to_fqn() else {
             return (vec![], false);
         };
-        let (defs, module_trait_bounds): (Vec<GenericModuleMemberDef>, _) = match self
-            .registry
-            .lookup_module(&type_fqn)
-        {
-            Some(info) => (
-                info.generic_members
-                    .lookup_visible(method_name, &self.package_path, &self.current_file)
-                    .into_iter()
-                    .cloned()
-                    .collect(),
-                info.trait_bounds.clone(),
-            ),
-            None => return (vec![], false),
-        };
-        let has_instance_defs = defs.iter().any(|d| {
-            !d.params.is_empty() && d.params[0].0 == "self"
-        });
+        let (defs, module_trait_bounds): (Vec<GenericModuleMemberDef>, _) =
+            match self.registry.lookup_module(&type_fqn) {
+                Some(info) => (
+                    info.generic_members
+                        .lookup_visible(method_name, &self.package_path, &self.current_file)
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    info.trait_bounds.clone(),
+                ),
+                None => return (vec![], false),
+            };
+        let has_instance_defs = defs
+            .iter()
+            .any(|d| !d.params.is_empty() && d.params[0].0 == "self");
 
         let mut results = Vec::new();
         let mut unsatisfied_bounds: Vec<String> = Vec::new();
@@ -118,7 +116,8 @@ impl Inference<'_> {
                             Some(a) => a,
                             None => continue,
                         };
-                        let method_args = match self.resolve_type_args(explicit_method_type_params) {
+                        let method_args = match self.resolve_type_args(explicit_method_type_params)
+                        {
                             Some(a) => a,
                             None => continue,
                         };
@@ -154,10 +153,8 @@ impl Inference<'_> {
 
             // If the method is intrinsic, resolve to IntrinsicCall directly
             if def.is_intrinsic {
-                let substitution =
-                    TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
-                let concrete_return =
-                    apply_substitution(&substitution, &def.return_type);
+                let substitution = TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
+                let concrete_return = apply_substitution(&substitution, &def.return_type);
                 if let Some(intrinsic) =
                     resolve_intrinsic_kind(&type_fqn, method_name, &concrete_return)
                 {
@@ -208,8 +205,12 @@ impl Inference<'_> {
                 symbol: SymbolName(format!("{}.{}", type_fqn.symbol, method_name)),
             };
 
-            let (mangled, return_type) =
-                self.resolve_generic_function_template(&effective_fqn, &generic_def, &type_args, MethodKind::ModuleFunction);
+            let (mangled, return_type) = self.resolve_generic_function_template(
+                &effective_fqn,
+                &generic_def,
+                &type_args,
+                MethodKind::ModuleFunction,
+            );
             results.push(ResolvedFunction::Regular {
                 mangled_name: mangled,
                 return_type,
@@ -244,20 +245,18 @@ impl Inference<'_> {
         let Some(type_fqn) = receiver_ty.try_to_fqn() else {
             return vec![];
         };
-        let (defs, module_trait_bounds): (Vec<GenericModuleMemberDef>, _) = match self
-            .registry
-            .lookup_module(&type_fqn)
-        {
-            Some(info) => (
-                info.generic_members
-                    .lookup_visible(prop_name, &self.package_path, &self.current_file)
-                    .into_iter()
-                    .cloned()
-                    .collect(),
-                info.trait_bounds.clone(),
-            ),
-            None => return vec![],
-        };
+        let (defs, module_trait_bounds): (Vec<GenericModuleMemberDef>, _) =
+            match self.registry.lookup_module(&type_fqn) {
+                Some(info) => (
+                    info.generic_members
+                        .lookup_visible(prop_name, &self.package_path, &self.current_file)
+                        .into_iter()
+                        .cloned()
+                        .collect(),
+                    info.trait_bounds.clone(),
+                ),
+                None => return vec![],
+            };
 
         let mut results = Vec::new();
         for def in defs {
@@ -329,10 +328,8 @@ impl Inference<'_> {
 
             // If the property is intrinsic, resolve to IntrinsicCall directly
             if def.is_intrinsic {
-                let substitution =
-                    TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
-                let concrete_return =
-                    apply_substitution(&substitution, &def.return_type);
+                let substitution = TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
+                let concrete_return = apply_substitution(&substitution, &def.return_type);
                 if let Some(intrinsic) =
                     resolve_intrinsic_kind(&type_fqn, prop_name, &concrete_return)
                 {
@@ -362,8 +359,12 @@ impl Inference<'_> {
                 symbol: SymbolName(format!("{}.{}", type_fqn.symbol, prop_name)),
             };
 
-            let (mangled, return_type) =
-                self.resolve_generic_function_template(&effective_fqn, &generic_def, &type_args, MethodKind::ModuleFunction);
+            let (mangled, return_type) = self.resolve_generic_function_template(
+                &effective_fqn,
+                &generic_def,
+                &type_args,
+                MethodKind::ModuleFunction,
+            );
             results.push(ResolvedFunction::Regular {
                 mangled_name: mangled,
                 return_type,
@@ -433,7 +434,8 @@ impl Inference<'_> {
                 continue;
             }
             let mut all_unified = true;
-            let has_explicit = !explicit_type_args.is_empty() || !explicit_method_type_params.is_empty();
+            let has_explicit =
+                !explicit_type_args.is_empty() || !explicit_method_type_params.is_empty();
             for ((_, param_ty), arg_ty) in def.params.iter().zip(arg_types.iter()) {
                 let substituted = apply_substitution(&substitution, param_ty);
                 if !substitution.unify(param_ty, arg_ty)
@@ -500,7 +502,8 @@ impl Inference<'_> {
                                 }
                             }
                         };
-                        let method_args = match self.resolve_type_args(explicit_method_type_params) {
+                        let method_args = match self.resolve_type_args(explicit_method_type_params)
+                        {
                             Some(a) => a,
                             None => continue,
                         };
@@ -571,10 +574,8 @@ impl Inference<'_> {
 
             // If the method is intrinsic, resolve to IntrinsicCall directly
             if def.is_intrinsic {
-                let substitution =
-                    TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
-                let concrete_return =
-                    apply_substitution(&substitution, &def.return_type);
+                let substitution = TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
+                let concrete_return = apply_substitution(&substitution, &def.return_type);
                 if let Some(intrinsic) =
                     resolve_intrinsic_kind(&module_info.fqn, method_name, &concrete_return)
                 {
@@ -618,8 +619,12 @@ impl Inference<'_> {
                 symbol: SymbolName(format!("{}.{}", module_info.fqn.symbol, method_name)),
             };
 
-            let (mangled, return_type) =
-                self.resolve_generic_function_template(&effective_fqn, &generic_def, &type_args, MethodKind::ModuleFunction);
+            let (mangled, return_type) = self.resolve_generic_function_template(
+                &effective_fqn,
+                &generic_def,
+                &type_args,
+                MethodKind::ModuleFunction,
+            );
             results.push(ResolvedFunction::Regular {
                 mangled_name: mangled,
                 return_type,
@@ -661,7 +666,8 @@ impl Inference<'_> {
                 return None;
             }
             self.resolve_type_args(explicit_type_args)?
-        } else if let Some(ref expected) = self.expected_type {
+        } else {
+            let expected = self.expected_type.as_ref()?;
             // Bidirectional: unify def.ty against expected to infer type args
             let mut substitution = TypeParamSubstitution::new();
             if substitution.unify(&def.ty, expected) {
@@ -669,8 +675,6 @@ impl Inference<'_> {
             } else {
                 return None;
             }
-        } else {
-            return None;
         };
 
         self.instantiate_and_resolve_generic_global(module_info, global_name, &def, type_args)
@@ -703,7 +707,6 @@ impl Inference<'_> {
 
         Some((concrete_mangled, concrete_ty, def.mutable, vec![]))
     }
-
 }
 
 /// Distinct messages, in first-seen order: one call can produce the same

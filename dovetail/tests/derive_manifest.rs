@@ -178,9 +178,10 @@ script = "macros/Tag.rhai"
     let result = dovetail::manifest::load_manifest(root);
     let errors = result.expect_err("expected resolve failure");
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, dovetail::manifest::ManifestError::MacroScriptNotFound { .. })),
+        errors.iter().any(|e| matches!(
+            e,
+            dovetail::manifest::ManifestError::MacroScriptNotFound { .. }
+        )),
         "expected MacroScriptNotFound, got: {:?}",
         errors
     );
@@ -218,9 +219,10 @@ script = "macros/Tag.rhai"
 
     let errors = dovetail::manifest::load_manifest(root).expect_err("expected unsupported-kind");
     assert!(
-        errors
-            .iter()
-            .any(|e| matches!(e, dovetail::manifest::ManifestError::UnsupportedMacroKind { .. })),
+        errors.iter().any(|e| matches!(
+            e,
+            dovetail::manifest::ManifestError::UnsupportedMacroKind { .. }
+        )),
         "expected UnsupportedMacroKind, got: {:?}",
         errors
     );

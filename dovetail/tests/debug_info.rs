@@ -99,10 +99,7 @@ function main(): Unit = panic "test"
         !err.contains("panic_with_message"),
         "should filter panic_with_message: {err}"
     );
-    assert!(
-        !err.contains("!run"),
-        "should filter run frame: {err}"
-    );
+    assert!(!err.contains("!run"), "should filter run frame: {err}");
     // Should contain user function
     assert!(
         err.contains("a.main"),
@@ -129,12 +126,6 @@ function main(): Unit = fail()
         "should contain Backtrace header: {err}"
     );
     // Should contain both user frames
-    assert!(
-        err.contains("a.fail"),
-        "should contain a.fail: {err}"
-    );
-    assert!(
-        err.contains("a.main"),
-        "should contain a.main: {err}"
-    );
+    assert!(err.contains("a.fail"), "should contain a.fail: {err}");
+    assert!(err.contains("a.main"), "should contain a.main: {err}");
 }

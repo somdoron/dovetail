@@ -24,7 +24,11 @@ pub(crate) struct TypeParamSubstitution {
 impl TypeParamSubstitution {
     /// Empty substitution — used as starting point for unification.
     pub fn new() -> Self {
-        Self { bindings: BTreeMap::new(), self_type: None, extension_inference: ExtensionInference::Strict }
+        Self {
+            bindings: BTreeMap::new(),
+            self_type: None,
+            extension_inference: ExtensionInference::Strict,
+        }
     }
 
     /// Build from parallel type_params and type_args slices.
@@ -77,7 +81,9 @@ impl TypeParamSubstitution {
             .iter()
             .zip(variances.iter())
             .map(|(tp, variance)| match self.bindings.get(tp) {
-                Some(ty) if !matches!(ty, Type::TypeVariable(..) | Type::GenericParam(..)) => Some(ty.clone()),
+                Some(ty) if !matches!(ty, Type::TypeVariable(..) | Type::GenericParam(..)) => {
+                    Some(ty.clone())
+                }
                 _ => match variance {
                     Variance::Covariant => Some(Type::Never),
                     Variance::Contravariant => Some(Type::Any),
@@ -118,8 +124,16 @@ impl TypeParamSubstitution {
             return true;
         }
         match param_ty {
-            Type::GenericRecord { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericRecord { fqn: arg_fqn, type_args: arg_type_args, .. } => {
+            Type::GenericRecord {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericRecord {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } => {
                     if param_fqn != arg_fqn || param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -130,8 +144,16 @@ impl TypeParamSubstitution {
                 }
                 _ => false,
             },
-            Type::GenericEnum { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericEnum { fqn: arg_fqn, type_args: arg_type_args, .. } => {
+            Type::GenericEnum {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericEnum {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } => {
                     if param_fqn != arg_fqn || param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -142,8 +164,16 @@ impl TypeParamSubstitution {
                 }
                 _ => false,
             },
-            Type::GenericClass { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericClass { fqn: arg_fqn, type_args: arg_type_args, .. } => {
+            Type::GenericClass {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericClass {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } => {
                     if param_fqn != arg_fqn || param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -154,10 +184,16 @@ impl TypeParamSubstitution {
                 }
                 _ => false,
             },
-            Type::GenericNewtype { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericNewtype { fqn: arg_fqn, type_args: arg_type_args, .. }
-                    if param_fqn == arg_fqn && param_type_args.len() == arg_type_args.len() =>
-                {
+            Type::GenericNewtype {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericNewtype {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } if param_fqn == arg_fqn && param_type_args.len() == arg_type_args.len() => {
                     param_type_args
                         .iter()
                         .zip(arg_type_args.iter())
@@ -233,10 +269,10 @@ impl TypeParamSubstitution {
 
     pub fn unify(&mut self, param_ty: &Type, arg_ty: &Type) -> bool {
         if let Type::TupleExtend(left, right) = param_ty {
-            if self.extension_inference != ExtensionInference::CollectIndependent {
-                if let Some((prefix, last)) = param_ty.split_tuple_extension(arg_ty) {
-                    return self.unify(left, &prefix) && self.unify(right, &last);
-                }
+            if self.extension_inference != ExtensionInference::CollectIndependent
+                && let Some((prefix, last)) = param_ty.split_tuple_extension(arg_ty)
+            {
+                return self.unify(left, &prefix) && self.unify(right, &last);
             }
             if self.extension_inference == ExtensionInference::CollectIndependent {
                 return true;
@@ -276,7 +312,9 @@ impl TypeParamSubstitution {
             let normalized = super::generics::apply_substitution(self, param_ty);
             return if matches!(normalized, Type::AssociatedProjection(_)) {
                 crate::typechecker::subtyping::identical(&normalized, arg_ty)
-            } else { self.unify(&normalized, arg_ty) };
+            } else {
+                self.unify(&normalized, arg_ty)
+            };
         }
         match param_ty {
             Type::TypeVariable(name, _) => {
@@ -288,8 +326,16 @@ impl TypeParamSubstitution {
                 }
             }
             // Generic record types: match by FQN and recursively unify type args
-            Type::GenericRecord { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericRecord { fqn: arg_fqn, type_args: arg_type_args, .. } => {
+            Type::GenericRecord {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericRecord {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } => {
                     if param_fqn != arg_fqn || param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -301,8 +347,16 @@ impl TypeParamSubstitution {
                 _ => *arg_ty == Type::Never,
             },
             // Generic enum types: match by FQN and recursively unify type args
-            Type::GenericEnum { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericEnum { fqn: arg_fqn, type_args: arg_type_args, .. } => {
+            Type::GenericEnum {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericEnum {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } => {
                     if param_fqn != arg_fqn || param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -314,8 +368,16 @@ impl TypeParamSubstitution {
                 _ => *arg_ty == Type::Never,
             },
             // Generic class types: match by FQN and recursively unify type args
-            Type::GenericClass { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericClass { fqn: arg_fqn, type_args: arg_type_args, .. } => {
+            Type::GenericClass {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericClass {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } => {
                     if param_fqn != arg_fqn || param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -327,9 +389,16 @@ impl TypeParamSubstitution {
                 _ => *arg_ty == Type::Never,
             },
             // Generic newtype types: match by FQN and recursively unify type args
-            Type::GenericNewtype { fqn: param_fqn, type_args: param_type_args, .. } => match arg_ty {
-                Type::GenericNewtype { fqn: arg_fqn, type_args: arg_type_args, .. }
-                    if param_fqn == arg_fqn => {
+            Type::GenericNewtype {
+                fqn: param_fqn,
+                type_args: param_type_args,
+                ..
+            } => match arg_ty {
+                Type::GenericNewtype {
+                    fqn: arg_fqn,
+                    type_args: arg_type_args,
+                    ..
+                } if param_fqn == arg_fqn => {
                     if param_type_args.len() != arg_type_args.len() {
                         return false;
                     }
@@ -356,7 +425,10 @@ impl TypeParamSubstitution {
             Type::Tuple(param_elems, _) => match arg_ty {
                 Type::Tuple(arg_elems, _) => {
                     param_elems.len() == arg_elems.len()
-                        && param_elems.iter().zip(arg_elems.iter()).all(|(p, a)| self.unify(p, a))
+                        && param_elems
+                            .iter()
+                            .zip(arg_elems.iter())
+                            .all(|(p, a)| self.unify(p, a))
                 }
                 _ => *arg_ty == Type::Never,
             },
@@ -364,15 +436,23 @@ impl TypeParamSubstitution {
             Type::Function(param_params, param_ret) => match arg_ty {
                 Type::Function(arg_params, arg_ret) => {
                     param_params.len() == arg_params.len()
-                        && param_params.iter().zip(arg_params.iter()).all(|(p, a)| self.unify(p, a))
+                        && param_params
+                            .iter()
+                            .zip(arg_params.iter())
+                            .all(|(p, a)| self.unify(p, a))
                         && self.unify(param_ret, arg_ret)
                 }
                 _ => *arg_ty == Type::Never,
             },
             // Interface object types: match component-wise (same sorted set of
             // FQNs) and recursively unify each component's type args.
-            Type::InterfaceObject { traits: param_traits, .. } => match arg_ty {
-                Type::InterfaceObject { traits: arg_traits, .. } => {
+            Type::InterfaceObject {
+                traits: param_traits,
+                ..
+            } => match arg_ty {
+                Type::InterfaceObject {
+                    traits: arg_traits, ..
+                } => {
                     if param_traits.len() != arg_traits.len() {
                         return false;
                     }

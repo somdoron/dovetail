@@ -4,8 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::common::span::{FilePath, Span};
 use crate::common::types::{
-    Fqn, MangledName, PackagePath, SymbolName, TypeParamName, Variance,
-    Visibility,
+    Fqn, MangledName, PackagePath, SymbolName, TypeParamName, Variance, Visibility,
 };
 use crate::parser::ast::Expr;
 
@@ -296,7 +295,6 @@ pub struct ClassFieldInfo {
     pub mutable: bool,
 }
 
-
 /// A resolved trait method signature (types are resolved, not AST TypeExpr).
 #[derive(Debug, Clone)]
 pub struct TraitMethodSig {
@@ -383,20 +381,41 @@ pub struct TraitSignature {
 impl TraitSignature {
     pub(crate) fn method_dispatch_name(&self, method: &TraitMethodSig) -> SymbolName {
         if self.method_dispatch_names.len() == self.methods.len() {
-            let index = self.methods.iter().position(|candidate| std::ptr::eq(candidate, method))
-                .or_else(|| self.methods.iter().position(|candidate|
-                    candidate.name == method.name && candidate.origin == method.origin
-                        && same_method_parameters(candidate, method)));
-            if let Some(index) = index { return self.method_dispatch_names[index].clone(); }
+            let index = self
+                .methods
+                .iter()
+                .position(|candidate| std::ptr::eq(candidate, method))
+                .or_else(|| {
+                    self.methods.iter().position(|candidate| {
+                        candidate.name == method.name
+                            && candidate.origin == method.origin
+                            && same_method_parameters(candidate, method)
+                    })
+                });
+            if let Some(index) = index {
+                return self.method_dispatch_names[index].clone();
+            }
         }
         let mut signatures: Vec<&TraitMethodSig> = Vec::new();
-        for candidate in self.methods.iter().filter(|candidate| candidate.name == method.name) {
-            if !signatures.iter().any(|previous| same_method_parameters(previous, candidate)) {
+        for candidate in self
+            .methods
+            .iter()
+            .filter(|candidate| candidate.name == method.name)
+        {
+            if !signatures
+                .iter()
+                .any(|previous| same_method_parameters(previous, candidate))
+            {
                 signatures.push(candidate);
             }
         }
-        if signatures.len() == 1 { return SymbolName(method.name.clone()); }
-        let index = signatures.iter().position(|candidate| same_method_parameters(candidate, method)).unwrap();
+        if signatures.len() == 1 {
+            return SymbolName(method.name.clone());
+        }
+        let index = signatures
+            .iter()
+            .position(|candidate| same_method_parameters(candidate, method))
+            .unwrap();
         SymbolName(format!("{}$overload{}", method.name, index))
     }
 }
@@ -407,20 +426,38 @@ pub(crate) fn instantiate_trait_method(
     method: &TraitMethodSig,
     enclosing: &BTreeMap<TypeParamName, Type>,
 ) -> TraitMethodSig {
-    let parameters: Vec<_> = method.type_params.iter().enumerate()
-        .map(|(index, _)| TypeParamName(format!("$traitMethod${index}"))).collect();
+    let parameters: Vec<_> = method
+        .type_params
+        .iter()
+        .enumerate()
+        .map(|(index, _)| TypeParamName(format!("$traitMethod${index}")))
+        .collect();
     let mut substitution = enclosing.clone();
-    substitution.extend(method.type_params.iter().cloned().zip(parameters.iter()
-        .map(|name| Type::TypeVariable(name.clone(), vec![]))));
-    let mut instantiated = method.clone();
-    instantiated.params = method.params.iter().map(|(name, ty)| (
-        name.clone(), super::collect::substitute_trait_type_params(ty, &substitution),
-    )).collect();
-    instantiated.return_type = super::collect::substitute_trait_type_params(
-        &method.return_type, &substitution,
+    substitution.extend(
+        method.type_params.iter().cloned().zip(
+            parameters
+                .iter()
+                .map(|name| Type::TypeVariable(name.clone(), vec![])),
+        ),
     );
+    let mut instantiated = method.clone();
+    instantiated.params = method
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            (
+                name.clone(),
+                super::collect::substitute_trait_type_params(ty, &substitution),
+            )
+        })
+        .collect();
+    instantiated.return_type =
+        super::collect::substitute_trait_type_params(&method.return_type, &substitution);
     instantiated.trait_bounds = super::collect::rename_method_bounds(
-        &method.trait_bounds, &method.type_params, &parameters, enclosing,
+        &method.trait_bounds,
+        &method.type_params,
+        &parameters,
+        enclosing,
     );
     instantiated.type_params = parameters;
     instantiated
@@ -429,27 +466,44 @@ pub(crate) fn instantiate_trait_method(
 /// Compare method-local parameters independently of their source spelling.
 /// Trait parameters retain their identity; only the method's binders are renamed.
 pub(crate) fn canonical_method_signature(method: &TraitMethodSig) -> (Vec<(String, Type)>, Type) {
-    let substitution: BTreeMap<_, _> = method.type_params.iter().enumerate()
-        .map(|(index, name)| (name.clone(), Type::TypeVariable(
-            TypeParamName(format!("$traitMethod${index}")), vec![],
-        )))
+    let substitution: BTreeMap<_, _> = method
+        .type_params
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            (
+                name.clone(),
+                Type::TypeVariable(TypeParamName(format!("$traitMethod${index}")), vec![]),
+            )
+        })
         .collect();
-    let parameters = method.params.iter().map(|(name, ty)| (
-        name.clone(), super::collect::substitute_trait_type_params(ty, &substitution),
-    )).collect();
+    let parameters = method
+        .params
+        .iter()
+        .map(|(name, ty)| {
+            (
+                name.clone(),
+                super::collect::substitute_trait_type_params(ty, &substitution),
+            )
+        })
+        .collect();
     let result = super::collect::substitute_trait_type_params(&method.return_type, &substitution);
     (parameters, result)
 }
 
 pub(crate) fn same_method_parameters(left: &TraitMethodSig, right: &TraitMethodSig) -> bool {
-    if left.type_params.len() != right.type_params.len() || left.params.len() != right.params.len() {
+    if left.type_params.len() != right.type_params.len() || left.params.len() != right.params.len()
+    {
         return false;
     }
     let (left, _) = canonical_method_signature(left);
     let (right, _) = canonical_method_signature(right);
-    left.iter().zip(&right).all(|((left_name, left), (right_name, right))| {
-        (left_name == "self") == (right_name == "self") && super::subtyping::identical(left, right)
-    })
+    left.iter()
+        .zip(&right)
+        .all(|((left_name, left), (right_name, right))| {
+            (left_name == "self") == (right_name == "self")
+                && super::subtyping::identical(left, right)
+        })
 }
 
 /// Implement block signature — all methods stored with raw AST bodies.
@@ -715,6 +769,9 @@ impl Default for Registry {
     }
 }
 
+/// An implementation block and optional inherited trait instantiation.
+type ImplProvider<'a> = (&'a ImplBlockSignature, Option<(Fqn, Vec<Type>)>);
+
 impl Registry {
     pub fn new() -> Self {
         Self {
@@ -821,12 +878,17 @@ impl Registry {
         symbol_file: &FilePath,
         caller_file: &FilePath,
     ) -> bool {
-        if is_accessible(visibility, symbol_package, caller_package, symbol_file, caller_file) {
+        if is_accessible(
+            visibility,
+            symbol_package,
+            caller_package,
+            symbol_file,
+            caller_file,
+        ) {
             return true;
         }
         // Test packages can access internal (but not private) symbols from granted packages
-        visibility == Visibility::Internal
-            && self.test_internal_access.contains(symbol_package)
+        visibility == Visibility::Internal && self.test_internal_access.contains(symbol_package)
     }
 
     pub fn register_type(&mut self, fqn: Fqn, ty: Type) {
@@ -1242,11 +1304,20 @@ impl Registry {
         sig: FunctionSignature,
     ) {
         if let Some(class_sig) = self.class_types.get_mut(class_fqn) {
-            class_sig.instance_methods.entry(name).or_default().push(sig);
+            class_sig
+                .instance_methods
+                .entry(name)
+                .or_default()
+                .push(sig);
         }
     }
 
-    pub fn add_class_trait_impl(&mut self, class_fqn: &Fqn, trait_fqn: Fqn, trait_type_args: Vec<Type>) {
+    pub fn add_class_trait_impl(
+        &mut self,
+        class_fqn: &Fqn,
+        trait_fqn: Fqn,
+        trait_type_args: Vec<Type>,
+    ) {
         if let Some(sig) = self.class_types.get_mut(class_fqn) {
             sig.trait_impls.push((trait_fqn, trait_type_args));
         }
@@ -1259,9 +1330,9 @@ impl Registry {
         fqn: &Fqn,
         caller_package: &PackagePath,
     ) -> Option<&ClassTypeSignature> {
-        self.class_types.get(fqn).filter(|sig| {
-            self.is_visible(sig.visibility, &fqn.package, caller_package)
-        })
+        self.class_types
+            .get(fqn)
+            .filter(|sig| self.is_visible(sig.visibility, &fqn.package, caller_package))
     }
 
     /// Check if `child` is a subtype of `parent` (walks the parent_class chain).
@@ -1271,7 +1342,11 @@ impl Registry {
             if &current == parent {
                 return true;
             }
-            match self.class_types.get(&current).and_then(|sig| sig.parent_class.as_ref()) {
+            match self
+                .class_types
+                .get(&current)
+                .and_then(|sig| sig.parent_class.as_ref())
+            {
                 Some(parent_fqn) => current = parent_fqn.clone(),
                 None => return false,
             }
@@ -1288,58 +1363,58 @@ impl Registry {
     ) -> Option<&Type> {
         let ty = self.types.get(fqn)?;
         // If this is a record type, check visibility
-        if let Some(info) = self.record_types.get(fqn) {
-            if !self.is_visible_with_file(
+        if let Some(info) = self.record_types.get(fqn)
+            && !self.is_visible_with_file(
                 info.visibility,
                 &fqn.package,
                 caller_package,
                 &info.source_file,
                 caller_file,
-            ) {
-                return None;
-            }
+            )
+        {
+            return None;
         }
         // If this is an enum type, check visibility
-        if let Some(info) = self.enum_types.get(fqn) {
-            if !self.is_visible_with_file(
+        if let Some(info) = self.enum_types.get(fqn)
+            && !self.is_visible_with_file(
                 info.visibility,
                 &fqn.package,
                 caller_package,
                 &info.source_file,
                 caller_file,
-            ) {
-                return None;
-            }
+            )
+        {
+            return None;
         }
         // If this is a newtype, check visibility
-        if let Some(sig) = self.newtype_types.get(fqn) {
-            if !self.is_visible_with_file(
+        if let Some(sig) = self.newtype_types.get(fqn)
+            && !self.is_visible_with_file(
                 sig.visibility,
                 &fqn.package,
                 caller_package,
                 &sig.source_file,
                 caller_file,
-            ) {
-                return None;
-            }
+            )
+        {
+            return None;
         }
         // If this is a type alias, check visibility
-        if let Some(sig) = self.type_alias_types.get(fqn) {
-            if !self.is_visible_with_file(
+        if let Some(sig) = self.type_alias_types.get(fqn)
+            && !self.is_visible_with_file(
                 sig.visibility,
                 &fqn.package,
                 caller_package,
                 &sig.source_file,
                 caller_file,
-            ) {
-                return None;
-            }
+            )
+        {
+            return None;
         }
         // If this is a class type, check visibility
-        if let Some(sig) = self.class_types.get(fqn) {
-            if !self.is_visible(sig.visibility, &fqn.package, caller_package) {
-                return None;
-            }
+        if let Some(sig) = self.class_types.get(fqn)
+            && !self.is_visible(sig.visibility, &fqn.package, caller_package)
+        {
+            return None;
         }
         Some(ty)
     }
@@ -1351,27 +1426,57 @@ impl Registry {
 
     /// Translate a selected inherited declaration into its provider's member symbol.
     pub(crate) fn route_trait_method(
-        &self, provider: &Fqn, provider_parameters: &[Type], requested: &Fqn,
-        requested_parameters: &[Type], member: &SymbolName,
+        &self,
+        provider: &Fqn,
+        provider_parameters: &[Type],
+        requested: &Fqn,
+        requested_parameters: &[Type],
+        member: &SymbolName,
     ) -> SymbolName {
         use super::infer::generics::apply_substitution;
         use super::infer::type_param_substitution::TypeParamSubstitution;
-        let Some(source) = self.get_trait(requested) else { return member.clone() };
-        let Some(source_method) = source.methods.iter().find(|method| source.method_dispatch_name(method) == *member) else { return member.clone() };
-        let Some(target) = self.get_trait(provider) else { return member.clone() };
+        let Some(source) = self.get_trait(requested) else {
+            return member.clone();
+        };
+        let Some(source_method) = source
+            .methods
+            .iter()
+            .find(|method| source.method_dispatch_name(method) == *member)
+        else {
+            return member.clone();
+        };
+        let Some(target) = self.get_trait(provider) else {
+            return member.clone();
+        };
         let identity = |signature: &TraitSignature, method: &TraitMethodSig, arguments: &[Type]| {
             let substitution = TypeParamSubstitution::from_pairs(&signature.type_params, arguments);
             match &method.origin {
-                Some((origin, parameters)) => (origin.clone(), parameters.iter().map(|ty| apply_substitution(&substitution, ty)).collect::<Vec<_>>()),
+                Some((origin, parameters)) => (
+                    origin.clone(),
+                    parameters
+                        .iter()
+                        .map(|ty| apply_substitution(&substitution, ty))
+                        .collect::<Vec<_>>(),
+                ),
                 None => (signature.fqn.clone(), arguments.to_vec()),
             }
         };
         let (origin, parameters) = identity(source, source_method, requested_parameters);
-        target.methods.iter().find(|method| {
-            let (candidate, arguments) = identity(target, method, provider_parameters);
-            method.name == source_method.name && candidate == origin && arguments.len() == parameters.len()
-                && arguments.iter().zip(&parameters).all(|(a, b)| super::subtyping::identical(a, b))
-        }).map(|method| target.method_dispatch_name(method)).unwrap_or_else(|| member.clone())
+        target
+            .methods
+            .iter()
+            .find(|method| {
+                let (candidate, arguments) = identity(target, method, provider_parameters);
+                method.name == source_method.name
+                    && candidate == origin
+                    && arguments.len() == parameters.len()
+                    && arguments
+                        .iter()
+                        .zip(&parameters)
+                        .all(|(a, b)| super::subtyping::identical(a, b))
+            })
+            .map(|method| target.method_dispatch_name(method))
+            .unwrap_or_else(|| member.clone())
     }
 
     /// Find implement blocks for a given type and method name.
@@ -1395,14 +1500,10 @@ impl Registry {
     }
 
     /// Find the implement block for a (trait, type) pair.
-    pub fn find_impl_block(
-        &self,
-        trait_fqn: &Fqn,
-        type_fqn: &Fqn,
-    ) -> Option<&ImplBlockSignature> {
-        self.implement_blocks
-            .iter()
-            .find(|b| b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn))
+    pub fn find_impl_block(&self, trait_fqn: &Fqn, type_fqn: &Fqn) -> Option<&ImplBlockSignature> {
+        self.implement_blocks.iter().find(|b| {
+            b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn)
+        })
     }
 
     /// Get all implement blocks for a given type.
@@ -1458,7 +1559,12 @@ impl Registry {
     /// Register a trait definition. Returns `false` if a trait with the same FQN already exists.
     /// Pre-register a trait name so that forward references resolve.
     /// The full signature is filled in later by `register_trait`.
-    pub fn pre_register_trait(&mut self, fqn: Fqn, type_params: Vec<TypeParamName>, is_interface: bool) {
+    pub fn pre_register_trait(
+        &mut self,
+        fqn: Fqn,
+        type_params: Vec<TypeParamName>,
+        is_interface: bool,
+    ) {
         self.traits.entry(fqn.clone()).or_insert_with(|| {
             let span = Span::point("".into(), 1, 1);
             TraitSignature {
@@ -1481,15 +1587,14 @@ impl Registry {
     pub fn register_trait(&mut self, fqn: Fqn, sig: TraitSignature) -> bool {
         // Allow overwriting a pre-registered placeholder (empty methods/properties/associated_types),
         // but reject true duplicates (already has methods, properties, or associated types).
-        if let Some(existing) = self.traits.get(&fqn) {
-            if !existing.methods.is_empty()
+        if let Some(existing) = self.traits.get(&fqn)
+            && (!existing.methods.is_empty()
                 || !existing.properties.is_empty()
                 || !existing.associated_types.is_empty()
                 // A marker trait with only supers is a real registration too.
-                || !existing.supers.is_empty()
-            {
-                return false;
-            }
+                || !existing.supers.is_empty())
+        {
+            return false;
         }
         self.traits.insert(fqn, sig);
         true
@@ -1503,14 +1608,10 @@ impl Registry {
 
     /// Look up a trait by FQN.
     /// Traits not visible from the caller's package are hidden.
-    pub fn lookup_trait(
-        &self,
-        fqn: &Fqn,
-        caller_package: &PackagePath,
-    ) -> Option<&TraitSignature> {
-        self.traits.get(fqn).filter(|sig| {
-            self.is_visible(sig.visibility, &fqn.package, caller_package)
-        })
+    pub fn lookup_trait(&self, fqn: &Fqn, caller_package: &PackagePath) -> Option<&TraitSignature> {
+        self.traits
+            .get(fqn)
+            .filter(|sig| self.is_visible(sig.visibility, &fqn.package, caller_package))
     }
 
     /// Look up a trait by bare name across all packages.
@@ -1520,8 +1621,7 @@ impl Registry {
         caller_package: &PackagePath,
     ) -> Option<(&Fqn, &TraitSignature)> {
         self.traits.iter().find(|(fqn, sig)| {
-            fqn.symbol.0 == name
-                && self.is_visible(sig.visibility, &fqn.package, caller_package)
+            fqn.symbol.0 == name && self.is_visible(sig.visibility, &fqn.package, caller_package)
         })
     }
 
@@ -1535,16 +1635,13 @@ impl Registry {
         owner_sig: &'a TraitSignature,
         m: &'a TraitMethodSig,
     ) -> (&'a TraitSignature, &'a TraitMethodSig) {
-        if let Some((origin_fqn, _)) = &m.origin {
-            if let Some(origin_sig) = self.traits.get(origin_fqn) {
-                if let Some(raw) = origin_sig.methods.iter().find(|om| {
-                    om.origin.is_none()
-                        && om.name == m.name
-                        && om.params.len() == m.params.len()
-                }) {
-                    return (origin_sig, raw);
-                }
-            }
+        if let Some((origin_fqn, _)) = &m.origin
+            && let Some(origin_sig) = self.traits.get(origin_fqn)
+            && let Some(raw) = origin_sig.methods.iter().find(|om| {
+                om.origin.is_none() && om.name == m.name && om.params.len() == m.params.len()
+            })
+        {
+            return (origin_sig, raw);
         }
         (owner_sig, m)
     }
@@ -1555,16 +1652,14 @@ impl Registry {
         owner_sig: &'a TraitSignature,
         p: &'a TraitPropertySig,
     ) -> (&'a TraitSignature, &'a TraitPropertySig) {
-        if let Some((origin_fqn, _)) = &p.origin {
-            if let Some(origin_sig) = self.traits.get(origin_fqn) {
-                if let Some(raw) = origin_sig
-                    .properties
-                    .iter()
-                    .find(|op| op.origin.is_none() && op.name == p.name)
-                {
-                    return (origin_sig, raw);
-                }
-            }
+        if let Some((origin_fqn, _)) = &p.origin
+            && let Some(origin_sig) = self.traits.get(origin_fqn)
+            && let Some(raw) = origin_sig
+                .properties
+                .iter()
+                .find(|op| op.origin.is_none() && op.name == p.name)
+        {
+            return (origin_sig, raw);
         }
         (owner_sig, p)
     }
@@ -1604,18 +1699,21 @@ impl Registry {
         &self,
         trait_fqn: &Fqn,
         type_fqn: &Fqn,
-    ) -> Vec<(&ImplBlockSignature, Option<(Fqn, Vec<Type>)>)> {
-        let mut out: Vec<(&ImplBlockSignature, Option<(Fqn, Vec<Type>)>)> = self
+    ) -> Vec<ImplProvider<'_>> {
+        let mut out: Vec<ImplProvider<'_>> = self
             .implement_blocks
             .iter()
-            .filter(|b| b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn))
+            .filter(|b| {
+                b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn)
+            })
             .map(|b| (b, None))
             .collect();
         for b in &self.implement_blocks {
             if !impl_receiver_family_matches(&b.type_fqn, type_fqn) || b.trait_fqn == *trait_fqn {
                 continue;
             }
-            if let Some(args) = self.super_closure_args(&b.trait_fqn, &b.trait_type_args, trait_fqn) {
+            if let Some(args) = self.super_closure_args(&b.trait_fqn, &b.trait_type_args, trait_fqn)
+            {
                 out.push((b, Some((b.trait_fqn.clone(), args))));
             }
         }
@@ -1624,9 +1722,12 @@ impl Registry {
 
     /// Check if a (trait, type) implementation pair exists (any type args).
     pub fn has_trait_impl(&self, trait_fqn: &Fqn, type_fqn: &Fqn) -> bool {
-        self.implement_blocks.iter().any(|b| b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn))
-            || self.class_types.get(type_fqn).is_some_and(|sig|
-                sig.trait_impls.iter().any(|(t, _)| t == trait_fqn))
+        self.implement_blocks.iter().any(|b| {
+            b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn)
+        }) || self
+            .class_types
+            .get(type_fqn)
+            .is_some_and(|sig| sig.trait_impls.iter().any(|(t, _)| t == trait_fqn))
     }
 
     /// Check whether an exact duplicate implement block exists: same trait,
@@ -1665,9 +1766,11 @@ impl Registry {
             b.trait_fqn == *trait_fqn
                 && impl_receiver_family_matches(&b.type_fqn, type_fqn)
                 && b.trait_type_args == trait_type_args
+        }) || self.class_types.get(type_fqn).is_some_and(|sig| {
+            sig.trait_impls
+                .iter()
+                .any(|(t, args)| t == trait_fqn && args == trait_type_args)
         })
-            || self.class_types.get(type_fqn).is_some_and(|sig|
-                sig.trait_impls.iter().any(|(t, args)| t == trait_fqn && args == trait_type_args))
     }
 
     /// Check whether a GENERIC implementation of a trait exists for a type —
@@ -1680,23 +1783,23 @@ impl Registry {
         self.implement_blocks.iter().any(|b| {
             b.trait_fqn == *trait_fqn
                 && impl_receiver_family_matches(&b.type_fqn, type_fqn)
-                && b.trait_type_args.iter().any(|t| t.contains_type_parameter())
+                && b.trait_type_args
+                    .iter()
+                    .any(|t| t.contains_type_parameter())
         }) || self.class_types.get(type_fqn).is_some_and(|sig| {
-            sig.trait_impls.iter().any(|(t, args)| {
-                t == trait_fqn && args.iter().any(|a| a.contains_type_parameter())
-            })
+            sig.trait_impls
+                .iter()
+                .any(|(t, args)| t == trait_fqn && args.iter().any(|a| a.contains_type_parameter()))
         })
     }
 
     /// Look up all implement blocks for a given (trait, type) pair.
-    pub fn find_impl_blocks(
-        &self,
-        trait_fqn: &Fqn,
-        type_fqn: &Fqn,
-    ) -> Vec<&ImplBlockSignature> {
+    pub fn find_impl_blocks(&self, trait_fqn: &Fqn, type_fqn: &Fqn) -> Vec<&ImplBlockSignature> {
         self.implement_blocks
             .iter()
-            .filter(|b| b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn))
+            .filter(|b| {
+                b.trait_fqn == *trait_fqn && impl_receiver_family_matches(&b.type_fqn, type_fqn)
+            })
             .collect()
     }
 
@@ -1748,7 +1851,10 @@ impl Registry {
             .iter()
             .filter(|b| !b.type_params.is_empty())
             .flat_map(|b| {
-                b.methods.iter().chain(b.properties.iter()).map(move |m| (b, m))
+                b.methods
+                    .iter()
+                    .chain(b.properties.iter())
+                    .map(move |m| (b, m))
             })
     }
 
@@ -1886,7 +1992,9 @@ impl Registry {
 
     /// Iterate over all functions (with FQN keys).
     pub fn all_functions(&self) -> impl Iterator<Item = (&Fqn, &[FunctionSignature])> {
-        self.functions.iter().map(|(fqn, sigs)| (fqn, sigs.as_slice()))
+        self.functions
+            .iter()
+            .map(|(fqn, sigs)| (fqn, sigs.as_slice()))
     }
 
     /// Iterate over all globals (with FQN keys).
@@ -1927,7 +2035,9 @@ impl Registry {
         merged
             .enum_types
             .extend(other.enum_types.iter().map(|(k, v)| (k.clone(), v.clone())));
-        merged.extension_blocks.extend(other.extension_blocks.iter().cloned());
+        merged
+            .extension_blocks
+            .extend(other.extension_blocks.iter().cloned());
         merged
             .traits
             .extend(other.traits.iter().map(|(k, v)| (k.clone(), v.clone())));
@@ -2006,9 +2116,16 @@ impl Registry {
 /// Recursive tuple heads share a candidate family with every arity >= 3.
 /// Exact shape matching and bound checking still decide applicability.
 pub(crate) fn impl_receiver_family_matches(pattern: &Fqn, actual: &Fqn) -> bool {
-    if pattern == actual { return true; }
+    if pattern == actual {
+        return true;
+    }
     pattern.package.to_string() == "standard.prelude"
         && actual.package.0.is_empty()
         && pattern.symbol.0 == "TupleExtend"
-        && actual.symbol.0.strip_prefix("Tuple").and_then(|n| n.parse::<usize>().ok()).is_some_and(|n| n >= 3)
+        && actual
+            .symbol
+            .0
+            .strip_prefix("Tuple")
+            .and_then(|n| n.parse::<usize>().ok())
+            .is_some_and(|n| n >= 3)
 }

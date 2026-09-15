@@ -92,7 +92,9 @@ fn run_tls_wasm(
         allow_root: true,
         allow_paths: vec![],
     };
-    let net_permissions = dovetail::runner::NetPermissions { allow_network: true };
+    let net_permissions = dovetail::runner::NetPermissions {
+        allow_network: true,
+    };
     dovetail::runner::run_component(
         wasm_bytes,
         &fs_permissions,
@@ -128,7 +130,11 @@ struct TempDir {
 impl TempDir {
     fn new(tag: &str) -> Self {
         let mut path = std::env::temp_dir();
-        path.push(format!("dovetail_https_interop_{}_{}", tag, std::process::id()));
+        path.push(format!(
+            "dovetail_https_interop_{}_{}",
+            tag,
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).expect("create temp dir");
         TempDir { path }
@@ -148,7 +154,14 @@ fn gen_p256_cert(dir: &Path) -> (PathBuf, PathBuf) {
     let key = dir.join("key.pem");
     let cert = dir.join("cert.pem");
     let status = Command::new("openssl")
-        .args(["ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out"])
+        .args([
+            "ecparam",
+            "-name",
+            "prime256v1",
+            "-genkey",
+            "-noout",
+            "-out",
+        ])
         .arg(&key)
         .status()
         .expect("run openssl ecparam");
@@ -159,8 +172,16 @@ fn gen_p256_cert(dir: &Path) -> (PathBuf, PathBuf) {
     // this SAN the legitimate handshake would be (correctly) rejected.
     let status = Command::new("openssl")
         .args([
-            "req", "-new", "-x509", "-days", "3000", "-subj", "/CN=127.0.0.1",
-            "-addext", "subjectAltName=IP:127.0.0.1", "-key",
+            "req",
+            "-new",
+            "-x509",
+            "-days",
+            "3000",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
+            "-key",
         ])
         .arg(&key)
         .arg("-out")
@@ -182,7 +203,14 @@ fn openssl_tls13_works() -> bool {
     let (cert, key) = gen_p256_cert(&dir.path);
     let port = free_port();
     let mut server = match Command::new("openssl")
-        .args(["s_server", "-tls1_3", "-accept", &port.to_string(), "-www", "-cert"])
+        .args([
+            "s_server",
+            "-tls1_3",
+            "-accept",
+            &port.to_string(),
+            "-www",
+            "-cert",
+        ])
         .arg(&cert)
         .arg("-key")
         .arg(&key)
@@ -199,7 +227,13 @@ fn openssl_tls13_works() -> bool {
         // line that `-quiet` would suppress. (The real tests below keep
         // `-quiet` so stdout carries only application data.)
         let out = Command::new("openssl")
-            .args(["s_client", "-tls1_3", "-connect", &format!("127.0.0.1:{port}"), "-CAfile"])
+            .args([
+                "s_client",
+                "-tls1_3",
+                "-connect",
+                &format!("127.0.0.1:{port}"),
+                "-CAfile",
+            ])
             .arg(&cert)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -225,7 +259,9 @@ fn openssl_tls13_works() -> bool {
 #[test]
 fn openssl_client_against_dovetail_https_server() {
     if !openssl_tls13_works() {
-        eprintln!("SKIP openssl_client_against_dovetail_https_server: local openssl can't do TLS 1.3");
+        eprintln!(
+            "SKIP openssl_client_against_dovetail_https_server: local openssl can't do TLS 1.3"
+        );
         return;
     }
     let wasm = build_interop_wasm("standard-io-http-interop");
@@ -260,7 +296,13 @@ fn openssl_client_against_dovetail_https_server() {
 
     // Real TLS 1.3 client: hand-rolled HTTP/1.1 GET over the encrypted channel.
     let mut child = Command::new("openssl")
-        .args(["s_client", "-tls1_3", "-connect", &format!("127.0.0.1:{port}"), "-CAfile"])
+        .args([
+            "s_client",
+            "-tls1_3",
+            "-connect",
+            &format!("127.0.0.1:{port}"),
+            "-CAfile",
+        ])
         .arg(&cert)
         .arg("-quiet")
         .stdin(Stdio::piped())
@@ -292,7 +334,7 @@ fn openssl_client_against_dovetail_https_server() {
         buf
     });
     let deadline = Instant::now() + Duration::from_secs(8);
-    while reader.is_finished() == false && Instant::now() < deadline {
+    while !reader.is_finished() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(50));
     }
     let _ = child.kill();
@@ -319,7 +361,9 @@ fn openssl_client_against_dovetail_https_server() {
 #[test]
 fn dovetail_https_client_against_openssl_server() {
     if !openssl_tls13_works() {
-        eprintln!("SKIP dovetail_https_client_against_openssl_server: local openssl can't do TLS 1.3");
+        eprintln!(
+            "SKIP dovetail_https_client_against_openssl_server: local openssl can't do TLS 1.3"
+        );
         return;
     }
     let wasm = build_interop_wasm("standard-io-http-interop");
@@ -331,8 +375,14 @@ fn dovetail_https_client_against_openssl_server() {
     // `-alpn http/1.1` matches what our client advertises.
     let mut server = Command::new("openssl")
         .args([
-            "s_server", "-tls1_3", "-accept", &port.to_string(), "-www",
-            "-alpn", "http/1.1", "-cert",
+            "s_server",
+            "-tls1_3",
+            "-accept",
+            &port.to_string(),
+            "-www",
+            "-alpn",
+            "http/1.1",
+            "-cert",
         ])
         .arg(&cert)
         .arg("-key")

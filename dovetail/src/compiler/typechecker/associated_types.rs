@@ -43,30 +43,24 @@ impl AssociatedProjection {
         let Some(registry) = registry else {
             return Type::AssociatedProjection(Box::new(self));
         };
-        if self.parameters.is_empty() {
-            if let Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) = &self.receiver
-            {
-                for bound in bounds.iter().filter_map(|bound| bound.named()) {
-                    let arguments = if bound.trait_fqn == self.trait_fqn {
-                        Some(bound.type_args.clone())
-                    } else {
-                        registry.super_closure_args(
-                            &bound.trait_fqn,
-                            &bound.type_args,
-                            &self.trait_fqn,
-                        )
-                    };
-                    if arguments.is_some_and(|arguments| {
-                        arguments.len() == self.trait_parameters.len()
-                            && arguments
-                                .iter()
-                                .zip(&self.trait_parameters)
-                                .all(|(a, b)| super::subtyping::identical(a, b))
-                    }) {
-                        if let Some(equality) = bound.associated_types.get(&self.member) {
-                            return equality.clone();
-                        }
-                    }
+        if self.parameters.is_empty()
+            && let Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _) = &self.receiver
+        {
+            for bound in bounds.iter().filter_map(|bound| bound.named()) {
+                let arguments = if bound.trait_fqn == self.trait_fqn {
+                    Some(bound.type_args.clone())
+                } else {
+                    registry.super_closure_args(&bound.trait_fqn, &bound.type_args, &self.trait_fqn)
+                };
+                if arguments.is_some_and(|arguments| {
+                    arguments.len() == self.trait_parameters.len()
+                        && arguments
+                            .iter()
+                            .zip(&self.trait_parameters)
+                            .all(|(a, b)| super::subtyping::identical(a, b))
+                }) && let Some(equality) = bound.associated_types.get(&self.member)
+                {
+                    return equality.clone();
                 }
             }
         }
@@ -185,10 +179,10 @@ pub(crate) fn from_bound(
     if associated.type_params.len() != parameters.len() {
         return None;
     }
-    if parameters.is_empty() {
-        if let Some(equality) = bound.associated_types.get(member) {
-            return Some(equality.clone());
-        }
+    if parameters.is_empty()
+        && let Some(equality) = bound.associated_types.get(member)
+    {
+        return Some(equality.clone());
     }
     Some(projection_from_bound(receiver, bound, member, parameters, registry)?.into_type())
 }
