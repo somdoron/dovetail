@@ -215,6 +215,12 @@ fn real_async_and_resource_types_warn_through_workspace_and_lsp() {
                     .message
                     .contains(expectation.split_whitespace().next().unwrap())
             );
+            if line.trim_start().starts_with("value // warning:") {
+                let column = line.find("value").unwrap() as u32 + 1;
+                assert_eq!(diagnostic.span.column, column);
+                assert_eq!(diagnostic.span.end_line, diagnostic.span.line);
+                assert_eq!(diagnostic.span.end_column, column + 4);
+            }
             if expectation.starts_with("Async ") {
                 assert_eq!(
                     diagnostic.message.contains("await"),
@@ -233,6 +239,16 @@ fn real_async_and_resource_types_warn_through_workspace_and_lsp() {
             Some(tower_lsp::lsp_types::DiagnosticSeverity::WARNING)
         );
         assert!(diagnostic.range.end.character > diagnostic.range.start.character);
+        let line = source
+            .lines()
+            .nth(diagnostic.range.start.line as usize)
+            .unwrap();
+        if line.trim_start().starts_with("value // warning:") {
+            let column = line.find("value").unwrap() as u32;
+            assert_eq!(diagnostic.range.end.line, diagnostic.range.start.line);
+            assert_eq!(diagnostic.range.start.character, column);
+            assert_eq!(diagnostic.range.end.character, column + 5);
+        }
     }
 }
 

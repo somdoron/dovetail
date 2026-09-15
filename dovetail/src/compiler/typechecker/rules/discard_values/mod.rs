@@ -94,6 +94,16 @@ impl DiscardValues<'_> {
             | Type::GenericRecord { fqn, .. }
             | Type::GenericClass { fqn, .. }
             | Type::GenericNewtype { fqn, .. } => fqn,
+            Type::TypeVariable(_, bounds) | Type::GenericParam(_, bounds, _)
+                if bounds
+                    .iter()
+                    .filter_map(|bound| bound.named())
+                    .any(|bound| {
+                        bound.is_class_bound() && self.is_async_type(&bound.trait_fqn)
+                    }) =>
+            {
+                &self.asynchronous
+            }
             _ => return None,
         };
         if fqn == &self.result {

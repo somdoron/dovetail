@@ -55,3 +55,39 @@ function discardedAsyncBlock(): Unit =
         await discardProgram()
         ()
     ()
+
+function ignoredBound<T>(value: T): Unit where T: Yield =
+    value // warning: Async sync
+    ()
+
+async function ignoredBoundAsync<T>(value: T): Async<Unit, Never> where T: Yield =
+    value // warning: Async async
+    let nested = () =>
+        value // warning: Async sync
+        ()
+    ()
+
+function acceptBound<T>(value: T): Unit where T: Yield = ()
+
+function consumedBound<T>(value: T): T where T: Yield =
+    let _ = value
+    let mutable assigned = value
+    assigned = value
+    acceptBound(value)
+    value
+
+function ignoredUnconstrained<T>(value: T): Unit =
+    value
+    ()
+
+function ignoredUnrelatedBound<T>(value: T): Unit where T: Waiter =
+    value
+    ()
+
+function ignoredAwaitableBound<T>(value: T): Unit where T: Awaitable<Unit> =
+    value
+    ()
+
+function ignoredClassCategory<T>(value: T): Unit where T: class =
+    value
+    ()
