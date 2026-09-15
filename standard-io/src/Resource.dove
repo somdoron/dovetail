@@ -35,8 +35,10 @@ module Resource<T, E> =
     /// runs when the resource is used; the resulting finalizer captures the
     /// acquired value and calls `release(value)` on scope exit.
     public function make(acquire: () => Async<T, E>, release: (T) => Async<Unit, Never>): Resource<T, E> =
+        let suspended: Async<Async<T, E>, E> = Async.thunk(acquire)
+        let acquisition: Async<T, E> = suspended.andThen<T>((program: Async<T, E>) => program)
         let acquired: Async<(T, Finalizer), E> =
-            acquire().map<(T, Finalizer)>((value: T) =>
+            acquisition.map<(T, Finalizer)>((value: T) =>
                 let finalizer: Finalizer = () => release(value)
                 (value, finalizer)
             )

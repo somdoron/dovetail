@@ -1230,7 +1230,7 @@ fn span_to_range_basic() {
     assert_eq!(range.start.line, 0);
     assert_eq!(range.start.character, 0);
     assert_eq!(range.end.line, 0);
-    assert_eq!(range.end.character, 4);
+    assert_eq!(range.end.character, 5);
 }
 
 #[test]
@@ -1240,7 +1240,7 @@ fn span_to_range_multiline() {
     assert_eq!(range.start.line, 2);
     assert_eq!(range.start.character, 4);
     assert_eq!(range.end.line, 6);
-    assert_eq!(range.end.character, 9);
+    assert_eq!(range.end.character, 10);
 }
 
 #[test]

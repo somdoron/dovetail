@@ -85,7 +85,7 @@ Source Files → Lexer → Layout Filter → Parser → Typechecker → Codegen 
 
 - **`make` for constructors** — Static constructor functions on records/classes are named `make` (e.g. `Logger.make`, `LogSpan.make`, `MemorySink.make`). Avoid `new` or `create`. (Some existing modules in `standard-collection` still use `new`; new code should prefer `make`.)
 
-- **Don't discard with `let _ =`** — Dovetail blocks automatically discard intermediate non-`Unit` expression values; only the last expression contributes to the block's type. Write `c.tick()` on a line by itself, not `let _ = c.tick()`. For builder-style helpers (e.g. functions that take a `StringBuilder` and call `.append()`), declare the helper to return the builder itself and let its last expression be the returning call — see `standard-json/src/Json.dove` and `standard-io-log/src/Formatter.dove` for the idiom.
+- **Ordinary discards need no binding** — Dovetail blocks automatically discard intermediate non-`Unit` expression values; only the last expression contributes to the block's type. Write `c.tick()` on a line by itself, not `let _ = c.tick()`. For builder-style helpers (e.g. functions that take a `StringBuilder` and call `.append()`), declare the helper to return the builder itself and let its last expression be the returning call — see `standard-json/src/Json.dove` and `standard-io-log/src/Formatter.dove` for the idiom. Exception: discarded `Result`, `Async`, and `Resource` values warn. Handle or use them, or write `let _ = expression` to acknowledge intentional discard. This does not execute an `Async` or acquire a `Resource`.
 
 ### Testing
 

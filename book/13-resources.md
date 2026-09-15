@@ -195,3 +195,14 @@ No explicit `.mapError(...)` is needed at the `use` site — the conversion is w
 
 For helpers that accept an unknown resource type through a `Usable` bound, see
 [Generic Resource Helpers](26-advanced-generics.md#generic-resource-helpers).
+
+### Discarded resources
+
+An intermediate expression returning `Resource` produces a warning. A resource
+value describes deferred acquisition and release; discarding it does not acquire
+the resource. Use `let value = use resource` in a compatible context, or return
+or compose the resource for later acquisition. `use resource` without a binding
+also counts as acquisition and does not produce this warning.
+
+Write `let _ = resource` only when discarding the description is intentional.
+This acknowledges discard; it **does not acquire** the resource or run its work.

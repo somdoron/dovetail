@@ -1,0 +1,57 @@
+package standard.io
+
+type DiscardProgram<T, E> = Async<T, E>
+type DiscardProgramAlias = DiscardProgram<Int32, Never>
+type DiscardResource<T> = Resource<T, Never>
+type DiscardResourceAlias = DiscardResource<Int32>
+
+function discardProgram(): DiscardProgramAlias = Async.succeed(1)
+function discardResource(): DiscardResourceAlias = Resource.succeed(1)
+function acceptDiscardProgram(program: Async<Int32, Never>): Unit = ()
+function acceptDiscardResource(resource: Resource<Int32, Never>): Unit = ()
+
+function discardOutsideAsync(): Unit =
+    discardProgram() // warning: Async sync
+    Succeed(2) // warning: Async sync
+    Yield() // warning: Async sync
+    discardResource() // warning: Resource sync
+    let _ = discardProgram()
+    let _ = discardResource()
+    acceptDiscardProgram(discardProgram())
+    acceptDiscardResource(discardResource())
+    ()
+
+async function discardInsideAsync(): Async<Unit, Never> =
+    discardProgram() // warning: Async async
+    discardResource() // warning: Resource async
+    let _ = await discardProgram()
+    let _ = use discardResource()
+    use Resource<Unit, Never>.succeed(())
+    let nested = () =>
+        discardProgram() // warning: Async sync
+        ()
+    let acknowledged: Async<Unit, Never> = async do
+        discardProgram() // warning: Async async
+        ()
+    let _ = acknowledged
+    let _ =
+        discardResource() // warning: Resource async
+        discardResource()
+    await Async<Result<Int32, String>, Never>.succeed(Ok(1)) // warning: Result async
+    ()
+
+function discardBranches(flag: Bool): Unit =
+    if flag then discardProgram() else discardProgram() // warning: Async sync twice
+    match flag with
+        case true => discardResource() // warning: Resource sync
+        case false => discardResource() // warning: Resource sync
+    ()
+
+function returnedProgram(): Async<Int32, Never> = discardProgram()
+function returnedResource(): Resource<Int32, Never> = discardResource()
+
+function discardedAsyncBlock(): Unit =
+    async do // warning: Async sync
+        await discardProgram()
+        ()
+    ()

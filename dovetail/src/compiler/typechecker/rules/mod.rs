@@ -1,5 +1,6 @@
 mod class_rules;
 mod coherence;
+mod discard_values;
 mod exhaustiveness;
 mod generic_static_rules;
 mod object_safety;
@@ -42,6 +43,7 @@ pub fn check_rules(
     coherence::check_coherence(merged_registry, package_path, diagnostics);
     object_safety::check_object_safety(package_registry, diagnostics);
     unsafe_cast::UnsafeCastRule::new().check(typed_module, diagnostics);
+    discard_values::check(typed_module, source_files, merged_registry, diagnostics);
     variance_position::check_variance_positions(package_registry, merged_registry, diagnostics);
     class_rules::check_class_rules(package_registry, package_path, source_files, diagnostics);
     generic_static_rules::check_generic_static_rules(package_registry, diagnostics);

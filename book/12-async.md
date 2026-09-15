@@ -268,3 +268,18 @@ There is deliberately no third option that escapes scopes altogether. A fiber th
 - `await e` is a prefix operator that yields the success value of an async value inside an async body.
 - `Async.run(program)` from a synchronous `main` drives the runtime to completion.
 - `fork` plus `join` runs work concurrently; structured concurrency means a scope waits for the fibers forked inside it, and `forkBackground` marks the ones it should cancel instead.
+
+### Discarded computations
+
+A bare intermediate expression returning `Async` produces a warning: constructing
+a deferred computation does not execute it. Inside a compatible async context,
+use `await` to execute it, or return or compose the computation for later use.
+
+```dovetail
+async function pause(): Async<Unit, Never> =
+    await Async.sleep(Duration.ofSeconds(1i64))
+```
+
+`let _ = computation` explicitly acknowledges intentional discard. It **does not
+execute** the computation. Bindings and arguments count as using a value; this
+warning does not prove that every stored computation is eventually executed.

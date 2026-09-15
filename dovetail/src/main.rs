@@ -233,8 +233,8 @@ fn build(project_filter: Option<&str>, output_dir: &str, options: &dovetail::man
 
     let result = dovetail::build_workspace(&workspace, project_filter, dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
 
+    report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
-        report_diagnostics(&result.diagnostics);
         return Err(());
     }
 
@@ -279,8 +279,8 @@ fn check(project_filter: Option<&str>, options: &dovetail::manifest::ResolveOpti
 
     let result = dovetail::build_workspace(&workspace, project_filter, dovetail::BuildMode::Check, &std::collections::HashMap::new(), false, None);
 
+    report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
-        report_diagnostics(&result.diagnostics);
         return Err(());
     }
 
@@ -333,8 +333,8 @@ fn run(
 
     let result = dovetail::build_workspace(&workspace, Some(&project_name), dovetail::BuildMode::Build, &std::collections::HashMap::new(), false, None);
 
+    report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
-        report_diagnostics(&result.diagnostics);
         return Err(());
     }
 
@@ -430,8 +430,8 @@ fn test(project_filter: Option<&str>, filters: &[String], file_filter: Option<&s
 
     let result = dovetail::build_workspace(&workspace, project_filter, dovetail::BuildMode::Test, &std::collections::HashMap::new(), false, None);
 
+    report_diagnostics(&result.diagnostics);
     if result.diagnostics.has_errors() {
-        report_diagnostics(&result.diagnostics);
         return Err(2);
     }
 

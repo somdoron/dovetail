@@ -6,7 +6,7 @@ use tower_lsp::lsp_types::{self, DiagnosticSeverity, Position, Range, Url};
 use crate::common::diagnostics::{DiagnosticTag, Diagnostics, Severity};
 use crate::common::span::Span;
 
-/// Convert a compiler Span (1-indexed) to an LSP Range (0-indexed).
+/// Convert an inclusive, 1-indexed compiler Span to a half-open, 0-indexed LSP Range.
 pub fn span_to_range(span: &Span) -> Range {
     Range {
         start: Position {
@@ -15,7 +15,7 @@ pub fn span_to_range(span: &Span) -> Range {
         },
         end: Position {
             line: span.end_line.saturating_sub(1),
-            character: span.end_column.saturating_sub(1),
+            character: span.end_column,
         },
     }
 }

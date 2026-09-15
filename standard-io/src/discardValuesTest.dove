@@ -1,0 +1,49 @@
+package standard.io
+
+test "acknowledging a Result still evaluates its expression" =
+    let mutable calls = 0
+    let attempt: () => Result<Int32, String> = () =>
+        calls = calls + 1
+        Error("deliberately ignored")
+    let _ = attempt()
+    assert calls == 1
+
+test "acknowledging an Async does not execute its body" =
+    let mutable calls = 0
+    let _: Async<Unit, Never> = async do
+        calls = calls + 1
+        ()
+    assert calls == 0
+
+test "acknowledging a Resource does not acquire or release it" =
+    let mutable acquired = false
+    let mutable released = false
+    let acquire: () => Async<Int32, Never> = () =>
+        acquired = true
+        Async.succeed(1)
+    let release: Int32 => Async<Unit, Never> = (_: Int32) =>
+        released = true
+        Async.succeed(())
+    let _: Resource<Int32, Never> = Resource.make(acquire, release)
+    assert !acquired
+    assert !released
+
+test "Resource.make defers acquisition until use and releases once" =
+    let mutable acquisitions = 0
+    let mutable releases = 0
+    let acquire: () => Async<Int32, Never> = () =>
+        acquisitions = acquisitions + 1
+        Async.succeed(42)
+    let release: Int32 => Async<Unit, Never> = (_: Int32) =>
+        releases = releases + 1
+        Async.succeed(())
+    let resource: Resource<Int32, Never> = Resource.make(acquire, release)
+    assert acquisitions == 0
+    let program: Async<Unit, Never> = async do
+        let value = use resource
+        assert value == 42
+        assert acquisitions == 1
+        assert releases == 0
+    program.run()
+    assert acquisitions == 1
+    assert releases == 1

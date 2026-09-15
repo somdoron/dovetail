@@ -450,3 +450,25 @@ Use these sparingly. In production code, prefer `or`, `map`, or `try`/`orReturn`
 - **`toResult`** and **`toOption`** convert between the two types
 - **`panic`** and **`assert`** are for unrecoverable errors and invariant checking
 - **`expect`** and **`require`** bridge `Option`/`Result` to panics when failure is a bug
+
+### Discarded results
+
+An intermediate expression normally discards its value. Dovetail warns when
+that value is a `Result`, because a failure could go unnoticed:
+
+```dovetail
+parseNumber(text)  // Warning if this returns Result
+()
+```
+
+Handle the result, propagate it with `try` in a compatible function, or return
+it. If ignoring either outcome is deliberate, write `let _ = parseNumber(text)`.
+The initializer still evaluates normally. This acknowledgement applies only to
+the final value of the initializer;
+intermediate discarded results inside it still warn.
+
+These warnings appear during checking, compilation, and in the editor, and do
+not fail compilation. Type aliases retain the warning. Ordinary intermediate
+values, such as counters and builder chains, still need no acknowledgement.
+The check does not track whether a named binding is eventually used or inspect
+values hidden inside containers or erased types.

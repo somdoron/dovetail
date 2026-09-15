@@ -464,7 +464,8 @@ test "append stream drops through the write-via-stream lifecycle built-ins" =
         Stream.discard(op)
     // drop-writable + future.read + future.drop on the append handle.
     FsStreamOps.dropWritable(appendStream.stream)
-    FsStreamOps.readAppendResult(appendStream.resultFuture)
+    // Cancellation may report failure; this test checks handle cleanup.
+    let _ = FsStreamOps.readAppendResult(appendStream.resultFuture)
     FsStreamOps.dropAppendResult(appendStream.resultFuture)
     appender.close()
 

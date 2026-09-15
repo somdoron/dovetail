@@ -723,6 +723,17 @@ pub(super) fn substitute_type_params_in(ty: &Type, substitution: &BTreeMap<Strin
                 type_args: substituted_args,
             }
         }
+        Type::GenericClass { fqn, type_args: type_params, .. } => {
+            let substituted_params = type_params
+                .iter()
+                .map(|(variance, ty)| (*variance, substitute_type_params_in(ty, substitution)))
+                .collect();
+            Type::GenericClass {
+                fqn: fqn.clone(),
+                mangled_name: MangledName::for_type(fqn),
+                type_args: substituted_params,
+            }
+        }
         Type::InterfaceObject { traits, .. } => Type::interface_intersection(
             traits
                 .iter()
