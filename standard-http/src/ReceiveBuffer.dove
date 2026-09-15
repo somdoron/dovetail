@@ -11,8 +11,7 @@ public class ReceiveBuffer(
     mutable nextLineSearch: Int32,
     mutable multipleLinesSearch: Int32
 ) =
-    public function new(): ReceiveBuffer =
-        ReceiveBuffer(Array.fill(1024, 0u8), 0, 0, 0)
+    public function new(): ReceiveBuffer = ReceiveBuffer(Array.fill(1024, 0u8), 0, 0, 0)
 
     /// Append bytes to the buffer.
     public function addBytes(self, bytes: Array<Uint8>): Unit =
@@ -35,7 +34,8 @@ public class ReceiveBuffer(
 
     /// Return a copy of the unconsumed data.
     public function toBytes(self): Array<Uint8> =
-        if self.len == 0 then Array<Uint8>.empty()
+        if self.len == 0 then
+            Array<Uint8>.empty()
         else
             let result = Array.fill(self.len, 0u8)
             self.data.copy(0, result, 0, self.len)
@@ -57,7 +57,8 @@ public class ReceiveBuffer(
 
     /// Extract up to count bytes from the buffer. Returns None if buffer is empty.
     public function extractAtMost(self, count: Int32): Option<Array<Uint8>> =
-        if self.len == 0 then None
+        if self.len == 0 then
+            None
         else
             let actual = if count > self.len then self.len else count
             Some(self.consume(actual))
@@ -88,8 +89,7 @@ public class ReceiveBuffer(
                 immediateBlank = 1
             else if self.len >= 2 then
                 if self.data.get(0).toInt32() == 13 then
-                    if self.data.get(1).toInt32() == 10 then
-                        immediateBlank = 2
+                    if self.data.get(1).toInt32() == 10 then immediateBlank = 2
 
         if immediateBlank > 0 then
             let _ = self.consume(immediateBlank)
@@ -106,8 +106,7 @@ public class ReceiveBuffer(
 
     /// Check if the first byte indicates an obviously invalid request line.
     public function isNextLineObviouslyInvalid(self): Bool =
-        if self.len == 0 then false
-        else self.data.get(0).toInt32() < 33
+        if self.len == 0 then false else self.data.get(0).toInt32() < 33
 
 /// Find \r\n in data[start..end). Returns index of \r or -1.
 function findCrLf(data: Array<Uint8>, start: Int32, end: Int32): Int32 =
@@ -152,14 +151,15 @@ function splitByNewline(data: Array<Uint8>): List<Array<Uint8>> =
         if data.get(i).toInt32() == 10 then
             let mutable lineEnd = i
             if lineEnd > lineStart then
-                if data.get(lineEnd - 1).toInt32() == 13 then
-                    lineEnd = lineEnd - 1
+                if data.get(lineEnd - 1).toInt32() == 13 then lineEnd = lineEnd - 1
             let lineLen = lineEnd - lineStart
-            let line = if lineLen > 0 then
+            let line =
+                if lineLen > 0 then
                     let buf = Array.fill(lineLen, 0u8)
                     let _ = data.copy(lineStart, buf, 0, lineLen)
                     buf
-                else Array<Uint8>.empty()
+                else
+                    Array<Uint8>.empty()
             lines.add(line)
             lineStart = i + 1
         i = i + 1
@@ -181,23 +181,22 @@ function splitByNewline(data: Array<Uint8>): List<Array<Uint8>> =
     // Drop trailing empty lines
     let mutable count = lines.length
     while count > 0 do
-        if lines.get(count - 1).length == 0 then
-            count = count - 1
-        else
-            count = -count
+        if lines.get(count - 1).length == 0 then count = count - 1 else count = -count
 
     let finalCount = if count < 0 then 0 - count else count
     // The `ArrayList` above is the right builder for the byte slicing; the
     // list is only the shape handed back to callers.
-    lines.toArray().toList().take(finalCount)
+    lines
+        .toArray()
+        .toList()
+        .take(finalCount)
 
 /// Helper: convert a string to a byte array.
 public function stringToBytes(s: String): Array<Uint8> = s.bytes()
 
 /// Helper: convert a byte array to a string.
 public function bytesToString(data: Array<Uint8>): String =
-    if data.length == 0 then ""
-    else String.fromBytes(data, 0, data.length)
+    if data.length == 0 then "" else String.fromBytes(data, 0, data.length)
 
 test "ReceiveBuffer new is empty" =
     let buf = ReceiveBuffer.new()
@@ -294,7 +293,10 @@ test "ReceiveBuffer isNextLineObviouslyInvalid" =
 
 test "ReceiveBuffer extractLines with LF-only delimiters" =
     let buf = ReceiveBuffer.new()
-    buf.addBytes(stringToBytes("HTTP/1.1 200 OK\nContent-type: text/plain\nConnection: close\n\nSome body"))
+    buf
+        .addBytes(
+        stringToBytes("HTTP/1.1 200 OK\nContent-type: text/plain\nConnection: close\n\nSome body")
+    )
 
     let lines = buf.extractLines()
     assert lines.isSome
@@ -308,7 +310,10 @@ test "ReceiveBuffer extractLines with LF-only delimiters" =
 
 test "ReceiveBuffer extractLines with mixed CRLF and LF" =
     let buf = ReceiveBuffer.new()
-    buf.addBytes(stringToBytes("HTTP/1.1 200 OK\nContent-type: text/plain\r\nConnection: close\n\nSome body"))
+    buf
+        .addBytes(
+        stringToBytes("HTTP/1.1 200 OK\nContent-type: text/plain\r\nConnection: close\n\nSome body")
+    )
 
     let lines = buf.extractLines()
     assert lines.isSome

@@ -11,7 +11,8 @@ module ConstantTime =
     /// whether — the arrays differ. Always use this instead of comparing
     /// `finalize()` output directly when checking MAC or AEAD tags.
     public function equal(a: Array<Uint8>, b: Array<Uint8>): Bool =
-        if a.length != b.length then false
+        if a.length != b.length then
+            false
         else
             let mutable diff = 0u8
             let mutable i = 0
@@ -21,18 +22,18 @@ module ConstantTime =
             diff == 0u8
 
 test "ConstantTime.equal: equal arrays" =
-    let a = [|1u8, 2u8, 3u8, 4u8|]
-    let b = [|1u8, 2u8, 3u8, 4u8|]
+    let a = [| 1u8, 2u8, 3u8, 4u8 |]
+    let b = [| 1u8, 2u8, 3u8, 4u8 |]
     assert ConstantTime.equal(a, b)
 
 test "ConstantTime.equal: differing arrays" =
-    let a = [|1u8, 2u8, 3u8, 4u8|]
-    let b = [|1u8, 2u8, 3u8, 5u8|]
+    let a = [| 1u8, 2u8, 3u8, 4u8 |]
+    let b = [| 1u8, 2u8, 3u8, 5u8 |]
     assert ConstantTime.equal(a, b) == false
 
 test "ConstantTime.equal: different lengths" =
-    let a = [|1u8, 2u8, 3u8|]
-    let b = [|1u8, 2u8, 3u8, 4u8|]
+    let a = [| 1u8, 2u8, 3u8 |]
+    let b = [| 1u8, 2u8, 3u8, 4u8 |]
     assert ConstantTime.equal(a, b) == false
 
 test "ConstantTime.equal: empty arrays" =

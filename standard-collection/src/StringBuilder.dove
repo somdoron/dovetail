@@ -8,13 +8,9 @@ package standard.collection
 ///
 /// All mutating methods modify the builder in place. `append` and
 /// `appendChar` return `self` so calls can be chained.
-public class StringBuilder(
-    public mutable buffer: Array<Uint8>,
-    public mutable len: Int32
-) =
+public class StringBuilder(public mutable buffer: Array<Uint8>, public mutable len: Int32) =
     /// Creates an empty StringBuilder with a default capacity of 64 bytes.
-    public function new(): StringBuilder =
-        StringBuilder(Array.fill(64, 0u8), 0)
+    public function new(): StringBuilder = StringBuilder(Array.fill(64, 0u8), 0)
 
     /// Creates an empty StringBuilder with at least the given capacity.
     /// The actual capacity will be at least 16 bytes.
@@ -48,8 +44,7 @@ public class StringBuilder(
 
     /// Builds and returns the accumulated string.
     public function toString(self): String =
-        if self.len == 0 then ""
-        else String.fromBytes(self.buffer, 0, self.len)
+        if self.len == 0 then "" else String.fromBytes(self.buffer, 0, self.len)
 
     /// The number of bytes written so far.
     public property length(self): Int32 = self.len
@@ -58,8 +53,7 @@ public class StringBuilder(
     public property capacity(self): Int32 = self.buffer.length
 
     /// Resets the builder to empty without releasing the buffer.
-    public function clear(self): Unit =
-        self.len = 0
+    public function clear(self): Unit = self.len = 0
 
     function ensureCapacity(self, needed: Int32): Unit =
         if needed > self.buffer.length then

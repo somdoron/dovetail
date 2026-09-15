@@ -34,7 +34,8 @@ module Range =
         else if self.step < 0 then
             if self.start <= self.end then 0
             else (self.start - self.end - self.step - 1) / (0 - self.step)
-        else 0
+        else
+            0
 
     /// True if the range contains no values.
     public property isEmpty(self): Bool = self.length == 0
@@ -45,11 +46,13 @@ module Range =
             value >= self.start && value < self.end && (value - self.start) % self.step == 0
         else if self.step < 0 then
             value <= self.start && value > self.end && (self.start - value) % (0 - self.step) == 0
-        else false
+        else
+            false
 
 class RangeIterator(mutable current: Int32, end: Int32, step: Int32) implements Iterator<Int32> =
     public function next(self): Option<Int32> =
-        if self.isDone then None
+        if self.isDone then
+            None
         else
             let value = self.current
             self.current = self.current + self.step
@@ -62,8 +65,7 @@ class RangeIterator(mutable current: Int32, end: Int32, step: Int32) implements 
 
 implement Iterable<Int32> for Range =
     /// Returns an iterator that yields each value in the range.
-    public function iterator(self): Iterator<Int32> =
-        RangeIterator(self.start, self.end, self.step)
+    public function iterator(self): Iterator<Int32> = RangeIterator(self.start, self.end, self.step)
 
 test "Range new" =
     let r = Range.new(0, 5)

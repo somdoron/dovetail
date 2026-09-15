@@ -10,8 +10,7 @@ module Hashable =
         (h + s) * 2246822519i64 + 1i64
 
 implement Hashable for Bool =
-    public function hash(self: Bool): Int64 =
-        if self then 1i64 else 0i64
+    public function hash(self: Bool): Int64 = if self then 1i64 else 0i64
 
 implement Hashable for Int8 =
     public function hash(self: Int8): Int64 = self.toInt64()
@@ -59,13 +58,11 @@ implement Hashable for String =
             i = i + 1
         h
 
-implement <A, B> Hashable for (A, B) where A: Hashable, B: Hashable =
-    public function hash(self: (A, B)): Int64 =
-        Hashable.combine(self._0.hash(), self._1.hash())
+implement<A, B> Hashable for (A, B) where A: Hashable, B: Hashable =
+    public function hash(self: (A, B)): Int64 = Hashable.combine(self._0.hash(), self._1.hash())
 
-implement <T, U> Hashable for T ~ U where T: Tuple, T: Hashable, U: Hashable =
-    public function hash(self: T ~ U): Int64 =
-        Hashable.combine(self.init.hash(), self.last.hash())
+implement<T, U> Hashable for T ~U where T: Tuple, T: Hashable, U: Hashable =
+    public function hash(self: T ~U): Int64 = Hashable.combine(self.init.hash(), self.last.hash())
 
 test "Hashable Int32 deterministic" =
     assert 42i32.hash() == 42i32.hash()

@@ -19,8 +19,8 @@ import standard.io.Queue
 // The window is one step wide, so this sweeps the fairness boundary across it
 // with `burnExactly` (bracket_test), the way the acquire sweeps do: for every
 // offset, offered == in the queue + delivered.
-
-async function takeAfter(steps: Int32, q: Queue<Int32>, delivered: Array<Int32>): Async<Unit, Never> =
+async function takeAfter(steps: Int32, q: Queue<Int32>, delivered: Array<Int32>):
+    Async<Unit, Never> =
     await burnExactly(steps)
     let _v = await q.take()
     delivered.set(0, delivered.get(0) + 1i32)
@@ -39,18 +39,19 @@ async function queueInterruptProgram(setter: (Int32) => Unit): Async<Unit, Never
         // can land on a Running fiber (see the bracket sweep).
         await burnSteps(300i32)
         await child.interrupt()
-        await child.join().foldCause<Unit, Never>(
+        await child
+            .join()
+            .foldCause<Unit, Never>(
             (_: Cause<Never>) => Async.succeed(()),
             (_: Unit) => Async.succeed(())
         )
-        if q.size + delivered.get(0) != 1i32 then
-            lost = lost + 1i32
+        if q.size + delivered.get(0) != 1i32 then lost = lost + 1i32
         steps = steps + 1i32
         round = round + 1i32
     setter(lost)
 
 @timeout(120000)
-test "queue: an interrupt landing after a take's mask pops never loses the element" =
+ test "queue: an interrupt landing after a take's mask pops never loses the element" =
     let mutable lost = -1i32
     queueInterruptProgram((n: Int32) => lost = n).run()
     // Every element offered across the sweep is either still queued or was

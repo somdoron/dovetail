@@ -20,7 +20,6 @@ import standard.crypto.EcdhP256
 /// off (RFC 8446). Each enum has a `*Code`/`*FromCode` pair giving its
 /// on-the-wire `uint16` (or `uint8` for content/alert types). Unknown codes
 /// decode to `None` so the caller can raise the right alert rather than panic.
-
 /// A TLS 1.3 cipher suite. Each pairs an AEAD with the hash used by HKDF and
 /// the transcript (RFC 8446 Appendix B.4). These three are the only suites TLS
 /// 1.3 defines; all are mandatory-to-implement coverage for this library.
@@ -132,7 +131,6 @@ implement Display for TlsError =
 // ---------------------------------------------------------------------------
 // CipherSuite
 // ---------------------------------------------------------------------------
-
 /// The two-byte wire code for a cipher suite.
 function cipherSuiteCode(cs: CipherSuite): Int32 =
     match cs with
@@ -171,7 +169,6 @@ function keyExchangeFor(group: KeyExchangeGroup): KeyExchange =
 // ALPN protocol identifiers (RFC 7301 / IANA TLS ALPN registry). ALPN ids are
 // opaque strings, so these are convenience constants — not an exhaustive enum.
 // ---------------------------------------------------------------------------
-
 /// ALPN id for HTTP/1.1.
 public let alpnHttp1: String = "http/1.1"
 
@@ -184,7 +181,6 @@ public let alpnHttp3: String = "h3"
 // ---------------------------------------------------------------------------
 // KeyExchangeGroup
 // ---------------------------------------------------------------------------
-
 /// The two-byte wire code for a named group.
 function groupCode(group: KeyExchangeGroup): Int32 =
     match group with
@@ -200,7 +196,6 @@ function groupFromCode(code: Int32): Option<KeyExchangeGroup> =
 // ---------------------------------------------------------------------------
 // SignatureScheme
 // ---------------------------------------------------------------------------
-
 /// The two-byte wire code for a signature scheme.
 function sigSchemeCode(scheme: SignatureScheme): Int32 =
     match scheme with
@@ -220,7 +215,6 @@ function sigSchemeFromCode(code: Int32): Option<SignatureScheme> =
 // ---------------------------------------------------------------------------
 // ContentType
 // ---------------------------------------------------------------------------
-
 /// The one-byte wire code for a record content type.
 function contentTypeCode(ct: ContentType): Int32 =
     match ct with
@@ -240,7 +234,6 @@ function contentTypeFromCode(code: Int32): Option<ContentType> =
 // ---------------------------------------------------------------------------
 // Alerts
 // ---------------------------------------------------------------------------
-
 /// The one-byte wire code for an alert level.
 function alertLevelCode(level: AlertLevel): Int32 =
     match level with
@@ -295,11 +288,12 @@ function alertFor(err: TlsError): AlertDescription =
         case NoApplicationProtocol => AlertDescription.NoApplicationProtocol
 
 test "tls cipher-suite code round-trips" =
-    let suites = [
-        CipherSuite.Aes128GcmSha256,
-        CipherSuite.Aes256GcmSha384,
-        CipherSuite.ChaCha20Poly1305Sha256,
-    ]
+    let suites =
+        [
+            CipherSuite.Aes128GcmSha256,
+            CipherSuite.Aes256GcmSha384,
+            CipherSuite.ChaCha20Poly1305Sha256,
+        ]
     let mutable ok = true
     for suite in suites do
         let code = cipherSuiteCode(suite)

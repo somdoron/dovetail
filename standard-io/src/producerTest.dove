@@ -4,19 +4,27 @@ import standard.time.Duration
 
 class ProducerTestState(public mutable position: Int32, public limit: Int32)
 
-function testProducer(limit: Int32, release: (ProducerTestState) => Async<Unit, Never>): Async<Producer<Int32, String>, String> =
-    let acquire: Async<ProducerTestState, String> = async do ProducerTestState(0, limit)
-    let pull: (ProducerTestState) => Async<Int32, Option<String>> = (state: ProducerTestState) => async do
-        if state.position == state.limit then
-            await Async<Int32, Option<String>>.fail(None)
-        else
-            state.position = state.position + 1
-            state.position
+function testProducer(limit: Int32, release: (ProducerTestState) => Async<Unit, Never>):
+    Async<Producer<Int32, String>, String> =
+    let acquire: Async<ProducerTestState, String> =
+        async do
+            ProducerTestState(0, limit)
+    let pull: (ProducerTestState) => Async<Int32, Option<String>> =
+        (state: ProducerTestState) =>
+            async do
+                if state.position == state.limit then
+                    await Async<Int32, Option<String>>.fail(None)
+                else
+                    state.position = state.position + 1
+                    state.position
     Producer<Int32, String>.make(acquire, pull, release)
 
 function expectProducerEnd(effect: Async<Int32, Option<String>>): Async<Unit, String> =
-    effect.fold((error: Option<String>) => Async.thunk(() => assert error.isNone),
-        (_: Int32) => Async.thunk(() => panic "expected EOF"))
+    effect
+        .fold(
+        (error: Option<String>) => Async.thunk(() => assert error.isNone),
+        (_: Int32) => Async.thunk(() => panic "expected EOF")
+    )
 
 function producerValue(effect: Async<Int32, Option<String>>): Async<Int32, String> =
     effect.mapError((error: Option<String>) => error.or("unexpected EOF"))
@@ -25,156 +33,234 @@ test "Producer: acquisition and pulls are lazy and state persists" =
     let mutable acquisitions = 0
     let mutable releases = 0
     let mutable pulls = 0
-    let acquire: Async<Int32, String> = async do
-        acquisitions = acquisitions + 1
-        42
-    let pull: (Int32) => Async<Int32, Option<String>> = (state: Int32) => async do
-        pulls = pulls + 1
-        state
+    let acquire: Async<Int32, String> =
+        async do
+            acquisitions = acquisitions + 1
+            42
+    let pull: (Int32) => Async<Int32, Option<String>> =
+        (state: Int32) =>
+            async do
+                pulls = pulls + 1
+                state
     let release = (_: Int32) => Async.thunk(() => releases = releases + 1)
     let description = Producer<Int32, String>.make(acquire, pull, release)
     assert acquisitions == 0
-    let program: Async<Unit, String> = async do
-        let producer = await description
-        assert acquisitions == 1
-        assert pulls == 0
-        assert releases == 0
-        assert (await producerValue(producer.next())) == 42
-        assert (await producerValue(producer.next())) == 42
-        assert pulls == 2
-        assert releases == 0
-        await producer.interrupt()
-        assert releases == 1
-        await producer.interrupt()
-        await expectProducerEnd(producer.next())
-        let other = await description
-        assert acquisitions == 2
-        await other.interrupt()
-        assert releases == 2
+    let program: Async<Unit, String> =
+        async do
+            let producer = await description
+            assert acquisitions == 1
+            assert pulls == 0
+            assert releases == 0
+            assert (await producerValue(producer.next())) == 42
+            assert (await producerValue(producer.next())) == 42
+            assert pulls == 2
+            assert releases == 0
+            await producer.interrupt()
+            assert releases == 1
+            await producer.interrupt()
+            await expectProducerEnd(producer.next())
+            let other = await description
+            assert acquisitions == 2
+            await other.interrupt()
+            assert releases == 2
     program.run()
 
 test "Producer: EOF releases before returning and stays exhausted" =
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        let producer = await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
-        assert (await producerValue(producer.next())) == 1
-        assert !released
-        await expectProducerEnd(producer.next())
-        assert released
-        await expectProducerEnd(producer.next())
+    let program: Async<Unit, String> =
+        async do
+            let producer =
+                await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
+            assert (await producerValue(producer.next())) == 1
+            assert !released
+            await expectProducerEnd(producer.next())
+            assert released
+            await expectProducerEnd(producer.next())
     program.run()
 
 test "Producer: parent scope closes an idle producer" =
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        use Async<Unit, String>.scope()
-        await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
-        ()
+    let program: Async<Unit, String> =
+        async do
+            use Async<Unit, String>.scope()
+            await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
+            ()
     program.run()
     assert released
 
 test "Producer: failed acquisition does not release" =
     let mutable released = false
-    let create = Producer<Int32, String>.make(Async<Int32, String>.fail("acquire"),
-        (value: Int32) => Async<Int32, Option<String>>.succeed(value),
-        (_: Int32) => Async.thunk(() => released = true))
-    create.fold((error: String) => Async.thunk(() => assert error == "acquire"),
-        (_: Producer<Int32, String>) => Async.thunk(() => panic "expected failure")).run()
+    let create =
+        Producer<Int32, String>
+            .make(
+            Async<Int32, String>.fail("acquire"),
+            (value: Int32) => Async<Int32, Option<String>>.succeed(value),
+            (_: Int32) => Async.thunk(() => released = true)
+        )
+    create
+        .fold(
+        (error: String) => Async.thunk(() => assert error == "acquire"),
+        (_: Producer<Int32, String>) => Async.thunk(() => panic "expected failure")
+    )
+        .run()
     assert !released
 
 test "Producer: only the creating fiber can pull or interrupt" =
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        let producer = await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
-        let wrong = producer.next().foldCause((cause: Cause<Option<String>>) => Async.thunk(() =>
-            match cause with
-                case Cause.Panicked(_, _) => ()
-                case _ => panic "expected ownership defect"
-        ), (_: Int32) => Async.thunk(() => panic "unexpected value"))
-        let child = await wrong.fork()
-        await child.join()
-        assert !released
-        let wrongStop = producer.interrupt().foldCause((cause: Cause<Never>) => Async.thunk(() =>
-            match cause with
-                case Cause.Panicked(message, _) => assert message == "only the creating fiber may pull or interrupt a producer"
-                case _ => panic "expected ownership defect"
-        ), (_: Unit) => Async.thunk(() => panic "unexpected interruption"))
-        let stop = await wrongStop.fork()
-        await stop.join()
-        assert !released
-        let value = await producerValue(producer.next())
-        assert value == 1
-        await producer.interrupt()
-        assert released
+    let program: Async<Unit, String> =
+        async do
+            let producer =
+                await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
+            let wrong =
+                producer
+                    .next()
+                    .foldCause(
+                    (
+                        (cause: Cause<Option<String>>) =>
+                            Async
+                                .thunk(
+                                () =>
+                                    match cause with
+                                        case Cause.Panicked(_, _) => ()
+                                        case _ => panic "expected ownership defect"
+                            )
+                    ),
+                    (_: Int32) => Async.thunk(() => panic "unexpected value")
+                )
+            let child = await wrong.fork()
+            await child.join()
+            assert !released
+            let wrongStop =
+                producer
+                    .interrupt()
+                    .foldCause(
+                    (
+                        (cause: Cause<Never>) =>
+                            Async
+                                .thunk(
+                                () =>
+                                    match cause with
+                                        case Cause.Panicked(message, _) =>
+                                            assert message
+                                                == "only the creating fiber may pull or interrupt a producer"
+                                        case _ => panic "expected ownership defect"
+                            )
+                    ),
+                    (_: Unit) => Async.thunk(() => panic "unexpected interruption")
+                )
+            let stop = await wrongStop.fork()
+            await stop.join()
+            assert !released
+            let value = await producerValue(producer.next())
+            assert value == 1
+            await producer.interrupt()
+            assert released
     program.run()
 
 test "Producer: EOF waits for structured children before release" =
     let mutable childDone = false
     let mutable released = false
     let acquire: Async<Unit, String> = Async.succeed(())
-    let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => async do
-        let child: Async<Unit, Never> = async do
-            await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
-            childDone = true
-        await child.fork()
-        await Async<Int32, Option<String>>.fail(None)
-    let release = (_: Unit) => Async.thunk(() =>
-        assert childDone
-        released = true
-    )
-    let program: Async<Unit, String> = async do
-        let producer = await Producer<Int32, String>.make(acquire, pull, release)
-        await expectProducerEnd(producer.next())
-        assert released
+    let pull: (Unit) => Async<Int32, Option<String>> =
+        (_: Unit) =>
+            async do
+                let child: Async<Unit, Never> =
+                    async do
+                        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+                        childDone = true
+                await child.fork()
+                await Async<Int32, Option<String>>.fail(None)
+    let release =
+        (_: Unit) =>
+            Async
+                .thunk(
+                () =>
+                    assert childDone
+                    released = true
+            )
+    let program: Async<Unit, String> =
+        async do
+            let producer = await Producer<Int32, String>.make(acquire, pull, release)
+            await expectProducerEnd(producer.next())
+            assert released
     program.run()
 
 test "Producer: interrupted pull drains children before caller recovers" =
     let mutable released = false
     let mutable childReleased = false
     let ready: Async<Promise<Unit, Never>, Never> = Async.makePromise()
-    let program: Async<Unit, Never> = async do
-        let started = await ready
-        let worker: Async<Unit, String> = async do
-            let acquire: Async<Unit, String> = Async.succeed(())
-            let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => async do
-                let child = Async<Unit, Never>.bracket(Async.succeed(()),
-                    (_: Unit) => Async.thunk(() => childReleased = true),
-                    (_: Unit) => Async<Unit, Never>.sleep(Duration.ofMillis(10000i64)))
-                await child.forkBackground()
-                await started.complete(())
-                await Async<Unit, Option<String>>.sleep(Duration.ofMillis(10000i64))
-                1
-            let release = (_: Unit) => Async.thunk(() =>
-                assert childReleased
-                released = true
+    let program: Async<Unit, Never> =
+        async do
+            let started = await ready
+            let worker: Async<Unit, String> =
+                async do
+                    let acquire: Async<Unit, String> = Async.succeed(())
+                    let pull: (Unit) => Async<Int32, Option<String>> =
+                        (_: Unit) =>
+                            async do
+                                let child =
+                                    Async<Unit, Never>
+                                        .bracket(
+                                        Async.succeed(()),
+                                        (_: Unit) => Async.thunk(() => childReleased = true),
+                                        (_: Unit) =>
+                                            Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
+                                    )
+                                await child.forkBackground()
+                                await started.complete(())
+                                await Async<Unit, Option<String>>.sleep(Duration.ofMillis(10000i64))
+                                1
+                    let release =
+                        (_: Unit) =>
+                            Async
+                                .thunk(
+                                () =>
+                                    assert childReleased
+                                    released = true
+                            )
+                    let producer = await Producer<Int32, String>.make(acquire, pull, release)
+                    await producerValue(producer.next())
+                    ()
+            let fiber = await worker.forkBackground()
+            await started.awaitPromise()
+            await fiber.interrupt()
+            await fiber
+                .join()
+                .foldCause(
+                (_: Cause<String>) => Async.thunk(() => assert released),
+                (_: Unit) => Async.thunk(() => panic "expected interruption")
             )
-            let producer = await Producer<Int32, String>.make(acquire, pull, release)
-            await producerValue(producer.next())
-            ()
-        let fiber = await worker.forkBackground()
-        await started.awaitPromise()
-        await fiber.interrupt()
-        await fiber.join().foldCause((_: Cause<String>) => Async.thunk(() => assert released),
-            (_: Unit) => Async.thunk(() => panic "expected interruption"))
     program.run()
 
 test "Producer: nested producer releases before outer" =
     let mutable innerReleased = false
     let mutable outerReleased = false
     let acquire: Async<Unit, String> = Async.succeed(())
-    let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => async do
-        let inner = await testProducer(1, (_: ProducerTestState) => Async.thunk(() => innerReleased = true)).mapError((error: String) => Some(error))
-        await inner.next()
-    let release = (_: Unit) => Async.thunk(() =>
-        assert innerReleased
-        outerReleased = true
-    )
-    let program: Async<Unit, String> = async do
-        let outer = await Producer<Int32, String>.make(acquire, pull, release)
-        assert (await producerValue(outer.next())) == 1
-        assert !innerReleased
-        await outer.interrupt()
-        assert innerReleased && outerReleased
+    let pull: (Unit) => Async<Int32, Option<String>> =
+        (_: Unit) =>
+            async do
+                let inner =
+                    await testProducer(
+                        1,
+                        (_: ProducerTestState) => Async.thunk(() => innerReleased = true)
+                    )
+                        .mapError((error: String) => Some(error))
+                await inner.next()
+    let release =
+        (_: Unit) =>
+            Async
+                .thunk(
+                () =>
+                    assert innerReleased
+                    outerReleased = true
+            )
+    let program: Async<Unit, String> =
+        async do
+            let outer = await Producer<Int32, String>.make(acquire, pull, release)
+            assert (await producerValue(outer.next())) == 1
+            assert !innerReleased
+            await outer.interrupt()
+            assert innerReleased && outerReleased
     program.run()
 
 function producerFiberSuspended(fiber: FiberState): Bool =
@@ -206,17 +292,23 @@ function finishProducerRuntime(runtime: Runtime): Unit =
 
 function soleProducer(runtime: Runtime): ProducerState =
     let mutable found: Option<ProducerState> = None
-    for pair in runtime.producers do found = Some(pair._1)
+    for pair in runtime.producers do
+        found = Some(pair._1)
     found.require
 
 test "Producer: cancellation around direct notification retains cleanup ownership" =
     for notifyFirst in [false, true] do
         let mutable released = false
         let mutable received = false
-        let program: Async<Unit, String> = async do
-            let producer = await testProducer(1, (_: ProducerTestState) => Async.thunk(() => released = true))
-            await producerValue(producer.next())
-            received = true
+        let program: Async<Unit, String> =
+            async do
+                let producer =
+                    await testProducer(
+                        1,
+                        (_: ProducerTestState) => Async.thunk(() => released = true)
+                    )
+                await producerValue(producer.next())
+                received = true
         let runtime = Runtime.make(program)
         let caller = runtime.fibers.get(FiberId.zero).require
         stepProducerUntil(runtime, caller, () => producerFiberSuspended(caller))
@@ -225,7 +317,11 @@ test "Producer: cancellation around direct notification retains cleanup ownershi
         stepProducerUntil(runtime, child, () => producer.phase.isIdle)
         stepProducerUntil(runtime, caller, () => producer.phase.isPulling)
         if notifyFirst then
-            stepProducerUntil(runtime, child, () => !runtime.producerRequests.get(caller.id).require.active)
+            stepProducerUntil(
+                runtime,
+                child,
+                () => !runtime.producerRequests.get(caller.id).require.active
+            )
         assert !received && !released
         runtime.interruptFiber(caller)
         assert !runtime.producerRequests.get(caller.id).require.active
@@ -241,11 +337,14 @@ test "Producer: cancellation around direct notification retains cleanup ownershi
 test "Producer: cancellation during acquisition releases an acquired state" =
     let mutable acquired = false
     let mutable released = false
-    let acquire: Async<Int32, String> = async do
-        acquired = true
-        7
+    let acquire: Async<Int32, String> =
+        async do
+            acquired = true
+            7
     let pull: (Int32) => Async<Int32, Option<String>> = (value: Int32) => Async.succeed(value)
-    let program = Producer<Int32, String>.make(acquire, pull, (_: Int32) => Async.thunk(() => released = true))
+    let program =
+        Producer<Int32, String>
+            .make(acquire, pull, (_: Int32) => Async.thunk(() => released = true))
     let runtime = Runtime.make(program)
     let caller = runtime.fibers.get(FiberId.zero).require
     stepProducerUntil(runtime, caller, () => producerFiberSuspended(caller))
@@ -259,12 +358,13 @@ test "Producer: cancellation during acquisition releases an acquired state" =
     assert runtime.producerRequests.isEmpty
 
 test "Producer: many executions release runtime bookkeeping" =
-    let program: Async<Unit, String> = async do
-        let mutable count = 0
-        while count < 100 do
-            let producer = await testProducer(0, (_: ProducerTestState) => Async.succeed(()))
-            await expectProducerEnd(producer.next())
-            count = count + 1
+    let program: Async<Unit, String> =
+        async do
+            let mutable count = 0
+            while count < 100 do
+                let producer = await testProducer(0, (_: ProducerTestState) => Async.succeed(()))
+                await expectProducerEnd(producer.next())
+                count = count + 1
     let runtime = Runtime.make(program)
     runtime.eventLoop()
     assert runtime.producers.isEmpty
@@ -273,123 +373,210 @@ test "Producer: many executions release runtime bookkeeping" =
 
 test "Producer: foreign handles behave as closed even when fiber IDs collide" =
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        let producer = await testProducer(2, (_: ProducerTestState) => Async.thunk(() => released = true))
-        let foreign = Producer<Int32, String>(producer.fiber, producer.creator)
-        await expectProducerEnd(foreign.next())
-        await foreign.interrupt()
-        assert !released
-        let value = await producerValue(producer.next())
-        assert value == 1
-        await producer.interrupt()
-        assert released
-        await expectProducerEnd(foreign.next())
-        await foreign.interrupt()
+    let program: Async<Unit, String> =
+        async do
+            let producer =
+                await testProducer(2, (_: ProducerTestState) => Async.thunk(() => released = true))
+            let foreign = Producer<Int32, String>(producer.fiber, producer.creator)
+            await expectProducerEnd(foreign.next())
+            await foreign.interrupt()
+            assert !released
+            let value = await producerValue(producer.next())
+            assert value == 1
+            await producer.interrupt()
+            assert released
+            await expectProducerEnd(foreign.next())
+            await foreign.interrupt()
     program.run()
 
 test "Producer: tuple state and readonly slice results preserve their types" =
-    let program: Async<Unit, String> = async do
-        let acquire: Async<(Int32, String), String> = Async.succeed((7, "state"))
-        let pull: ((Int32, String)) => Async<ReadonlySlice<Int32>, Option<String>> = (state: (Int32, String)) => async do
-            assert state._1 == "state"
-            [|state._0|].readonly
-        let producer = await Producer<ReadonlySlice<Int32>, String>.make(acquire, pull,
-            (state: (Int32, String)) => Async.thunk(() => assert state._0 == 7))
-        let chunk = await producer.next().mapError((error: Option<String>) => error.or("EOF"))
-        assert chunk.length == 1 && chunk[0] == 7
-        await producer.interrupt()
+    let program: Async<Unit, String> =
+        async do
+            let acquire: Async<(Int32, String), String> = Async.succeed((7, "state"))
+            let pull: ((Int32, String)) => Async<ReadonlySlice<Int32>, Option<String>> =
+                (state: (Int32, String)) =>
+                    async do
+                        assert state._1 == "state"
+                        [| state._0 |].readonly
+            let producer =
+                await Producer<ReadonlySlice<Int32>, String>
+                    .make(
+                    acquire,
+                    pull,
+                    (state: (Int32, String)) => Async.thunk(() => assert state._0 == 7)
+                )
+            let chunk = await producer.next().mapError((error: Option<String>) => error.or("EOF"))
+            assert chunk.length == 1 && chunk[0] == 7
+            await producer.interrupt()
     program.run()
 
 test "Producer: cleanup defect takes precedence over a pull panic" =
-    let program: Async<Unit, String> = async do
-        let acquire: Async<Unit, String> = Async.succeed(())
-        let bodyPanic: (Unit) => Async<Int32, Option<String>> = (_: Unit) => Async.failPanic("body panic")
-        let producer = await Producer<Int32, String>.make(acquire, bodyPanic,
-            (_: Unit) => Async<Unit, Never>.failPanic("cleanup panic"))
-        await producer.next().foldCause((cause: Cause<Option<String>>) => Async.thunk(() =>
-            match cause with
-                case Cause.Panicked(message, _) => assert message == "cleanup panic"
-                case _ => panic "expected cleanup panic"
-        ), (_: Int32) => Async.thunk(() => panic "expected failure"))
+    let program: Async<Unit, String> =
+        async do
+            let acquire: Async<Unit, String> = Async.succeed(())
+            let bodyPanic: (Unit) => Async<Int32, Option<String>> =
+                (_: Unit) => Async.failPanic("body panic")
+            let producer =
+                await Producer<Int32, String>
+                    .make(
+                    acquire,
+                    bodyPanic,
+                    (_: Unit) => Async<Unit, Never>.failPanic("cleanup panic")
+                )
+            await producer
+                .next()
+                .foldCause(
+                (
+                    (cause: Cause<Option<String>>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        assert message == "cleanup panic"
+                                    case _ => panic "expected cleanup panic"
+                        )
+                ),
+                (_: Int32) => Async.thunk(() => panic "expected failure")
+            )
     program.run()
 
 test "Producer: attached cleanup still runs before producer release" =
     let mutable attachedReleased = false
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        let acquire: Async<Unit, String> = Async.succeed(())
-        let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => async do
-            let resource = Resource<Unit, Never>.make(() => Async.succeed(()),
-                (_: Unit) => Async.thunk(() => attachedReleased = true))
-            await resource.attachToScope()
-            await Async<Int32, Option<String>>.fail(None)
-        let release = (_: Unit) => Async.thunk(() =>
-            assert attachedReleased
-            released = true
-        )
-        let producer = await Producer<Int32, String>.make(acquire, pull, release)
-        await expectProducerEnd(producer.next())
-        assert released
+    let program: Async<Unit, String> =
+        async do
+            let acquire: Async<Unit, String> = Async.succeed(())
+            let pull: (Unit) => Async<Int32, Option<String>> =
+                (_: Unit) =>
+                    async do
+                        let resource =
+                            Resource<Unit, Never>
+                                .make(
+                                () => Async.succeed(()),
+                                (_: Unit) => Async.thunk(() => attachedReleased = true)
+                            )
+                        await resource.attachToScope()
+                        await Async<Int32, Option<String>>.fail(None)
+            let release =
+                (_: Unit) =>
+                    Async
+                        .thunk(
+                        () =>
+                            assert attachedReleased
+                            released = true
+                    )
+            let producer = await Producer<Int32, String>.make(acquire, pull, release)
+            await expectProducerEnd(producer.next())
+            assert released
     program.run()
 
 test "Producer: pull failure releases before recovery and is observed once" =
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        let acquire: Async<Unit, String> = Async.succeed(())
-        let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => Async.fail(Some("pull failed"))
-        let producer = await Producer<Int32, String>.make(acquire, pull,
-            (_: Unit) => Async.thunk(() => released = true))
-        await producer.next().fold((error: Option<String>) => Async.thunk(() =>
-            assert released
-            assert error.require == "pull failed"
-        ), (_: Int32) => Async.thunk(() => panic "expected failure"))
-        await expectProducerEnd(producer.next())
+    let program: Async<Unit, String> =
+        async do
+            let acquire: Async<Unit, String> = Async.succeed(())
+            let pull: (Unit) => Async<Int32, Option<String>> =
+                (_: Unit) => Async.fail(Some("pull failed"))
+            let producer =
+                await Producer<Int32, String>
+                    .make(acquire, pull, (_: Unit) => Async.thunk(() => released = true))
+            await producer
+                .next()
+                .fold(
+                (
+                    (error: Option<String>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                assert released
+                                assert error.require == "pull failed"
+                        )
+                ),
+                (_: Int32) => Async.thunk(() => panic "expected failure")
+            )
+            await expectProducerEnd(producer.next())
     program.run()
 
 test "Producer: explicit interruption reports cleanup panic once" =
-    let program: Async<Unit, String> = async do
-        let release: (ProducerTestState) => Async<Unit, Never> = (_: ProducerTestState) => async do
-            await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
-            await Async<Unit, Never>.failPanic("release panic")
-        let producer = await testProducer(1, release)
-        await producer.interrupt().foldCause((cause: Cause<Never>) => Async.thunk(() =>
-            match cause with
-                case Cause.Panicked(message, _) => assert message == "release panic"
-                case _ => panic "expected cleanup panic"
-        ), (_: Unit) => Async.thunk(() => panic "expected failure"))
-        await producer.interrupt()
-        await expectProducerEnd(producer.next())
+    let program: Async<Unit, String> =
+        async do
+            let release: (ProducerTestState) => Async<Unit, Never> =
+                (_: ProducerTestState) =>
+                    async do
+                        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+                        await Async<Unit, Never>.failPanic("release panic")
+            let producer = await testProducer(1, release)
+            await producer
+                .interrupt()
+                .foldCause(
+                (
+                    (cause: Cause<Never>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        assert message == "release panic"
+                                    case _ => panic "expected cleanup panic"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "expected failure")
+            )
+            await producer.interrupt()
+            await expectProducerEnd(producer.next())
     program.run()
 
 test "Producer: shutdown frame awaits asynchronous release before returning Unit" =
     let mutable released = false
-    let program: Async<Unit, String> = async do
-        let release: (ProducerTestState) => Async<Unit, Never> = (_: ProducerTestState) => async do
-            await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
-            released = true
-        let producer = await testProducer(1, release)
-        await producer.interrupt()
-        assert released
-        await expectProducerEnd(producer.next())
+    let program: Async<Unit, String> =
+        async do
+            let release: (ProducerTestState) => Async<Unit, Never> =
+                (_: ProducerTestState) =>
+                    async do
+                        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+                        released = true
+            let producer = await testProducer(1, release)
+            await producer.interrupt()
+            assert released
+            await expectProducerEnd(producer.next())
     program.run()
 
 test "Producer: shutdown finishes when a pull recovers interruption into an item" =
     let mutable released = false
     let mutable cancelled = false
     let acquire: Async<Unit, String> = Async.succeed(())
-    let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) =>
-        Async<Unit, Option<String>>.sleep(Duration.ofMillis(10000i64)).map((_: Unit) => 1)
-            .foldCause((_: Cause<Never>) => Async.succeed(2), (value: Int32) => Async.succeed(value))
-    let operation: Async<Unit, String> = async do
-        let producer = await Producer<Int32, String>.make(acquire, pull,
-            (_: Unit) => Async.thunk(() => released = true))
-        await producerValue(producer.next())
-        panic "cancelled pull returned an item"
-    let program = operation.foldCause((cause: Cause<String>) => Async.thunk(() =>
-        match cause with
-            case Cause.Interrupted(_) => cancelled = true
-            case _ => panic "expected cancellation"
-    ), (_: Unit) => Async.succeed(()))
+    let pull: (Unit) => Async<Int32, Option<String>> =
+        (_: Unit) =>
+            Async<Unit, Option<String>>
+                .sleep(Duration.ofMillis(10000i64))
+                .map((_: Unit) => 1)
+                .foldCause(
+                (_: Cause<Never>) => Async.succeed(2),
+                (value: Int32) => Async.succeed(value)
+            )
+    let operation: Async<Unit, String> =
+        async do
+            let producer =
+                await Producer<Int32, String>
+                    .make(acquire, pull, (_: Unit) => Async.thunk(() => released = true))
+            await producerValue(producer.next())
+            panic "cancelled pull returned an item"
+    let program =
+        operation
+            .foldCause(
+            (
+                (cause: Cause<String>) =>
+                    Async
+                        .thunk(
+                        () =>
+                            match cause with
+                                case Cause.Interrupted(_) => cancelled = true
+                                case _ => panic "expected cancellation"
+                    )
+            ),
+            (_: Unit) => Async.succeed(())
+        )
     let runtime = Runtime.make(program)
     let caller = runtime.fibers.get(FiberId.zero).require
     stepProducerUntil(runtime, caller, () => producerFiberSuspended(caller))
@@ -408,20 +595,38 @@ test "Producer: acquisition attachment cleanup panic overrides caller cancellati
         let mutable acquisitionReached = false
         let mutable released = false
         let mutable cleanupObserved = false
-        let acquire: Async<Unit, String> = async do
-            let resource = Resource<Unit, Never>.make(() => Async.succeed(()),
-                (_: Unit) => Async<Unit, Never>.failPanic("acquisition cleanup panic"))
-            await resource.attachToScope()
-            acquisitionReached = true
-            if succeeds then () else await Async<Unit, String>.fail("acquisition failed")
+        let acquire: Async<Unit, String> =
+            async do
+                let resource =
+                    Resource<Unit, Never>
+                        .make(
+                        () => Async.succeed(()),
+                        (_: Unit) => Async<Unit, Never>.failPanic("acquisition cleanup panic")
+                    )
+                await resource.attachToScope()
+                acquisitionReached = true
+                if succeeds then () else await Async<Unit, String>.fail("acquisition failed")
         let pull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => Async.succeed(1)
-        let operation = Producer<Int32, String>.make(acquire, pull,
-            (_: Unit) => Async.thunk(() => released = true))
-        let program = operation.foldCause((cause: Cause<String>) => Async.thunk(() =>
-            match cause with
-                case Cause.Panicked(message, _) => cleanupObserved = message == "acquisition cleanup panic"
-                case _ => ()
-        ), (_: Producer<Int32, String>) => Async.thunk(() => panic "cancelled acquisition returned a producer"))
+        let operation =
+            Producer<Int32, String>
+                .make(acquire, pull, (_: Unit) => Async.thunk(() => released = true))
+        let program =
+            operation
+                .foldCause(
+                (
+                    (cause: Cause<String>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        cleanupObserved = message == "acquisition cleanup panic"
+                                    case _ => ()
+                        )
+                ),
+                (_: Producer<Int32, String>) =>
+                    Async.thunk(() => panic "cancelled acquisition returned a producer")
+            )
         let runtime = Runtime.make(program)
         let caller = runtime.fibers.get(FiberId.zero).require
         stepProducerUntil(runtime, caller, () => producerFiberSuspended(caller))
@@ -437,18 +642,32 @@ test "Producer: acquisition attachment cleanup panic overrides caller cancellati
 test "Producer: cancellation during shutdown preserves cleanup panic" =
     let mutable releaseStarted = false
     let mutable cleanupObserved = false
-    let release: (ProducerTestState) => Async<Unit, Never> = (_: ProducerTestState) => async do
-        releaseStarted = true
-        await Async<Unit, Never>.yieldNow()
-        await Async<Unit, Never>.failPanic("shutdown cleanup panic")
-    let operation: Async<Unit, String> = async do
-        let producer = await testProducer(1, release)
-        await producer.interrupt()
-    let program = operation.foldCause((cause: Cause<String>) => Async.thunk(() =>
-        match cause with
-            case Cause.Panicked(message, _) => cleanupObserved = message == "shutdown cleanup panic"
-            case _ => ()
-    ), (_: Unit) => Async.thunk(() => panic "expected cleanup failure"))
+    let release: (ProducerTestState) => Async<Unit, Never> =
+        (_: ProducerTestState) =>
+            async do
+                releaseStarted = true
+                await Async<Unit, Never>.yieldNow()
+                await Async<Unit, Never>.failPanic("shutdown cleanup panic")
+    let operation: Async<Unit, String> =
+        async do
+            let producer = await testProducer(1, release)
+            await producer.interrupt()
+    let program =
+        operation
+            .foldCause(
+            (
+                (cause: Cause<String>) =>
+                    Async
+                        .thunk(
+                        () =>
+                            match cause with
+                                case Cause.Panicked(message, _) =>
+                                    cleanupObserved = message == "shutdown cleanup panic"
+                                case _ => ()
+                    )
+            ),
+            (_: Unit) => Async.thunk(() => panic "expected cleanup failure")
+        )
     let runtime = Runtime.make(program)
     let caller = runtime.fibers.get(FiberId.zero).require
     stepProducerUntil(runtime, caller, () => producerFiberSuspended(caller))

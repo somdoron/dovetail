@@ -3,4 +3,5 @@ package standard.prelude
 /// The capability used by indexed reads.
 public trait Index<K> =
     type Output
+
     function get(self: Self, index: K): Output

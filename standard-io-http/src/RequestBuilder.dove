@@ -68,7 +68,8 @@ module RequestBuilder =
         }
 
     /// JSON-encode `value` and stage `application/json` as the Content-Type.
-    public function json<T>(self, value: T): RequestBuilder where T: JsonEncoder =
+    public function json<T>(self, value: T): RequestBuilder
+        where T: JsonEncoder =
         RequestBuilder {
             method = self.method
             uri = self.uri
@@ -80,15 +81,15 @@ module RequestBuilder =
     /// Issue the request. Builds a `Request`, dispatches via
     /// `HttpClient.send`, returns the flat `Response`.
     public async function send(self): Async<Response, HttpClientError> =
-        let typedHeaders = await Async.fromResult(
-            buildHeadersForBuilder(self.headers, self.contentType)
-        )
-        let req: Request = Request {
-            method = self.method
-            uri = self.uri
-            headers = typedHeaders
-            body = self.body
-        }
+        let typedHeaders =
+            await Async.fromResult(buildHeadersForBuilder(self.headers, self.contentType))
+        let req: Request =
+            Request {
+                method = self.method
+                uri = self.uri
+                headers = typedHeaders
+                body = self.body
+            }
         await HttpClient.send(req)
 
 /// Shallow-copy a list of header pairs so chain steps don't mutate
@@ -106,15 +107,12 @@ function cloneHeaders(src: ArrayList<(String, String)>): ArrayList<(String, Stri
 /// helper if the caller didn't supply one. `Host`, `Connection: close`,
 /// and `Content-Length` are added later by `HttpClient.send`'s assembly
 /// path.
-function buildHeadersForBuilder(
-    pairs: ArrayList<(String, String)>,
-    contentType: Option<String>
-): Result<Headers, HttpClientError> =
+function buildHeadersForBuilder(pairs: ArrayList<(String, String)>, contentType: Option<String>):
+    Result<Headers, HttpClientError> =
     let mutable hasContentType = false
     let mutable i = 0
     while i < pairs.length do
-        if pairs.get(i)._0.toLowerCase() == "content-type" then
-            hasContentType = true
+        if pairs.get(i)._0.toLowerCase() == "content-type" then hasContentType = true
         i = i + 1
     let merged = ArrayList<(String, String)>.new()
     let mutable j = 0
@@ -122,9 +120,7 @@ function buildHeadersForBuilder(
         merged.add(pairs.get(j))
         j = j + 1
     match contentType with
-        case Some(ct) =>
-            if !hasContentType then
-                merged.add(("Content-Type", ct))
+        case Some(ct) => if !hasContentType then merged.add(("Content-Type", ct))
         case None => ()
     match normalizeAndValidate(merged.toArray().toList()) with
         case Error(e) => Error(HttpClientError.ProtocolError(e))

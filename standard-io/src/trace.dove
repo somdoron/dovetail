@@ -6,9 +6,9 @@ function emptyTrace(): List<SourceLocation> = List.empty
 
 function withTrace(cause: Cause<Any>, trace: List<SourceLocation>): Cause<Any> =
     match cause with
-    case Cause.Failed(error, _) => Cause.Failed(error, trace)
-    case Cause.Panicked(msg, _) => Cause.Panicked(msg, trace)
-    case Cause.Interrupted(_) => Cause.Interrupted(trace)
+        case Cause.Failed(error, _) => Cause.Failed(error, trace)
+        case Cause.Panicked(msg, _) => Cause.Panicked(msg, trace)
+        case Cause.Interrupted(_) => Cause.Interrupted(trace)
 
 /// The trace a cause is already carrying. Needed where a cause is re-injected
 /// into a fiber through `FailCause`, which re-traces with the fiber's CURRENT
@@ -16,11 +16,22 @@ function withTrace(cause: Cause<Any>, trace: List<SourceLocation>): Cause<Any> =
 /// replacing a real trace with an empty one.
 function traceOf(cause: Cause<Any>): List<SourceLocation> =
     match cause with
-    case Cause.Failed(_, trace) => trace
-    case Cause.Panicked(_, trace) => trace
-    case Cause.Interrupted(trace) => trace
+        case Cause.Failed(_, trace) => trace
+        case Cause.Panicked(_, trace) => trace
+        case Cause.Interrupted(trace) => trace
 
 function printTraces(traces: List<SourceLocation>): Unit =
     for trace in traces do
         if trace.functionName != "" then
-            Console.eprintln("  at " ++ trace.functionName ++ " (" ++ trace.file ++ ":" ++ trace.line.format() ++ ":" ++ trace.column.format() ++ ")")
+            Console
+                .eprintln(
+                "  at "
+                    ++ trace.functionName
+                    ++ " ("
+                    ++ trace.file
+                    ++ ":"
+                    ++ trace.line.format()
+                    ++ ":"
+                    ++ trace.column.format()
+                    ++ ")"
+            )

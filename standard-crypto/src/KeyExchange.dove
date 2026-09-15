@@ -10,10 +10,16 @@ import standard.prelude.Result
 /// `SecretKey`, and calls `derivePublicKey`.
 public interface KeyExchange =
     property publicKeySize(self): Int32
+
     property secretKeySize(self): Int32
+
     property sharedSecretSize(self): Int32
+
     function derivePublicKey(self, secret: SecretKey): PublicKey
-    function computeSharedSecret(self, mySecret: SecretKey, theirPublic: PublicKey): Result<SymmetricKey, CryptoError>
+
+    function computeSharedSecret(self, mySecret: SecretKey, theirPublic: PublicKey):
+        Result<SymmetricKey, CryptoError>
+
     /// Interpret `secretKeySize` candidate bytes as a secret key. Returns `None`
     /// when the bytes don't form a valid secret (e.g. an out-of-range curve
     /// scalar), so a random generator can resample. Curve25519-family algorithms

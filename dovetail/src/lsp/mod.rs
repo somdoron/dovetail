@@ -1423,14 +1423,45 @@ impl LanguageServer for DovetailLanguageServer {
     }
 
     async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
-        self.log(
-            LogLevel::Debug,
-            &format!(
-                "formatting: {} → None (not implemented)",
-                params.text_document.uri
-            ),
-        );
-        Ok(None) // Placeholder — no formatting yet
+        let uri = &params.text_document.uri;
+        let snapshot = self
+            .state
+            .documents
+            .read()
+            .unwrap()
+            .get(uri)
+            .map(|document| (document.version, document.content.clone()));
+        let Some((version, source)) = snapshot else {
+            return Ok(None);
+        };
+        let input = source.clone();
+        let file_path = uri.as_str().into();
+        let output =
+            tokio::task::spawn_blocking(move || crate::formatter::format_source(&input, file_path))
+                .await
+                .map_err(|_| tower_lsp::jsonrpc::Error::internal_error())?
+                .map_err(|error| tower_lsp::jsonrpc::Error::invalid_params(error.to_string()))?;
+        if output == source {
+            return Ok(None);
+        }
+        let documents = self.state.documents.read().unwrap();
+        if documents
+            .get(uri)
+            .is_none_or(|document| document.version != version)
+        {
+            return Ok(None);
+        }
+        let line = source.bytes().filter(|byte| *byte == b'\n').count() as u32;
+        let character = source
+            .rsplit('\n')
+            .next()
+            .unwrap_or("")
+            .encode_utf16()
+            .count() as u32;
+        Ok(Some(vec![TextEdit {
+            range: Range::new(Position::new(0, 0), Position::new(line, character)),
+            new_text: output,
+        }]))
     }
 
     async fn code_lens(&self, params: CodeLensParams) -> Result<Option<Vec<CodeLens>>> {

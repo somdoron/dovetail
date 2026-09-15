@@ -2,7 +2,7 @@ package standard.math
 
 /// Rounding mode for decimal arithmetic.
 @derive(Equatable)
-public enum RoundingMode =
+ public enum RoundingMode =
     /// Rounds towards the nearest neighbor; ties round up.
     HalfUp
     /// Rounds towards the nearest neighbor; ties round down.
@@ -32,12 +32,13 @@ test "RoundingMode all variants are distinct" =
 
 test "RoundingMode match" =
     let mode = RoundingMode.HalfEven
-    let name = match mode with
-        case RoundingMode.HalfUp => "half-up"
-        case RoundingMode.HalfDown => "half-down"
-        case RoundingMode.HalfEven => "half-even"
-        case RoundingMode.Floor => "floor"
-        case RoundingMode.Ceiling => "ceiling"
-        case RoundingMode.Up => "up"
-        case RoundingMode.Down => "down"
+    let name =
+        match mode with
+            case RoundingMode.HalfUp => "half-up"
+            case RoundingMode.HalfDown => "half-down"
+            case RoundingMode.HalfEven => "half-even"
+            case RoundingMode.Floor => "floor"
+            case RoundingMode.Ceiling => "ceiling"
+            case RoundingMode.Up => "up"
+            case RoundingMode.Down => "down"
     assert name == "half-even"

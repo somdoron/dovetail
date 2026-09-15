@@ -1,16 +1,33 @@
 module standard.prelude.Array<T>
 
 public function get(self, index: Int32): T = intrinsic
+
 public function set(self, index: Int32, value: T): Unit = intrinsic
+
 public property readonly(self): ReadonlySlice<T> = ReadonlySlice.full(self)
+
 public property length(self): Int32 = intrinsic
+
 public function clone(self): Array<T> = intrinsic
+
 public function fill(size: Int32, value: T): Array<T> = intrinsic
+
 public function extend(self, value: T, newSize: Int32): Array<T> = intrinsic
+
 public function concat(self, other: Array<T>): Array<T> = intrinsic
+
 public function empty(): Array<T> = intrinsic
-public function copy(self, sourceOffset: Int32, destination: Array<T>, destinationOffset: Int32, length: Int32): Array<T> = intrinsic
-public function copy(self, destination: Array<T>, destinationOffset: Int32): Array<T> = self.copy(0, destination, destinationOffset, self.length)
+
+public function copy(
+    self,
+    sourceOffset: Int32,
+    destination: Array<T>,
+    destinationOffset: Int32,
+    length: Int32
+): Array<T> = intrinsic
+
+public function copy(self, destination: Array<T>, destinationOffset: Int32): Array<T> =
+    self.copy(0, destination, destinationOffset, self.length)
 
 /// Copies the array's elements into a `List`, preserving order.
 /// Built back-to-front, so it needs no reversing pass.
@@ -31,7 +48,8 @@ public function contains(self, value: T): Bool where T: Equatable =
     found
 
 public function map<U>(self, f: T => U): Array<U> =
-    if (self.length == 0) then Array.empty()
+    if (self.length == 0) then
+        Array.empty()
     else
         let result = Array.fill(self.length, f(self.get(0)))
         let mutable i = 1
@@ -41,7 +59,8 @@ public function map<U>(self, f: T => U): Array<U> =
         result
 
 public function foldLeft<U>(self, initial: U, f: (U, T) => U): U =
-    if (self.length == 0) then initial
+    if (self.length == 0) then
+        initial
     else
         let mutable acc = initial
         let mutable i = 0
@@ -58,7 +77,8 @@ public function foldLeft<U>(self, initial: U, f: (U, T) => U): U =
 /// receiver is unchanged.
 public function sortedBy(self, cmp: (T, T) => Ordering): Array<T> =
     let n = self.length
-    if n <= 1 then self.clone()
+    if n <= 1 then
+        self.clone()
     else
         // `src` holds each pass's input; `dst` is written this pass;
         // swap at the end of each pass so the final result lives in
@@ -101,14 +121,14 @@ public function sortedBy(self, cmp: (T, T) => Ordering): Array<T> =
 ///
 /// O(n log n) bottom-up merge sort. Requires `T: Comparable`; for
 /// custom ordering use `sortedBy` (no trait bound) or `sortedByKey`.
-public function sorted(self): Array<T> where T: Comparable =
-    self.sortedBy((a: T, b: T) => a.compare(b))
+public function sorted(self): Array<T>
+    where T: Comparable = self.sortedBy((a: T, b: T) => a.compare(b))
 
 /// Return a new sorted array using a projection. Each element's `key`
 /// is computed once per comparison; if the key is expensive, prefer
 /// `sortedBy` with a memoized comparator instead.
-public function sortedByKey<K>(self, key: (T) => K): Array<T> where K: Comparable =
-    self.sortedBy((a: T, b: T) => key(a).compare(key(b)))
+public function sortedByKey<K>(self, key: (T) => K): Array<T>
+    where K: Comparable = self.sortedBy((a: T, b: T) => key(a).compare(key(b)))
 
 test "Array sorted: empty array" =
     let a: Array<Int32> = Array.empty()
@@ -122,14 +142,14 @@ test "Array sorted: single element" =
     assert s.get(0) == 42
 
 test "Array sorted: already sorted" =
-    let a = [|1, 2, 3, 4, 5|]
+    let a = [| 1, 2, 3, 4, 5 |]
     let s = a.sorted()
     assert s.length == 5
     assert s.get(0) == 1
     assert s.get(4) == 5
 
 test "Array sorted: reverse order" =
-    let a = [|5, 4, 3, 2, 1|]
+    let a = [| 5, 4, 3, 2, 1 |]
     let s = a.sorted()
     assert s.get(0) == 1
     assert s.get(1) == 2
@@ -138,7 +158,7 @@ test "Array sorted: reverse order" =
     assert s.get(4) == 5
 
 test "Array sorted: mixed order with duplicates" =
-    let a = [|3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5|]
+    let a = [| 3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5 |]
     let s = a.sorted()
     assert s.get(0) == 1
     assert s.get(1) == 1
@@ -153,41 +173,70 @@ test "Array sorted: mixed order with duplicates" =
     assert s.get(10) == 9
 
 test "Array sorted: does not mutate receiver" =
-    let a = [|3, 1, 2|]
+    let a = [| 3, 1, 2 |]
     let _ = a.sorted()
     assert a.get(0) == 3
     assert a.get(1) == 1
     assert a.get(2) == 2
 
 test "Array sorted: strings" =
-    let a = [|"cherry", "apple", "banana"|]
+    let a = [| "cherry", "apple", "banana" |]
     let s = a.sorted()
     assert s.get(0) == "apple"
     assert s.get(1) == "banana"
     assert s.get(2) == "cherry"
 
 test "Array sortedBy: reverse via comparator" =
-    let a = [|1, 2, 3, 4, 5|]
+    let a = [| 1, 2, 3, 4, 5 |]
     let s = a.sortedBy((x: Int32, y: Int32) => y.compare(x))
     assert s.get(0) == 5
     assert s.get(4) == 1
 
 test "Array sortedByKey: by string length" =
-    let a = [|"banana", "fig", "cherry", "kiwi"|]
+    let a = [| "banana", "fig", "cherry", "kiwi" |]
     let s = a.sortedByKey((x: String) => x.length)
-    assert s.get(0) == "fig"        // 3
-    assert s.get(1) == "kiwi"       // 4
-    assert s.get(2) == "banana"     // 6
-    assert s.get(3) == "cherry"     // 6
+    assert s.get(0) == "fig" // 3
+    assert s.get(1) == "kiwi" // 4
+    assert s.get(2) == "banana" // 6
+    assert s.get(3) == "cherry" // 6
 
 test "Array sorted: large array (32 elements)" =
     // Exercises multiple merge-sort passes (32 = 2^5, so width grows 1→2→4→8→16).
-    let a = [|
-        29, 17, 3, 8, 24, 14, 21, 1,
-        15, 9, 18, 6, 27, 11, 20, 26,
-        12, 4, 30, 13, 22, 7, 31, 2,
-        28, 16, 10, 19, 23, 5, 25, 0
-    |]
+    let a =
+        [|
+            29,
+            17,
+            3,
+            8,
+            24,
+            14,
+            21,
+            1,
+            15,
+            9,
+            18,
+            6,
+            27,
+            11,
+            20,
+            26,
+            12,
+            4,
+            30,
+            13,
+            22,
+            7,
+            31,
+            2,
+            28,
+            16,
+            10,
+            19,
+            23,
+            5,
+            25,
+            0
+        |]
     let s = a.sorted()
     let mutable i = 0
     while i < 32 do

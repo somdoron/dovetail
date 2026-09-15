@@ -11,7 +11,6 @@ import standard.time.TimeZone
 /// passing a `(LogRecord) => String` to the sink's `withFormatter` /
 /// `openWith` constructor.
 module Formatter =
-
     /// Render an event in logfmt form: a sequence of `key=value` pairs on a
     /// single line, in the order:
     /// `ts level logger span msg <span-fields> <logger-fields>`. Keys are
@@ -29,11 +28,13 @@ module Formatter =
         if event.loggerName != "" then
             builder.append(" logger=")
             appendValue(builder, event.loggerName)
-        else builder
+        else
+            builder
         if event.spans.length > 0 then
             builder.append(" span=")
             appendDottedSpanNames(builder, event.spans)
-        else builder
+        else
+            builder
         builder.append(" msg=")
         appendValue(builder, event.message)
         for span in event.spans do
@@ -48,12 +49,10 @@ module Formatter =
         builder.toString()
 
 // --- Internal helpers (package-private) -------------------------------------
-
 // Helpers return `StringBuilder` (the same builder passed in) so the body
 // can end with the most recent builder expression — matching the convention
 // in `standard-json/src/Json.dove`. Intermediate `.append(...)` calls are
 // auto-discarded by Dovetail's block rules.
-
 function appendDottedSpanNames(builder: StringBuilder, spans: List<LogSpan>): StringBuilder =
     // A separator that starts empty, rather than an index compared to 0 —
     // there is no index to compare once the walk is by element.
@@ -65,8 +64,7 @@ function appendDottedSpanNames(builder: StringBuilder, spans: List<LogSpan>): St
     builder
 
 function appendValue(builder: StringBuilder, value: String): StringBuilder =
-    if isBare(value) then builder.append(value)
-    else appendQuoted(builder, value)
+    if isBare(value) then builder.append(value) else appendQuoted(builder, value)
 
 function isBare(value: String): Bool =
     let length = value.length
@@ -78,7 +76,13 @@ function isBare(value: String): Bool =
     bare
 
 function isBareChar(c: Char): Bool =
-    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-' || c == '/'
+    (c >= 'A' && c <= 'Z')
+        || (c >= 'a' && c <= 'z')
+        || (c >= '0' && c <= '9')
+        || c == '_'
+        || c == '.'
+        || c == '-'
+        || c == '/'
 
 function appendQuoted(builder: StringBuilder, value: String): StringBuilder =
     let length = value.length

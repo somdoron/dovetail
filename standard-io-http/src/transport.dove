@@ -60,14 +60,12 @@ let maxResponseHeaderBytes: Int32 = 65536i32
 /// Whether appending `incoming` bytes on top of `current` already-buffered bytes
 /// would push past `cap`. Split out so the size guards below are unit-testable
 /// without driving a socket, and shared by the body and header-block limits.
-function exceedsCap(current: Int32, incoming: Int32, cap: Int32): Bool =
-    current + incoming > cap
+function exceedsCap(current: Int32, incoming: Int32, cap: Int32): Bool = current + incoming > cap
 
 /// Drive a `standard.http.Connection` (sans-IO state machine) over a fresh
 /// connection. `http://` uses a plain `TcpStream`; `https://` wraps it in TLS.
 /// The two share one driver — `driveClientExchange` — parameterised by the
 /// stream pair's error type and a lift into `HttpClientError`.
-
 /// Send a request over a plain TCP connection. v1 always opens a new socket per
 /// call (no pooling).
 public async function sendRequest(
@@ -93,8 +91,7 @@ public async function sendRequestTls(
     let tls: TlsClientStream = use TlsClientStream.connect(config, tcp.input, tcp.output)
     await driveClientExchange(tls.input, tls.output, tlsClientMapErr, request, body)
 
-function netClientMapErr(e: NetworkError): HttpClientError =
-    HttpClientError.from(NetError.from(e))
+function netClientMapErr(e: NetworkError): HttpClientError = HttpClientError.from(NetError.from(e))
 
 function tlsClientMapErr(e: TlsIoError): HttpClientError =
     match e with
@@ -107,20 +104,30 @@ function tlsClientMapErr(e: TlsIoError): HttpClientError =
 /// Build a per-request HTTPS client config: advertise `http/1.1`, draw fresh
 /// entropy and the current time. Verifies the server cert against `trustAnchors`
 /// when supplied, otherwise the bundled Mozilla roots.
-async function buildClientTlsConfig(
-    host: String,
-    trustAnchors: Option<List<X509Certificate>>
-): Async<TlsClientConfig, HttpClientError> =
+async function buildClientTlsConfig(host: String, trustAnchors: Option<List<X509Certificate>>):
+    Async<TlsClientConfig, HttpClientError> =
     let now = await Instant.now
     let seed = await Random.bytes(160i32)
-    let anchors = match trustAnchors with
-        case Some(certs) => certs
-        case None => Roots.mozillaRoots()
+    let anchors =
+        match trustAnchors with
+            case Some(certs) => certs
+            case None => Roots.mozillaRoots()
     TlsClientConfig {
         serverName = host
-        cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+        cipherSuites =
+            [
+                CipherSuite.Aes128GcmSha256,
+                CipherSuite.Aes256GcmSha384,
+                CipherSuite.ChaCha20Poly1305Sha256
+            ]
         keyExchangeGroups = [KeyExchangeGroup.X25519, KeyExchangeGroup.SecP256R1]
-        signatureAlgorithms = [SignatureScheme.Ed25519, SignatureScheme.EcdsaSecp256r1Sha256, SignatureScheme.RsaPssRsaeSha256, SignatureScheme.RsaPssRsaeSha384]
+        signatureAlgorithms =
+            [
+                SignatureScheme.Ed25519,
+                SignatureScheme.EcdsaSecp256r1Sha256,
+                SignatureScheme.RsaPssRsaeSha256,
+                SignatureScheme.RsaPssRsaeSha384
+            ]
         trustAnchors = anchors
         alpnProtocols = [alpnHttp1]
         currentTime = now
@@ -137,15 +144,15 @@ public async function driveClientExchange<E>(
     mapErr: (E) => HttpClientError,
     request: HttpRequest,
     body: Array<Uint8>
-): Async<Response, HttpClientError> where E : IoError =
+): Async<Response, HttpClientError>
+    where E: IoError =
     let conn = Connection.client()
 
     // Phase 1 — request line + headers.
     await writeEvent(output, conn, HttpEvent.Request(request), mapErr)
 
     // Phase 2 — body (only if non-empty; framing is Content-Length).
-    if body.length > 0 then
-        await writeEvent(output, conn, HttpEvent.Data(body), mapErr)
+    if body.length > 0 then await writeEvent(output, conn, HttpEvent.Data(body), mapErr)
 
     // Phase 3 — close the message (flushes the Content-Length writer).
     await writeEvent(output, conn, HttpEvent.EndOfMessage(Headers.empty()), mapErr)
@@ -177,12 +184,22 @@ public async function driveClientExchange<E>(
                     // event hasn't arrived yet and fail past the cap.
                     if !seenResponse then
                         if exceedsCap(headerBytesRead, chunk.length, maxResponseHeaderBytes) then
-                            err = Some(HttpClientError.ProtocolError(HttpError.remote("response header block exceeds maxResponseHeaderBytes")))
+                            err =
+                                Some(
+                                    HttpClientError
+                                        .ProtocolError(
+                                        HttpError
+                                            .remote(
+                                            "response header block exceeds maxResponseHeaderBytes"
+                                        )
+                                    )
+                                )
                         else
                             headerBytesRead = headerBytesRead + chunk.length
                     // Empty array == peer closed; signal EOF to the state
                     // machine so it can finalise Http10/Content-Length bodies.
-                    conn.receiveData(chunk)
+                    conn
+                        .receiveData(chunk)
                 case NextEventResult.Paused =>
                     // Client-side Paused shouldn't happen with `Connection: close`;
                     // treat as terminal so we don't spin.
@@ -202,28 +219,41 @@ public async function driveClientExchange<E>(
                             // can't OOM the client. Mirrors the server's
                             // `maxBodyBytes` guard in `readWireRequest`.
                             if exceedsCap(bodyBytes.length, chunk.length, maxResponseBodyBytes) then
-                                err = Some(HttpClientError.ProtocolError(HttpError.remote("response body exceeds maxResponseBodyBytes")))
+                                err =
+                                    Some(
+                                        HttpClientError
+                                            .ProtocolError(
+                                            HttpError
+                                                .remote(
+                                                "response body exceeds maxResponseBodyBytes"
+                                            )
+                                        )
+                                    )
                             else
                                 bodyBytes.append(chunk)
-                        case HttpEvent.EndOfMessage(_) =>
-                            done = true
+                        case HttpEvent.EndOfMessage(_) => done = true
                         case HttpEvent.ConnectionClosed =>
-                            if !seenResponse then
-                                err = Some(HttpClientError.UnexpectedEndOfStream)
+                            if !seenResponse then err = Some(HttpClientError.UnexpectedEndOfStream)
                             done = true
                         case HttpEvent.Request(_) =>
                             // Unreachable on the client receive path.
-                            err = Some(HttpClientError.ProtocolError(HttpError.remote("client received Request event")))
+                            err =
+                                Some(
+                                    HttpClientError
+                                        .ProtocolError(
+                                        HttpError.remote("client received Request event")
+                                    )
+                                )
                         case _ => ()
-                case NextEventResult.Error(e) =>
-                    err = Some(HttpClientError.ProtocolError(e))
+                case NextEventResult.Error(e) => err = Some(HttpClientError.ProtocolError(e))
                 case _ => ()
 
     // Collapse the read side's outcome: a run that ends without a complete
     // response is an unexpected EOF, even when no explicit error was recorded.
-    let readFailure: Option<HttpClientError> = match err with
-        case Some(e) => Some(e)
-        case None => if !seenResponse then Some(HttpClientError.UnexpectedEndOfStream) else None
+    let readFailure: Option<HttpClientError> =
+        match err with
+            case Some(e) => Some(e)
+            case None => if !seenResponse then Some(HttpClientError.UnexpectedEndOfStream) else None
 
     match readFailure with
         case None =>
@@ -241,7 +271,7 @@ public async function driveClientExchange<E>(
                 reason = reason
                 headers = responseHeaders
                 body = bodyBytes.toArray()
-                }
+            }
         case Some(readErr) =>
             // No complete response. End the write half and read its verdict: a
             // `write` resolves when the host ACCEPTS the request bytes, not when
@@ -252,12 +282,15 @@ public async function driveClientExchange<E>(
             // so it YIELDS to the write's verdict; a genuine protocol error does
             // not, and neither does a bare unexpected EOF when the write half was
             // fine (a peer that simply hung up without answering).
-            let writeFailure: Option<HttpClientError> = await output.close()
-                .map<Option<HttpClientError>>((_: Unit) => None)
-                .catchAll((e: E) => Async.succeed(Some(mapErr(e))))
-            let finalErr = match (readErr, writeFailure) with
-                case (HttpClientError.UnexpectedEndOfStream, Some(writeErr)) => writeErr
-                case _ => readErr
+            let writeFailure: Option<HttpClientError> =
+                await output
+                    .close()
+                    .map<Option<HttpClientError>>((_: Unit) => None)
+                    .catchAll((e: E) => Async.succeed(Some(mapErr(e))))
+            let finalErr =
+                match (readErr, writeFailure) with
+                    case (HttpClientError.UnexpectedEndOfStream, Some(writeErr)) => writeErr
+                    case _ => readErr
             await Async.fail(finalErr)
 
 /// Send one HttpEvent through the connection's writer and push the resulting
@@ -268,13 +301,13 @@ async function writeEvent<E>(
     conn: Connection,
     event: HttpEvent,
     mapErr: (E) => HttpClientError
-): Async<Unit, HttpClientError> where E : IoError =
+): Async<Unit, HttpClientError>
+    where E: IoError =
     let sendResult = conn.send(event)
     let bytesOpt = await Async.fromResult(sendResult.mapError(HttpClientError.from))
     match bytesOpt with
         case Some(bytes) =>
-            if bytes.length > 0 then
-                await output.write(bytes.readonly).mapError(mapErr)
+            if bytes.length > 0 then await output.write(bytes.readonly).mapError(mapErr)
         case None => ()
 
 test "exceedsCap bounds the client response body and header accumulation (C1/C2)" =

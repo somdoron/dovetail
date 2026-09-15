@@ -24,7 +24,6 @@ import standard.wasi.Waitable
 // Driven through a synthetic stream end because no copy is posted here at all:
 // what is under test is the state machine around the handle, and a real socket
 // would only add a peer that has to be persuaded not to read.
-
 enum ClosedSinkError =
     Gone
     Canceled
@@ -45,8 +44,7 @@ function quietSink(): ComponentStreamWrite<ClosedSinkError> =
         writable = Waitable(0i32)
         ending = () => Ok(())
         ledger = EndingLedger.fresh()
-        start = (bytes: ReadonlySlice<Uint8>) =>
-            panic "this stream end is never written to"
+        start = (bytes: ReadonlySlice<Uint8>) => panic "this stream end is never written to"
         cancel = () => EventPayload(0i32)
         canceledError = ClosedSinkError.Canceled
         stillOpen = () => true
@@ -90,13 +88,21 @@ async function closeThenAskProgram(outcomes: Array<String>): Async<Unit, Never> 
     // fiber, after every answer asserted below has been taken. See the note
     // above `deadWriteProbe` in the output-stream contract test for the bug.
     let sink: AsyncOutputStream<ClosedSinkError> =
-        await WasiOutputStream<ClosedSinkError>.resource<Never>(
-            ClosedSinkError.Gone, TornWrite.Fence, () => Async.succeed(quietSink())
-        ).attachToScope()
+        await WasiOutputStream<ClosedSinkError>
+            .resource<Never>(
+            ClosedSinkError.Gone,
+            TornWrite.Fence,
+            () => Async.succeed(quietSink())
+        )
+            .attachToScope()
     outcomes.set(0, await sink.close().fold<String, Never>(reportFailure, reportSuccess))
     outcomes.set(1, await sink.flush().fold<String, Never>(reportFailure, reportSuccess))
     outcomes.set(2, await sink.close().fold<String, Never>(reportFailure, reportSuccess))
-    outcomes.set(3, await sink.write([|1u8|].readonly).fold<String, Never>(reportFailure, reportSuccess))
+    outcomes
+        .set(
+        3,
+        await sink.write([| 1u8 |].readonly).fold<String, Never>(reportFailure, reportSuccess)
+    )
 
 test "flush on a live stream reports nothing" =
     let outcomes = Array<String>.fill(1, "")
@@ -109,7 +115,11 @@ async function liveFlushProgram(outcomes: Array<String>): Async<Unit, Never> =
     // `attachToScope()`, not `use` — same generic-base-class codegen bug as
     // `closeThenAskProgram` above, dodged the same way.
     let sink: AsyncOutputStream<ClosedSinkError> =
-        await WasiOutputStream<ClosedSinkError>.resource<Never>(
-            ClosedSinkError.Gone, TornWrite.Fence, () => Async.succeed(quietSink())
-        ).attachToScope()
+        await WasiOutputStream<ClosedSinkError>
+            .resource<Never>(
+            ClosedSinkError.Gone,
+            TornWrite.Fence,
+            () => Async.succeed(quietSink())
+        )
+            .attachToScope()
     outcomes.set(0, await sink.flush().fold<String, Never>(reportFailure, reportSuccess))

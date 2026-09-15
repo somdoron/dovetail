@@ -18,7 +18,6 @@ import standard.io.net.NetError
 //     was in that memory;
 //   * the accepting fiber parks on the accept stream, so closing the listener
 //     under it has to resume it rather than leave it suspended forever.
-
 async function acceptScoped(listener: TcpListener): Async<Int32, NetError> =
     let stream: TcpStream = use listener.accept()
     let _address = await stream.localAddress()
@@ -34,7 +33,6 @@ async function acceptScoped(listener: TcpListener): Async<Int32, NetError> =
 // There is no unowned variant of this test, because there is no way to write
 // one: a fiber can only outlive the scope that binds the listener by escaping
 // it, and nothing escapes a scope any more.
-
 async function backgroundAcceptor(
     listener: TcpListener,
     started: Promise<Unit, Never>,
@@ -42,15 +40,14 @@ async function backgroundAcceptor(
 ): Async<Unit, Never> =
     await started.complete(())
     let attempt: Async<Int32, NetError> = acceptScoped(listener)
-    await attempt.foldCause<Unit, Never>(
+    await attempt
+        .foldCause<Unit, Never>(
         (_: Cause<NetError>) => Async.thunk(() => mark()),
         (_: Int32) => Async.thunk(() => mark())
     )
 
-async function bindWithBackgroundAcceptor(
-    started: Promise<Unit, Never>,
-    mark: () => Unit
-): Async<Unit, NetError> =
+async function bindWithBackgroundAcceptor(started: Promise<Unit, Never>, mark: () => Unit):
+    Async<Unit, NetError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let _acceptor: Fiber<Unit, Never> =
         await backgroundAcceptor(listener, started, mark).forkBackground()
@@ -61,7 +58,7 @@ async function bindWithBackgroundAcceptor(
     ()
 
 @timeout(10000)
-test "TcpListener: a background acceptor is torn down before the listener is released" =
+ test "TcpListener: a background acceptor is torn down before the listener is released" =
     let mutable tornDown = false
     backgroundAcceptProgram(() => tornDown = true).run()
     // No trap, and the acceptor had finished unwinding by the time the block
@@ -79,17 +76,15 @@ async function backgroundAcceptProgram(setter: () => Unit): Async<Unit, NetError
 // a corrupt pinned free list, so a working bind + accept afterwards is the
 // check.
 @timeout(20000)
-test "TcpListener: repeated close-under-accept leaves sockets and the heap sane" =
+ test "TcpListener: repeated close-under-accept leaves sockets and the heap sane" =
     let mutable tornDown = 0i32
     let mutable roundTripped = 0i32
-    repeatedCloseProgram(
-        (n: Int32) => tornDown = n,
-        (n: Int32) => roundTripped = n
-    ).run()
+    repeatedCloseProgram((n: Int32) => tornDown = n, (n: Int32) => roundTripped = n).run()
     assert tornDown == 32i32
     assert roundTripped == 4i32
 
-async function repeatedCloseProgram(setTornDown: (Int32) => Unit, setRoundTrip: (Int32) => Unit): Async<Unit, NetError> =
+async function repeatedCloseProgram(setTornDown: (Int32) => Unit, setRoundTrip: (Int32) => Unit):
+    Async<Unit, NetError> =
     let mutable tornDown = 0i32
     let mutable i = 0i32
     while i < 32i32 do
@@ -107,7 +102,8 @@ async function repeatedCloseProgram(setTornDown: (Int32) => Unit, setRoundTrip: 
     let echoed = await served.awaitPromise()
     setRoundTrip(echoed)
 
-async function acceptAndEchoFour(listener: TcpListener, report: Promise<Int32, Never>): Async<Unit, NetError> =
+async function acceptAndEchoFour(listener: TcpListener, report: Promise<Int32, Never>):
+    Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     let data = await stream.input.read(64i64).mapError(toNetError)
     await report.complete(data.length)
@@ -117,12 +113,14 @@ async function acceptAndEchoFour(listener: TcpListener, report: Promise<Int32, N
 // outstanding read and the host op is posted before the fiber parks, so without
 // the per-handle stream lock the second acceptor's `acceptStart` lands on a busy
 // stream and traps. Both connections must be served.
-
-async function acceptOneAndReport(listener: TcpListener, report: Promise<Int32, Never>): Async<Unit, Never> =
-    let outcome = await acceptScoped(listener).fold<Int32, Never>(
-        (_: NetError) => Async.succeed(-1i32),
-        (n: Int32) => Async.succeed(n)
-    )
+async function acceptOneAndReport(listener: TcpListener, report: Promise<Int32, Never>):
+    Async<Unit, Never> =
+    let outcome =
+        await acceptScoped(listener)
+            .fold<Int32, Never>(
+            (_: NetError) => Async.succeed(-1i32),
+            (n: Int32) => Async.succeed(n)
+        )
     await report.complete(outcome)
     ()
 
@@ -131,10 +129,8 @@ async function concurrentAcceptProgram(setter: (Int32) => Unit): Async<Unit, Net
     let address = await listener.localAddress()
     let firstReport: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
     let secondReport: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
-    let first: Fiber<Unit, Never> =
-        await acceptOneAndReport(listener, firstReport).fork()
-    let second: Fiber<Unit, Never> =
-        await acceptOneAndReport(listener, secondReport).fork()
+    let first: Fiber<Unit, Never> = await acceptOneAndReport(listener, firstReport).fork()
+    let second: Fiber<Unit, Never> = await acceptOneAndReport(listener, secondReport).fork()
     // Quiescence barrier: the event loop only reaches its blocking wait once the
     // run queue is empty, so when this resumes BOTH acceptors have got as far as
     // they can — one parked on the accept, the other behind it. Connecting first
@@ -152,7 +148,7 @@ async function concurrentAcceptProgram(setter: (Int32) => Unit): Async<Unit, Net
     setter(firstOutcome + secondOutcome)
 
 @timeout(10000)
-test "TcpListener: two fibers accepting on one listener are serialized, not trapped" =
+ test "TcpListener: two fibers accepting on one listener are serialized, not trapped" =
     let mutable total = 0i32
     concurrentAcceptProgram((n: Int32) => total = n).run()
     // 1 from each acceptor: both accepts completed with a real connection.
@@ -164,7 +160,6 @@ test "TcpListener: two fibers accepting on one listener are serialized, not trap
 // The queued one is the interesting half: it is resumed by the lock handoff the
 // interrupt triggers, and must not turn that resumption into a fresh
 // `acceptStart` on a handle that is on its way out.
-
 async function bindWithTwoQueuedAcceptors(
     firstStarted: Promise<Unit, Never>,
     secondStarted: Promise<Unit, Never>,
@@ -180,7 +175,7 @@ async function bindWithTwoQueuedAcceptors(
     ()
 
 @timeout(10000)
-test "TcpListener: two queued acceptors are both torn down before the listener is released" =
+ test "TcpListener: two queued acceptors are both torn down before the listener is released" =
     let mutable tornDown = 0i32
     queuedAcceptorsProgram((n: Int32) => tornDown = n).run()
     // Both unwound, and neither trapped on the dropped accept stream.

@@ -75,11 +75,8 @@ module HttpServer =
     public async function serve(address: String, route: Route): Async<Unit, ServerError> =
         await HttpServer.serveWithConfig(address, route, ServerConfig.default())
 
-    public async function serveWithConfig(
-        address: String,
-        route: Route,
-        config: ServerConfig
-    ): Async<Unit, ServerError> =
+    public async function serveWithConfig(address: String, route: Route, config: ServerConfig):
+        Async<Unit, ServerError> =
         let listener: TcpListener = use Tcp.bind(address)
         await HttpServer.serveOnWithConfig(listener, route, config)
 
@@ -95,8 +92,11 @@ module HttpServer =
         config: ServerConfig
     ): Async<Unit, ServerError> =
         let handler = route.orNotFound()
-        await HttpServer.acceptLoop(listener, config, (stream: TcpStream) =>
-            handleConnection(stream, handler, config)
+        await HttpServer
+            .acceptLoop(
+            listener,
+            config,
+            (stream: TcpStream) => handleConnection(stream, handler, config)
         )
 
     /// The accept loop, shared by HTTP and HTTPS. Everything except what to do
@@ -123,8 +123,9 @@ module HttpServer =
         // loop keeps running. This is what stops a silent client — one that
         // finishes the handshake and never sends a request — from holding a
         // permit forever.
-        let bounded: (TcpStream) => Async<Unit, ServerError> = (stream: TcpStream) =>
-            HttpServer.boundConnection(connectionBody, stream, config.connectionTimeout)
+        let bounded: (TcpStream) => Async<Unit, ServerError> =
+            (stream: TcpStream) =>
+                HttpServer.boundConnection(connectionBody, stream, config.connectionTimeout)
         let mutable keepRunning = true
         while keepRunning do
             await permits.take()
@@ -178,13 +179,17 @@ module HttpServer =
         // come back. After `maxConcurrency` panicking handlers `permits.take()`
         // blocks forever and the server stops accepting — a deadlock, not a
         // degraded response.
-        let body: (TcpStream) => Async<Unit, Never> = (stream: TcpStream) =>
-            connectionBody(stream).foldCause<Unit, Never>(
-                (_: Cause<ServerError>) => permits.offer(true).asUnit(),
-                (_: Unit) => permits.offer(true).asUnit()
-            )
-        let attempt: Async<Unit, NetError> = listener.accept().forkAndUse<Unit, NetError>(body).asUnit()
-        await attempt.fold<Bool, ServerError>(
+        let body: (TcpStream) => Async<Unit, Never> =
+            (stream: TcpStream) =>
+                connectionBody(stream)
+                    .foldCause<Unit, Never>(
+                    (_: Cause<ServerError>) => permits.offer(true).asUnit(),
+                    (_: Unit) => permits.offer(true).asUnit()
+                )
+        let attempt: Async<Unit, NetError> =
+            listener.accept().forkAndUse<Unit, NetError>(body).asUnit()
+        await attempt
+            .fold<Bool, ServerError>(
             (e: NetError) => recoverAccept(e, permits),
             (_: Unit) => Async.succeed(true)
         )
@@ -195,10 +200,10 @@ module HttpServer =
     // `TlsServerStream.accept` before the HTTP exchange runs over the encrypted
     // stream pair. The loop, the concurrency semaphore, and the accept-failure
     // recovery are literally the same code.
-
     /// Bind to `address` and serve HTTPS, terminating TLS with `tls`. Build the
     /// config with `tlsServerConfig` (cert chain + key) or by hand.
-    public async function serveTls(address: String, route: Route, tls: TlsServerConfig): Async<Unit, ServerError> =
+    public async function serveTls(address: String, route: Route, tls: TlsServerConfig):
+        Async<Unit, ServerError> =
         await HttpServer.serveTlsWithConfig(address, route, tls, ServerConfig.default())
 
     public async function serveTlsWithConfig(
@@ -218,8 +223,11 @@ module HttpServer =
         config: ServerConfig
     ): Async<Unit, ServerError> =
         let handler = route.orNotFound()
-        await HttpServer.acceptLoop(listener, config, (stream: TcpStream) =>
-            HttpServer.runTlsConnection(stream, handler, tls, config)
+        await HttpServer
+            .acceptLoop(
+            listener,
+            config,
+            (stream: TcpStream) => HttpServer.runTlsConnection(stream, handler, tls, config)
         )
 
     /// The HTTPS connection body: run the TLS handshake on the accepted socket,
@@ -232,7 +240,8 @@ module HttpServer =
         tls: TlsServerConfig,
         config: ServerConfig
     ): Async<Unit, ServerError> =
-        let tlsStream: TlsServerStream = use TlsServerStream.accept(tls, stream.input, stream.output)
+        let tlsStream: TlsServerStream = use TlsServerStream
+            .accept(tls, stream.input, stream.output)
         await serveExchange(tlsStream.input, tlsStream.output, tlsServerMapErr, handler, config)
 
     /// Build a `TlsServerConfig` from a certificate chain and a loaded signing
@@ -240,17 +249,20 @@ module HttpServer =
     /// the standard cipher suites / key-exchange groups, and draws fresh entropy
     /// plus the current time. Callers wanting full control can build the config
     /// by hand instead.
-    public async function tlsServerConfig(
-        certificateChain: List<X509Certificate>,
-        key: ServerKey
-    ): Async<TlsServerConfig, Never> =
+    public async function tlsServerConfig(certificateChain: List<X509Certificate>, key: ServerKey):
+        Async<TlsServerConfig, Never> =
         let now = await Instant.now
         let seed = await Random.bytes(160i32)
         TlsServerConfig {
             certificateChain = certificateChain
             privateKey = key.key
             signatureScheme = key.scheme
-            cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+            cipherSuites =
+                [
+                    CipherSuite.Aes128GcmSha256,
+                    CipherSuite.Aes256GcmSha384,
+                    CipherSuite.ChaCha20Poly1305Sha256
+                ]
             keyExchangeGroups = [KeyExchangeGroup.X25519, KeyExchangeGroup.SecP256R1]
             alpnProtocols = [alpnHttp1]
             currentTime = now

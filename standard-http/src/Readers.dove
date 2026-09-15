@@ -25,12 +25,14 @@ public function bodyFraming(
             BodyFraming.ContentLength(0i64)
         else if requestMethod == "CONNECT" then
             if statusCode >= 200 then
-                if statusCode < 300 then
-                    BodyFraming.ContentLength(0i64)
+                if statusCode < 300 then BodyFraming.ContentLength(0i64)
                 else bodyFramingByHeaders(headers, false)
-            else bodyFramingByHeaders(headers, false)
-        else bodyFramingByHeaders(headers, false)
-    else bodyFramingByHeaders(headers, true)
+            else
+                bodyFramingByHeaders(headers, false)
+        else
+            bodyFramingByHeaders(headers, false)
+    else
+        bodyFramingByHeaders(headers, true)
 
 /// Determine body framing from headers alone (Transfer-Encoding > Content-Length > fallback).
 function bodyFramingByHeaders(headers: Headers, isRequest: Bool): BodyFraming =
@@ -51,7 +53,8 @@ function bodyFramingByHeaders(headers: Headers, isRequest: Bool): BodyFraming =
 /// Value is trimmed of leading/trailing whitespace.
 /// The outer sequence is a list; each line stays `Array<Uint8>` — the bytes
 /// are sliced by offset.
-public function decodeHeaderLines(lines: List<Array<Uint8>>): Result<List<(String, String)>, HttpError> =
+public function decodeHeaderLines(lines: List<Array<Uint8>>):
+    Result<List<(String, String)>, HttpError> =
     let mutable result: List<(String, String)> = List.empty
     let mutable error: Option<HttpError> = None
     for line in lines do
@@ -73,80 +76,102 @@ public function readRequest(buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpE
     let lines = buf.extractLines()
     match lines with
         case None =>
-            if buf.isNextLineObviouslyInvalid() then
-                Error(HttpError.remote("illegal request line"))
+            if buf.isNextLineObviouslyInvalid() then Error(HttpError.remote("illegal request line"))
             else Ok(None)
-        case Some([]) =>
-            Error(HttpError.remote("no request line received"))
+        case Some([]) => Error(HttpError.remote("no request line received"))
         case Some(requestLine :: headerLines) =>
-                let parsed = parseRequestLine(requestLine)
-                match parsed with
-                    case Error(e) => Error(e)
-                    case Ok(triple) =>
-                        let method = triple._0
-                        let target = triple._1
-                        let httpVersion = triple._2
-                        let headersResult = decodeHeaderLines(headerLines)
-                        match headersResult with
-                            case Error(e) => Error(e)
-                            case Ok(pairs) =>
-                                let normalized = normalizeAndValidateParsed(pairs)
-                                match normalized with
-                                    case Error(e) => Error(e)
-                                    case Ok(headers) =>
-                                        // RFC 7230 §5.4: Host header validation
-                                        let hostValidation = validateHostHeader(headers, httpVersion)
-                                        match hostValidation with
-                                            case Error(e) => Error(e)
-                                            case Ok(_) =>
-                                                let req = HttpRequest { method = method; target = target; headers = headers; httpVersion = httpVersion }
-                                                Ok(Some(HttpEvent.Request(req)))
+            let parsed = parseRequestLine(requestLine)
+            match parsed with
+                case Error(e) => Error(e)
+                case Ok(triple) =>
+                    let method = triple._0
+                    let target = triple._1
+                    let httpVersion = triple._2
+                    let headersResult = decodeHeaderLines(headerLines)
+                    match headersResult with
+                        case Error(e) => Error(e)
+                        case Ok(pairs) =>
+                            let normalized = normalizeAndValidateParsed(pairs)
+                            match normalized with
+                                case Error(e) => Error(e)
+                                case Ok(headers) =>
+                                    // RFC 7230 §5.4: Host header validation
+                                    let hostValidation = validateHostHeader(headers, httpVersion)
+                                    match hostValidation with
+                                        case Error(e) => Error(e)
+                                        case Ok(_) =>
+                                            let req =
+                                                HttpRequest {
+                                                    method = method
+                                                    target = target
+                                                    headers = headers
+                                                    httpVersion = httpVersion
+                                                }
+                                            Ok(Some(HttpEvent.Request(req)))
 
 /// Parse a response/informational response from the buffer.
 public function readResponse(buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
     let lines = buf.extractLines()
     match lines with
         case None =>
-            if buf.isNextLineObviouslyInvalid() then
-                Error(HttpError.remote("illegal status line"))
+            if buf.isNextLineObviouslyInvalid() then Error(HttpError.remote("illegal status line"))
             else Ok(None)
-        case Some([]) =>
-            Error(HttpError.remote("no response line received"))
+        case Some([]) => Error(HttpError.remote("no response line received"))
         case Some(statusLine :: headerLines) =>
-                let parsed = parseStatusLine(statusLine)
-                match parsed with
-                    case Error(e) => Error(e)
-                    case Ok(triple) =>
-                        let httpVersion = triple._0
-                        let statusCode = triple._1
-                        let reason = triple._2
-                        let headersResult = decodeHeaderLines(headerLines)
-                        match headersResult with
-                            case Error(e) => Error(e)
-                            case Ok(pairs) =>
-                                let normalized = normalizeAndValidateParsed(pairs)
-                                match normalized with
-                                    case Error(e) => Error(e)
-                                    case Ok(headers) =>
-                                        let response = HttpResponse { statusCode = statusCode; headers = headers; httpVersion = httpVersion; reason = reason }
-                                        if statusCode < 100 then
-                                            Error(HttpError.remote("status code must be >= 100, got " ++ intToString(statusCode)))
-                                        else if statusCode >= 1000 then
-                                            Error(HttpError.remote("status code must be < 1000, got " ++ intToString(statusCode)))
-                                        else if statusCode < 200 then
-                                            Ok(Some(HttpEvent.InformationalResponse(response)))
-                                        else
-                                            Ok(Some(HttpEvent.Response(response)))
+            let parsed = parseStatusLine(statusLine)
+            match parsed with
+                case Error(e) => Error(e)
+                case Ok(triple) =>
+                    let httpVersion = triple._0
+                    let statusCode = triple._1
+                    let reason = triple._2
+                    let headersResult = decodeHeaderLines(headerLines)
+                    match headersResult with
+                        case Error(e) => Error(e)
+                        case Ok(pairs) =>
+                            let normalized = normalizeAndValidateParsed(pairs)
+                            match normalized with
+                                case Error(e) => Error(e)
+                                case Ok(headers) =>
+                                    let response =
+                                        HttpResponse {
+                                            statusCode = statusCode
+                                            headers = headers
+                                            httpVersion = httpVersion
+                                            reason = reason
+                                        }
+                                    if statusCode < 100 then
+                                        Error(
+                                            HttpError
+                                                .remote(
+                                                "status code must be >= 100, got "
+                                                    ++ intToString(statusCode)
+                                            )
+                                        )
+                                    else if statusCode >= 1000 then
+                                        Error(
+                                            HttpError
+                                                .remote(
+                                                "status code must be < 1000, got "
+                                                    ++ intToString(statusCode)
+                                            )
+                                        )
+                                    else if statusCode < 200 then
+                                        Ok(Some(HttpEvent.InformationalResponse(response)))
+                                    else
+                                        Ok(Some(HttpEvent.Response(response)))
 
 /// Parse "METHOD target HTTP/x.y" request line.
 function parseRequestLine(line: Array<Uint8>): Result<(String, String, String), HttpError> =
     // Find first space
     let sp1 = findByte(line, 32)
-    if sp1 < 0 then Error(HttpError.remote("illegal request line"))
+    if sp1 < 0 then
+        Error(HttpError.remote("illegal request line"))
     else
         // Find second space
         let sp2 = findByteFrom(line, 32, sp1 + 1)
-        if sp2 < 0 then Error(HttpError.remote("illegal request line"))
+        if sp2 < 0 then
+            Error(HttpError.remote("illegal request line"))
         else
             let method = bytesToString(sliceBytes(line, 0, sp1))
             let target = bytesToString(sliceBytes(line, sp1 + 1, sp2))
@@ -154,8 +179,10 @@ function parseRequestLine(line: Array<Uint8>): Result<(String, String, String), 
             // Reject a non-token method or a target carrying control/space characters,
             // the same discipline the write path enforces (validateMethod/validateTarget).
             // An unvalidated method/target is handed to routing and echoed in logs/responses.
-            if validateMethod(method).isError then Error(HttpError.remote("illegal request method"))
-            else if validateTarget(target).isError then Error(HttpError.remote("illegal request target"))
+            if validateMethod(method).isError then
+                Error(HttpError.remote("illegal request method"))
+            else if validateTarget(target).isError then
+                Error(HttpError.remote("illegal request target"))
             else
                 match parseHttpVersion(versionPart) with
                     case None => Error(HttpError.remote("illegal request line"))
@@ -165,7 +192,8 @@ function parseRequestLine(line: Array<Uint8>): Result<(String, String, String), 
 function parseStatusLine(line: Array<Uint8>): Result<(String, Int32, String), HttpError> =
     // Expect "HTTP/x.y SP status SP reason" or "HTTP/x.y SP status"
     let str = bytesToString(line)
-    if str.length < 12 then Error(HttpError.remote("illegal status line"))
+    if str.length < 12 then
+        Error(HttpError.remote("illegal status line"))
     else
         let versionPart = str.substring(0, 8)
         let httpVersion = parseHttpVersion(versionPart)
@@ -174,35 +202,43 @@ function parseStatusLine(line: Array<Uint8>): Result<(String, Int32, String), Ht
             case Some(ver) =>
                 // After "HTTP/x.y" expect space
                 let rest = str.substring(8, str.length)
-                if rest.length < 1 then Error(HttpError.remote("illegal status line"))
+                if rest.length < 1 then
+                    Error(HttpError.remote("illegal status line"))
                 else
                     let firstChar = rest.substring(0, 1)
-                    if firstChar != " " then Error(HttpError.remote("illegal status line"))
+                    if firstChar != " " then
+                        Error(HttpError.remote("illegal status line"))
                     else
                         let afterSpace = rest.substring(1, rest.length)
-                        if afterSpace.length < 3 then Error(HttpError.remote("illegal status line"))
+                        if afterSpace.length < 3 then
+                            Error(HttpError.remote("illegal status line"))
                         else
                             let statusStr = afterSpace.substring(0, 3)
                             let statusCode = parseIntFromString(statusStr)
                             match statusCode with
                                 case None => Error(HttpError.remote("illegal status line"))
                                 case Some(code) =>
-                                    let reason = if afterSpace.length > 4 then
+                                    let reason =
+                                        if afterSpace.length > 4 then
                                             afterSpace.substring(4, afterSpace.length)
-                                        else ""
+                                        else
+                                            ""
                                     Ok((ver, code.toInt32(), reason))
 
 /// Parse "HTTP/x.y" -> "x.y", returns None if invalid.
 function parseHttpVersion(s: String): Option<String> =
-    if s.length < 8 then None
+    if s.length < 8 then
+        None
     else
         let prefix = s.substring(0, 5)
-        if prefix != "HTTP/" then None
+        if prefix != "HTTP/" then
+            None
         else
             let ver = s.substring(5, 8)
             // Validate x.y format
             let bytes = ver.bytes()
-            if bytes.length != 3 then None
+            if bytes.length != 3 then
+                None
             else
                 let d1 = bytes.get(0).toInt32()
                 let dot = bytes.get(1).toInt32()
@@ -222,28 +258,26 @@ function validateHostHeader(headers: Headers, httpVersion: String): Result<Unit,
             Error(HttpError.localWithHint("Missing mandatory Host: header", 400))
         else if hostCount > 1 then
             Error(HttpError.localWithHint("Found multiple Host: headers", 400))
-        else Ok(())
+        else
+            Ok(())
     else if hostCount > 1 then
         Error(HttpError.localWithHint("Found multiple Host: headers", 400))
-    else Ok(())
+    else
+        Ok(())
 
 /// Content-Length body reader state.
 /// Reads exactly the declared number of body bytes.
-public class ContentLengthReader(
-    public mutable remaining: Int64,
-    mutable totalLength: Int64
-) =
+public class ContentLengthReader(public mutable remaining: Int64, mutable totalLength: Int64) =
     /// Create a new reader expecting exactly `length` bytes.
-    public function new(length: Int64): ContentLengthReader =
-        ContentLengthReader(length, length)
+    public function new(length: Int64): ContentLengthReader = ContentLengthReader(length, length)
 
     /// Read body data. Returns None if need more data.
     public function read(self, buf: ReceiveBuffer): Option<HttpEvent> =
         if self.remaining == 0i64 then
             Some(HttpEvent.EndOfMessage(Headers.empty()))
         else
-            let maxRead = if self.remaining > 999999999i64 then 999999999
-                else self.remaining.toInt32()
+            let maxRead =
+                if self.remaining > 999999999i64 then 999999999 else self.remaining.toInt32()
             let data = buf.extractAtMost(maxRead)
             match data with
                 case None => None
@@ -254,10 +288,16 @@ public class ContentLengthReader(
     /// Called on EOF. Raises error since we expected more data.
     public function readEof(self): Result<HttpEvent, HttpError> =
         let received = self.totalLength - self.remaining
-        Error(HttpError.remote(
-            "peer closed connection without sending complete message body (received " ++
-            intToString(received.toInt32()) ++ " bytes, expected " ++
-            intToString(self.totalLength.toInt32()) ++ ")"))
+        Error(
+            HttpError
+                .remote(
+                "peer closed connection without sending complete message body (received "
+                    ++ intToString(received.toInt32())
+                    ++ " bytes, expected "
+                    ++ intToString(self.totalLength.toInt32())
+                    ++ ")"
+            )
+        )
 
 /// Chunked transfer encoding reader state.
 /// Parses HTTP chunked encoding: hex size lines, chunk data, trailers.
@@ -267,8 +307,7 @@ public class ChunkedReader(
     mutable readingTrailer: Bool
 ) =
     /// Create a new chunked reader.
-    public function new(): ChunkedReader =
-        ChunkedReader(0, 0, false)
+    public function new(): ChunkedReader = ChunkedReader(0, 0, false)
 
     /// Read chunked body data.
     public function read(self, buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
@@ -287,48 +326,50 @@ public class ChunkedReader(
                                 let normalized = normalizeAndValidateParsed(pairs)
                                 match normalized with
                                     case Error(e) => Error(e)
-                                    case Ok(headers) =>
-                                        Ok(Some(HttpEvent.EndOfMessage(headers)))
-        else if self.bytesToDiscard > 0 then
-            let data = buf.extractAtMost(self.bytesToDiscard)
-            match data with
-                case None => Ok(None)
-                case Some(bytes) =>
-                    // Validate chunk footer bytes are \r\n
-                    let expectedOffset = 2 - self.bytesToDiscard // 0 means checking \r first
-                    let mutable valid = true
-                    let mutable k = 0
-                    while k < bytes.length do
-                        let pos = expectedOffset + k
-                        let b = bytes.get(k).toInt32()
-                        if pos == 0 then
-                            if b != 13 then valid = false // expect \r
-                        else if pos == 1 then
-                            if b != 10 then valid = false // expect \n
-                        k = k + 1
-                    if !valid then
-                        Error(HttpError.local("malformed chunk footer"))
-                    else
-                        self.bytesToDiscard = self.bytesToDiscard - bytes.length
-                        if self.bytesToDiscard > 0 then Ok(None)
-                        else self.read(buf) // fall through to read more
-        else if self.bytesInChunk == 0 then
-            // Need to read chunk header
-            let chunkHeader = buf.extractNextLine()
-            match chunkHeader with
-                case None => Ok(None)
-                case Some(headerLine) =>
-                    let sizeResult = parseChunkSize(headerLine)
-                    match sizeResult with
-                        case Error(e) => Error(e)
-                        case Ok(size) =>
-                            if size == 0 then
-                                self.readingTrailer = true
-                                self.read(buf)
+                                    case Ok(headers) => Ok(Some(HttpEvent.EndOfMessage(headers)))
+        else
+            if self.bytesToDiscard > 0 then
+                let data = buf.extractAtMost(self.bytesToDiscard)
+                match data with
+                    case None => Ok(None)
+                    case Some(bytes) =>
+                        // Validate chunk footer bytes are \r\n
+                        let expectedOffset = 2 - self.bytesToDiscard // 0 means checking \r first
+                        let mutable valid = true
+                        let mutable k = 0
+                        while k < bytes.length do
+                            let pos = expectedOffset + k
+                            let b = bytes.get(k).toInt32()
+                            if pos == 0 then
+                                if b != 13 then valid = false // expect \r
                             else
-                                self.bytesInChunk = size
-                                self.readChunkData(buf)
-        else self.readChunkData(buf)
+                                if pos == 1 then
+                                    if b != 10 then valid = false // expect \n
+                            k = k + 1
+                        if !valid then
+                            Error(HttpError.local("malformed chunk footer"))
+                        else
+                            self.bytesToDiscard = self.bytesToDiscard - bytes.length
+                            if self.bytesToDiscard > 0 then Ok(None) else self.read(buf) // fall through to read more
+            else
+                if self.bytesInChunk == 0 then
+                    // Need to read chunk header
+                    let chunkHeader = buf.extractNextLine()
+                    match chunkHeader with
+                        case None => Ok(None)
+                        case Some(headerLine) =>
+                            let sizeResult = parseChunkSize(headerLine)
+                            match sizeResult with
+                                case Error(e) => Error(e)
+                                case Ok(size) =>
+                                    if size == 0 then
+                                        self.readingTrailer = true
+                                        self.read(buf)
+                                    else
+                                        self.bytesInChunk = size
+                                        self.readChunkData(buf)
+                else
+                    self.readChunkData(buf)
 
     /// Read data bytes from the current chunk.
     function readChunkData(self, buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
@@ -337,8 +378,7 @@ public class ChunkedReader(
             case None => Ok(None)
             case Some(bytes) =>
                 self.bytesInChunk = self.bytesInChunk - bytes.length
-                if self.bytesInChunk == 0 then
-                    self.bytesToDiscard = 2 // \r\n
+                if self.bytesInChunk == 0 then self.bytesToDiscard = 2 // \r\n
                 Ok(Some(HttpEvent.Data(bytes)))
 
 /// Parse chunk size from a chunk header line (hex number, possibly with extensions).
@@ -362,7 +402,8 @@ function parseChunkSize(line: Array<Uint8>): Result<Int32, HttpError> =
     // Cap on chunk size to bound the body-reader allocation; matches the max
     // read size used by ContentLengthReader/EofReader elsewhere in this file.
     let maxChunkSize = 999999999i64
-    if hexEnd == 0 then Error(HttpError.remote("illegal chunk header"))
+    if hexEnd == 0 then
+        Error(HttpError.remote("illegal chunk header"))
     else
         // integer-overflow DoS: a digit-count cap does NOT bound the value under
         // wrapping arithmetic (8 hex digits already overflow Int32). Accumulate
@@ -391,24 +432,28 @@ function parseChunkSize(line: Array<Uint8>): Result<Int32, HttpError> =
 /// Convert hex digit byte to value, or -1 if not hex.
 function hexDigitValue(b: Int32): Int32 =
     if b >= 48 then
-        if b <= 57 then b - 48        // '0'-'9'
-        else if b >= 65 then
-            if b <= 70 then b - 55     // 'A'-'F'
-            else if b >= 97 then
-                if b <= 102 then b - 87 // 'a'-'f'
-                else -1
-            else -1
-        else -1
-    else -1
+        if b <= 57 then
+            b - 48 // '0'-'9'
+        else
+            if b >= 65 then
+                if b <= 70 then
+                    b - 55 // 'A'-'F'
+                else
+                    if b >= 97 then
+                        if b <= 102 then b - 87 // 'a'-'f'
+                        else -1
+                    else
+                        -1
+            else
+                -1
+    else
+        -1
 
 /// HTTP/1.0 EOF-delimited body reader.
 /// Reads all available data until the connection closes.
-public class EofReader(
-    mutable dummy: Bool
-) =
+public class EofReader(mutable dummy: Bool) =
     /// Create a new EOF reader.
-    public function new(): EofReader =
-        EofReader(false)
+    public function new(): EofReader = EofReader(false)
 
     /// Read as much data as available.
     public function read(self, buf: ReceiveBuffer): Option<HttpEvent> =
@@ -418,19 +463,15 @@ public class EofReader(
             case Some(bytes) => Some(HttpEvent.Data(bytes))
 
     /// On EOF, return EndOfMessage.
-    public function readEof(self): HttpEvent =
-        HttpEvent.EndOfMessage(Headers.empty())
+    public function readEof(self): HttpEvent = HttpEvent.EndOfMessage(Headers.empty())
 
 /// Check that the buffer is empty (expect nothing more).
 public function expectNothing(buf: ReceiveBuffer): Result<Unit, HttpError> =
-    if buf.hasData then Error(HttpError.remote("Got data when expecting EOF"))
-    else Ok(())
+    if buf.hasData then Error(HttpError.remote("Got data when expecting EOF")) else Ok(())
 
 // Helpers
-
 /// Find first occurrence of a byte in an array. Returns -1 if not found.
-function findByte(data: Array<Uint8>, target: Int32): Int32 =
-    findByteFrom(data, target, 0)
+function findByte(data: Array<Uint8>, target: Int32): Int32 = findByteFrom(data, target, 0)
 
 /// Find first occurrence of a byte starting from a given index.
 function findByteFrom(data: Array<Uint8>, target: Int32, start: Int32): Int32 =
@@ -447,7 +488,8 @@ function findByteFrom(data: Array<Uint8>, target: Int32, start: Int32): Int32 =
 /// Slice a byte array from start (inclusive) to end (exclusive).
 function sliceBytes(data: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
     let len = end - start
-    if len <= 0 then Array<Uint8>.empty()
+    if len <= 0 then
+        Array<Uint8>.empty()
     else
         let result = Array.fill(len, 0u8)
         data.copy(start, result, 0, len)
@@ -455,7 +497,6 @@ function sliceBytes(data: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> 
 
 /// Slice an array of arrays from start to end.
 // Tests
-
 test "parseRequestLine valid" =
     let line = stringToBytes("GET / HTTP/1.1")
     let result = parseRequestLine(line)
@@ -481,10 +522,10 @@ test "parseRequestLine invalid" =
 test "parseRequestLine rejects a non-token method or control-bearing target" =
     // Inbound method/target must be validated too, matching the write path.
     // method "GE<TAB>T" — TAB (0x09) is not a token char
-    let badMethod = [|0x47u8, 0x45u8, 0x09u8, 0x54u8|].concat(stringToBytes(" / HTTP/1.1"))
+    let badMethod = [| 0x47u8, 0x45u8, 0x09u8, 0x54u8 |].concat(stringToBytes(" / HTTP/1.1"))
     assert parseRequestLine(badMethod).isError
     // target "/a<DEL>b" — DEL (0x7f) is not a visible ASCII char
-    let badTarget = stringToBytes("GET /a").concat([|0x7fu8|]).concat(stringToBytes("b HTTP/1.1"))
+    let badTarget = stringToBytes("GET /a").concat([| 0x7fu8 |]).concat(stringToBytes("b HTTP/1.1"))
     assert parseRequestLine(badTarget).isError
     // a normal request line still parses
     assert parseRequestLine(stringToBytes("GET /path?q=a%20b HTTP/1.1")).isOk
@@ -563,8 +604,7 @@ test "readResponse 100 Continue" =
     let result = readResponse(buf)
     assert result.isOk
     match result.require.require with
-        case InformationalResponse(resp) =>
-            assert resp.statusCode == 100
+        case InformationalResponse(resp) => assert resp.statusCode == 100
         case _ => assert false
 
 test "bodyFraming content-length" =
@@ -715,8 +755,7 @@ test "parseChunkSize hex" =
 test "parseChunkSize with extension" =
     assert parseChunkSize(stringToBytes("a;name=value\r\n")).require == 10
 
-test "parseChunkSize invalid" =
-    assert parseChunkSize(stringToBytes("xyz\r\n")).isError
+test "parseChunkSize invalid" = assert parseChunkSize(stringToBytes("xyz\r\n")).isError
 
 test "parseChunkSize rejects overflow" =
     // integer-overflow DoS: 0x80000000 (8 hex digits) wraps Int32 negative,

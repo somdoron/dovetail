@@ -29,5 +29,4 @@ async function freshPromises(): Async<Unit, Never> =
     let second = await make
     assert !ClassIdentity.equals(first, second)
 
-test "identity: async allocation book example" =
-    freshPromises().run()
+test "identity: async allocation book example" = freshPromises().run()

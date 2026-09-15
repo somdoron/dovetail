@@ -8,7 +8,6 @@ import standard.prelude.Array
 /// fatal regardless. `close_notify` signals an orderly half-close. Alerts are
 /// internal protocol mechanics; failures surface to the application as a
 /// `TlsError` on a `TlsEvent.Error`.
-
 record Alert =
     level: AlertLevel
     description: AlertDescription
@@ -25,23 +24,26 @@ record Alert =
 ///   - warning(1) + close_notify(0)  -> orderly close (ConnectionClosed)
 ///   - warning(1) + user_canceled(90) -> tolerated warning (ignored)
 ///   - anything else (incl. fatal + close_notify) -> fatal error
-
 /// Whether the alert is a well-formed warning `close_notify` (orderly half-close).
 function isOrderlyClose(payload: Array<Uint8>): Bool =
-    payload.length >= 2
+    payload
+        .length
+        >= 2
         && payload.get(0).toInt32() == alertLevelCode(AlertLevel.Warning)
         && payload.get(1).toInt32() == alertDescriptionCode(AlertDescription.CloseNotify)
 
 /// Whether the alert is a well-formed warning `user_canceled` (safely ignored).
 function isIgnorableWarning(payload: Array<Uint8>): Bool =
-    payload.length >= 2
+    payload
+        .length
+        >= 2
         && payload.get(0).toInt32() == alertLevelCode(AlertLevel.Warning)
         && payload.get(1).toInt32() == alertDescriptionCode(AlertDescription.UserCanceled)
 
 module Alert =
     /// Serialise this alert to its two wire bytes.
     function serialize(self): Array<Uint8> =
-        [|alertLevelCode(self.level).toUint8(), alertDescriptionCode(self.description).toUint8()|]
+        [| alertLevelCode(self.level).toUint8(), alertDescriptionCode(self.description).toUint8() |]
 
     /// Whether an alert payload is a `close_notify` (description byte 0).
     function isCloseNotify(payload: Array<Uint8>): Bool =
@@ -49,7 +51,8 @@ module Alert =
 
     /// Build an alert record for the current epoch of `recordLayer` — sealed if
     /// traffic keys are installed, otherwise a plaintext record.
-    function toRecord(recordLayer: RecordLayer, level: AlertLevel, description: AlertDescription): Array<Uint8> =
+    function toRecord(recordLayer: RecordLayer, level: AlertLevel, description: AlertDescription):
+        Array<Uint8> =
         let bytes = Alert { level = level; description = description }.serialize()
         if recordLayer.canWriteProtected then
             match recordLayer.sealRecord(ContentType.Alert, bytes.readonly) with
@@ -69,27 +72,27 @@ module Alert =
 test "tls alert serialises level and description" =
     let alert = Alert { level = AlertLevel.Fatal; description = AlertDescription.BadRecordMac }
     let bytes = alert.serialize()
-    assert bytes.get(0) == 2u8      // fatal
-    assert bytes.get(1) == 20u8     // bad_record_mac
+    assert bytes.get(0) == 2u8 // fatal
+    assert bytes.get(1) == 20u8 // bad_record_mac
 
 test "tls close_notify detection" =
-    assert Alert.isCloseNotify([|1u8, 0u8|])
-    assert Alert.isCloseNotify([|2u8, 40u8|]) == false
+    assert Alert.isCloseNotify([| 1u8, 0u8 |])
+    assert Alert.isCloseNotify([| 2u8, 40u8 |]) == false
 
 test "tls alert orderly-close requires warning level and close_notify" =
     // warning + close_notify -> orderly half-close
-    assert isOrderlyClose([|1u8, 0u8|])
+    assert isOrderlyClose([| 1u8, 0u8 |])
     // fatal + close_notify(0) is malformed/hostile: NOT an orderly close
-    assert isOrderlyClose([|2u8, 0u8|]) == false
+    assert isOrderlyClose([| 2u8, 0u8 |]) == false
     // warning + a non-closure description is not an orderly close
-    assert isOrderlyClose([|1u8, 40u8|]) == false
+    assert isOrderlyClose([| 1u8, 40u8 |]) == false
     // truncated payload
-    assert isOrderlyClose([|0u8|]) == false
+    assert isOrderlyClose([| 0u8 |]) == false
 
 test "tls alert user_canceled is an ignorable warning only at warning level" =
-    assert isIgnorableWarning([|1u8, 90u8|])
-    assert isIgnorableWarning([|2u8, 90u8|]) == false
-    assert isIgnorableWarning([|1u8, 0u8|]) == false
+    assert isIgnorableWarning([| 1u8, 90u8 |])
+    assert isIgnorableWarning([| 2u8, 90u8 |]) == false
+    assert isIgnorableWarning([| 1u8, 0u8 |]) == false
 
 test "tls fatal alert record is plaintext before keys" =
     let rl = RecordLayer.make()
@@ -98,5 +101,5 @@ test "tls fatal alert record is plaintext before keys" =
     assert bytes.get(0) == 21u8
     assert bytes.get(3) == 0u8
     assert bytes.get(4) == 2u8
-    assert bytes.get(5) == 2u8      // fatal
-    assert bytes.get(6) == 20u8     // bad_record_mac
+    assert bytes.get(5) == 2u8 // fatal
+    assert bytes.get(6) == 20u8 // bad_record_mac

@@ -12,5 +12,4 @@ public function bytes(len: Int32): Async<Array<Uint8>, Never> =
     Async.thunk(() => WasiRandom.bytes(len.toInt64()))
 
 /// A cryptographically-secure random 64-bit integer.
-public function int64(): Async<Int64, Never> =
-    Async.thunk(() => WasiRandom.int64())
+public function int64(): Async<Int64, Never> = Async.thunk(() => WasiRandom.int64())

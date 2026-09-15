@@ -45,7 +45,8 @@ public class TlsInputStream(conn: TlsConnection) extends AsyncInputStream<TlsIoE
     /// (invariant 3): plaintext this connection authenticated before it died is
     /// the caller's, and is handed over before the death is reported — which the
     /// tail of this method does, once the buffer is empty.
-    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, TlsIoError> =
+    protected override async function readAvailable(self, bytesLength: Int64):
+        Async<Array<Uint8>, TlsIoError> =
         await self.receiveOpen()
         // Outside the lock: the handshake fiber pumps under the same lock, so
         // waiting for it while holding this would deadlock.
@@ -61,7 +62,11 @@ public class TlsInputStream(conn: TlsConnection) extends AsyncInputStream<TlsIoE
         // wrong order (a MAC/AEAD failure), or both pass the `hasBuffered` check
         // and split one record's plaintext, leaving the loser an empty array it
         // would read as EOF.
-        let _held = use self.conn.readLock.acquire().orPanicWith((_: MutexError) => "TlsInputStream.read re-entered the read lock")
+        let _held = use self
+            .conn
+            .readLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "TlsInputStream.read re-entered the read lock")
         // The pump's failure goes to the latch instead of out of this loop. One
         // step can do both things: a 16KiB socket read can carry a valid record
         // followed by a corrupt one, and `pumpStep` appends the first record's
@@ -76,8 +81,7 @@ public class TlsInputStream(conn: TlsConnection) extends AsyncInputStream<TlsIoE
         // what must not happen is handing back the EMPTY array that a poisoned
         // engine leaves behind, because to a reader that is a clean end of
         // stream — a truncation attack reported as a successful close.
-        if !self.conn.hasBuffered then
-            await Async.fromResult(self.conn.latchedFailure())
+        if !self.conn.hasBuffered then await Async.fromResult(self.conn.latchedFailure())
         // Last, because the pump above suspends and a close can land in any of
         // those windows: whatever it discarded must not be re-delivered by the
         // take below. Asked ATOMICALLY with the take — one thunk, one
@@ -90,11 +94,11 @@ public class TlsInputStream(conn: TlsConnection) extends AsyncInputStream<TlsIoE
         // prevent. A read that would answer empty must know whether it is
         // empty-because-closed in the same step as the take.
         let taken: Result<Array<Uint8>, TlsIoError> =
-            await Async<Result<Array<Uint8>, TlsIoError>, Never>.thunk(() =>
-                if self.conn.isReceiveClosed then
-                    Error(TlsIoError.Closed)
-                else
-                    Ok(self.conn.takeBuffered(bytesLength))
+            await Async<Result<Array<Uint8>, TlsIoError>, Never>
+                .thunk(
+                () =>
+                    if self.conn.isReceiveClosed then Error(TlsIoError.Closed)
+                    else Ok(self.conn.takeBuffered(bytesLength))
             )
         await Async.fromResult(taken)
 
@@ -115,8 +119,7 @@ public class TlsInputStream(conn: TlsConnection) extends AsyncInputStream<TlsIoE
     /// `Resource` that owns it. That reader finishes its record and is refused at
     /// the check above. The transports that DO own their handle cancel in flight;
     /// see `AsyncInputStream.close`, which says which half is universal.
-    public override async function close(self): Async<Unit, TlsIoError> =
-        self.conn.closeReceive()
+    public override async function close(self): Async<Unit, TlsIoError> = self.conn.closeReceive()
 
 /// Encrypted output stream over a shared `TlsConnection`. `write` waits for the
 /// (background) handshake to finish, then hands plaintext to the engine and
@@ -140,7 +143,8 @@ public class TlsOutputStream(conn: TlsConnection) extends AsyncOutputStream<TlsI
             case Ok(_) =>
                 if self.conn.isSendClosed then Async.fail(TlsIoError.Closed) else Async.succeed(())
 
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, TlsIoError> =
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, TlsIoError> =
         await self.conn.ensureHandshake()
         // Re-checked after the handshake await, not merely by the base before
         // it: encrypting under a poisoned engine produces records the peer

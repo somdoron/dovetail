@@ -18,7 +18,7 @@ use super::{
 ///   dir derived from the suffix after root_package
 /// - Dotted entries not starting with root_package → folder-relative
 ///   (e.g. `"utils.helpers"` → `src/utils/helpers/`)
-fn resolve_package_entry(
+pub(super) fn resolve_package_entry(
     entry: &str,
     root_package: &PackagePath,
     project_dir: &Path,

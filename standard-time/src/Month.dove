@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a month of the year from January to December.
 @derive(Equatable)
-public enum Month =
+ public enum Month =
     January
     February
     March
@@ -122,16 +122,13 @@ module Month =
             case December => "D"
 
     /// Returns the number of days in this month, accounting for leap years.
-    public function length(self, leapYear: Bool): Int32 =
-        monthLength(self, leapYear)
+    public function length(self, leapYear: Bool): Int32 = monthLength(self, leapYear)
 
     /// Returns the month that is the given number of months after this one, wrapping around.
-    public function plus(self, months: Int32): Month =
-        monthFromValue(monthValue(self) + months)
+    public function plus(self, months: Int32): Month = monthFromValue(monthValue(self) + months)
 
     /// Returns the month that is the given number of months before this one, wrapping around.
-    public function minus(self, months: Int32): Month =
-        monthFromValue(monthValue(self) - months)
+    public function minus(self, months: Int32): Month = monthFromValue(monthValue(self) - months)
 
     /// Look up by full English name (case-sensitive). Returns `None` for
     /// any other string.
@@ -169,13 +166,11 @@ module Month =
     /// Look up by numeric value (1-12). Returns `None` for any other
     /// value (no wrap-around — use `plus` / `minus` for that).
     public function fromValue(value: Int32): Option<Month> =
-        if value < 1 || value > 12 then None
-        else Some(monthFromValue(value))
+        if value < 1 || value > 12 then None else Some(monthFromValue(value))
 
 implement Display for Month =
     /// Formats this month as its English name.
-    public function format(self: Month): String =
-        self.name
+    public function format(self: Month): String = self.name
 
 test "Month value" =
     assert Month.January.value == 1
@@ -193,8 +188,7 @@ test "Month length non-leap year" =
     assert Month.April.length(false) == 30
     assert Month.December.length(false) == 31
 
-test "Month length leap year" =
-    assert Month.February.length(true) == 29
+test "Month length leap year" = assert Month.February.length(true) == 29
 
 test "Month plus" =
     assert Month.January.plus(1) == Month.February

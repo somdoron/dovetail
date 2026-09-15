@@ -26,39 +26,78 @@ implement JsonEncoder for String =
     public function toJson(self: String): Json = Json.Str(self)
 
 /// Encodes an `Array<T>` as a `Json.Array` of element-wise encodings.
-implement <T> JsonEncoder for Array<T> where T: JsonEncoder =
+implement<T> JsonEncoder for Array<T>
+    where T: JsonEncoder =
     public function toJson(self: Array<T>): Json =
         Json.Array(self.toList().map(item => item.toJson()))
 
 /// Encodes a `List<T>` as a `Json.Array` of element-wise encodings.
-implement <T> JsonEncoder for List<T> where T: JsonEncoder =
-    public function toJson(self: List<T>): Json =
-        Json.Array(self.map(item => item.toJson()))
+implement<T> JsonEncoder for List<T>
+    where T: JsonEncoder =
+    public function toJson(self: List<T>): Json = Json.Array(self.map(item => item.toJson()))
 
 /// Encodes a 2-tuple as a `Json.Array` of length 2.
-implement <A, B> JsonEncoder for (A, B) where A: JsonEncoder, B: JsonEncoder =
-    public function toJson(self: (A, B)): Json =
-        Json.Array([self._0.toJson(), self._1.toJson()])
+implement<A, B> JsonEncoder for (A, B)
+    where A: JsonEncoder,
+          B: JsonEncoder =
+    public function toJson(self: (A, B)): Json = Json.Array([self._0.toJson(), self._1.toJson()])
 
 /// Encodes a 3-tuple as a `Json.Array` of length 3.
-implement <A, B, C> JsonEncoder for (A, B, C) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder =
+implement<A, B, C> JsonEncoder for (A, B, C)
+    where A: JsonEncoder,
+          B: JsonEncoder,
+          C: JsonEncoder =
     public function toJson(self: (A, B, C)): Json =
         Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson()])
 
 /// Encodes a 4-tuple as a `Json.Array` of length 4.
-implement <A, B, C, D> JsonEncoder for (A, B, C, D) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder, D: JsonEncoder =
+implement<A, B, C, D> JsonEncoder for (A, B, C, D)
+    where A: JsonEncoder,
+          B: JsonEncoder,
+          C: JsonEncoder,
+          D: JsonEncoder =
     public function toJson(self: (A, B, C, D)): Json =
         Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson(), self._3.toJson()])
 
 /// Encodes a 5-tuple as a `Json.Array` of length 5.
-implement <A, B, C, D, E> JsonEncoder for (A, B, C, D, E) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder, D: JsonEncoder, E: JsonEncoder =
+implement<A, B, C, D, E> JsonEncoder for (A, B, C, D, E)
+    where A: JsonEncoder,
+          B: JsonEncoder,
+          C: JsonEncoder,
+          D: JsonEncoder,
+          E: JsonEncoder =
     public function toJson(self: (A, B, C, D, E)): Json =
-        Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson(), self._3.toJson(), self._4.toJson()])
+        Json
+            .Array(
+            [
+                self._0.toJson(),
+                self._1.toJson(),
+                self._2.toJson(),
+                self._3.toJson(),
+                self._4.toJson()
+            ]
+        )
 
 /// Encodes a 6-tuple as a `Json.Array` of length 6.
-implement <A, B, C, D, E, F> JsonEncoder for (A, B, C, D, E, F) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder, D: JsonEncoder, E: JsonEncoder, F: JsonEncoder =
+implement<A, B, C, D, E, F> JsonEncoder for (A, B, C, D, E, F)
+    where A: JsonEncoder,
+          B: JsonEncoder,
+          C: JsonEncoder,
+          D: JsonEncoder,
+          E: JsonEncoder,
+          F: JsonEncoder =
     public function toJson(self: (A, B, C, D, E, F)): Json =
-        Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson(), self._3.toJson(), self._4.toJson(), self._5.toJson()])
+        Json
+            .Array(
+            [
+                self._0.toJson(),
+                self._1.toJson(),
+                self._2.toJson(),
+                self._3.toJson(),
+                self._4.toJson(),
+                self._5.toJson()
+            ]
+        )
 
 test "JsonEncoder for Bool" =
     match true.toJson() with

@@ -14,7 +14,6 @@ import standard.time.Duration
 // number, not a flag alone, so a release that runs late fails the assertion
 // instead of passing by coincidence. Timeouts on every test: a broken scope
 // shows up as a hang.
-
 enum RaceTestError =
     Boom
 
@@ -32,27 +31,26 @@ function stampNow(seq: Array<Int32>, slot: Int32): Unit =
 /// stamps `seq[slot]`, so a test can order the release against whatever the
 /// caller does after the race returns.
 async function holderThatSleeps(seq: Array<Int32>, slot: Int32): Async<Int32, Never> =
-    let res: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(0i32),
-        (_: Int32) => Async.thunk(() => stampNow(seq, slot))
-    )
+    let res: Resource<Int32, Never> =
+        Resource
+            .make(() => Async.succeed(0i32), (_: Int32) => Async.thunk(() => stampNow(seq, slot)))
     let _held: Int32 = use res
     await Async<Unit, Never>.sleep(Duration.ofMillis(5000i64))
     99i32
 
 // --- the first success wins ---------------------------------------------------
-
 async function slowCompleting(flag: Array<Int32>): Async<Int32, Never> =
     await Async<Unit, Never>.sleep(Duration.ofMillis(5000i64))
     flag.set(0, 1i32)
     2i32
 
 async function valueWinsProgram(outcome: Array<Int32>, flag: Array<Int32>): Async<Unit, Never> =
-    let fast: Async<Int32, Never> = Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 1i32)
+    let fast: Async<Int32, Never> =
+        Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 1i32)
     outcome.set(0, await fast.race(slowCompleting(flag)))
 
 @timeout(10000)
-test "race: the first success wins and the loser is interrupted" =
+ test "race: the first success wins and the loser is interrupted" =
     let outcome = Array<Int32>.fill(1, 0i32)
     let flag = Array<Int32>.fill(1, 0i32)
     valueWinsProgram(outcome, flag).run()
@@ -63,7 +61,6 @@ test "race: the first success wins and the loser is interrupted" =
     assert flag.get(0) == 0i32
 
 // --- the first FAILURE also wins ----------------------------------------------
-
 async function failSoon(): Async<Int32, RaceTestError> =
     await Async<Unit, Never>.sleep(Duration.ofMillis(10i64))
     await Async<Int32, RaceTestError>.fail(RaceTestError.Boom)
@@ -74,13 +71,18 @@ async function slowSucceed(): Async<Int32, RaceTestError> =
 
 async function failureWinsProgram(outcome: Array<Int32>): Async<Unit, Never> =
     let raced: Async<Int32, RaceTestError> = failSoon().race(slowSucceed())
-    outcome.set(0, await raced.fold<Int32, Never>(
-        (_: RaceTestError) => Async.succeed(1i32),
-        (_: Int32) => Async.succeed(2i32)
-    ))
+    outcome
+        .set(
+        0,
+        await raced
+            .fold<Int32, Never>(
+            (_: RaceTestError) => Async.succeed(1i32),
+            (_: Int32) => Async.succeed(2i32)
+        )
+    )
 
 @timeout(10000)
-test "race: the first failure decides the race with that failure" =
+ test "race: the first failure decides the race with that failure" =
     let outcome = Array<Int32>.fill(1, 0i32)
     failureWinsProgram(outcome).run()
     // A completion is a completion: the racer that FAILED first won the race,
@@ -88,7 +90,6 @@ test "race: the first failure decides the race with that failure" =
     assert outcome.get(0) == 1i32
 
 // --- a panic in a racer propagates as a panic ---------------------------------
-
 async function panicSoon(): Async<Int32, Never> =
     await Async<Unit, Never>.sleep(Duration.ofMillis(10i64))
     await Async<Int32, Never>.failPanic("racer blew up")
@@ -99,18 +100,19 @@ async function slowQuietly(): Async<Int32, Never> =
 
 function recordPanicked(cause: Cause<Never>, outcome: Array<Int32>): Async<Unit, Never> =
     match cause with
-    case Cause.Panicked(_, _) => Async.thunk(() => outcome.set(0, 1i32))
-    case _ => Async.thunk(() => outcome.set(0, 3i32))
+        case Cause.Panicked(_, _) => Async.thunk(() => outcome.set(0, 1i32))
+        case _ => Async.thunk(() => outcome.set(0, 3i32))
 
 async function panicWinsProgram(outcome: Array<Int32>): Async<Unit, Never> =
     let raced: Async<Int32, Never> = panicSoon().race(slowQuietly())
-    await raced.foldCause<Unit, Never>(
+    await raced
+        .foldCause<Unit, Never>(
         (cause: Cause<Never>) => recordPanicked(cause, outcome),
         (_: Int32) => Async.thunk(() => outcome.set(0, 2i32))
     )
 
 @timeout(10000)
-test "race: a panic in a racer propagates as a panic, not a value" =
+ test "race: a panic in a racer propagates as a panic, not a value" =
     let outcome = Array<Int32>.fill(1, 0i32)
     panicWinsProgram(outcome).run()
     // The defect travelled through the shared promise as a full `Cause` and
@@ -119,15 +121,15 @@ test "race: a panic in a racer propagates as a panic, not a value" =
     assert outcome.get(0) == 1i32
 
 // --- the loser's resource is released before the race returns -------------------
-
 async function loserReleaseProgram(outcome: Array<Int32>, seq: Array<Int32>): Async<Unit, Never> =
-    let fast: Async<Int32, Never> = Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 5i32)
+    let fast: Async<Int32, Never> =
+        Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 5i32)
     outcome.set(0, await fast.race(holderThatSleeps(seq, 1i32)))
     // Runs strictly after `race` returned — the ordering witness.
     stampNow(seq, 2i32)
 
 @timeout(10000)
-test "race: the losing racer's resource is released before race returns" =
+ test "race: the losing racer's resource is released before race returns" =
     let outcome = Array<Int32>.fill(1, 0i32)
     let seq = Array<Int32>.fill(3, 0i32)
     loserReleaseProgram(outcome, seq).run()
@@ -145,26 +147,29 @@ test "race: the losing racer's resource is released before race returns" =
 // it supersedes the winner's value and comes out of the race as `Cause.Panicked`
 // (see `decideRace`). Without that, `foldCause`'s SUCCESS arm would run on the
 // winner's `1` and the panic would be silently lost.
-
 async function loserPanicsOnRelease(): Async<Int32, Never> =
-    let res: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(0i32),
-        (_: Int32) => Async<Unit, Never>.failPanic("loser finalizer blew up")
-    )
+    let res: Resource<Int32, Never> =
+        Resource
+            .make(
+            () => Async.succeed(0i32),
+            (_: Int32) => Async<Unit, Never>.failPanic("loser finalizer blew up")
+        )
     let _held: Int32 = use res
     await Async<Unit, Never>.sleep(Duration.ofMillis(5000i64))
     99i32
 
 async function loserPanicWinsProgram(outcome: Array<Int32>): Async<Unit, Never> =
-    let fast: Async<Int32, Never> = Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 1i32)
+    let fast: Async<Int32, Never> =
+        Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 1i32)
     let raced: Async<Int32, Never> = fast.race(loserPanicsOnRelease())
-    await raced.foldCause<Unit, Never>(
+    await raced
+        .foldCause<Unit, Never>(
         (cause: Cause<Never>) => recordPanicked(cause, outcome),
         (_: Int32) => Async.thunk(() => outcome.set(0, 2i32))
     )
 
 @timeout(10000)
-test "race: a panic in the LOSER's finalizer supersedes the winner" =
+ test "race: a panic in the LOSER's finalizer supersedes the winner" =
     let outcome = Array<Int32>.fill(1, 0i32)
     loserPanicWinsProgram(outcome).run()
     // `recordPanicked` writes 1 on `Cause.Panicked`; the success arm would have
@@ -172,19 +177,18 @@ test "race: a panic in the LOSER's finalizer supersedes the winner" =
     assert outcome.get(0) == 1i32
 
 // --- a race inside a `use` block: scope nesting stays LIFO ---------------------
-
 async function raceInsideUseProgram(outcome: Array<Int32>, seq: Array<Int32>): Async<Unit, Never> =
-    let blockRes: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(1i32),
-        (_: Int32) => Async.thunk(() => stampNow(seq, 3i32))
-    )
+    let blockRes: Resource<Int32, Never> =
+        Resource
+            .make(() => Async.succeed(1i32), (_: Int32) => Async.thunk(() => stampNow(seq, 3i32)))
     let _outer: Int32 = use blockRes
-    let fast: Async<Int32, Never> = Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 5i32)
+    let fast: Async<Int32, Never> =
+        Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 5i32)
     outcome.set(0, await fast.race(holderThatSleeps(seq, 1i32)))
     stampNow(seq, 2i32)
 
 @timeout(10000)
-test "race: inside a use block the loser's release precedes the block's" =
+ test "race: inside a use block the loser's release precedes the block's" =
     let outcome = Array<Int32>.fill(1, 0i32)
     let seq = Array<Int32>.fill(4, 0i32)
     raceInsideUseProgram(outcome, seq).run()
@@ -198,21 +202,23 @@ test "race: inside a use block the loser's release precedes the block's" =
     assert seq.get(2) < seq.get(3)
 
 // --- interrupting the race interrupts both racers -----------------------------
-
-async function interruptedRaceProgram(outcome: Array<Int32>, seq: Array<Int32>): Async<Unit, Never> =
+async function interruptedRaceProgram(outcome: Array<Int32>, seq: Array<Int32>):
+    Async<Unit, Never> =
     let racing: Fiber<Int32, Never> =
         await holderThatSleeps(seq, 1i32).race(holderThatSleeps(seq, 2i32)).fork()
     // Long enough for both racers to be parked in their sleeps.
     await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
     await racing.interrupt()
-    await racing.join().foldCause<Unit, Never>(
+    await racing
+        .join()
+        .foldCause<Unit, Never>(
         (_: Cause<Never>) => Async.thunk(() => outcome.set(0, 1i32)),
         (_: Int32) => Async.thunk(() => outcome.set(0, 2i32))
     )
     stampNow(seq, 3i32)
 
 @timeout(10000)
-test "race: interrupting the racing fiber interrupts both racers" =
+ test "race: interrupting the racing fiber interrupts both racers" =
     let outcome = Array<Int32>.fill(1, 0i32)
     let seq = Array<Int32>.fill(4, 0i32)
     interruptedRaceProgram(outcome, seq).run()
@@ -226,16 +232,15 @@ test "race: interrupting the racing fiber interrupts both racers" =
     assert seq.get(2) < seq.get(3)
 
 // --- timeout: the timer wins --------------------------------------------------
-
 async function timerWinsProgram(outcome: Array<Int32>, seq: Array<Int32>): Async<Unit, Never> =
     let winner: Option<Int32> = await holderThatSleeps(seq, 1i32).timeout(Duration.ofMillis(20i64))
     stampNow(seq, 2i32)
     match winner with
-    case Some(_) => outcome.set(0, 1i32)
-    case None => outcome.set(0, 2i32)
+        case Some(_) => outcome.set(0, 1i32)
+        case None => outcome.set(0, 2i32)
 
 @timeout(10000)
-test "timeout: the timer wins with None and the slow side is torn down first" =
+ test "timeout: the timer wins with None and the slow side is torn down first" =
     let outcome = Array<Int32>.fill(1, 0i32)
     let seq = Array<Int32>.fill(3, 0i32)
     timerWinsProgram(outcome, seq).run()
@@ -247,31 +252,35 @@ test "timeout: the timer wins with None and the slow side is torn down first" =
     assert seq.get(1) < seq.get(2)
 
 // --- timeout: self wins -------------------------------------------------------
-
 async function selfWinsProgram(outcome: Array<Int32>): Async<Unit, Never> =
-    let fast: Async<Int32, Never> = Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 42i32)
+    let fast: Async<Int32, Never> =
+        Async<Unit, Never>.sleep(Duration.ofMillis(10i64)).map((_: Unit) => 42i32)
     let winner: Option<Int32> = await fast.timeout(Duration.ofMillis(5000i64))
     match winner with
-    case Some(v) => outcome.set(0, v)
-    case None => outcome.set(0, -1i32)
+        case Some(v) => outcome.set(0, v)
+        case None => outcome.set(0, -1i32)
 
 @timeout(10000)
-test "timeout: a completion before the deadline is Some(value)" =
+ test "timeout: a completion before the deadline is Some(value)" =
     let outcome = Array<Int32>.fill(1, 0i32)
     selfWinsProgram(outcome).run()
     assert outcome.get(0) == 42i32
 
 // --- timeout: a failure before the deadline stays a failure --------------------
-
 async function failureBeatsTimerProgram(outcome: Array<Int32>): Async<Unit, Never> =
     let timed: Async<Option<Int32>, RaceTestError> = failSoon().timeout(Duration.ofMillis(5000i64))
-    outcome.set(0, await timed.fold<Int32, Never>(
-        (_: RaceTestError) => Async.succeed(1i32),
-        (_: Option<Int32>) => Async.succeed(2i32)
-    ))
+    outcome
+        .set(
+        0,
+        await timed
+            .fold<Int32, Never>(
+            (_: RaceTestError) => Async.succeed(1i32),
+            (_: Option<Int32>) => Async.succeed(2i32)
+        )
+    )
 
 @timeout(10000)
-test "timeout: a failure before the deadline propagates, not None" =
+ test "timeout: a failure before the deadline propagates, not None" =
     let outcome = Array<Int32>.fill(1, 0i32)
     failureBeatsTimerProgram(outcome).run()
     // A timeout is about lateness. An answer that arrived broken ARRIVED —

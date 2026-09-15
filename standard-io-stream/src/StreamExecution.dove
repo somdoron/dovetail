@@ -4,7 +4,8 @@ import standard.io.Async
 import standard.io.Cause
 
 // Pending elements are reversed already; fill backwards without another list.
-internal async function assembleChunk<T>(items: List<Any>, count: Int32): Async<ReadonlySlice<T>, Never> =
+internal async function assembleChunk<T>(items: List<Any>, count: Int32):
+    Async<ReadonlySlice<T>, Never> =
     let values = Array.fill(count, items.head as T)
     let mutable remaining = items
     let mutable index = count
@@ -22,56 +23,72 @@ internal async function assembleChunk<T>(items: List<Any>, count: Int32): Async<
 internal function makeState(stream: Stream<Any, Any>): StreamExecutionState =
     StreamExecutionState(stream, false, (), None, None, None, 0, 0, false, List.empty)
 
-internal function open(stream: Stream<Any, Any>): Async<StreamSession, Any> = StreamSession.make(stream)
+internal function open(stream: Stream<Any, Any>): Async<StreamSession, Any> =
+    StreamSession.make(stream)
 
-internal function demand(session: StreamSession): Async<Option<ReadonlySlice<Any>>, Any> = session.next()
+internal function demand(session: StreamSession): Async<Option<ReadonlySlice<Any>>, Any> =
+    session.next()
 
-internal function consume(stream: Stream<Any, Any>, consumeChunk: (ReadonlySlice<Any>) => Async<Unit, Any>): Async<Unit, Any> = async do
-    use Async.scope()
-    // Explicit close runs before the surrounding scope drains children, so a
-    // cleanup defect is still observable through the owned producer handle.
-    let producer = await open(stream)
-    let body: Async<Unit, Any> = async do
-        let mutable running = true
-        while running do
-            match (await demand(producer)) with
-                case None => running = false
-                case Some(chunk) => await consumeChunk(chunk)
-    await body.foldCause<Unit, Any>(
-        (cause: Cause<Any>) =>
-            let close: Async<Unit, Any> = producer.interrupt().uninterruptible()
-            close.andThen((_: Unit) => Async<Unit, Any>.fromCause(cause))
-        ,
-        (_: Unit) => producer.interrupt())
+internal function consume(
+    stream: Stream<Any, Any>,
+    consumeChunk: (ReadonlySlice<Any>) => Async<Unit, Any>
+): Async<Unit, Any> =
+    async do
+        use Async.scope()
+        // Explicit close runs before the surrounding scope drains children, so a
+        // cleanup defect is still observable through the owned producer handle.
+        let producer = await open(stream)
+        let body: Async<Unit, Any> =
+            async do
+                let mutable running = true
+                while running do
+                    match (await demand(producer)) with
+                        case None => running = false
+                        case Some(chunk) => await consumeChunk(chunk)
+        await body
+            .foldCause<Unit, Any>(
+            (
+                (cause: Cause<Any>) =>
+                    let close: Async<Unit, Any> = producer.interrupt().uninterruptible()
+                    close.andThen((_: Unit) => Async<Unit, Any>.fromCause(cause))
+            ),
+            (_: Unit) => producer.interrupt()
+        )
 
-internal async function fold<S>(stream: Stream<Any, Any>, initial: ByName<S>, f: (S, Any) => S): Async<S, Any> =
+internal async function fold<S>(stream: Stream<Any, Any>, initial: ByName<S>, f: (S, Any) => S):
+    Async<S, Any> =
     let mutable result = initial.get
-    await consume(stream, async (chunk: ReadonlySlice<Any>) =>
-        let mutable index = 0
-        while index < chunk.length do
-            if index % 256 == 0 then await Async.yieldNow()
-            result = f(result, chunk.get(index))
-            index = index + 1
+    await consume(
+        stream,
+        async (chunk: ReadonlySlice<Any>) =>
+            let mutable index = 0
+            while index < chunk.length do
+                if index % 256 == 0 then await Async.yieldNow()
+                result = f(result, chunk.get(index))
+                index = index + 1
     )
     result
 
-function tick(budget: StreamBudget): Async<Unit, Never> = async do
-    budget.steps = budget.steps + 1
-    if budget.steps >= 256 then
-        budget.steps = 0
-        await Async.yieldNow()
+function tick(budget: StreamBudget): Async<Unit, Never> =
+    async do
+        budget.steps = budget.steps + 1
+        if budget.steps >= 256 then
+            budget.steps = 0
+            await Async.yieldNow()
 
 // Async continuations trampoline stream traversal; no recursive host calls are
 // made while constructing or descending deeply nested operator descriptions.
-internal function next(current: StreamExecutionState, budget: StreamBudget): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    let mutable result: Option<ReadonlySlice<Any>> = None
-    while result.isNone && !current.ended do
-        await tick(budget)
-        result = await advance(current, budget)
-        match result with
-            case Some(chunk) => if chunk.length == 0 then result = None
-            case None => ()
-    result
+internal function next(current: StreamExecutionState, budget: StreamBudget):
+    Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        let mutable result: Option<ReadonlySlice<Any>> = None
+        while result.isNone && !current.ended do
+            await tick(budget)
+            result = await advance(current, budget)
+            match result with
+                case Some(chunk) => if chunk.length == 0 then result = None
+                case None => ()
+        result
 
 function upstream(current: StreamExecutionState, stream: Stream<Any, Any>): StreamExecutionState =
     match current.upstream with
@@ -81,243 +98,357 @@ function upstream(current: StreamExecutionState, stream: Stream<Any, Any>): Stre
             current.upstream = Some(value)
             value
 
-function child(current: StreamExecutionState, stream: Stream<Any, Any>): Async<StreamSession, Any> = async do
-    match current.branch with
-        case Some(value) => value
-        case None =>
-            let value = await open(stream)
-            current.branch = Some(value)
-            value
+function child(current: StreamExecutionState, stream: Stream<Any, Any>): Async<StreamSession, Any> =
+    async do
+        match current.branch with
+            case Some(value) => value
+            case None =>
+                let value = await open(stream)
+                current.branch = Some(value)
+                value
 
-function advance(current: StreamExecutionState, budget: StreamBudget): Async<Option<ReadonlySlice<Any>>, Any> =
+function advance(current: StreamExecutionState, budget: StreamBudget):
+    Async<Option<ReadonlySlice<Any>>, Any> =
     match current.stream with
         case stream: StreamEmpty<Any, Any> => advanceEmpty(current, budget)
         case stream: StreamFromChunk<Any, Any> => advanceFromChunk(current, budget, stream.chunk)
-        case stream: StreamUnfold<Any, Any, Any> => advanceSource(current, budget, stream.initial, stream.step)
-        case stream: StreamTransform<Any, Any, Any> => advanceTransform(current, budget, stream.source, stream.transform)
-        case stream: StreamTransformItem<Any, Any, Any> => advanceItems(current, budget, stream.source, stream.effect)
-        case stream: StreamDrop<Any, Any> => advanceDrop(current, budget, stream.source, stream.count)
-        case stream: StreamTake<Any, Any> => advanceTake(current, budget, stream.source, stream.count)
-        case stream: StreamConcat<Any, Any> => advanceConcat(current, budget, stream.first, stream.second)
-        case stream: StreamFlatMap<Any, Any, Any> => advanceFlatMap(current, budget, stream.source, stream.bind)
+        case stream: StreamUnfold<Any, Any, Any> =>
+            advanceSource(current, budget, stream.initial, stream.step)
+        case stream: StreamTransform<Any, Any, Any> =>
+            advanceTransform(current, budget, stream.source, stream.transform)
+        case stream: StreamTransformItem<Any, Any, Any> =>
+            advanceItems(current, budget, stream.source, stream.effect)
+        case stream: StreamDrop<Any, Any> =>
+            advanceDrop(current, budget, stream.source, stream.count)
+        case stream: StreamTake<Any, Any> =>
+            advanceTake(current, budget, stream.source, stream.count)
+        case stream: StreamConcat<Any, Any> =>
+            advanceConcat(current, budget, stream.first, stream.second)
+        case stream: StreamFlatMap<Any, Any, Any> =>
+            advanceFlatMap(current, budget, stream.source, stream.bind)
         case stream: StreamRepeat<Any, Any> => advanceRepeat(current, budget, stream.source)
-        case stream: StreamRecover<Any, Any, Any> => advanceRecover(current, budget, stream.source, stream.recover)
-        case stream: StreamRechunk<Any, Any> => advanceRechunk(current, budget, stream.source, stream.size, stream.assemble)
+        case stream: StreamRecover<Any, Any, Any> =>
+            advanceRecover(current, budget, stream.source, stream.recover)
+        case stream: StreamRechunk<Any, Any> =>
+            advanceRechunk(current, budget, stream.source, stream.size, stream.assemble)
         case stream: StreamMerge<Any, Any> => advanceMerge(current, budget, stream.sources)
 
-internal function advanceEmpty(current: StreamExecutionState, budget: StreamBudget): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    current.ended = true
-    None
-
-internal function advanceFromChunk(current: StreamExecutionState, budget: StreamBudget, chunk: Async<ReadonlySlice<Any>, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    current.ended = true
-    Some(await chunk)
-
-internal function advanceSource(current: StreamExecutionState, budget: StreamBudget, initial: () => Any, step: (Any) => Async<(ReadonlySlice<Any>, Any), Option<Any>>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    if !current.initialized then
-        current.state = initial()
-        current.initialized = true
-    let result = await step(current.state).fold<Option<(ReadonlySlice<Any>, Any)>, Any>(
-        (error: Option<Any>) => match error with
-            case None => Async.succeed(None)
-            case Some(value) => Async.fail(value)
-        ,
-        (pair: (ReadonlySlice<Any>, Any)) => Async.succeed(Some(pair)))
-    match result with
-        case None =>
-            current.ended = true
-            current.state = ()
-            None
-        case Some(pair) =>
-            current.state = pair._1
-            Some(pair._0)
-
-internal function advanceTransform(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, transform: (ReadonlySlice<Any>) => Async<ReadonlySlice<Any>, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    match (await next(upstream(current, source), budget)) with
-        case None =>
-            current.ended = true
-            None
-        case Some(chunk) =>
-            Some(await transform(chunk))
-
-internal function advanceItems(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, effect: (Any) => Async<ReadonlySlice<Any>, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    match (await item(current, upstream(current, source), budget)) with
-        case None =>
-            current.ended = true
-            None
-        case Some(value) => Some(await effect(value))
-
-internal function advanceDrop(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, count: Int32): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    if !current.initialized then
-        current.count = count
-        current.initialized = true
-    match (await next(upstream(current, source), budget)) with
-        case None =>
-            current.ended = true
-            None
-        case Some(chunk) =>
-            let removed = if current.count < chunk.length then current.count else chunk.length
-            current.count = current.count - removed
-            Some(chunk.slice(removed, chunk.length))
-
-internal function advanceTake(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, count: Int32): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    if !current.initialized then
-        current.count = count
-        current.initialized = true
-    if current.count == 0 then
+internal function advanceEmpty(current: StreamExecutionState, budget: StreamBudget):
+    Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
         current.ended = true
         None
-    else
-        let producer = await child(current, source)
-        match (await demand(producer)) with
+
+internal function advanceFromChunk(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    chunk: Async<ReadonlySlice<Any>, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        current.ended = true
+        Some(await chunk)
+
+internal function advanceSource(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    initial: () => Any,
+    step: (Any) => Async<(ReadonlySlice<Any>, Any), Option<Any>>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        if !current.initialized then
+            current.state = initial()
+            current.initialized = true
+        let result =
+            await step(current.state)
+                .fold<Option<(ReadonlySlice<Any>, Any)>, Any>(
+                (
+                    (error: Option<Any>) =>
+                        match error with
+                            case None => Async.succeed(None)
+                            case Some(value) => Async.fail(value)
+                ),
+                (pair: (ReadonlySlice<Any>, Any)) => Async.succeed(Some(pair))
+            )
+        match result with
             case None =>
-                current.branch = None
+                current.ended = true
+                current.state = ()
+                None
+            case Some(pair) =>
+                current.state = pair._1
+                Some(pair._0)
+
+internal function advanceTransform(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    transform: (ReadonlySlice<Any>) => Async<ReadonlySlice<Any>, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        match (await next(upstream(current, source), budget)) with
+            case None =>
+                current.ended = true
+                None
+            case Some(chunk) => Some(await transform(chunk))
+
+internal function advanceItems(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    effect: (Any) => Async<ReadonlySlice<Any>, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        match (await item(current, upstream(current, source), budget)) with
+            case None =>
+                current.ended = true
+                None
+            case Some(value) => Some(await effect(value))
+
+internal function advanceDrop(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    count: Int32
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        if !current.initialized then
+            current.count = count
+            current.initialized = true
+        match (await next(upstream(current, source), budget)) with
+            case None =>
                 current.ended = true
                 None
             case Some(chunk) =>
-                let taken = if current.count < chunk.length then current.count else chunk.length
-                current.count = current.count - taken
-                Some(chunk.slice(0, taken))
+                let removed = if current.count < chunk.length then current.count else chunk.length
+                current.count = current.count - removed
+                Some(chunk.slice(removed, chunk.length))
 
-internal function advanceConcat(current: StreamExecutionState, budget: StreamBudget, first: Stream<Any, Any>, second: () => Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    let producer = await child(current, first)
-    match (await demand(producer)) with
-        case Some(chunk) => Some(chunk)
-        case None =>
-            current.branch = None
-            // The first branch is closed. Its tail needs no continuation
-            // or extra scope: it finishes with this execution.
-            current.stream = second()
+internal function advanceTake(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    count: Int32
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        if !current.initialized then
+            current.count = count
+            current.initialized = true
+        if current.count == 0 then
+            current.ended = true
             None
+        else
+            let producer = await child(current, source)
+            match (await demand(producer)) with
+                case None =>
+                    current.branch = None
+                    current.ended = true
+                    None
+                case Some(chunk) =>
+                    let taken = if current.count < chunk.length then current.count else chunk.length
+                    current.count = current.count - taken
+                    Some(chunk.slice(0, taken))
 
-internal function advanceRepeat(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    let producer = await child(current, source)
-    match (await demand(producer)) with
-        case Some(chunk) => Some(chunk)
-        case None =>
-            current.branch = None
-            // Empty executions must not starve cancellation.
-            await Async.yieldNow()
-            None
+internal function advanceConcat(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    first: Stream<Any, Any>,
+    second: () => Stream<Any, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        let producer = await child(current, first)
+        match (await demand(producer)) with
+            case Some(chunk) => Some(chunk)
+            case None =>
+                current.branch = None
+                // The first branch is closed. Its tail needs no continuation
+                // or extra scope: it finishes with this execution.
+                current
+                    .stream = second()
+                None
 
-internal function advanceFlatMap(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, bind: (Any) => Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    await flatMap(current, source, bind)
+internal function advanceRepeat(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        let producer = await child(current, source)
+        match (await demand(producer)) with
+            case Some(chunk) => Some(chunk)
+            case None =>
+                current.branch = None
+                // Empty executions must not starve cancellation.
+                await Async.yieldNow()
+                None
 
-internal function advanceRecover(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, recover: (Any) => Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    let producer = await child(current, source)
-    if current.initialized then
-        let result = await demand(producer)
+internal function advanceFlatMap(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    bind: (Any) => Stream<Any, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        await flatMap(current, source, bind)
+
+internal function advanceRecover(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    recover: (Any) => Stream<Any, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        let producer = await child(current, source)
+        if current.initialized then
+            let result = await demand(producer)
+            if result.isNone then
+                current.branch = None
+                current.ended = true
+            result
+        else
+            await demand(producer)
+                .fold<Option<ReadonlySlice<Any>>, Any>(
+                (
+                    async (error: Any) =>
+                        current.branch = None
+                        current.initialized = true
+                        current.branch = Some(await open(recover(error)))
+                        None
+                ),
+                (result: Option<ReadonlySlice<Any>>) =>
+                    Async
+                        .thunk(
+                        () =>
+                            if result.isNone then
+                                current.branch = None
+                                current.ended = true
+                            result
+                    )
+            )
+
+internal function advanceRechunk(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    source: Stream<Any, Any>,
+    size: Int32,
+    assemble: (List<Any>, Int32) => Async<ReadonlySlice<Any>, Never>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        await rechunk(current, upstream(current, source), size, assemble, budget)
+
+internal function advanceMerge(
+    current: StreamExecutionState,
+    budget: StreamBudget,
+    sources: () => List<Stream<Any, Any>>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        if !current.initialized then
+            current.branch = Some(await StreamMergeExecution.open(sources()))
+            current.initialized = true
+        let result = await demand(current.branch.require)
         if result.isNone then
             current.branch = None
             current.ended = true
         result
-    else
-        await demand(producer).fold<Option<ReadonlySlice<Any>>, Any>(
-            async (error: Any) =>
-                current.branch = None
-                current.initialized = true
-                current.branch = Some(await open(recover(error)))
-                None
-            ,
-            (result: Option<ReadonlySlice<Any>>) => Async.thunk(() =>
-                if result.isNone then
-                    current.branch = None
-                    current.ended = true
-                result
-            )
-        )
 
-internal function advanceRechunk(current: StreamExecutionState, budget: StreamBudget, source: Stream<Any, Any>, size: Int32, assemble: (List<Any>, Int32) => Async<ReadonlySlice<Any>, Never>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    await rechunk(current, upstream(current, source), size, assemble, budget)
-
-internal function advanceMerge(current: StreamExecutionState, budget: StreamBudget, sources: () => List<Stream<Any, Any>>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    if !current.initialized then
-        current.branch = Some(await StreamMergeExecution.open(sources()))
-        current.initialized = true
-    let result = await demand(current.branch.require)
-    if result.isNone then
-        current.branch = None
-        current.ended = true
-    result
-
-function item(current: StreamExecutionState, source: StreamExecutionState, budget: StreamBudget): Async<Option<Any>, Any> = async do
-    if current.chunk.isNone then
-        current.chunk = await next(source, budget)
-        current.index = 0
-    match current.chunk with
-        case None => None
-        case Some(chunk) =>
-            let value = chunk.get(current.index)
-            current.index = current.index + 1
-            if current.index == chunk.length then current.chunk = None
-            Some(value)
-
-function flatMap(current: StreamExecutionState, source: Stream<Any, Any>, bind: (Any) => Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    let outer = await child(current, source)
-    if current.initialized then
-        let result = await outer.advanceBinding()
-        if result.isNone then current.initialized = false
-        result
-    else
+function item(current: StreamExecutionState, source: StreamExecutionState, budget: StreamBudget):
+    Async<Option<Any>, Any> =
+    async do
         if current.chunk.isNone then
-            current.chunk = await demand(outer)
+            current.chunk = await next(source, budget)
             current.index = 0
         match current.chunk with
-            case None =>
-                current.branch = None
-                current.ended = true
-                None
+            case None => None
             case Some(chunk) =>
-                let inner = bind(chunk.get(current.index))
+                let value = chunk.get(current.index)
                 current.index = current.index + 1
                 if current.index == chunk.length then current.chunk = None
-                current.initialized = true
-                let result = await outer.bind(inner)
-                if result.isNone then current.initialized = false
-                result
+                Some(value)
 
-function rechunk(current: StreamExecutionState, source: StreamExecutionState, size: Int32, assemble: (List<Any>, Int32) => Async<ReadonlySlice<Any>, Never>, budget: StreamBudget): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    let mutable running = true
-    while running && current.count < size do
-        await tick(budget)
-        match (await item(current, source, budget)) with
-            case None =>
-                current.ended = true
-                running = false
-            case Some(value) =>
-                current.pending = List.Cons(value, current.pending)
-                current.count = current.count + 1
-    if current.count == 0 then None
-    else
-        let result = await assemble(current.pending, current.count)
-        current.pending = List.empty
-        current.count = 0
-        Some(result)
+function flatMap(
+    current: StreamExecutionState,
+    source: Stream<Any, Any>,
+    bind: (Any) => Stream<Any, Any>
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        let outer = await child(current, source)
+        if current.initialized then
+            let result = await outer.advanceBinding()
+            if result.isNone then current.initialized = false
+            result
+        else
+            if current.chunk.isNone then
+                current.chunk = await demand(outer)
+                current.index = 0
+            match current.chunk with
+                case None =>
+                    current.branch = None
+                    current.ended = true
+                    None
+                case Some(chunk) =>
+                    let inner = bind(chunk.get(current.index))
+                    current.index = current.index + 1
+                    if current.index == chunk.length then current.chunk = None
+                    current.initialized = true
+                    let result = await outer.bind(inner)
+                    if result.isNone then current.initialized = false
+                    result
 
-function stopBranch(current: StreamExecutionState): Async<Unit, Never> = async do
-    match current.branch with
-        case None => ()
-        case Some(producer) =>
-            current.branch = None
-            await producer.interrupt()
+function rechunk(
+    current: StreamExecutionState,
+    source: StreamExecutionState,
+    size: Int32,
+    assemble: (List<Any>, Int32) => Async<ReadonlySlice<Any>, Never>,
+    budget: StreamBudget
+): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        let mutable running = true
+        while running && current.count < size do
+            await tick(budget)
+            match (await item(current, source, budget)) with
+                case None =>
+                    current.ended = true
+                    running = false
+                case Some(value) =>
+                    current.pending = List.Cons(value, current.pending)
+                    current.count = current.count + 1
+        if current.count == 0 then
+            None
+        else
+            let result = await assemble(current.pending, current.count)
+            current.pending = List.empty
+            current.count = 0
+            Some(result)
+
+function stopBranch(current: StreamExecutionState): Async<Unit, Never> =
+    async do
+        match current.branch with
+            case None => ()
+            case Some(producer) =>
+                current.branch = None
+                await producer.interrupt()
 
 // Run all closes even when one cleanup panics. The active inner branch closes
 // before its retained outer execution. Scope cleanup remains the safety net.
-internal function close(current: StreamExecutionState): Async<Unit, Never> = async do
-    let mutable failure: Option<Cause<Never>> = None
-    await stopBranch(current).foldCause<Unit, Never>(
-        (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
-        (_: Unit) => Async.succeed(()))
-    match current.upstream with
-        case None => ()
-        case Some(source) =>
-            current.upstream = None
-            await close(source).foldCause<Unit, Never>(
-                (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
-                (_: Unit) => Async.succeed(()))
-    current.chunk = None
-    current.pending = List.empty
-    current.state = ()
-    match failure with
-        case None => ()
-        case Some(cause) => await Async<Unit, Never>.fromCause(cause)
+internal function close(current: StreamExecutionState): Async<Unit, Never> =
+    async do
+        let mutable failure: Option<Cause<Never>> = None
+        await stopBranch(current)
+            .foldCause<Unit, Never>(
+            (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
+            (_: Unit) => Async.succeed(())
+        )
+        match current.upstream with
+            case None => ()
+            case Some(source) =>
+                current.upstream = None
+                await close(source)
+                    .foldCause<Unit, Never>(
+                    (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
+                    (_: Unit) => Async.succeed(())
+                )
+        current.chunk = None
+        current.pending = List.empty
+        current.state = ()
+        match failure with
+            case None => ()
+            case Some(cause) => await Async<Unit, Never>.fromCause(cause)

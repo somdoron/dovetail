@@ -1098,11 +1098,11 @@ function main(): Unit =
 }
 
 // ---------------------------------------------------------------------------
-// Formatting stub test (section 20.1)
+// Formatting
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_formatting_returns_none() {
+async fn test_formatting_unchanged_returns_none() {
     let workspace = create_temp_workspace(
         r#"package a
 
@@ -1139,7 +1139,7 @@ function main(): Unit = ()
     let resp = service.call(req).await.unwrap();
     let resp = resp.unwrap();
     let result = resp.result().unwrap();
-    assert!(result.is_null(), "formatting should return null (not implemented)");
+    assert!(result.is_null(), "unchanged formatting should return null");
 }
 
 // ---------------------------------------------------------------------------
@@ -1287,4 +1287,67 @@ function main(): Unit = assert add(1, 2) == 3
             );
         }
     }
+}
+
+#[tokio::test]
+async fn formatting_uses_unsaved_buffer_and_utf16_range() {
+    let (workspace, file) = create_valid_workspace(
+        r#"package a
+function onDisk(): Unit = ()
+"#,
+    );
+    let mut service = init_service(Some(Url::from_directory_path(workspace.path()).unwrap())).await;
+    let uri = Url::from_file_path(&file).unwrap();
+    let source = r#"package a
+function inEditor( ):String= "😀" // 😀"#;
+    service.call(build_notification("textDocument/didOpen", serde_json::json!({
+        "textDocument": { "uri": uri, "languageId": "dovetail", "version": 1, "text": source }
+    }))).await.unwrap();
+    let response = service
+        .call(build_request(
+            "textDocument/formatting",
+            serde_json::json!({
+                "textDocument": { "uri": uri }, "options": { "tabSize": 8, "insertSpaces": false }
+            }),
+            101,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    let edits: Vec<TextEdit> = serde_json::from_value(response.result().unwrap().clone()).unwrap();
+    assert_eq!(edits.len(), 1);
+    assert_eq!(
+        edits[0].new_text,
+        dovetail::formatter::format_source(source, uri.as_str().into()).unwrap()
+    );
+    assert_eq!(
+        edits[0].range.end,
+        Position::new(
+            1,
+            source.lines().last().unwrap().encode_utf16().count() as u32
+        )
+    );
+    assert!(std::fs::read_to_string(&file).unwrap().contains("onDisk"));
+    service
+        .call(build_notification(
+            "textDocument/didChange",
+            serde_json::json!({
+                "textDocument": { "uri": uri, "version": 2 },
+                "contentChanges": [{ "text": "package a\nfunction broken( =" }]
+            }),
+        ))
+        .await
+        .unwrap();
+    let response = service
+        .call(build_request(
+            "textDocument/formatting",
+            serde_json::json!({
+                "textDocument": { "uri": uri }, "options": { "tabSize": 4, "insertSpaces": true }
+            }),
+            102,
+        ))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(response.error().is_some());
 }

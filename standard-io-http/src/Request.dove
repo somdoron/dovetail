@@ -23,12 +23,12 @@ public record Request =
 module Request =
     /// Decode the body as UTF-8 text. v1 doesn't sniff `Content-Type`;
     /// caller is responsible for picking the right helper.
-    public function bodyAsString(self): String =
-        String.fromBytes(self.body, 0, self.body.length)
+    public function bodyAsString(self): String = String.fromBytes(self.body, 0, self.body.length)
 
     /// Parse the body as JSON and decode into `T`. Returns
     /// `BodyDecodeError.InvalidJson` for parse failures or type mismatches.
-    public function jsonBody<T>(self): Result<T, BodyDecodeError> where T: JsonDecoder =
+    public function jsonBody<T>(self): Result<T, BodyDecodeError>
+        where T: JsonDecoder =
         let text = String.fromBytes(self.body, 0, self.body.length)
         match Json.parse(text) with
             case Error(e) => Error(BodyDecodeError.InvalidJson(e))

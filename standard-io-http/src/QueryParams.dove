@@ -9,8 +9,7 @@ import standard.uri.Uri
 /// multi-value via `getAll`.
 public class QueryParams(items: Map<String, Array<String>>) =
     /// Empty query — used when `uri.query` is `None`.
-    public function empty(): QueryParams =
-        QueryParams(Map<String, Array<String>>.empty())
+    public function empty(): QueryParams = QueryParams(Map<String, Array<String>>.empty())
 
     /// Parse the optional `uri.query` field into a `QueryParams`.
     /// Empty query string is treated as no params. Pair separator is
@@ -23,7 +22,8 @@ public class QueryParams(items: Map<String, Array<String>>) =
         match query with
             case None => QueryParams.empty()
             case Some(s) =>
-                if s.length == 0 then QueryParams.empty()
+                if s.length == 0 then
+                    QueryParams.empty()
                 else
                     let mutable map: Map<String, Array<String>> = Map<String, Array<String>>.empty()
                     for chunk in s.split("&") do
@@ -32,9 +32,10 @@ public class QueryParams(items: Map<String, Array<String>>) =
                                 case Some(pair) =>
                                     let key = pair._0
                                     let value = pair._1
-                                    let updated = match map.get(key) with
-                                        case Some(existing) => existing.concat([|value|])
-                                        case None => [|value|]
+                                    let updated =
+                                        match map.get(key) with
+                                            case Some(existing) => existing.concat([| value |])
+                                            case None => [| value |]
                                     map = map.put(key, updated)
                                 case None => ()
                     QueryParams(map)
@@ -44,9 +45,7 @@ public class QueryParams(items: Map<String, Array<String>>) =
     public function get(self, name: String): Option<String> =
         match self.items.get(name) with
             case None => None
-            case Some(arr) =>
-                if arr.length > 0 then Some(arr.get(0))
-                else None
+            case Some(arr) => if arr.length > 0 then Some(arr.get(0)) else None
 
     /// All values for the named param in URL order. Empty array if absent.
     public function getAll(self, name: String): Array<String> =
@@ -77,9 +76,10 @@ module QueryParams =
     /// both sides. Returns `None` if either decode fails.
     function parseQueryPair(chunk: String): Option<(String, String)> =
         let eqPos = findFirstChar(chunk, '=')
-        let (rawKey, rawValue) = match eqPos with
-            case None => (chunk, "")
-            case Some(idx) => (chunk.substring(0, idx), chunk.substring(idx + 1, chunk.length))
+        let (rawKey, rawValue) =
+            match eqPos with
+                case None => (chunk, "")
+                case Some(idx) => (chunk.substring(0, idx), chunk.substring(idx + 1, chunk.length))
         let decodedKey = Uri.decode(rawKey.replace("+", " "))
         let decodedValue = Uri.decode(rawValue.replace("+", " "))
         match decodedKey with
@@ -95,19 +95,20 @@ module QueryParams =
         let mutable i = 0
         while i < len do
             if found.isNone then
-                if s.getChar(i) == c then
-                    found = Some(i)
+                if s.getChar(i) == c then found = Some(i)
             i = i + 1
         found
 
     /// Duplicated from `PathParams` — small, used only here. Keeping it
     /// local rather than introducing a shared `parse` utility module.
     function parseInt32(s: String): Option<Int32> =
-        if s.length == 0 then None
+        if s.length == 0 then
+            None
         else
             let bytes = s.bytes()
             let (negative, start) = if bytes.get(0) == 45u8 then (true, 1) else (false, 0)
-            if start >= bytes.length then None
+            if start >= bytes.length then
+                None
             else
                 let mutable acc = 0i32
                 let mutable i = start
@@ -119,21 +120,18 @@ module QueryParams =
                             failed = true
                         else
                             let digit = b - 48
-                            if acc > 214748364i32 then
-                                failed = true
-                            else
-                                acc = acc * 10 + digit
+                            if acc > 214748364i32 then failed = true else acc = acc * 10 + digit
                     i = i + 1
-                if failed then None
-                else if negative then Some(0 - acc)
-                else Some(acc)
+                if failed then None else if negative then Some(0 - acc) else Some(acc)
 
     function parseInt64(s: String): Option<Int64> =
-        if s.length == 0 then None
+        if s.length == 0 then
+            None
         else
             let bytes = s.bytes()
             let (negative, start) = if bytes.get(0) == 45u8 then (true, 1) else (false, 0)
-            if start >= bytes.length then None
+            if start >= bytes.length then
+                None
             else
                 let mutable acc = 0i64
                 let mutable i = start
@@ -145,11 +143,7 @@ module QueryParams =
                             failed = true
                         else
                             let digit = (b - 48).toInt64()
-                            if acc > 922337203685477580i64 then
-                                failed = true
-                            else
-                                acc = acc * 10i64 + digit
+                            if acc > 922337203685477580i64 then failed = true
+                            else acc = acc * 10i64 + digit
                     i = i + 1
-                if failed then None
-                else if negative then Some(0i64 - acc)
-                else Some(acc)
+                if failed then None else if negative then Some(0i64 - acc) else Some(acc)

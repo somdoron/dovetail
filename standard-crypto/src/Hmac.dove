@@ -8,18 +8,11 @@ import standard.prelude.Array
 /// used internally (by `Hkdf`) and by the streaming `Mac` object.
 module HmacCore =
     /// HMAC(key, message) using the given hash algorithm.
-    function compute(
-        algo: HashAlgorithm,
-        key: Array<Uint8>,
-        message: Array<Uint8>
-    ): Array<Uint8> =
+    function compute(algo: HashAlgorithm, key: Array<Uint8>, message: Array<Uint8>): Array<Uint8> =
         let blockSize = algo.blockSize
         // K0: key reduced/padded to exactly one block.
         let k0 = Array<Uint8>.fill(blockSize, 0u8)
-        if key.length > blockSize then
-            algo.hash(key).copy(k0, 0)
-        else
-            key.copy(k0, 0)
+        if key.length > blockSize then algo.hash(key).copy(k0, 0) else key.copy(k0, 0)
 
         // Inner: H((K0 ^ ipad) || message)
         let inner = Array<Uint8>.fill(blockSize + message.length, 0u8)
@@ -41,13 +34,17 @@ module HmacCore =
 
 /// A streaming HMAC computation: buffers the message and computes the tag on
 /// `finalize`. `verify` compares in constant time.
-class HmacState(algo: HashAlgorithm, key: Array<Uint8>, mutable buffer: Array<Uint8>) implements Mac =
-    public function update(self, data: Array<Uint8>): Unit =
-        self.buffer = self.buffer.concat(data)
+class HmacState(
+    algo: HashAlgorithm,
+    key: Array<Uint8>,
+    mutable buffer: Array<Uint8>
+) implements Mac =
+    public function update(self, data: Array<Uint8>): Unit = self.buffer = self.buffer.concat(data)
+
     public function finalize(self): Array<Uint8> =
         HmacCore.compute(self.algo, self.key, self.buffer)
-    public function verify(self, tag: Array<Uint8>): Bool =
-        ConstantTime.equal(self.finalize(), tag)
+
+    public function verify(self, tag: Array<Uint8>): Bool = ConstantTime.equal(self.finalize(), tag)
 
 /// HMAC as a `MacAlgorithm`, parameterized by a hash. Construct with
 /// `Hmac(Sha256)`; create a keyed MAC with `.mac(key)`, or compute one-shot
@@ -63,17 +60,45 @@ public class Hmac(algo: HashAlgorithm) implements MacAlgorithm =
         HmacCore.compute(self.algo, key, message)
 
 // RFC 4231 test vectors.
-
 test "HMAC-SHA256 RFC 4231 case 1" =
     let key = Array<Uint8>.fill(20, 0x0bu8)
     let data = "Hi There".bytes()
     let mac = Hmac(Sha256).compute(key, data)
-    let expected = [|
-        0xb0u8, 0x34u8, 0x4cu8, 0x61u8, 0xd8u8, 0xdbu8, 0x38u8, 0x53u8,
-        0x5cu8, 0xa8u8, 0xafu8, 0xceu8, 0xafu8, 0x0bu8, 0xf1u8, 0x2bu8,
-        0x88u8, 0x1du8, 0xc2u8, 0x00u8, 0xc9u8, 0x83u8, 0x3du8, 0xa7u8,
-        0x26u8, 0xe9u8, 0x37u8, 0x6cu8, 0x2eu8, 0x32u8, 0xcfu8, 0xf7u8,
-    |]
+    let expected =
+        [|
+            0xb0u8,
+            0x34u8,
+            0x4cu8,
+            0x61u8,
+            0xd8u8,
+            0xdbu8,
+            0x38u8,
+            0x53u8,
+            0x5cu8,
+            0xa8u8,
+            0xafu8,
+            0xceu8,
+            0xafu8,
+            0x0bu8,
+            0xf1u8,
+            0x2bu8,
+            0x88u8,
+            0x1du8,
+            0xc2u8,
+            0x00u8,
+            0xc9u8,
+            0x83u8,
+            0x3du8,
+            0xa7u8,
+            0x26u8,
+            0xe9u8,
+            0x37u8,
+            0x6cu8,
+            0x2eu8,
+            0x32u8,
+            0xcfu8,
+            0xf7u8,
+        |]
     assert mac.length == 32
     let mutable i = 0
     let mutable ok = true
@@ -86,12 +111,41 @@ test "HMAC-SHA256 RFC 4231 case 2 (short key)" =
     let key = "Jefe".bytes()
     let data = "what do ya want for nothing?".bytes()
     let mac = Hmac(Sha256).compute(key, data)
-    let expected = [|
-        0x5bu8, 0xdcu8, 0xc1u8, 0x46u8, 0xbfu8, 0x60u8, 0x75u8, 0x4eu8,
-        0x6au8, 0x04u8, 0x24u8, 0x26u8, 0x08u8, 0x95u8, 0x75u8, 0xc7u8,
-        0x5au8, 0x00u8, 0x3fu8, 0x08u8, 0x9du8, 0x27u8, 0x39u8, 0x83u8,
-        0x9du8, 0xecu8, 0x58u8, 0xb9u8, 0x64u8, 0xecu8, 0x38u8, 0x43u8,
-    |]
+    let expected =
+        [|
+            0x5bu8,
+            0xdcu8,
+            0xc1u8,
+            0x46u8,
+            0xbfu8,
+            0x60u8,
+            0x75u8,
+            0x4eu8,
+            0x6au8,
+            0x04u8,
+            0x24u8,
+            0x26u8,
+            0x08u8,
+            0x95u8,
+            0x75u8,
+            0xc7u8,
+            0x5au8,
+            0x00u8,
+            0x3fu8,
+            0x08u8,
+            0x9du8,
+            0x27u8,
+            0x39u8,
+            0x83u8,
+            0x9du8,
+            0xecu8,
+            0x58u8,
+            0xb9u8,
+            0x64u8,
+            0xecu8,
+            0x38u8,
+            0x43u8,
+        |]
     assert mac.length == 32
     let mutable i = 0
     let mutable ok = true
@@ -104,16 +158,73 @@ test "HMAC-SHA512 RFC 4231 case 1" =
     let key = Array<Uint8>.fill(20, 0x0bu8)
     let data = "Hi There".bytes()
     let mac = Hmac(Sha512).compute(key, data)
-    let expected = [|
-        0x87u8, 0xaau8, 0x7cu8, 0xdeu8, 0xa5u8, 0xefu8, 0x61u8, 0x9du8,
-        0x4fu8, 0xf0u8, 0xb4u8, 0x24u8, 0x1au8, 0x1du8, 0x6cu8, 0xb0u8,
-        0x23u8, 0x79u8, 0xf4u8, 0xe2u8, 0xceu8, 0x4eu8, 0xc2u8, 0x78u8,
-        0x7au8, 0xd0u8, 0xb3u8, 0x05u8, 0x45u8, 0xe1u8, 0x7cu8, 0xdeu8,
-        0xdau8, 0xa8u8, 0x33u8, 0xb7u8, 0xd6u8, 0xb8u8, 0xa7u8, 0x02u8,
-        0x03u8, 0x8bu8, 0x27u8, 0x4eu8, 0xaeu8, 0xa3u8, 0xf4u8, 0xe4u8,
-        0xbeu8, 0x9du8, 0x91u8, 0x4eu8, 0xebu8, 0x61u8, 0xf1u8, 0x70u8,
-        0x2eu8, 0x69u8, 0x6cu8, 0x20u8, 0x3au8, 0x12u8, 0x68u8, 0x54u8,
-    |]
+    let expected =
+        [|
+            0x87u8,
+            0xaau8,
+            0x7cu8,
+            0xdeu8,
+            0xa5u8,
+            0xefu8,
+            0x61u8,
+            0x9du8,
+            0x4fu8,
+            0xf0u8,
+            0xb4u8,
+            0x24u8,
+            0x1au8,
+            0x1du8,
+            0x6cu8,
+            0xb0u8,
+            0x23u8,
+            0x79u8,
+            0xf4u8,
+            0xe2u8,
+            0xceu8,
+            0x4eu8,
+            0xc2u8,
+            0x78u8,
+            0x7au8,
+            0xd0u8,
+            0xb3u8,
+            0x05u8,
+            0x45u8,
+            0xe1u8,
+            0x7cu8,
+            0xdeu8,
+            0xdau8,
+            0xa8u8,
+            0x33u8,
+            0xb7u8,
+            0xd6u8,
+            0xb8u8,
+            0xa7u8,
+            0x02u8,
+            0x03u8,
+            0x8bu8,
+            0x27u8,
+            0x4eu8,
+            0xaeu8,
+            0xa3u8,
+            0xf4u8,
+            0xe4u8,
+            0xbeu8,
+            0x9du8,
+            0x91u8,
+            0x4eu8,
+            0xebu8,
+            0x61u8,
+            0xf1u8,
+            0x70u8,
+            0x2eu8,
+            0x69u8,
+            0x6cu8,
+            0x20u8,
+            0x3au8,
+            0x12u8,
+            0x68u8,
+            0x54u8,
+        |]
     assert mac.length == 64
     let mutable i = 0
     let mutable ok = true

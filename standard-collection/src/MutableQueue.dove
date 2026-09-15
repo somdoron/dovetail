@@ -8,7 +8,8 @@ public class MutableQueue<T>(
     internal mutable head: Int32,
     internal mutable tail: Int32,
     internal mutable count: Int32
-) implements Iterable<T> where T: Default =
+) implements Iterable<T>
+    where T: Default =
     /// Adds a value to the back of the queue, growing capacity if needed.
     public function enqueue(self, value: T): Unit =
         if self.count >= self.data.length then self.grow()
@@ -18,7 +19,8 @@ public class MutableQueue<T>(
 
     /// Removes and returns the front element, or None if the queue is empty.
     public function dequeue(self): Option<T> =
-        if self.count == 0 then None
+        if self.count == 0 then
+            None
         else
             let value = self.data.get(self.head)
             self.head = (self.head + 1) % self.data.length
@@ -27,15 +29,13 @@ public class MutableQueue<T>(
 
     /// Returns the front element without removing it, or None if empty.
     public property peek(self): Option<T> =
-        if self.count == 0 then None
-        else Some(self.data.get(self.head))
+        if self.count == 0 then None else Some(self.data.get(self.head))
 
     /// The number of elements in the queue.
     public property length(self): Int32 = self.count
 
     /// Creates a new empty MutableQueue.
-    public function new(): MutableQueue<T> =
-        MutableQueue(Array.fill(8, T.default), 0, 0, 0)
+    public function new(): MutableQueue<T> = MutableQueue(Array.fill(8, T.default), 0, 0, 0)
 
     /// True if the queue contains no elements.
     public property isEmpty(self): Bool = self.count == 0
@@ -55,12 +55,14 @@ public class MutableQueue<T>(
         self.head = 0
         self.tail = self.count
 
-implement <T> Default for MutableQueue<T> where T: Default =
+implement<T> Default for MutableQueue<T> where T: Default =
     public property default: MutableQueue<T> = MutableQueue.new()
 
-class MutableQueueIterator<T>(queue: MutableQueue<T>, mutable index: Int32) implements Iterator<T> where T: Default =
+class MutableQueueIterator<T>(queue: MutableQueue<T>, mutable index: Int32) implements Iterator<T>
+    where T: Default =
     public function next(self): Option<T> =
-        if self.index >= self.queue.count then None
+        if self.index >= self.queue.count then
+            None
         else
             let pos = (self.queue.head + self.index) % self.queue.data.length
             let value = self.queue.data.get(pos)

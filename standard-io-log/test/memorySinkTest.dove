@@ -51,4 +51,3 @@ test "MemorySink.snapshot is independent of later writes" =
     sink.emit(dummyRecord(LogLevel.Info, "two")).run()
     assert snap.length == 1
     assert sink.snapshot().length == 2
-

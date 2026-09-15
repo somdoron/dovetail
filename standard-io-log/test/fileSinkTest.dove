@@ -12,13 +12,17 @@ import standard.io.fs.DirEntry
 import standard.io.fs.EntryType
 import standard.text.Charset
 
-async function listFileSinkSegments(dirPath: Path, stem: String): Async<List<DirEntry>, FileStreamError> =
+async function listFileSinkSegments(dirPath: Path, stem: String):
+    Async<List<DirEntry>, FileStreamError> =
     let entries = await Directory.entries(dirPath)
-    entries.filter(entry =>
-        let isFile = match entry.entryType with
-            case EntryType.File => true
-            case _ => false
-        isFile && entry.name.startsWith(stem ++ "-") && entry.name.endsWith(".log")
+    entries
+        .filter(
+        entry =>
+            let isFile =
+                match entry.entryType with
+                    case EntryType.File => true
+                    case _ => false
+            isFile && entry.name.startsWith(stem ++ "-") && entry.name.endsWith(".log")
     )
 
 async function cleanupSegments(dirPath: Path, stem: String): Async<Unit, FileStreamError> =
@@ -88,7 +92,8 @@ async function writeManyRecords(basePath: Path, maxBytes: Int64): Async<Unit, Fi
     await log.info("juliet")
 
 // Count total non-empty lines across every segment file for `stem`.
-async function totalLinesAcrossSegments(dir: Path, stem: String, set: (Int32) => Unit): Async<Unit, FileStreamError> =
+async function totalLinesAcrossSegments(dir: Path, stem: String, set: (Int32) => Unit):
+    Async<Unit, FileStreamError> =
     let segments = await listFileSinkSegments(dir, stem)
     let mutable total = 0
     for segment in segments do
@@ -104,7 +109,8 @@ test "FileSink.openLimited rotates into new segment files past maxBytes" =
     let basePath = Path.of(stem ++ ".log")
     cleanupSegments(dir, stem).run()
     // 1ms timestamp precision keeps segment names distinct across rotations.
-    writeManyRecords(basePath, 8i64).run()
+    writeManyRecords(basePath, 8i64)
+        .run()
     countSegments(dir, stem, (n: Int32) => segmentCount = n).run()
     totalLinesAcrossSegments(dir, stem, (n: Int32) => totalLines = n).run()
     cleanupSegments(dir, stem).run()
@@ -113,6 +119,7 @@ test "FileSink.openLimited rotates into new segment files past maxBytes" =
     // No records are lost across rotations.
     assert totalLines == 10
 
-async function countSegments(dir: Path, stem: String, set: (Int32) => Unit): Async<Unit, FileStreamError> =
+async function countSegments(dir: Path, stem: String, set: (Int32) => Unit):
+    Async<Unit, FileStreamError> =
     let segments = await listFileSinkSegments(dir, stem)
     set(segments.length)

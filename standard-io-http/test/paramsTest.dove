@@ -5,9 +5,7 @@ import standard.io.http.QueryParams
 import standard.io.http.ParamDecodeError
 
 // PathParams + QueryParams accessor behavior. No router, no I/O.
-
 // --- PathParams -------------------------------------------------------------
-
 test "PathParams.empty: get returns None" =
     let p = PathParams.empty()
     assert p.get("id").isNone
@@ -21,7 +19,6 @@ test "PathParams.getInt32: missing → Missing" =
         case _ => assert false
 
 // --- QueryParams ------------------------------------------------------------
-
 test "QueryParams.parse: None query string" =
     let q = QueryParams.parse(None)
     assert q.get("foo").isNone

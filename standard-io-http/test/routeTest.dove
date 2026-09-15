@@ -14,17 +14,16 @@ import standard.http.Headers
 
 // Route combinator tests — no socket. Build a Context by hand, invoke
 // the route's inner function via `.value`, observe the Option<Response>.
-
 // --- Helpers ----------------------------------------------------------------
-
 function makeContext(method: Method, path: String): Context =
     let uri = Uri.parse("http://localhost" ++ path).require
-    let req = Request {
-        method = method
-        uri = uri
-        headers = Headers.empty()
-        body = Array<Uint8>.empty()
-    }
+    let req =
+        Request {
+            method = method
+            uri = uri
+            headers = Headers.empty()
+            body = Array<Uint8>.empty()
+        }
     Context {
         request = req
         pathParams = PathParams.empty()
@@ -34,13 +33,15 @@ function makeContext(method: Method, path: String): Context =
 function runRoute(r: Route, ctx: Context): Option<Response> =
     let mutable captured: Option<Option<Response>> = None
     let mutable failed = false
-    let program: Async<Unit, Never> = r.value(ctx).fold(
-        (_: ServerError) => Async.thunk(() => failed = true),
-        (opt: Option<Response>) => Async.thunk(() => captured = Some(opt))
-    )
+    let program: Async<Unit, Never> =
+        r
+            .value(ctx)
+            .fold(
+            (_: ServerError) => Async.thunk(() => failed = true),
+            (opt: Option<Response>) => Async.thunk(() => captured = Some(opt))
+        )
     program.run()
-    if failed then panic "route failed"
-    else captured.require
+    if failed then panic "route failed" else captured.require
 
 // Typed handler vars — extracted so Dovetail's closure inference picks up
 // the right expected return type from the let binding rather than from
@@ -49,7 +50,9 @@ function worldHandler(_: Context): Async<Response, ServerError> =
     Async.succeed(Response.text("world"))
 
 function aHandler(_: Context): Async<Response, ServerError> = Async.succeed(Response.text("a"))
+
 function bHandler(_: Context): Async<Response, ServerError> = Async.succeed(Response.text("b"))
+
 function cHandler(_: Context): Async<Response, ServerError> = Async.succeed(Response.text("c"))
 
 function notFoundHandler(_: Context): Async<Response, ServerError> =
@@ -63,7 +66,6 @@ function echoIdHandler(ctx: Context): Async<Response, ServerError> =
     Async.succeed(Response.text("user " ++ id))
 
 // --- Tests ------------------------------------------------------------------
-
 test "Route.get matches GET on the right path" =
     let r: Route = Route.get("/hello", worldHandler)
     let result = runRoute(r, makeContext(Method.Get, "/hello"))
@@ -89,67 +91,66 @@ test "Route.get captures path params" =
         case None => assert false
 
 test "Route.choose tries each route until one matches" =
-    let app: Route = Route.choose([|
-        Route.get("/a", aHandler),
-        Route.get("/b", bHandler),
-        Route.get("/c", cHandler),
-    |])
+    let app: Route =
+        Route
+            .choose(
+            [| Route.get("/a", aHandler), Route.get("/b", bHandler), Route.get("/c", cHandler),  |]
+        )
     let result = runRoute(app, makeContext(Method.Get, "/b"))
     match result with
         case Some(resp) => assert resp.bodyAsString() == "b"
         case None => assert false
 
 test "Route.choose returns None when no route matches" =
-    let app: Route = Route.choose([|
-        Route.get("/a", aHandler),
-        Route.get("/b", bHandler),
-    |])
+    let app: Route = Route.choose([| Route.get("/a", aHandler), Route.get("/b", bHandler),  |])
     let result = runRoute(app, makeContext(Method.Get, "/nope"))
     assert result.isNone
 
 test "route.orNotFound turns None into a 404" =
-    let app: Route = Route.choose([|
-        Route.get("/a", aHandler),
-    |])
+    let app: Route = Route.choose([| Route.get("/a", aHandler),  |])
     let handler: (Context) => Async<Response, ServerError> = app.orNotFound()
     let mutable captured: Option<Response> = None
     let mutable failed = false
-    let program: Async<Unit, Never> = handler(makeContext(Method.Get, "/nope")).fold(
-        (_: ServerError) => Async.thunk(() => failed = true),
-        (r: Response) => Async.thunk(() => captured = Some(r))
-    )
+    let program: Async<Unit, Never> =
+        handler(makeContext(Method.Get, "/nope"))
+            .fold(
+            (_: ServerError) => Async.thunk(() => failed = true),
+            (r: Response) => Async.thunk(() => captured = Some(r))
+        )
     program.run()
-    if failed then panic "handler failed"
+    if failed then
+        panic "handler failed"
     else
         let r = captured.require
         assert r.statusCode == 404
 
 test "route.orNotFound passes through matched response" =
-    let app: Route = Route.choose([|
-        Route.get("/hi", worldHandler),
-    |])
+    let app: Route = Route.choose([| Route.get("/hi", worldHandler),  |])
     let handler: (Context) => Async<Response, ServerError> = app.orNotFound()
     let mutable captured: Option<Response> = None
     let mutable failed = false
-    let program: Async<Unit, Never> = handler(makeContext(Method.Get, "/hi")).fold(
-        (_: ServerError) => Async.thunk(() => failed = true),
-        (r: Response) => Async.thunk(() => captured = Some(r))
-    )
+    let program: Async<Unit, Never> =
+        handler(makeContext(Method.Get, "/hi"))
+            .fold(
+            (_: ServerError) => Async.thunk(() => failed = true),
+            (r: Response) => Async.thunk(() => captured = Some(r))
+        )
     program.run()
-    if failed then panic "handler failed"
+    if failed then
+        panic "handler failed"
     else
         let r = captured.require
         assert r.statusCode == 200
         assert r.bodyAsString() == "world"
 
 test "A handler that returns Response.notFound() is still 'matched' (not skipped)" =
-    let app: Route = Route.choose([|
-        Route.get("/maybe", notFoundHandler),
-        Route.get("/maybe", fallbackHandler),
-    |])
+    let app: Route =
+        Route
+            .choose(
+            [| Route.get("/maybe", notFoundHandler), Route.get("/maybe", fallbackHandler),  |]
+        )
     let result = runRoute(app, makeContext(Method.Get, "/maybe"))
     // First route matched (Some) and returned a 404 — the second isn't tried.
     match result with
-        case Some(r) =>
-            assert r.statusCode == 404
+        case Some(r) => assert r.statusCode == 404
         case None => assert false

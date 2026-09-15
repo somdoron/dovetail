@@ -37,35 +37,42 @@ import standard.crypto.EcdsaP384
 ///
 ///     let key = use Aes256Gcm.generateKey()    // random AEAD key, wiped on exit
 ///     let kp  = use Ed25519.generateKeyPair()   // random key pair, secret wiped
-
 extension CryptoRandom for AeadAlgorithm =
     /// A random symmetric key of this cipher's key size. Zeroized on release.
     public function generateKey(self): Resource<SymmetricKey, Never> =
-        Resource.make(
+        Resource
+            .make(
             () => Random.bytes(self.keySize).map((b: Array<Uint8>) => SymmetricKey(b)),
-            (k: SymmetricKey) => Async.thunk(() => k.clear()))
+            (k: SymmetricKey) => Async.thunk(() => k.clear())
+        )
 
     /// A random nonce of this cipher's nonce size. A nonce is public (sent in
     /// the clear), so there is nothing to wipe — it is a resource only so that
     /// generation stays in the async/effect world. Release is a no-op.
     public function generateNonce(self): Resource<Nonce, Never> =
-        Resource.make(
+        Resource
+            .make(
             () => Random.bytes(self.nonceSize).map((b: Array<Uint8>) => Nonce(b)),
-            (_: Nonce) => Async.succeed(()))
+            (_: Nonce) => Async.succeed(())
+        )
 
 extension CryptoRandom for KeyExchange =
     /// A random key pair. The secret is zeroized on release.
     public function generateKeyPair(self): Resource<KeyPair, Never> =
-        Resource.make(
+        Resource
+            .make(
             () => randomKeyExchangeKeyPair(self),
-            (kp: KeyPair) => Async.thunk(() => kp.secret.clear()))
+            (kp: KeyPair) => Async.thunk(() => kp.secret.clear())
+        )
 
 extension CryptoRandom for SignatureAlgorithm =
     /// A random key pair. The secret is zeroized on release.
     public function generateKeyPair(self): Resource<KeyPair, Never> =
-        Resource.make(
+        Resource
+            .make(
             () => randomSignatureKeyPair(self),
-            (kp: KeyPair) => Async.thunk(() => kp.secret.clear()))
+            (kp: KeyPair) => Async.thunk(() => kp.secret.clear())
+        )
 
 // Rejection sampling: draw `secretKeySize` random bytes and accept them as a
 // secret iff the algorithm says they form a valid one (NIST curves reject an
@@ -106,7 +113,15 @@ test "generateKey/generateNonce resources have the right sizes and keys vary" =
         let n = use Aes256Gcm.generateNonce()
         let cn = use ChaCha20Poly1305.generateKey()
         // Two independent draws must differ (a 32-byte collision is impossible).
-        Async.thunk(() => ok = (k1.value.length == 32) && (n.value.length == 12) && (cn.value.length == 32) && (ConstantTime.equal(k1.value, k2.value) == false))
+        Async
+            .thunk(
+            () =>
+                ok =
+                    (k1.value.length == 32)
+                        && (n.value.length == 12)
+                        && (cn.value.length == 32)
+                        && (ConstantTime.equal(k1.value, k2.value) == false)
+        )
     program.run()
     assert ok
 
@@ -138,7 +153,14 @@ test "Ed25519 generated key pair signs and verifies" =
         let kp = use Ed25519.generateKeyPair()
         let msg = "hello signature".bytes()
         let sig = Ed25519.sign(kp.secret, msg)
-        Async.thunk(() => ok = Ed25519.verify(kp.publicKey, msg, sig) && (Ed25519.verify(kp.publicKey, "tampered".bytes(), sig) == false))
+        Async
+            .thunk(
+            () =>
+                ok =
+                    Ed25519
+                        .verify(kp.publicKey, msg, sig)
+                        && (Ed25519.verify(kp.publicKey, "tampered".bytes(), sig) == false)
+        )
     program.run()
     assert ok
 
@@ -148,7 +170,14 @@ test "EcdsaP256 generated key pair signs and verifies" =
         let kp = use EcdsaP256.generateKeyPair()
         let msg = "hello signature".bytes()
         let sig = EcdsaP256.sign(kp.secret, msg)
-        Async.thunk(() => ok = EcdsaP256.verify(kp.publicKey, msg, sig) && (EcdsaP256.verify(kp.publicKey, "tampered".bytes(), sig) == false))
+        Async
+            .thunk(
+            () =>
+                ok =
+                    EcdsaP256
+                        .verify(kp.publicKey, msg, sig)
+                        && (EcdsaP256.verify(kp.publicKey, "tampered".bytes(), sig) == false)
+        )
     program.run()
     assert ok
 
@@ -158,7 +187,14 @@ test "EcdsaP384 generated key pair signs and verifies" =
         let kp = use EcdsaP384.generateKeyPair()
         let msg = "hello signature".bytes()
         let sig = EcdsaP384.sign(kp.secret, msg)
-        Async.thunk(() => ok = EcdsaP384.verify(kp.publicKey, msg, sig) && (EcdsaP384.verify(kp.publicKey, "tampered".bytes(), sig) == false))
+        Async
+            .thunk(
+            () =>
+                ok =
+                    EcdsaP384
+                        .verify(kp.publicKey, msg, sig)
+                        && (EcdsaP384.verify(kp.publicKey, "tampered".bytes(), sig) == false)
+        )
     program.run()
     assert ok
 

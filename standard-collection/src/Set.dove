@@ -6,7 +6,9 @@ import standard.prelude.Option
 
 /// An immutable set of unique values, backed by a Map.
 /// All mutating operations return a new Set, leaving the original unchanged.
-public record Set<T> where T: Hashable, T: Equatable =
+public record Set<T>
+    where T: Hashable,
+          T: Equatable =
     inner: Map<T, Bool>
 
 module Set<T> =
@@ -16,16 +18,13 @@ module Set<T> =
         Set { inner = emptyMap }
 
     /// Returns a new set with the given value added. Duplicates are ignored.
-    public function add(self, value: T): Set<T> =
-        Set { inner = self.inner.put(value, true) }
+    public function add(self, value: T): Set<T> = Set { inner = self.inner.put(value, true) }
 
     /// Returns true if the set contains the given value.
-    public function contains(self, value: T): Bool =
-        self.inner.contains(value)
+    public function contains(self, value: T): Bool = self.inner.contains(value)
 
     /// Returns a new set with the given value removed. Returns self if not present.
-    public function remove(self, value: T): Set<T> =
-        Set { inner = self.inner.remove(value) }
+    public function remove(self, value: T): Set<T> = Set { inner = self.inner.remove(value) }
 
     /// The number of elements in the set.
     public property length(self): Int32 = self.inner.length
@@ -35,17 +34,27 @@ module Set<T> =
 
     /// Returns a new set containing all elements from both sets.
     public function union(self, other: Set<T>): Set<T> =
-        let result = other.inner.foldEntries(self.inner, (acc: Map<T, Bool>, k: T, v: Bool) =>
-            if !acc.contains(k) then acc.put(k, true) else acc
-        )
+        let result =
+            other
+                .inner
+                .foldEntries(
+                self.inner,
+                (acc: Map<T, Bool>, k: T, v: Bool) =>
+                    if !acc.contains(k) then acc.put(k, true) else acc
+            )
         Set { inner = result }
 
     /// Returns a new set containing only elements present in both sets.
     public function intersection(self, other: Set<T>): Set<T> =
         let empty: Map<T, Bool> = Map.empty()
-        let result = self.inner.foldEntries(empty, (acc: Map<T, Bool>, k: T, v: Bool) =>
-            if other.inner.contains(k) then acc.put(k, true) else acc
-        )
+        let result =
+            self
+                .inner
+                .foldEntries(
+                empty,
+                (acc: Map<T, Bool>, k: T, v: Bool) =>
+                    if other.inner.contains(k) then acc.put(k, true) else acc
+            )
         Set { inner = result }
 
 class SetIterator<T>(inner: Iterator<(T, Bool)>) implements Iterator<T> =
@@ -54,9 +63,8 @@ class SetIterator<T>(inner: Iterator<(T, Bool)>) implements Iterator<T> =
             case Some(entry) => Some(entry._0)
             case None => None
 
-implement <T> Iterable<T> for Set<T> where T: Hashable, T: Equatable =
-    public function iterator(self): Iterator<T> =
-        SetIterator(self.inner.iterator())
+implement<T> Iterable<T> for Set<T> where T: Hashable, T: Equatable =
+    public function iterator(self): Iterator<T> = SetIterator(self.inner.iterator())
 
 test "Set empty" =
     let s: Set<String> = Set.empty()

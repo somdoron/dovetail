@@ -24,7 +24,6 @@ implement Display for BodyDecodeError =
             case BodyDecodeError.InvalidJson(_) => "body was not valid JSON"
             case BodyDecodeError.Custom(msg) => msg
 
-
 /// Errors surfaced by the HTTP client.
 /// Wraps the three distinct error domains the client touches
 /// (URI parsing, network I/O, HTTP protocol) plus client-specific
@@ -60,17 +59,16 @@ implement Display for HttpClientError =
             case HttpClientError.MissingHost => "URL is missing a host"
             case HttpClientError.NetworkError(e) => "network error: " ++ e.format()
             case HttpClientError.ProtocolError(e) => "HTTP protocol error: " ++ e.message
-            case HttpClientError.UnexpectedEndOfStream => "peer closed connection before response was complete"
+            case HttpClientError.UnexpectedEndOfStream =>
+                "peer closed connection before response was complete"
             case HttpClientError.InvalidHeader(name) => "invalid header: " ++ name
             case HttpClientError.BodyDecodeFailed(e) => "body decode failed: " ++ e.format()
             case HttpClientError.TlsError(e) => "TLS error: " ++ e.format()
 
 /// Auto-conversion at `use` sites: TCP/DNS errors become NetworkError.
 implement From<NetError> for HttpClientError =
-    public function from(value: NetError): HttpClientError =
-        HttpClientError.NetworkError(value)
+    public function from(value: NetError): HttpClientError = HttpClientError.NetworkError(value)
 
 /// Auto-conversion for HttpError propagated via `?`/lift.
 implement From<HttpError> for HttpClientError =
-    public function from(value: HttpError): HttpClientError =
-        HttpClientError.ProtocolError(value)
+    public function from(value: HttpError): HttpClientError = HttpClientError.ProtocolError(value)

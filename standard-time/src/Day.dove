@@ -6,12 +6,11 @@ public newtype Day = Int32
 module Day =
     /// Creates a Day from the given integer value. Panics if value is not in 1..31.
     public function of(value: Int32): Day =
-        if value < 1 || value > 31 then panic("Day.of: value must be between 1 and 31")
+        if value < 1 || value > 31 then panic ("Day.of: value must be between 1 and 31")
         Day(value)
 
 implement Equatable for Day =
-    public function equals(self: Day, other: Day): Bool =
-        self.value == other.value
+    public function equals(self: Day, other: Day): Bool = self.value == other.value
 
 implement Comparable for Day =
     public function compare(self: Day, other: Day): Ordering =
@@ -20,8 +19,7 @@ implement Comparable for Day =
         else Ordering.Equal
 
 implement Display for Day =
-    public function format(self: Day): String =
-        padZero(self.value, 2)
+    public function format(self: Day): String = padZero(self.value, 2)
 
 test "Day of" =
     let d = Day.of(15)

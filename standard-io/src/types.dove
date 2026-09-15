@@ -8,7 +8,6 @@ import standard.wasi.ComponentSubtask
 import standard.wasi.Waitable
 
 // --- Supporting types ---
-
 public enum Cause<out E> =
     Failed(E, List<SourceLocation>)
     Panicked(String, List<SourceLocation>)
@@ -18,6 +17,7 @@ public newtype FiberId = Int32
 
 module FiberId =
     property zero: FiberId = FiberId(0)
+
     property next(self): FiberId = FiberId(self.value + 1)
 
 implement Default for FiberId =
@@ -29,14 +29,13 @@ implement Hashable for FiberId =
 implement Equatable for FiberId =
     function equals(self, other: FiberId): Bool = self.value == other.value
 
-public class Fiber<out T, out E>(public id: FiberId) = 
+public class Fiber<out T, out E>(public id: FiberId) =
     let mutable result: Option<FiberResult> = None
 
     internal property completedResult(self): Option<FiberResult> = self.result
 
-    internal function setResult(self, result: FiberResult): Unit =
-        self.result = Some(result)
-    
+    internal function setResult(self, result: FiberResult): Unit = self.result = Some(result)
+
 /// Identifies one fiber scope: a fiber's whole body (its *root* scope) or one
 /// `use`/`bracket` block nested inside it. Fibers forked while a scope is open
 /// belong to it, and the scope does not finish — a `use` does not release its
@@ -66,7 +65,6 @@ public class Promise<T, E>(signal: Waiter, public mutable state: PromiseState<T,
 // Variants are final classes extending the sealed-abstract parent. Cross-instantiation
 // variance falls out of full type erasure: every `Async<T, E>` lowers to the same WASM
 // struct regardless of T/E, so widening `Async<T, Never>` to `Async<T, E>` is a no-op.
-
 public sealed abstract class Async<out T, out E>()
 
 public final class Succeed<out T>(public value: T) extends Async<T, Never>()
@@ -122,11 +120,10 @@ public final class Join<out T, out E>(public target: Fiber<Any, Any>) extends As
 // That is what these replaced: `callThen` and `streamOperation` spread one host
 // operation across four or five steps of a bracket, and every boundary between
 // them was an interrupt window that had to be closed with a mutable flag.
-
 /// Start an async component call and park until its subtask returns.
-public final class RunSubtask<out T, out E>(
-    public call: ComponentSubtask<Any, Any>
-) extends Async<T, E>()
+public final class RunSubtask<out T, out E>(public call: ComponentSubtask<Any, Any>) extends Async<
+    T,
+    E>()
 
 /// Park until a `future<T>` resolves, then take its value.
 public final class ReadFutureValue<out T, out E>(
@@ -188,29 +185,22 @@ public final class WriteStream<out T, out E>(
 /// `cancelStreamWrite`, which take the `ComponentStreamRead`/`Write` whole — so
 /// the handle and the error raised on it come from one record, typed by one `E`,
 /// and cannot be paired with each other's.
-public final class CancelStream(
-    public waitable: Waitable,
-    public canceledError: Any
-) extends Async<Unit, Never>()
+public final class CancelStream(public waitable: Waitable, public canceledError: Any) extends Async<
+    Unit,
+    Never>()
 
 /// Take a non-reentrant mutex, or queue behind its holder. Fails immediately if
 /// this fiber is the holder — see `MutexError.AlreadyHeld`.
-public final class AcquireMutex(
-    public state: MutexState
-) extends Async<Unit, MutexError>()
+public final class AcquireMutex(public state: MutexState) extends Async<Unit, MutexError>()
 
 /// Take a reentrant mutex, or queue behind its holder. Re-acquiring from the
 /// holding fiber just deepens the hold, so this cannot fail.
-public final class AcquireReentrantMutex(
-    public state: MutexState
-) extends Async<Unit, Never>()
+public final class AcquireReentrantMutex(public state: MutexState) extends Async<Unit, Never>()
 
 /// Give up one level of a mutex hold, handing the mutex to the longest-waiting
 /// fiber once the outermost level exits. Always paired with an acquire through a
 /// bracket, so unwinding on failure or interruption still releases.
-public final class ReleaseMutex(
-    public state: MutexState
-) extends Async<Unit, Never>()
+public final class ReleaseMutex(public state: MutexState) extends Async<Unit, Never>()
 
 public final class Thunk<out T>(public f: () => T) extends Async<T, Never>()
 
@@ -306,10 +296,10 @@ public class Queue<T>(
     offerWaiter: Waiter,
     buffer: MutableQueue<T>,
     capacity: Option<Int32>
-) where T: Default
+)
+    where T: Default
 
 // --- Resource (acquire-with-finalizer over Async) ---
-
 /// A finalizer that has already captured its resource, so it runs with no
 /// arguments. Internal: the cleanup half of a `Resource`'s acquisition.
 internal type Finalizer = () => Async<Unit, Never>
@@ -337,54 +327,45 @@ public newtype Resource<out T, out E> private = Async<(T, Finalizer), E>
 // `currentFinalizer` is the release action for the currently-held resource. It
 // is consumed exactly once (either by `replace` swapping it out or by the
 // outer scope releasing the `Switchable`).
-
-public class Switchable<T, E>(
-    mutable currentValue: T,
-    internal mutable currentFinalizer: Finalizer
-)
+public class Switchable<T, E>(mutable currentValue: T, internal mutable currentFinalizer: Finalizer)
 
 // --- Tests ---
-
 test "Cause Failed" =
     let trace: List<SourceLocation> = List.empty
     let c: Cause<String> = Cause.Failed("err", trace)
     match c with
-    case Cause.Failed(e, _) => assert e == "err"
-    case _ => panic "expected Failed"
+        case Cause.Failed(e, _) => assert e == "err"
+        case _ => panic "expected Failed"
 
 test "Cause Panicked" =
     let trace: List<SourceLocation> = List.empty
     let c: Cause<String> = Cause.Panicked("boom", trace)
     match c with
-    case Cause.Panicked(msg, _) => assert msg == "boom"
-    case _ => panic "expected Panicked"
+        case Cause.Panicked(msg, _) => assert msg == "boom"
+        case _ => panic "expected Panicked"
 
 test "Cause Interrupted" =
     let trace: List<SourceLocation> = List.empty
     let c: Cause<String> = Cause.Interrupted(trace)
     match c with
-    case Cause.Interrupted(_) => ()
-    case _ => panic "expected Interrupted"
+        case Cause.Interrupted(_) => ()
+        case _ => panic "expected Interrupted"
 
 test "PromiseState Pending" =
     let s: PromiseState<Int32, String> = PromiseState.Pending
     match s with
-    case PromiseState.Pending => ()
-    case _ => panic "expected Pending"
+        case PromiseState.Pending => ()
+        case _ => panic "expected Pending"
 
 test "PromiseState Completed" =
     let r: Result<Int32, Cause<String>> = Ok(42)
     let s: PromiseState<Int32, String> = PromiseState.Completed(r)
     match s with
-    case PromiseState.Completed(Ok(v)) => assert v == 42
-    case _ => panic "expected Completed Ok"
+        case PromiseState.Completed(Ok(v)) => assert v == 42
+        case _ => panic "expected Completed Ok"
 
 // --- Demand-driven producer execution ---
-
-public class Producer<out A, out E> internal (
-    internal fiber: FiberId,
-    internal creator: FiberId
-)
+public class Producer<out A, out E> internal (internal fiber: FiberId, internal creator: FiberId)
 
 internal final class CreateProducer<out S, out A, out E>(
     public acquire: Async<S, E>,
@@ -393,8 +374,17 @@ internal final class CreateProducer<out S, out A, out E>(
     public makeHandle: (FiberId, FiberId) => Producer<A, E>
 ) extends Async<Producer<A, E>, E>()
 
-internal final class Pull<out A, out E>(public producer: Producer<A, E>) extends Async<A, Option<E>>()
-internal final class InterruptProducer<out A, out E>(public producer: Producer<A, E>) extends Async<Unit, Never>()
+internal final class Pull<out A, out E>(public producer: Producer<A, E>) extends Async<
+    A,
+    Option<E>>()
 
-internal final class ProducerAcquired(public producer: ProducerState, public value: Any) extends Async<Unit, Never>()
+internal final class InterruptProducer<out A, out E>(public producer: Producer<A, E>) extends Async<
+    Unit,
+    Never>()
+
+internal final class ProducerAcquired(
+    public producer: ProducerState,
+    public value: Any
+) extends Async<Unit, Never>()
+
 internal final class ProducerIdle(public producer: ProducerState) extends Async<Unit, Never>()

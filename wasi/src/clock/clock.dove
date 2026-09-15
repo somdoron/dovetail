@@ -31,7 +31,8 @@ module MonotonicClock =
         // A negative (already-elapsed) duration lifts to a huge u64 nanosecond count at the
         // WASI boundary — a ~584-year wait instead of firing at once. Clamp to 0 so an
         // already-passed deadline (`timeout(deadline - now)`) fires now rather than hanging.
-        MonotonicClock.waitForNanosStart(if nanos < 0i64 then 0i64 else nanos)
+        MonotonicClock
+            .waitForNanosStart(if nanos < 0i64 then 0i64 else nanos)
 
     /// Start an async wait until a monotonic mark — a `now()` reading, not a
     /// time of day. The two are not interchangeable: `now()` counts from an

@@ -1,3 +1,5 @@
+mod formatting;
+pub use formatting::formatting_directories;
 mod resolve;
 mod dependencies;
 mod git;

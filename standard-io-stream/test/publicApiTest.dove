@@ -5,162 +5,219 @@ import standard.io.Resource
 import standard.io.stream.Stream
 
 @timeout(5000)
-test "Stream: public API composes across a package boundary" =
+ test "Stream: public API composes across a package boundary" =
     let resource: Resource<Int32, String> = Resource.succeed(4)
-    let stream: Stream<Int32, Any> = Stream<Int32, String>.fromResource(resource)
-        .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value + 1]))
-        .map((value: Int32) => value * 2)
-    let program: Async<Unit, Any> = async do
-        assert (await stream.runCollect()) == [8, 10]
+    let stream: Stream<Int32, Any> =
+        Stream<Int32, String>
+            .fromResource(resource)
+            .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value + 1]))
+            .map((value: Int32) => value * 2)
+    let program: Async<Unit, Any> =
+        async do
+            assert (await stream.runCollect()) == [8, 10]
     program.mapError((_: Any) => "unexpected failure").run()
 
 @timeout(5000)
-test "Stream: by-name initial state is lazy and evaluated for each execution" =
+ test "Stream: by-name initial state is lazy and evaluated for each execution" =
     let mutable starts = 0
-    let initial = () =>
-        starts = starts + 1
-        0
-    let source = Stream<Int32, String>.unfoldChunkAsync(initial(), (index: Int32) =>
-        if index == 0 then Async.succeed((Array.fill(1, 7).readonly, 1))
-        else Async<(ReadonlySlice<Int32>, Int32), Option<String>>.fail(None)
-    )
+    let initial =
+        () =>
+            starts = starts + 1
+            0
+    let source =
+        Stream<Int32, String>
+            .unfoldChunkAsync(
+            initial(),
+            (index: Int32) =>
+                if index == 0 then Async.succeed((Array.fill(1, 7).readonly, 1))
+                else Async<(ReadonlySlice<Int32>, Int32), Option<String>>.fail(None)
+        )
     assert starts == 0
-    let program: Async<Unit, String> = async do
-        assert (await Stream<Int32, String>.empty.runCollect()) == List.empty
-        assert (await source.runCollect()) == [7]
-        assert starts == 1
-        assert (await source.runCollect()) == [7]
-        assert starts == 2
+    let program: Async<Unit, String> =
+        async do
+            assert (await Stream<Int32, String>.empty.runCollect()) == List.empty
+            assert (await source.runCollect()) == [7]
+            assert starts == 1
+            assert (await source.runCollect()) == [7]
+            assert starts == 2
     program.run()
 
 @timeout(5000)
-test "Stream: unfold distinguishes EOF from a typed source failure" =
+ test "Stream: unfold distinguishes EOF from a typed source failure" =
     let mutable recovered = 0
-    let step: (Int32) => Async<(ReadonlySlice<Int32>, Int32), Option<Int32>> = (index: Int32) =>
-        if index == 0 then Async.succeed((Array.fill(1, 7).readonly, 1))
-        else Async.fail(Some(42))
-    let source = Stream<Int32, Int32>.unfoldChunkAsync(0, step).catchAll((error: Int32) =>
-        recovered = recovered + 1
-        Stream<Int32, Int32>.succeed(error)
-    )
-    let program: Async<Unit, Int32> = async do
-        assert (await source.runCollect()) == [7, 42]
-        assert recovered == 1
+    let step: (Int32) => Async<(ReadonlySlice<Int32>, Int32), Option<Int32>> =
+        (index: Int32) =>
+            if index == 0 then Async.succeed((Array.fill(1, 7).readonly, 1))
+            else Async.fail(Some(42))
+    let source =
+        Stream<Int32, Int32>
+            .unfoldChunkAsync(0, step)
+            .catchAll(
+            (error: Int32) =>
+                recovered = recovered + 1
+                Stream<Int32, Int32>.succeed(error)
+        )
+    let program: Async<Unit, Int32> =
+        async do
+            assert (await source.runCollect()) == [7, 42]
+            assert recovered == 1
     program.run()
 
 @timeout(5000)
-test "Stream: source values and concat construction are lazy per execution" =
+ test "Stream: source values and concat construction are lazy per execution" =
     let mutable values = 0
     let mutable rightBranches = 0
-    let nextValue = () =>
-        values = values + 1
-        values
-    let makeRight = () =>
-        rightBranches = rightBranches + 1
-        Stream<Int32, String>.succeed(nextValue())
+    let nextValue =
+        () =>
+            values = values + 1
+            values
+    let makeRight =
+        () =>
+            rightBranches = rightBranches + 1
+            Stream<Int32, String>.succeed(nextValue())
     let source = Stream<Int32, String>.succeed(nextValue()).concat(makeRight())
     let collect = source.runCollect()
     assert values == 0 && rightBranches == 0
-    let program: Async<Unit, String> = async do
-        assert (await source.take(1).runCollect()) == [1]
-        assert rightBranches == 0
-        assert (await collect) == [2, 3]
-        assert rightBranches == 1
-        assert (await collect) == [4, 5]
-        assert rightBranches == 2
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.take(1).runCollect()) == [1]
+            assert rightBranches == 0
+            assert (await collect) == [2, 3]
+            assert rightBranches == 1
+            assert (await collect) == [4, 5]
+            assert rightBranches == 2
     program.run()
 
 @timeout(5000)
-test "Stream: merge inputs and finalizer construction are deferred" =
+ test "Stream: merge inputs and finalizer construction are deferred" =
     let mutable inputsBuilt = 0
     let mutable finalizersBuilt = 0
     let mutable finalized = 0
-    let makeInputs = () =>
-        inputsBuilt = inputsBuilt + 1
-        [Stream<Int32, String>.succeed(7)]
-    let makeFinalizer = () =>
-        finalizersBuilt = finalizersBuilt + 1
-        Async.thunk(() => finalized = finalized + 1)
+    let makeInputs =
+        () =>
+            inputsBuilt = inputsBuilt + 1
+            [Stream<Int32, String>.succeed(7)]
+    let makeFinalizer =
+        () =>
+            finalizersBuilt = finalizersBuilt + 1
+            Async.thunk(() => finalized = finalized + 1)
     let source = Stream<Int32, String>.mergeAll(makeInputs()).ensuring(makeFinalizer())
     assert inputsBuilt == 0 && finalizersBuilt == 0
-    let program: Async<Unit, String> = async do
-        await source.take(0).drain()
-        assert inputsBuilt == 0 && finalizersBuilt == 0
-        assert (await source.runCollect()) == [7]
-        assert inputsBuilt == 1 && finalizersBuilt == 1 && finalized == 1
-        assert (await source.runCollect()) == [7]
-        assert inputsBuilt == 2 && finalizersBuilt == 2 && finalized == 2
+    let program: Async<Unit, String> =
+        async do
+            await source.take(0).drain()
+            assert inputsBuilt == 0 && finalizersBuilt == 0
+            assert (await source.runCollect()) == [7]
+            assert inputsBuilt == 1 && finalizersBuilt == 1 && finalized == 1
+            assert (await source.runCollect()) == [7]
+            assert inputsBuilt == 2 && finalizersBuilt == 2 && finalized == 2
     program.run()
 
 @timeout(5000)
-test "Stream: typed subclasses preserve byte chunks and tuple source state" =
-    let step: ((Int32, ReadonlySlice<Uint8>)) => Async<(ReadonlySlice<Uint8>, (Int32, ReadonlySlice<Uint8>)), Option<Int32>> = (state: (Int32, ReadonlySlice<Uint8>)) =>
-        if state._0 == 0 then Async.succeed((state._1, (1, state._1)))
-        else Async.fail(None)
-    let source = Stream<Uint8, Int32>.unfoldChunkAsync((0, Array.fill(2, 7u8).readonly), step)
-        .map((value: Uint8) => (value, "byte"))
-        .flatMap((value: (Uint8, String)) => Stream<Uint8, Int32>.succeed(value._0))
-        .rechunk(3)
-        .concat(Stream<Uint8, Int32>.fail(99))
-        .catchAll((error: Int32) =>
-            assert error == 99
-            Stream<Uint8, String>.succeed(9u8)
+ test "Stream: typed subclasses preserve byte chunks and tuple source state" =
+    let step:
+        ((Int32, ReadonlySlice<Uint8>)) => Async<
+            (ReadonlySlice<Uint8>, (Int32, ReadonlySlice<Uint8>)),
+            Option<Int32>> =
+        (state: (Int32, ReadonlySlice<Uint8>)) =>
+            if state._0 == 0 then Async.succeed((state._1, (1, state._1))) else Async.fail(None)
+    let source =
+        Stream<Uint8, Int32>
+            .unfoldChunkAsync((0, Array.fill(2, 7u8).readonly), step)
+            .map((value: Uint8) => (value, "byte"))
+            .flatMap((value: (Uint8, String)) => Stream<Uint8, Int32>.succeed(value._0))
+            .rechunk(3)
+            .concat(Stream<Uint8, Int32>.fail(99))
+            .catchAll(
+            (error: Int32) =>
+                assert error == 99
+                Stream<Uint8, String>.succeed(9u8)
         )
-    let program: Async<Unit, String> = async do
-        assert (await source.runCollect()) == [7u8, 7u8, 9u8]
-        assert (await source.runCollect()) == [7u8, 7u8, 9u8]
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.runCollect()) == [7u8, 7u8, 9u8]
+            assert (await source.runCollect()) == [7u8, 7u8, 9u8]
     program.run()
 
 @timeout(5000)
-test "Stream: widened byte streams preserve chunk representation" =
+ test "Stream: widened byte streams preserve chunk representation" =
     let bytes = Stream<Uint8, Never>.fromChunk([| 1u8, 2u8, 3u8 |].readonly)
     let widened: Stream<Any, Never> = bytes
-    let program: Async<Unit, Never> = async do
-        let mutable chunks = 0
-        await widened.foreachChunk((values: ReadonlySlice<Any>) => Async.thunk(() =>
-            chunks = chunks + 1
-            assert values.length == 3
-            assert (values[0] as Uint8) == 1u8
-            assert (values[2] as Uint8) == 3u8
-        ))
-        assert chunks == 1
-        let mapped = widened.mapChunks((values: ReadonlySlice<Any>) => values)
-            .map((value: Any) => (value as Uint8).toInt32())
-        assert (await mapped.runCollect()) == [1, 2, 3]
-        assert (await widened.rechunk(2).map((value: Any) => (value as Uint8).toInt32()).runCollect()) == [1, 2, 3]
-        assert (await bytes.rechunk(2).runCollect()) == [1u8, 2u8, 3u8]
+    let program: Async<Unit, Never> =
+        async do
+            let mutable chunks = 0
+            await widened
+                .foreachChunk(
+                (values: ReadonlySlice<Any>) =>
+                    Async
+                        .thunk(
+                        () =>
+                            chunks = chunks + 1
+                            assert values.length == 3
+                            assert (values[0] as Uint8) == 1u8
+                            assert (values[2] as Uint8) == 3u8
+                    )
+            )
+            assert chunks == 1
+            let mapped =
+                widened
+                    .mapChunks((values: ReadonlySlice<Any>) => values)
+                    .map((value: Any) => (value as Uint8).toInt32())
+            assert (await mapped.runCollect()) == [1, 2, 3]
+            assert (
+                await widened
+                    .rechunk(2)
+                    .map((value: Any) => (value as Uint8).toInt32())
+                    .runCollect()
+            )
+                == [1, 2, 3]
+            assert (await bytes.rechunk(2).runCollect()) == [1u8, 2u8, 3u8]
     program.run()
 
 @timeout(5000)
-test "Stream: widened chunk transformations preserve mutable aliases and offsets" =
-    let storage = [|0u8, 1u8, 2u8, 3u8|]
-    let source: Stream<Any, Never> = Stream<Uint8, Never>.fromChunk(storage.readonly[|1..3|])
-    let transformed = source.mapChunks((chunk: ReadonlySlice<Any>) =>
-        storage[1] = 9u8
-        assert chunk.length == 2
-        assert (chunk[0] as Uint8) == 9u8
-        chunk.drop(1)
-    )
-    let program: Async<Unit, Never> = async do
-        await transformed.foreachChunk(async (chunk: ReadonlySlice<Any>) =>
-            storage[2] = 8u8
-            assert chunk.length == 1
-            assert (chunk[0] as Uint8) == 8u8
+ test "Stream: widened chunk transformations preserve mutable aliases and offsets" =
+    let storage = [| 0u8, 1u8, 2u8, 3u8 |]
+    let source: Stream<Any, Never> = Stream<Uint8, Never>.fromChunk(storage.readonly [| 1..3 |])
+    let transformed =
+        source
+            .mapChunks(
+            (chunk: ReadonlySlice<Any>) =>
+                storage[1] = 9u8
+                assert chunk.length == 2
+                assert (chunk[0] as Uint8) == 9u8
+                chunk.drop(1)
         )
+    let program: Async<Unit, Never> =
+        async do
+            await transformed
+                .foreachChunk(
+                async (chunk: ReadonlySlice<Any>) =>
+                    storage[2] = 8u8
+                    assert chunk.length == 1
+                    assert (chunk[0] as Uint8) == 8u8
+            )
     program.run()
 
 newtype StreamSignedByte = Int8
 
 @timeout(5000)
-test "Stream: packed newtypes survive typed and widened chunk reads" =
-    let bytes = [|StreamSignedByte(-1i8), StreamSignedByte(-127i8)|]
+ test "Stream: packed newtypes survive typed and widened chunk reads" =
+    let bytes = [| StreamSignedByte(-1i8), StreamSignedByte(-127i8) |]
     let source = Stream<StreamSignedByte, Never>.fromChunk(bytes.readonly)
     let widened: Stream<Any, Never> = source
-    let selected = widened.mapChunks((chunk: ReadonlySlice<Any>) => chunk)
-        .drop(1).take(1)
-        .map((value: Any) => (value as StreamSignedByte).value)
-    let program: Async<Unit, Never> = async do
-        assert (await source.map((value: StreamSignedByte) => value.value).runCollect()) == [-1i8, -127i8]
-        assert (await selected.runCollect()) == [-127i8]
-        assert (await source.rechunk(1).map((value: StreamSignedByte) => value.value).runCollect()) == [-1i8, -127i8]
+    let selected =
+        widened
+            .mapChunks((chunk: ReadonlySlice<Any>) => chunk)
+            .drop(1)
+            .take(1)
+            .map((value: Any) => (value as StreamSignedByte).value)
+    let program: Async<Unit, Never> =
+        async do
+            assert (await source.map((value: StreamSignedByte) => value.value).runCollect())
+                == [-1i8, -127i8]
+            assert (await selected.runCollect()) == [-127i8]
+            assert (
+                await source.rechunk(1).map((value: StreamSignedByte) => value.value).runCollect()
+            )
+                == [-1i8, -127i8]
     program.run()

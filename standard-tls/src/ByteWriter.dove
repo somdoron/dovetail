@@ -9,8 +9,7 @@ import standard.prelude.Array
 /// back-patching of reserved length fields.
 class ByteWriter(mutable buf: Array<Uint8>, mutable len: Int32) =
     /// A writer with a small initial capacity.
-    public function make(): ByteWriter =
-        ByteWriter(Array<Uint8>.fill(64, 0u8), 0)
+    public function make(): ByteWriter = ByteWriter(Array<Uint8>.fill(64, 0u8), 0)
 
     /// Bytes written so far.
     public property length(self): Int32 = self.len
@@ -87,7 +86,7 @@ test "tls ByteWriter writes big-endian integers" =
     w.putU16(0x3456)
     w.putU24(0x789abc)
     let bytes = w.toBytes()
-    let expected = [|0x12u8, 0x34u8, 0x56u8, 0x78u8, 0x9au8, 0xbcu8|]
+    let expected = [| 0x12u8, 0x34u8, 0x56u8, 0x78u8, 0x9au8, 0xbcu8 |]
     assert bytes.length == expected.length
     let mutable i = 0
     let mutable ok = true
@@ -108,8 +107,8 @@ test "tls ByteWriter grows past initial capacity" =
 
 test "tls ByteWriter vectors round-trip through ByteReader" =
     let w = ByteWriter.make()
-    w.putVec8([|0xaau8, 0xbbu8|])
-    w.putVec16([|0x01u8, 0x02u8, 0x03u8|])
+    w.putVec8([| 0xaau8, 0xbbu8 |])
+    w.putVec16([| 0x01u8, 0x02u8, 0x03u8 |])
     let r = ByteReader.make(w.toBytes())
     let a = r.vec8().require
     let b = r.vec16().require

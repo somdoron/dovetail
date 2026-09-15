@@ -19,50 +19,28 @@ module Route =
     // ========================================================================
     // Leaf constructors — match method + path, run the body on match.
     // ========================================================================
-
     /// GET-only route at `pattern`. On match, the `body` function runs
     /// with the captured `Context`; its `Response` is wrapped in `Some`.
-    public function get(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
+    public function get(pattern: String, body: (Context) => Async<Response, ServerError>): Route =
         Route.any(Method.Get, pattern, body)
 
-    public function post(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
+    public function post(pattern: String, body: (Context) => Async<Response, ServerError>): Route =
         Route.any(Method.Post, pattern, body)
 
-    public function put(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
+    public function put(pattern: String, body: (Context) => Async<Response, ServerError>): Route =
         Route.any(Method.Put, pattern, body)
 
-    public function delete(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
-        Route.any(Method.Delete, pattern, body)
+    public function delete(pattern: String, body: (Context) => Async<Response, ServerError>):
+        Route = Route.any(Method.Delete, pattern, body)
 
-    public function patch(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
+    public function patch(pattern: String, body: (Context) => Async<Response, ServerError>): Route =
         Route.any(Method.Patch, pattern, body)
 
-    public function head(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
+    public function head(pattern: String, body: (Context) => Async<Response, ServerError>): Route =
         Route.any(Method.Head, pattern, body)
 
-    public function options(
-        pattern: String,
-        body: (Context) => Async<Response, ServerError>
-    ): Route =
-        Route.any(Method.Options, pattern, body)
+    public function options(pattern: String, body: (Context) => Async<Response, ServerError>):
+        Route = Route.any(Method.Options, pattern, body)
 
     /// General method/path constructor. Use when none of the
     /// method-specific shortcuts apply (e.g. `Method.Other("PROPFIND")`).
@@ -79,7 +57,6 @@ module Route =
     // ========================================================================
     // Combinator + instance method
     // ========================================================================
-
     /// Try each route in order. First `Some` wins; falls through `None`
     /// when nothing matched. Ties go to first-registered.
     public function choose(items: Array<Route>): Route =
@@ -91,16 +68,19 @@ module Route =
     /// unmatched request (`None`) to `404 Not Found` with an empty body.
     /// This is what `HttpServer.serve` expects.
     public function orNotFound(self): (Context) => Async<Response, ServerError> =
-        (ctx: Context) => self.value(ctx).andThen<Response>((opt: Option<Response>) =>
-            match opt with
-                case Some(r) => Async.succeed(r)
-                case None => Async.succeed(Response.notFound())
-        )
+        (ctx: Context) =>
+            self
+                .value(ctx)
+                .andThen<Response>(
+                (opt: Option<Response>) =>
+                    match opt with
+                        case Some(r) => Async.succeed(r)
+                        case None => Async.succeed(Response.notFound())
+            )
 
     // ========================================================================
     // Internals
     // ========================================================================
-
     /// Method/path matcher invoked by every route constructed via
     /// `any`. Kept as a free function so the `Route(...)` newtype
     /// constructor stays a one-liner — Dovetail's parser balks on
@@ -116,51 +96,65 @@ module Route =
             match pattern.tryMatch(pathStr) with
                 case None => Async.succeed(None)
                 case Some(captured) =>
-                    let routed = Context {
-                        request = ctx.request
-                        pathParams = captured
-                        queryParams = ctx.queryParams
-                    }
+                    let routed =
+                        Context {
+                            request = ctx.request
+                            pathParams = captured
+                            queryParams = ctx.queryParams
+                        }
                     body(routed).andThen<Option<Response>>((r: Response) => Async.succeed(Some(r)))
         else
             Async.succeed(None)
 
     /// Sequential `choose` driver. Walks `items` from `index`; returns
     /// the first `Some` or `None` at the end of the list.
-    function chooseImpl(items: Array<Route>, ctx: Context, index: Int32): Async<Option<Response>, ServerError> =
-        if index >= items.length then Async.succeed(None)
+    function chooseImpl(items: Array<Route>, ctx: Context, index: Int32):
+        Async<Option<Response>, ServerError> =
+        if index >= items.length then
+            Async.succeed(None)
         else
             let route = items.get(index)
-            route.value(ctx).andThen<Option<Response>>((opt: Option<Response>) =>
-                match opt with
-                    case Some(r) => Async.succeed(Some(r))
-                    case None => chooseImpl(items, ctx, index + 1)
+            route
+                .value(ctx)
+                .andThen<Option<Response>>(
+                (opt: Option<Response>) =>
+                    match opt with
+                        case Some(r) => Async.succeed(Some(r))
+                        case None => chooseImpl(items, ctx, index + 1)
             )
 
     /// Equality test on `Method` enum.
     function methodMatches(a: Method, b: Method): Bool =
         match a with
-            case Method.Get => match b with
-                case Method.Get => true
-                case _ => false
-            case Method.Post => match b with
-                case Method.Post => true
-                case _ => false
-            case Method.Put => match b with
-                case Method.Put => true
-                case _ => false
-            case Method.Delete => match b with
-                case Method.Delete => true
-                case _ => false
-            case Method.Patch => match b with
-                case Method.Patch => true
-                case _ => false
-            case Method.Head => match b with
-                case Method.Head => true
-                case _ => false
-            case Method.Options => match b with
-                case Method.Options => true
-                case _ => false
-            case Method.Other(n1) => match b with
-                case Method.Other(n2) => n1 == n2
-                case _ => false
+            case Method.Get =>
+                match b with
+                    case Method.Get => true
+                    case _ => false
+            case Method.Post =>
+                match b with
+                    case Method.Post => true
+                    case _ => false
+            case Method.Put =>
+                match b with
+                    case Method.Put => true
+                    case _ => false
+            case Method.Delete =>
+                match b with
+                    case Method.Delete => true
+                    case _ => false
+            case Method.Patch =>
+                match b with
+                    case Method.Patch => true
+                    case _ => false
+            case Method.Head =>
+                match b with
+                    case Method.Head => true
+                    case _ => false
+            case Method.Options =>
+                match b with
+                    case Method.Options => true
+                    case _ => false
+            case Method.Other(n1) =>
+                match b with
+                    case Method.Other(n2) => n1 == n2
+                    case _ => false

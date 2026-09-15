@@ -14,30 +14,33 @@ public record TreeSet<T> =
 
 module TreeSet<T> =
     /// Creates an empty TreeSet.
-    public function empty(): TreeSet<T> where T: Comparable =
+    public function empty(): TreeSet<T>
+        where T: Comparable =
         let map: TreeMap<T, Bool> = TreeMap.empty()
         TreeSet { inner = map }
 
     /// Returns a new set with the given value added in sorted order. Duplicates are ignored.
-    public function add(self, value: T): TreeSet<T> where T: Comparable =
-        TreeSet { inner = self.inner.put(value, true) }
+    public function add(self, value: T): TreeSet<T>
+        where T: Comparable = TreeSet { inner = self.inner.put(value, true) }
 
     /// Returns true if the set contains the given value.
-    public function contains(self, value: T): Bool where T: Comparable =
-        self.inner.contains(value)
+    public function contains(self, value: T): Bool
+        where T: Comparable = self.inner.contains(value)
 
     /// Returns a new set with the given value removed. Returns self if not present.
-    public function remove(self, value: T): TreeSet<T> where T: Comparable =
-        TreeSet { inner = self.inner.remove(value) }
+    public function remove(self, value: T): TreeSet<T>
+        where T: Comparable = TreeSet { inner = self.inner.remove(value) }
 
     /// Returns the smallest element, or None if empty.
-    public function min(self): Option<T> where T: Comparable =
+    public function min(self): Option<T>
+        where T: Comparable =
         match self.inner.min() with
             case Some((k, _)) => Some(k)
             case _ => None
 
     /// Returns the largest element, or None if empty.
-    public function max(self): Option<T> where T: Comparable =
+    public function max(self): Option<T>
+        where T: Comparable =
         match self.inner.max() with
             case Some((k, _)) => Some(k)
             case _ => None
@@ -54,9 +57,8 @@ class TreeSetIterator<T>(inner: Iterator<(T, Bool)>) implements Iterator<T> =
             case Some(entry) => Some(entry._0)
             case None => None
 
-implement <T> Iterable<T> for TreeSet<T> where T: Comparable =
-    public function iterator(self): Iterator<T> =
-        TreeSetIterator(self.inner.iterator())
+implement<T> Iterable<T> for TreeSet<T> where T: Comparable =
+    public function iterator(self): Iterator<T> = TreeSetIterator(self.inner.iterator())
 
 test "TreeSet empty" =
     let s: TreeSet<String> = TreeSet.empty()
@@ -113,31 +115,27 @@ test "TreeSet immutability" =
 
 /// A mutable sorted set backed by a MutableTreeMap.
 /// Elements must implement Comparable.
-public class MutableTreeSet<T>(mutable inner: MutableTreeMap<T, Bool>) implements Iterable<T> where T: Comparable =
+public class MutableTreeSet<T>(mutable inner: MutableTreeMap<T, Bool>) implements Iterable<T>
+    where T: Comparable =
     /// Creates a new empty MutableTreeSet.
     public function new(): MutableTreeSet<T> =
         let inner: MutableTreeMap<T, Bool> = MutableTreeMap.new()
         MutableTreeSet(inner)
 
     /// Adds a value to the set. Does nothing if already present.
-    public function add(self, value: T): Unit =
-        self.inner.put(value, true)
+    public function add(self, value: T): Unit = self.inner.put(value, true)
 
     /// Returns true if the set contains the given value.
-    public function contains(self, value: T): Bool =
-        self.inner.contains(value)
+    public function contains(self, value: T): Bool = self.inner.contains(value)
 
     /// Removes a value from the set. Does nothing if not present.
-    public function remove(self, value: T): Unit =
-        self.inner.remove(value)
+    public function remove(self, value: T): Unit = self.inner.remove(value)
 
     /// Returns the smallest element, or None if empty.
-    public function min(self): Option<T> =
-        self.inner.minKey()
+    public function min(self): Option<T> = self.inner.minKey()
 
     /// Returns the largest element, or None if empty.
-    public function max(self): Option<T> =
-        self.inner.maxKey()
+    public function max(self): Option<T> = self.inner.maxKey()
 
     /// Removes all elements from the set.
     public function clear(self): Unit = self.inner.clear()
@@ -149,8 +147,7 @@ public class MutableTreeSet<T>(mutable inner: MutableTreeMap<T, Bool>) implement
     public property isEmpty(self): Bool = self.inner.isEmpty
 
     /// Returns an iterator over the elements of the set in sorted order.
-    public function iterator(self): Iterator<T> =
-        TreeSetIterator(self.inner.iterator())
+    public function iterator(self): Iterator<T> = TreeSetIterator(self.inner.iterator())
 
 test "MutableTreeSet new is empty" =
     let s: MutableTreeSet<String> = MutableTreeSet.new()

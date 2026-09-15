@@ -13,8 +13,11 @@ import standard.prelude.Result
 /// addition for the streaming/async layer.
 public interface AeadAlgorithm =
     property keySize(self): Int32
+
     property nonceSize(self): Int32
+
     property tagSize(self): Int32
+
     function encrypt(
         self,
         key: SymmetricKey,
@@ -22,6 +25,7 @@ public interface AeadAlgorithm =
         plaintext: Array<Uint8>,
         authenticatedData: Array<Uint8>
     ): Array<Uint8>
+
     function decrypt(
         self,
         key: SymmetricKey,

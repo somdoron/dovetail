@@ -7,11 +7,14 @@ import standard.prelude.Array
 /// `verify` over comparing `finalize()` output manually.
 public interface Mac =
     function update(self, data: Array<Uint8>): Unit
+
     function finalize(self): Array<Uint8>
+
     function verify(self, tag: Array<Uint8>): Bool
 
 /// A MAC algorithm singleton (e.g. an `Hmac` instance). `mac(key)` creates a
 /// fresh keyed MAC computation.
 public trait MacAlgorithm =
     property macSize(self): Int32
+
     function mac(self, key: SymmetricKey): Mac

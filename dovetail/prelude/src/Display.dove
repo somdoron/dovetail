@@ -4,7 +4,8 @@ public trait Display =
     function format(self: Self): String
 
 function formatInt32(value: Int32): String =
-    if value == 0 then "0"
+    if value == 0 then
+        "0"
     else
         let buf = Array.fill(11, 0u8)
         let mutable pos = 10
@@ -20,7 +21,8 @@ function formatInt32(value: Int32): String =
         String.fromBytes(buf, pos + 1, 10 - pos)
 
 function formatInt64(value: Int64): String =
-    if value == 0i64 then "0"
+    if value == 0i64 then
+        "0"
     else
         let buf = Array.fill(20, 0u8)
         let mutable pos = 19
@@ -64,7 +66,8 @@ implement Display for Uint32 =
 
 implement Display for Uint64 =
     public function format(self: Uint64): String =
-        if self == 0u64 then "0"
+        if self == 0u64 then
+            "0"
         else
             let buf = Array.fill(20, 0u8)
             let mutable pos = 19
@@ -87,24 +90,25 @@ implement Display for Char =
 /// Renders already-formatted `elemStrings` comma-separated between `open` and
 /// `close`, sizing the output buffer up front so the join stays linear.
 /// Shared by the `Array` and `List` renderings, which differ only in brackets.
-private function joinBracketed(
-    elemStrings: Array<Array<Uint8>>,
-    open: String,
-    close: String
-): String =
+private function joinBracketed(elemStrings: Array<Array<Uint8>>, open: String, close: String):
+    String =
     let openBytes = open.bytes()
     let closeBytes = close.bytes()
     let comma = ",".bytes()
     let commaLength = comma.length
     let n = elemStrings.length
 
-    if n == 0 then open ++ close
+    if n == 0 then
+        open ++ close
     else
         // TODO: compiler should be able to infer acc without the explicit type
-        let totalLen = elemStrings.foldLeft(
-            openBytes.length + closeBytes.length,
-            (acc: Int32, fs) => acc + fs.length + commaLength
-        ) - commaLength
+        let totalLen =
+            elemStrings
+                .foldLeft(
+                openBytes.length + closeBytes.length,
+                (acc: Int32, fs) => acc + fs.length + commaLength
+            )
+                - commaLength
 
         let bytes = Array.fill(totalLen, 0u8)
         let mutable idx = 0
@@ -125,16 +129,16 @@ private function joinBracketed(
         assert idx == totalLen
         String.fromBytes(bytes, 0, totalLen)
 
-implement <T> Display for Array<T> where T: Display =
+implement<T> Display for Array<T> where T: Display =
     public function format(self: Array<T>): String =
         joinBracketed(self.map(a => a.format().bytes()), "[|", "|]")
 
-implement <T> Display for List<T> where T: Display =
+implement<T> Display for List<T> where T: Display =
     public function format(self: List<T>): String =
         joinBracketed(self.toArray().map(a => a.format().bytes()), "[", "]")
 
 test "Display Array<Int32>" =
-    let arr = [|1, 42, 3|]
+    let arr = [| 1, 42, 3 |]
     assert arr.format() == "[|1,42,3|]"
 
 test "Display empty Array<Int32>" =
@@ -142,16 +146,15 @@ test "Display empty Array<Int32>" =
     assert arr.format() == "[||]"
 
 test "Display Array<String>" =
-    let arr = [|"a", "b", "c"|]
+    let arr = [| "a", "b", "c" |]
     assert arr.format() == "[|a,b,c|]"
 
-test "Display List<Int32>" =
-    assert [1, 42, 3].format() == "[1,42,3]"
+test "Display List<Int32>" = assert [1, 42, 3].format() == "[1,42,3]"
 
 test "Display empty List<Int32>" =
     let xs: List<Int32> = []
     assert xs.format() == "[]"
-    
+
 implement Display for Never =
     public function format(self: Never): String = panic "unreachable"
 
@@ -163,18 +166,20 @@ test "Display Bool" =
     assert true.format() == "true"
     assert false.format() == "false"
 
-test "Display String" =
-    assert "hello".format() == "hello"
-
+test "Display String" = assert "hello".format() == "hello"
 
 /// Extract the outer element text of a tuple, preserving nested delimiters.
 /// Tuple Display always supplies the outer parentheses removed here.
-function tupleElements<T>(value: T): String where T: Tuple, T: Display =
+function tupleElements<T>(value: T): String
+    where T: Tuple,
+          T: Display =
     let formatted = value.format()
     formatted.substring(1, formatted.length - 1)
 
-implement <A, B> Display for (A, B) where A: Display, B: Display =
-    public function format(self: (A, B)): String = "(" ++ self.init.format() ++ ", " ++ self.last.format() ++ ")"
+implement<A, B> Display for (A, B) where A: Display, B: Display =
+    public function format(self: (A, B)): String =
+        "(" ++ self.init.format() ++ ", " ++ self.last.format() ++ ")"
 
-implement <T, U> Display for T ~ U where T: Tuple, T: Display, U: Display =
-    public function format(self: T ~ U): String = "(" ++ tupleElements(self.init) ++ ", " ++ self.last.format() ++ ")"
+implement<T, U> Display for T ~U where T: Tuple, T: Display, U: Display =
+    public function format(self: T ~U): String =
+        "(" ++ tupleElements(self.init) ++ ", " ++ self.last.format() ++ ")"

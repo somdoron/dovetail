@@ -12,7 +12,6 @@ import standard.io.Async
 // That choice is what makes `append` pure concatenation: numbered placeholders
 // (`?1`, `$1`) would need a renumbering pass on every join.
 // =============================================================================
-
 /// A SQL fragment. Construct one with `sql"..."`, `Query.empty`, or `append` —
 /// assembling one by hand defeats the point, since the parameters are what keep
 /// interpolated values out of the SQL text.
@@ -27,12 +26,12 @@ public record Query =
 /// `a ++ b` concatenates two fragments, the operator form of `append`.
 implement Concat<Query> for Query =
     type Output = Query
+
     public function concat(self: Query, other: Query): Query = self.append(other)
 
 module Query =
     /// An empty fragment; renders to "".
-    public function empty(): Query =
-        Query { text = ""; params = Array.empty() }
+    public function empty(): Query = Query { text = ""; params = Array.empty() }
 
     /// Concatenate two fragments. Text and parameters simply join, in order —
     /// see the note above on why no renumbering is needed. `a ++ b` is the
@@ -59,7 +58,6 @@ module Query =
     // `OR` cannot silently rebind against a surrounding `AND`. These produce a
     // bare expression with no leading space; the clause builders below add the
     // keyword and its separating space.
-
     /// The parts joined with `AND`, as `((a) AND (b))`. Empty in, empty out.
     public function andAll(parts: List<Query>): Query = joined(parts, " AND ", true, true)
 
@@ -67,12 +65,10 @@ module Query =
     public function orAll(parts: List<Query>): Query = joined(parts, " OR ", true, true)
 
     /// `andAll` over the parts that are present.
-    public function andSome(parts: List<Option<Query>>): Query =
-        Query.andAll(present(parts))
+    public function andSome(parts: List<Option<Query>>): Query = Query.andAll(present(parts))
 
     /// `orAll` over the parts that are present.
-    public function orSome(parts: List<Option<Query>>): Query =
-        Query.orAll(present(parts))
+    public function orSome(parts: List<Option<Query>>): Query = Query.orAll(present(parts))
 
     /// The parts joined with `, `. Empty in, empty out.
     ///
@@ -90,7 +86,6 @@ module Query =
     //
     // and each collapses to the empty fragment when it has nothing to say — so
     // no `WHERE`, no `ORDER BY`, and no `WHERE 1=1` placeholder to write.
-
     /// `WHERE (a) AND (b)`, or nothing at all when `parts` is empty.
     public function whereAnd(parts: List<Query>): Query =
         clause(" WHERE ", joined(parts, " AND ", true, false))
@@ -109,12 +104,10 @@ module Query =
     ///         minAge.map((a: Int32) => sql"age >= $a")
     ///     ]))
     /// ```
-    public function whereAndSome(parts: List<Option<Query>>): Query =
-        Query.whereAnd(present(parts))
+    public function whereAndSome(parts: List<Option<Query>>): Query = Query.whereAnd(present(parts))
 
     /// `whereOr` over the parts that are present.
-    public function whereOrSome(parts: List<Option<Query>>): Query =
-        Query.whereOr(present(parts))
+    public function whereOrSome(parts: List<Option<Query>>): Query = Query.whereOr(present(parts))
 
     /// A `WHERE` clause for a single optional filter, or nothing when absent.
     /// The shorthand for the one-filter case of `whereAndSome`.
@@ -141,8 +134,7 @@ module Query =
         clause(" ORDER BY ", joined(parts, ", ", false, false))
 
     /// `orderBy` over the parts that are present.
-    public function orderBySome(parts: List<Option<Query>>): Query =
-        Query.orderBy(present(parts))
+    public function orderBySome(parts: List<Option<Query>>): Query = Query.orderBy(present(parts))
 
     /// Run a statement that yields no rows (INSERT/UPDATE/DELETE). Returns the
     /// number of rows changed.
@@ -154,23 +146,26 @@ module Query =
     /// The whole result set is collected before decoding, because `queryRows`
     /// does. For a large table, bound the query with `LIMIT` until a streaming
     /// API exists.
-    public async function fetchAll<T>(self, conn: Connection): Async<List<T>, SqliteError> where T: FromRow =
+    public async function fetchAll<T>(self, conn: Connection): Async<List<T>, SqliteError>
+        where T: FromRow =
         let rows = await conn.queryRows(self.text, self.params)
         await Async<List<T>, SqliteError>.fromResult<List<T>>(decodeRows<T>(rows))
 
     /// Zero or one row. Errors if the query yields more than one — a query
     /// meant to be unique silently returning the first of several is a bug
     /// worth surfacing.
-    public async function fetchOptional<T>(self, conn: Connection): Async<Option<T>, SqliteError> where T: FromRow =
+    public async function fetchOptional<T>(self, conn: Connection): Async<Option<T>, SqliteError>
+        where T: FromRow =
         let rows: List<T> = await self.fetchAll<T>(conn)
         if rows.length > 1 then
-            await Async.fail(cardinalityError(
-                "expected at most one row, got " ++ rows.length.format()
-            ))
-        else rows.headOption
+            await Async
+                .fail(cardinalityError("expected at most one row, got " ++ rows.length.format()))
+        else
+            rows.headOption
 
     /// Exactly one row; errors on none or more than one.
-    public async function fetchOne<T>(self, conn: Connection): Async<T, SqliteError> where T: FromRow =
+    public async function fetchOne<T>(self, conn: Connection): Async<T, SqliteError>
+        where T: FromRow =
         let found: Option<T> = await self.fetchOptional<T>(conn)
         match found with
             case Some(value) => value
@@ -194,8 +189,7 @@ function present(parts: List<Option<Query>>): List<Query> =
 /// result, for the joiners that produce a standalone boolean expression.
 function joined(parts: List<Query>, separator: String, wrapParts: Bool, wrapAll: Bool): Query =
     let wrap: (Query) => Query =
-        if wrapParts then (part: Query) => part.parenthesized()
-        else (part: Query) => part
+        if wrapParts then (part: Query) => part.parenthesized() else (part: Query) => part
     match parts with
         case [] => Query.empty()
         case first :: rest =>
@@ -218,7 +212,8 @@ function clause(keyword: String, body: Query): Query =
 
 /// Decode a whole result set, stopping at the first row that fails so the
 /// reported error is the first thing that actually went wrong.
-function decodeRows<T>(rows: List<Row>): Result<List<T>, SqliteError> where T: FromRow =
+function decodeRows<T>(rows: List<Row>): Result<List<T>, SqliteError>
+    where T: FromRow =
     let mutable decoded: List<T> = List.empty
     let mutable rest = rows
     let mutable failure: Option<SqliteError> = None

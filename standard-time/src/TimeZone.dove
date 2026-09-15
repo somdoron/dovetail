@@ -26,8 +26,7 @@ public record TimeZone =
 /// Factory methods and operations for TimeZone.
 module TimeZone =
     /// The UTC time-zone with zero offset.
-    public property utc: TimeZone =
-        TimeZone { id = "UTC"; offsetSeconds = 0; isIana = false }
+    public property utc: TimeZone = TimeZone { id = "UTC"; offsetSeconds = 0; isIana = false }
 
     /// Creates a fixed-offset TimeZone with the given identifier and
     /// offset. The `id` is purely a label — even if it matches an IANA
@@ -56,7 +55,8 @@ module TimeZone =
     /// For Fixed zones this is the constant `offsetSeconds`; for IANA
     /// zones it walks the transition table (O(log n)).
     public function offsetAt(self, epochSecond: Int64): Int32 =
-        if !self.isIana then self.offsetSeconds
+        if !self.isIana then
+            self.offsetSeconds
         else
             match TzData.findZone(self.id) with
                 case Some(zone) => zone.offsetAt(epochSecond).offsetSeconds
@@ -65,25 +65,23 @@ module TimeZone =
     /// Active zone abbreviation for `epochSecond` (e.g. `"EST"`, `"EDT"`,
     /// `"BST"`). For Fixed zones this is just the zone id.
     public function abbreviationAt(self, epochSecond: Int64): String =
-        if !self.isIana then self.id
+        if !self.isIana then
+            self.id
         else
             match TzData.findZone(self.id) with
                 case Some(zone) => zone.offsetAt(epochSecond).abbrev
                 case None => self.id
 
     /// Returns the whole-hour component of the UTC offset.
-    public function offsetHours(self): Int32 =
-        self.offsetSeconds / 3600
+    public function offsetHours(self): Int32 = self.offsetSeconds / 3600
 
     /// Returns the remaining minutes component of the UTC offset after removing whole hours.
-    public function offsetMinutes(self): Int32 =
-        (self.offsetSeconds % 3600) / 60
+    public function offsetMinutes(self): Int32 = (self.offsetSeconds % 3600) / 60
 
 implement Equatable for TimeZone =
     /// Returns true if both time-zones have the same id and offset.
     public function equals(self: TimeZone, other: TimeZone): Bool =
-        if self.id == other.id then self.offsetSeconds == other.offsetSeconds
-        else false
+        if self.id == other.id then self.offsetSeconds == other.offsetSeconds else false
 
 implement Display for TimeZone =
     /// Formats this time-zone as "id (offset Ns)".

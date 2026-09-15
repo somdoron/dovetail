@@ -18,13 +18,13 @@ import standard.wasi.net.NetworkError
 // than one fiber touches a single stream end, or when a stream ends underneath
 // a fiber that is still using it. All of them trap or hang without the fixes,
 // so the `@timeout` is part of the assertion.
-
 function toNetError(e: NetworkError): NetError = NetError.from(e)
 
 function streamPort(address: String): Uint16 =
-    let text = match address.split(":").last with
-        case Some(portText) => portText
-        case None => panic "expected a host:port local address"
+    let text =
+        match address.split(":").last with
+            case Some(portText) => portText
+            case None => panic "expected a host:port local address"
     let mutable acc = 0i32
     let mutable i = 0i32
     while i < text.byteLength do
@@ -37,9 +37,8 @@ function streamPort(address: String): Uint16 =
 // before the fiber parks, so without a lock spanning start→finish the second
 // fiber's `writeStart` lands on a busy stream and wasmtime traps. Both writes
 // must land whole (interleaving halves of them would also be wrong).
-
 @timeout(10000)
-test "Streams: two fibers writing one output stream serialize instead of trapping" =
+ test "Streams: two fibers writing one output stream serialize instead of trapping" =
     let mutable received = 0i32
     concurrentWriteProgram((n: Int32) => received = n).run()
     // 2 x 32 KiB — big enough that each write blocks partway and the two fibers
@@ -51,26 +50,30 @@ async function drainAll(stream: TcpStream, wanted: Int32): Async<Int32, NetError
     let mutable done = false
     while !done do
         let chunk = await stream.input.read(65536i64).mapError(toNetError)
-        if chunk.length == 0 then done = true
+        if chunk.length == 0 then
+            done = true
         else
             total = total + chunk.length
             if total >= wanted then done = true
     total
 
-async function acceptAndCount(listener: TcpListener, wanted: Int32, report: Promise<Int32, Never>): Async<Unit, NetError> =
+async function acceptAndCount(listener: TcpListener, wanted: Int32, report: Promise<Int32, Never>):
+    Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     let total = await drainAll(stream, wanted)
     await report.complete(total)
     ()
 
-async function writeChunk(output: AsyncOutputStream<NetworkError>, fill: Uint8): Async<Unit, NetError> =
+async function writeChunk(output: AsyncOutputStream<NetworkError>, fill: Uint8):
+    Async<Unit, NetError> =
     await output.write(Array<Uint8>.fill(32768, fill).readonly).mapError(toNetError)
 
 async function concurrentWriteProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let address = await listener.localAddress()
     let counted: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
-    let _server: Fiber<Unit, NetError> = await acceptAndCount(listener, 65536i32, counted).forkBackground()
+    let _server: Fiber<Unit, NetError> =
+        await acceptAndCount(listener, 65536i32, counted).forkBackground()
     let client: TcpStream = use Tcp.connect("127.0.0.1", streamPort(address))
     let a: Fiber<Unit, NetError> = await writeChunk(client.output, 65u8).fork()
     let b: Fiber<Unit, NetError> = await writeChunk(client.output, 66u8).fork()
@@ -80,15 +83,15 @@ async function concurrentWriteProgram(setter: (Int32) => Unit): Async<Unit, NetE
     setter(total)
 
 // --- A2: two fibers reading one stream ---------------------------------------
-
 @timeout(10000)
-test "Streams: two fibers reading one input stream serialize instead of trapping" =
+ test "Streams: two fibers reading one input stream serialize instead of trapping" =
     let mutable total = 0i32
     concurrentReadProgram((n: Int32) => total = n).run()
     // Both reads completed and between them saw all 16 bytes the server sent.
     assert total == 16i32
 
-async function readOnce(input: AsyncInputStream<NetworkError>, report: Promise<Int32, Never>): Async<Unit, NetError> =
+async function readOnce(input: AsyncInputStream<NetworkError>, report: Promise<Int32, Never>):
+    Async<Unit, NetError> =
     let chunk = await input.read(8i64).mapError(toNetError)
     await report.complete(chunk.length)
     ()
@@ -120,9 +123,8 @@ async function concurrentReadProgram(setter: (Int32) => Unit): Async<Unit, NetEr
 // Ending the scope that owns a connection while a fiber in it is parked mid-read
 // used to cancel the host op and then abandon the fiber, leaving it Suspended
 // forever. It must be resumed — at EOF, for a reader — and only then interrupted.
-
 @timeout(10000)
-test "Streams: releasing a connection under a parked read unwinds the reader, not abandons it" =
+ test "Streams: releasing a connection under a parked read unwinds the reader, not abandons it" =
     let mutable resumedWith = -1i32
     closeUnderReaderProgram((n: Int32) => resumedWith = n).run()
     // RE-POINTED, and it was vacuous before: the marker started at 0 INSIDE the
@@ -142,7 +144,8 @@ test "Streams: releasing a connection under a parked read unwinds the reader, no
     // would report a truncated body as a complete one.
     assert resumedWith == -3i32
 
-async function acceptAndHold(listener: TcpListener, release: Promise<Unit, Never>): Async<Unit, NetError> =
+async function acceptAndHold(listener: TcpListener, release: Promise<Unit, Never>):
+    Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     // Never writes: the client's read has nothing to complete it.
     await release.awaitPromise()
@@ -163,7 +166,8 @@ async function parkedReader(
     // another async step.
     let read: Async<Int32, NetworkError> =
         input.read(64i64).map((chunk: Array<Uint8>) => chunk.length)
-    await read.foldCause<Unit, Never>(
+    await read
+        .foldCause<Unit, Never>(
         (_: Cause<NetworkError>) => Async.thunk(() => mark(-3i32)),
         (n: Int32) => Async.thunk(() => mark(n))
     )
@@ -209,9 +213,8 @@ async function closeUnderReaderProgram(setter: (Int32) => Unit): Async<Unit, Net
 // --- A1: end-of-stream latch --------------------------------------------------
 // The stream's result future is one-shot. Reading past EOF used to re-post on
 // the finished host stream and re-read the spent future; both trap.
-
 @timeout(10000)
-test "Streams: reading past EOF keeps returning empty instead of trapping" =
+ test "Streams: reading past EOF keeps returning empty instead of trapping" =
     let mutable extraReads = -1i32
     readPastEofProgram((n: Int32) => extraReads = n).run()
     // Three further reads after EOF, all empty, no trap.
@@ -243,9 +246,8 @@ async function readPastEofProgram(setter: (Int32) => Unit): Async<Unit, NetError
 // The write side's result future is one-shot too. After the peer resets the
 // connection the first write latches the failure; later writes must re-report it
 // from the latch rather than re-reading the spent future.
-
 @timeout(10000)
-test "Streams: writes after a dropped peer keep failing from the latch" =
+ test "Streams: writes after a dropped peer keep failing from the latch" =
     let mutable failures = 0i32
     writeAfterFailureProgram((n: Int32) => failures = n).run()
     // The write that discovers the drop, plus three more, all failing.
@@ -260,10 +262,13 @@ async function writeUntilFailure(output: AsyncOutputStream<NetworkError>): Async
     let mutable attempts = 0i32
     let mutable failed = false
     while attempts < 1000i32 && !failed do
-        let didFail = await output.write(big.readonly).fold<Bool, NetError>(
-            (_: NetworkError) => Async.succeed(true),
-            (_: Unit) => Async.succeed(false)
-        )
+        let didFail =
+            await output
+                .write(big.readonly)
+                .fold<Bool, NetError>(
+                (_: NetworkError) => Async.succeed(true),
+                (_: Unit) => Async.succeed(false)
+            )
         failed = didFail
         attempts = attempts + 1
     if failed then 1i32 else 0i32
@@ -277,10 +282,14 @@ async function writeAfterFailureProgram(setter: (Int32) => Unit): Async<Unit, Ne
     let mutable failures = first
     let mutable i = 0i32
     while i < 3i32 do
-        let again = await client.output.write("x".bytes().readonly).fold<Int32, NetError>(
-            (_: NetworkError) => Async.succeed(1i32),
-            (_: Unit) => Async.succeed(0i32)
-        )
+        let again =
+            await client
+                .output
+                .write("x".bytes().readonly)
+                .fold<Int32, NetError>(
+                (_: NetworkError) => Async.succeed(1i32),
+                (_: Unit) => Async.succeed(0i32)
+            )
         failures = failures + again
         i = i + 1
     setter(failures)
@@ -294,9 +303,8 @@ async function writeAfterFailureProgram(setter: (Int32) => Unit): Async<Unit, Ne
 // arrived — and it reported success on a stream whose reader had vanished,
 // because the path that noticed the vanished reader recorded the ENDING without
 // recording the REASON, and the report answers from the reason.
-
 @timeout(10000)
-test "Streams: closing a stream whose reader vanished reports the failure, not success" =
+ test "Streams: closing a stream whose reader vanished reports the failure, not success" =
     let mutable outcome = 0i32
     closeAfterDropProgram((n: Int32) => outcome = n).run()
     // 1 = the writes failed, AND the close that followed refused to call it
@@ -309,10 +317,14 @@ async function closeAfterDropProgram(setter: (Int32) => Unit): Async<Unit, NetEr
     let _server: Fiber<Unit, NetError> = await acceptAndDrop(listener).forkBackground()
     let client: TcpStream = use Tcp.connect("127.0.0.1", streamPort(address))
     let wrote = await writeUntilFailure(client.output)
-    let closeFailed = await client.output.close().fold<Bool, NetError>(
-        (_: NetworkError) => Async.succeed(true),
-        (_: Unit) => Async.succeed(false)
-    )
+    let closeFailed =
+        await client
+            .output
+            .close()
+            .fold<Bool, NetError>(
+            (_: NetworkError) => Async.succeed(true),
+            (_: Unit) => Async.succeed(false)
+        )
     setter(if wrote == 1i32 && closeFailed then 1i32 else 2i32)
 
 // --- C1: offset-based partial writes ------------------------------------------
@@ -320,20 +332,24 @@ async function closeAfterDropProgram(setter: (Int32) => Unit): Async<Unit, NetEr
 // retry. A large payload is guaranteed to complete partially, so an off-by-one
 // in the offset arithmetic shows up as corrupted or short data — not just as a
 // performance difference.
-
 @timeout(15000)
-test "Streams: a large partial-write round-trip preserves every byte" =
+ test "Streams: a large partial-write round-trip preserves every byte" =
     let mutable verified = false
     largeWriteProgram((b: Bool) => verified = b).run()
     assert verified
 
-async function acceptAndEchoAll(listener: TcpListener, wanted: Int32, report: Promise<Array<Uint8>, Never>): Async<Unit, NetError> =
+async function acceptAndEchoAll(
+    listener: TcpListener,
+    wanted: Int32,
+    report: Promise<Array<Uint8>, Never>
+): Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     let mutable buffer = Array<Uint8>.empty()
     let mutable done = false
     while !done do
         let chunk = await stream.input.read(65536i64).mapError(toNetError)
-        if chunk.length == 0 then done = true
+        if chunk.length == 0 then
+            done = true
         else
             buffer = buffer.concat(chunk)
             if buffer.length >= wanted then done = true
@@ -352,7 +368,8 @@ async function largeWriteProgram(setter: (Bool) => Unit): Async<Unit, NetError> 
     while i < size do
         payload.set(i, (i % 251i32).toUint8())
         i = i + 1
-    let _server: Fiber<Unit, NetError> = await acceptAndEchoAll(listener, size, received).forkBackground()
+    let _server: Fiber<Unit, NetError> =
+        await acceptAndEchoAll(listener, size, received).forkBackground()
     let client: TcpStream = use Tcp.connect("127.0.0.1", streamPort(address))
     // No end-of-stream signal needed: `acceptAndEchoAll` stops at `wanted`.
     await client.output.write(payload.readonly).mapError(toNetError)
@@ -368,9 +385,8 @@ async function largeWriteProgram(setter: (Bool) => Unit): Async<Unit, NetError> 
 // `flush` used to return `Ok` unconditionally, which made "write it all, then
 // flush, then trust the result" a lie: a stream the host had already dropped
 // reported clean. It now answers from the same latch a further write would.
-
 @timeout(10000)
-test "Streams: flush reports the failure a dropped peer already latched" =
+ test "Streams: flush reports the failure a dropped peer already latched" =
     let mutable flushFailed = false
     flushAfterDropProgram((b: Bool) => flushFailed = b).run()
     assert flushFailed
@@ -382,10 +398,14 @@ async function flushAfterDropProgram(setter: (Bool) => Unit): Async<Unit, NetErr
     let client: TcpStream = use Tcp.connect("127.0.0.1", streamPort(address))
     // Writes until the host reports the peer's drop, which latches the error.
     await writeUntilFailure(client.output)
-    let failed = await client.output.flush().fold<Bool, NetError>(
-        (_: NetworkError) => Async.succeed(true),
-        (_: Unit) => Async.succeed(false)
-    )
+    let failed =
+        await client
+            .output
+            .flush()
+            .fold<Bool, NetError>(
+            (_: NetworkError) => Async.succeed(true),
+            (_: Unit) => Async.succeed(false)
+        )
     setter(failed)
 
 // --- the window between posting a stream op and parking on it -----------------
@@ -401,21 +421,24 @@ async function flushAfterDropProgram(setter: (Bool) => Unit): Async<Unit, NetErr
 // budget expires, which is the only moment an interrupt can land on a Running
 // fiber. After each attempt a plain read must still work — pre-fix, the attempt
 // that lands in the window leaves an op posted and that read traps.
-
 async function burnSteps(count: Int32): Async<Unit, Never> =
     let mutable i = 0i32
     while i < count do
         await Async.succeed(())
         i = i + 1
 
-async function burnThenRead(input: AsyncInputStream<NetworkError>, burn: Int32): Async<Unit, Never> =
+async function burnThenRead(input: AsyncInputStream<NetworkError>, burn: Int32):
+    Async<Unit, Never> =
     await burnSteps(burn)
-    await input.read(16i64).fold<Unit, Never>(
+    await input
+        .read(16i64)
+        .fold<Unit, Never>(
         (_: NetworkError) => Async.succeed(()),
         (_: Array<Uint8>) => Async.succeed(())
     )
 
-async function acceptAndDripOnCue(listener: TcpListener, cue: Queue<Bool>, rounds: Int32): Async<Unit, NetError> =
+async function acceptAndDripOnCue(listener: TcpListener, cue: Queue<Bool>, rounds: Int32):
+    Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     let mutable i = 0i32
     while i < rounds do
@@ -436,15 +459,16 @@ async function postParkWindowProgram(setter: (Int32) => Unit): Async<Unit, NetEr
     let mutable burn = 1000i32
     let mutable round = 0i32
     while round < rounds do
-        let reader: Fiber<Unit, Never> =
-            await burnThenRead(client.input, burn).forkBackground()
+        let reader: Fiber<Unit, Never> = await burnThenRead(client.input, burn).forkBackground()
         // Outlast the reader's budget so this fiber is next in the queue when
         // the reader's expires, and interrupt it there.
         await burnSteps(1100i32)
         await reader.interrupt()
         // `join` re-raises the fiber's cause, and this one was interrupted on
         // purpose — swallow it and keep the sweep going.
-        await reader.join().foldCause<Unit, NetError>(
+        await reader
+            .join()
+            .foldCause<Unit, NetError>(
             (_: Cause<Never>) => Async.succeed(()),
             (_: Unit) => Async.succeed(())
         )
@@ -460,12 +484,11 @@ async function postParkWindowProgram(setter: (Int32) => Unit): Async<Unit, NetEr
 // two step budgets, which runs in seconds on an idle machine but is the first
 // thing to blow a tight timeout when the suite shares the CPU.
 @timeout(180000)
-test "Streams: an interrupt between posting a read and parking on it leaves no op behind" =
+ test "Streams: an interrupt between posting a read and parking on it leaves no op behind" =
     let mutable delivered = -1i32
     postParkWindowProgram((n: Int32) => delivered = n).run()
     // One byte per round, every round.
     assert delivered == 64i32
-
 
 // --- an explicit close detaches every fiber from the handle -------------------
 // `close` is the one place a stream is torn down while other fibers are still
@@ -487,7 +510,6 @@ test "Streams: an interrupt between posting a read and parking on it leaves no o
 // runtime's own queue drain is still what stands behind the streams that have no
 // wrapper lock (see the two-queued-acceptors test in `accept_test`), and it is
 // still what this close calls.
-
 /// 1 = failed with `Canceled`, 2 = failed with something else, 3 = returned.
 function readOutcome(result: Result<Int32, NetError>): Int32 =
     match result with
@@ -508,9 +530,11 @@ async function announceThenRead(
     report: Promise<Int32, Never>
 ): Async<Unit, Never> =
     await posted.complete(())
-    let outcome = await input.read(64i64)
-        .mapError(toNetError)
-        .fold<Int32, Never>(
+    let outcome =
+        await input
+            .read(64i64)
+            .mapError(toNetError)
+            .fold<Int32, Never>(
             (e: NetError) => Async.succeed(readOutcome(Error(e))),
             (chunk: Array<Uint8>) => Async.succeed(readOutcome(Ok(chunk.length)))
         )
@@ -518,7 +542,7 @@ async function announceThenRead(
     ()
 
 @timeout(10000)
-test "Streams: close cancels the read in flight and drains the readers queued behind it" =
+ test "Streams: close cancels the read in flight and drains the readers queued behind it" =
     let mutable first = 0i32
     let mutable second = 0i32
     closeUnderTwoReadersProgram((a: Int32) => first = a, (b: Int32) => second = b).run()
@@ -527,7 +551,8 @@ test "Streams: close cancels the read in flight and drains the readers queued be
     assert first == 1i32
     assert second == 1i32
 
-async function closeUnderTwoReadersProgram(setFirst: (Int32) => Unit, setSecond: (Int32) => Unit): Async<Unit, NetError> =
+async function closeUnderTwoReadersProgram(setFirst: (Int32) => Unit, setSecond: (Int32) => Unit):
+    Async<Unit, NetError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let address = await listener.localAddress()
     let release: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
@@ -573,15 +598,16 @@ async function closeUnderTwoReadersProgram(setFirst: (Int32) => Unit, setSecond:
 // is what the wrapper's own read lock is for: it puts the check and the post
 // inside one critical section, so B re-asks the question after it waits rather
 // than before.
-
-async function acceptThenCloseOnCue(listener: TcpListener, cue: Promise<Unit, Never>): Async<Unit, NetError> =
+async function acceptThenCloseOnCue(listener: TcpListener, cue: Promise<Unit, Never>):
+    Async<Unit, NetError> =
     let _stream: TcpStream = use listener.accept()
     // Nothing is ever written, so neither read can complete on its own; the
     // scope closing the connection is what ends the stream under both of them.
     await cue.awaitPromise()
     ()
 
-async function twoReadersAtEofProgram(setFirst: (Int32) => Unit, setSecond: (Int32) => Unit): Async<Unit, NetError> =
+async function twoReadersAtEofProgram(setFirst: (Int32) => Unit, setSecond: (Int32) => Unit):
+    Async<Unit, NetError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let address = await listener.localAddress()
     let cue: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
@@ -607,7 +633,7 @@ async function twoReadersAtEofProgram(setFirst: (Int32) => Unit, setSecond: (Int
     setSecond(resultB)
 
 @timeout(10000)
-test "Streams: a stream that ends under a queued reader answers it instead of trapping" =
+ test "Streams: a stream that ends under a queued reader answers it instead of trapping" =
     let mutable first = 0i32
     let mutable second = 0i32
     twoReadersAtEofProgram((a: Int32) => first = a, (b: Int32) => second = b).run()
@@ -620,7 +646,6 @@ test "Streams: a stream that ends under a queued reader answers it instead of tr
 // --- the same on the write side -----------------------------------------------
 // A write parked on a peer that never drains is exactly the case where waiting
 // for the in-flight op instead of cancelling it would never return.
-
 /// The write-side twin of `announceThenRead`, with the same signalling order.
 async function announceThenWrite(
     output: AsyncOutputStream<NetworkError>,
@@ -630,9 +655,11 @@ async function announceThenWrite(
     await posted.complete(())
     // Far past any socket buffer, so this blocks partway with the peer holding
     // the connection open and reading nothing.
-    let outcome = await output.write(Array<Uint8>.fill(4194304, 65u8).readonly)
-        .mapError(toNetError)
-        .fold<Int32, Never>(
+    let outcome =
+        await output
+            .write(Array<Uint8>.fill(4194304, 65u8).readonly)
+            .mapError(toNetError)
+            .fold<Int32, Never>(
             (e: NetError) => Async.succeed(readOutcome(Error(e))),
             (_: Unit) => Async.succeed(3i32)
         )
@@ -640,7 +667,7 @@ async function announceThenWrite(
     ()
 
 @timeout(10000)
-test "Streams: close cancels the write in flight instead of waiting for a peer that never drains" =
+ test "Streams: close cancels the write in flight instead of waiting for a peer that never drains" =
     let mutable outcome = 0i32
     closeUnderWriterProgram((n: Int32) => outcome = n).run()
     assert outcome == 1i32
@@ -675,9 +702,8 @@ async function closeUnderWriterProgram(setter: (Int32) => Unit): Async<Unit, Net
 //
 // The `use` below then releases both streams over the top of the explicit close,
 // so this also pins that the Resource finalizer is a no-op once close has run.
-
 @timeout(10000)
-test "Streams: closing twice and using the stream afterwards latches instead of touching a reused handle" =
+ test "Streams: closing twice and using the stream afterwards latches instead of touching a reused handle" =
     let mutable outcome = 0i32
     closeTwiceProgram((n: Int32) => outcome = n).run()
     // 1 = both closes returned, and the later read and the later write both
@@ -707,14 +733,22 @@ async function closeTwiceProgram(setter: (Int32) => Unit): Async<Unit, NetError>
     // which side of the close the scheduler put you on. A body reader on the
     // losing side reported a truncated body as a complete one. So a closed
     // stream now reports the close, in the same words, to both.
-    let readFailed = await client.input.read(64i64).fold<Bool, NetError>(
-        (_: NetworkError) => Async.succeed(true),
-        (bytes: Array<Uint8>) => Async.succeed(false)
-    )
-    let writeFailed = await client.output.write("x".bytes().readonly).fold<Bool, NetError>(
-        (_: NetworkError) => Async.succeed(true),
-        (_: Unit) => Async.succeed(false)
-    )
+    let readFailed =
+        await client
+            .input
+            .read(64i64)
+            .fold<Bool, NetError>(
+            (_: NetworkError) => Async.succeed(true),
+            (bytes: Array<Uint8>) => Async.succeed(false)
+        )
+    let writeFailed =
+        await client
+            .output
+            .write("x".bytes().readonly)
+            .fold<Bool, NetError>(
+            (_: NetworkError) => Async.succeed(true),
+            (_: Unit) => Async.succeed(false)
+        )
     await release.complete(())
     setter(if readFailed && writeFailed then 1i32 else 2i32)
 
@@ -739,13 +773,13 @@ async function closeTwiceProgram(setter: (Int32) => Unit): Async<Unit, NetError>
 // events when nothing is runnable, and the peer's signal has just made this fiber
 // runnable — so the interrupt below lands on a read that has completed and not
 // yet been delivered, which is exactly the losing cancel.
-
 async function neverFinishing(started: Promise<Unit, Never>): Async<Unit, Never> =
     await started.complete(())
     let forever: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     await forever.awaitPromise()
 
-async function sendThenHold(listener: TcpListener, sent: Promise<Unit, Never>): Async<Unit, NetError> =
+async function sendThenHold(listener: TcpListener, sent: Promise<Unit, Never>):
+    Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     await stream.output.write(Array<Uint8>.fill(8, 70u8).readonly).mapError(toNetError)
     await sent.complete(())
@@ -777,14 +811,17 @@ async function maskedJoinProgram(setter: (Bool) => Unit): Async<Unit, NetError> 
     await posted.awaitPromise()
     await sent.awaitPromise()
     await masked.interrupt()
-    let ended = await masked.join().foldCause(
-        (_: Cause<NetError>) => Async.succeed(true),
-        (_: Unit) => Async.succeed(false)
-    )
+    let ended =
+        await masked
+            .join()
+            .foldCause(
+            (_: Cause<NetError>) => Async.succeed(true),
+            (_: Unit) => Async.succeed(false)
+        )
     setter(ended)
 
 @timeout(15000)
-test "Streams: a reader masked by a losing cancel is interrupted at its next park, not stranded" =
+ test "Streams: a reader masked by a losing cancel is interrupted at its next park, not stranded" =
     let mutable interrupted = false
     maskedJoinProgram((b: Bool) => interrupted = b).run()
     assert interrupted
@@ -795,7 +832,6 @@ test "Streams: a reader masked by a losing cancel is interrupted at its next par
 // the reader posts, so the read completes inline and there is no losing cancel to
 // mask. A test that passes with the fix removed pins nothing, which is the whole
 // argument for there being one helper rather than a check per park site.
-
 // --- interrupting a write parked against a peer that has gone ----------------
 //
 // A write cancelled while parked used to be SETTLED on the way out, which read
@@ -814,13 +850,14 @@ test "Streams: a reader masked by a losing cancel is interrupted at its next par
 // here, so the double read never fires. What the test does pin is that
 // interrupting a fiber parked mid-write and then releasing the connection
 // under it neither traps nor hangs, which had no coverage at all.
-
-async function writeForever(output: AsyncOutputStream<NetworkError>, posted: Promise<Unit, Never>): Async<Unit, NetError> =
+async function writeForever(output: AsyncOutputStream<NetworkError>, posted: Promise<Unit, Never>):
+    Async<Unit, NetError> =
     let big = Array<Uint8>.fill(1048576, 65u8)
     await posted.complete(())
     let mutable i = 0i32
     while i < 1000i32 do
-        await output.write(big.readonly)
+        await output
+            .write(big.readonly)
             .mapError(toNetError)
             .catchAll((_: NetError) => Async.succeed(()))
         i = i + 1
@@ -838,14 +875,13 @@ async function interruptedWriterProgram(setter: (Bool) => Unit): Async<Unit, Net
     // second read of the result future, if the cancel spent it.
     await Async<Unit, NetError>.sleep(Duration.ofMillis(50i64))
     await writer.interrupt()
-    await writer.join().foldCause(
-        (_: Cause<NetError>) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    await writer
+        .join()
+        .foldCause((_: Cause<NetError>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
     setter(true)
 
 @timeout(20000)
-test "Streams: interrupting a write against a dropped peer leaves the result future for the finalizer" =
+ test "Streams: interrupting a write against a dropped peer leaves the result future for the finalizer" =
     let mutable finished = false
     interruptedWriterProgram((b: Bool) => finished = b).run()
     assert finished
@@ -866,8 +902,8 @@ test "Streams: interrupting a write against a dropped peer leaves the result fut
 // lands before the runtime collects host events — so the cancel, not a
 // completion, is what reports the ending. The read after it is the assertion:
 // it must answer from the latch.
-
-async function holdUntilSignalled(listener: TcpListener, closeNow: Promise<Unit, Never>): Async<Unit, NetError> =
+async function holdUntilSignalled(listener: TcpListener, closeNow: Promise<Unit, Never>):
+    Async<Unit, NetError> =
     let _stream: TcpStream = use listener.accept()
     await closeNow.awaitPromise()
     ()
@@ -885,12 +921,13 @@ async function acceptThenCloseOnSignal(
 
 /// 1 = failed, 2 = end of stream, 3 = bytes.
 async function readAgain(input: AsyncInputStream<NetworkError>): Async<Int32, NetError> =
-    await input.read(64i64)
+    await input
+        .read(64i64)
         .mapError(toNetError)
         .fold<Int32, NetError>(
-            (_: NetError) => Async.succeed(1i32),
-            (bytes: Array<Uint8>) => Async.succeed(if bytes.length == 0 then 2i32 else 3i32)
-        )
+        (_: NetError) => Async.succeed(1i32),
+        (bytes: Array<Uint8>) => Async.succeed(if bytes.length == 0 then 2i32 else 3i32)
+    )
 
 async function droppedCancelProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
@@ -908,14 +945,16 @@ async function droppedCancelProgram(setter: (Int32) => Unit): Async<Unit, NetErr
     await closeNow.complete(())
     await closed.awaitPromise()
     await reader.interrupt()
-    await reader.join().foldCause<Unit, NetError>(
+    await reader
+        .join()
+        .foldCause<Unit, NetError>(
         (_: Cause<Never>) => Async.succeed(()),
         (_: Unit) => Async.succeed(())
     )
     setter(await readAgain(client.input))
 
 @timeout(10000)
-test "Streams: a cancel that reports the stream ended leaves the stream ended" =
+ test "Streams: a cancel that reports the stream ended leaves the stream ended" =
     let mutable outcome = 0i32
     droppedCancelProgram((n: Int32) => outcome = n).run()
     // 2 = the end of stream, answered from the latch with no second copy posted.
@@ -941,7 +980,6 @@ test "Streams: a cancel that reports the stream ended leaves the stream ended" =
 //
 // The peer here holds the connection open and never reads, which is what makes
 // the write park with part of the array already gone rather than fail outright.
-
 async function writeUntilInterrupted(
     output: AsyncOutputStream<NetworkError>,
     posted: Promise<Unit, Never>
@@ -949,10 +987,9 @@ async function writeUntilInterrupted(
     await posted.complete(())
     // Far past any socket buffer: the first copies get bytes out and one of them
     // then parks with the array half delivered.
-    await output.write(Array<Uint8>.fill(4194304, 65u8).readonly).fold<Unit, Never>(
-        (_: NetworkError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    await output
+        .write(Array<Uint8>.fill(4194304, 65u8).readonly)
+        .fold<Unit, Never>((_: NetworkError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
 
 async function tornWriteProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
@@ -968,13 +1005,18 @@ async function tornWriteProgram(setter: (Int32) => Unit): Async<Unit, NetError> 
     // test above uses for the same purpose.
     await Async<Unit, NetError>.sleep(Duration.ofMillis(50i64))
     await writer.interrupt()
-    await writer.join().foldCause<Unit, NetError>(
+    await writer
+        .join()
+        .foldCause<Unit, NetError>(
         (_: Cause<Never>) => Async.succeed(()),
         (_: Unit) => Async.succeed(())
     )
-    let outcome = await client.output.write("x".bytes().readonly)
-        .mapError(toNetError)
-        .fold<Int32, NetError>(
+    let outcome =
+        await client
+            .output
+            .write("x".bytes().readonly)
+            .mapError(toNetError)
+            .fold<Int32, NetError>(
             (e: NetError) => Async.succeed(readOutcome(Error(e))),
             (_: Unit) => Async.succeed(3i32)
         )
@@ -995,7 +1037,7 @@ async function tornWriteProgram(setter: (Int32) => Unit): Async<Unit, NetError> 
 // The read-side twin of the same delivery IS pinned, by the cancel-reports-ended
 // test above: there the news at a count of zero is the ending itself.
 @timeout(20000)
-test "Streams: a write interrupted with the array half out fences the stream" =
+ test "Streams: a write interrupted with the array half out fences the stream" =
     let mutable outcome = 0i32
     tornWriteProgram((n: Int32) => outcome = n).run()
     // 1 = `Canceled`: the stream refused the next write because it is torn, and

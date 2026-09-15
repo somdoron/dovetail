@@ -250,6 +250,8 @@ pub struct PrefixedLiteralData {
 #[derive(Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
+    /// Original bytes, populated only when source capture is enabled.
+    pub source_range: Option<std::ops::Range<usize>>,
     pub span: Span,
     pub text: String,
     pub doc_comment: Option<String>,
@@ -262,6 +264,7 @@ impl Token {
     pub fn new(kind: TokenKind, span: Span, text: impl Into<String>) -> Self {
         Self {
             kind,
+            source_range: None,
             span,
             text: text.into(),
             doc_comment: None,
@@ -273,6 +276,7 @@ impl Token {
     pub fn with_literal(span: Span, data: PrefixedLiteralData) -> Self {
         Self {
             kind: TokenKind::PrefixedStringLiteral,
+            source_range: None,
             span,
             text: data.prefix.clone(),
             doc_comment: None,

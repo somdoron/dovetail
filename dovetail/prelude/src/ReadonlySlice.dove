@@ -7,11 +7,13 @@ public type ReadonlySlice<out T> = intrinsic
 module ReadonlySlice<T> =
     public function make(data: Array<T>, start: Int32, length: Int32): ReadonlySlice<T> = intrinsic
 
-    public function full(data: Array<T>): ReadonlySlice<T> = ReadonlySlice.make(data, 0, data.length)
+    public function full(data: Array<T>): ReadonlySlice<T> =
+        ReadonlySlice.make(data, 0, data.length)
 
     public property readonly(self): ReadonlySlice<T> = self
 
     public property length(self): Int32 = intrinsic
+
     public function isEmpty(self): Bool = self.length == 0
 
     public function get(self, index: Int32): T = intrinsic
@@ -25,10 +27,12 @@ module ReadonlySlice<T> =
         self.slice(start, end + 1)
 
     public function drop(self, count: Int32): ReadonlySlice<T> = self.slice(count, self.length)
+
     public function take(self, count: Int32): ReadonlySlice<T> = self.slice(0, count)
 
     public function toArray(self): Array<T> =
-        if self.isEmpty() then Array.empty()
+        if self.isEmpty() then
+            Array.empty()
         else
             let result = Array.fill(self.length, self.get(0))
             self.copyTo(Slice.full(result))
@@ -38,7 +42,8 @@ module ReadonlySlice<T> =
     public function copyTo(self, dest: Slice<T>): Unit = intrinsic
 
     public function map<U>(self, f: T => U): ReadonlySlice<U> =
-        if self.isEmpty() then Array<U>.empty().readonly
+        if self.isEmpty() then
+            Array<U>.empty().readonly
         else
             let result = Array.fill(self.length, f(self.get(0)))
             let mutable i = 1
@@ -47,18 +52,20 @@ module ReadonlySlice<T> =
                 i = i + 1
             result.readonly
 
-class ReadonlySliceIterator<T>(slice: ReadonlySlice<T>, mutable index: Int32) implements Iterator<T> =
+class ReadonlySliceIterator<T>(slice: ReadonlySlice<T>, mutable index: Int32) implements Iterator<
+    T> =
     public function next(self): Option<T> =
-        if self.index == self.slice.length then None
+        if self.index == self.slice.length then
+            None
         else
             let item = self.slice.get(self.index)
             self.index = self.index + 1
             Some(item)
 
-implement <T> Iterable<T> for ReadonlySlice<T> =
+implement<T> Iterable<T> for ReadonlySlice<T> =
     public function iterator(self): Iterator<T> = ReadonlySliceIterator<T>(self, 0)
 
-implement <T> Display for ReadonlySlice<T> where T: Display =
+implement<T> Display for ReadonlySlice<T> where T: Display =
     public function format(self: ReadonlySlice<T>): String =
         let mutable parts: List<String> = List.empty
         let mutable i = 0
@@ -67,9 +74,10 @@ implement <T> Display for ReadonlySlice<T> where T: Display =
             i = i + 1
         "[" ++ String.join(parts.reverse(), "") ++ "]"
 
-implement <T> Equatable for ReadonlySlice<T> where T: Equatable =
+implement<T> Equatable for ReadonlySlice<T> where T: Equatable =
     public function equals(self: ReadonlySlice<T>, other: ReadonlySlice<T>): Bool =
-        if self.length != other.length then false
+        if self.length != other.length then
+            false
         else
             let mutable equal = true
             let mutable i = 0
@@ -80,6 +88,7 @@ implement <T> Equatable for ReadonlySlice<T> where T: Equatable =
                 i = i + 1
             equal
 
-implement <T> Index<Int32> for ReadonlySlice<T> =
+implement<T> Index<Int32> for ReadonlySlice<T> =
     type Output = T
+
     public function get(self: ReadonlySlice<T>, index: Int32): T = self.get(index)

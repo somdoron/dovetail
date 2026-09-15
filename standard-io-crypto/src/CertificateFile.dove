@@ -39,34 +39,47 @@ implement Display for CertLoadError =
 extension CertificateFile for X509Certificate =
     /// Load a single PEM certificate from `path`. Wiped on release.
     public function loadPem(path: Path): Resource<X509Certificate, CertLoadError> =
-        Resource.make(
+        Resource
+            .make(
             () => acquireCertPem(path),
-            (cert: X509Certificate) => Async.thunk(() => cert.clear()))
+            (cert: X509Certificate) => Async.thunk(() => cert.clear())
+        )
 
     /// Load every PEM certificate in `path` (a bundle / chain), leaf first. Each
     /// certificate is wiped on release.
     public function loadChainPem(path: Path): Resource<List<X509Certificate>, CertLoadError> =
-        Resource.make(
+        Resource
+            .make(
             () => acquireChainPem(path),
-            (certs: List<X509Certificate>) => Async.thunk(() => clearAll(certs)))
+            (certs: List<X509Certificate>) => Async.thunk(() => clearAll(certs))
+        )
 
     /// Load a single DER (binary) certificate from `path`. Wiped on release.
     public function loadDer(path: Path): Resource<X509Certificate, CertLoadError> =
-        Resource.make(
+        Resource
+            .make(
             () => acquireCertDer(path),
-            (cert: X509Certificate) => Async.thunk(() => cert.clear()))
+            (cert: X509Certificate) => Async.thunk(() => cert.clear())
+        )
 
 private async function acquireCertPem(path: Path): Async<X509Certificate, CertLoadError> =
     let bytes = await File.readBytes(path).mapError((e: FileStreamError) => CertLoadError.Io(e))
-    await Async.fromResult(X509.parseCertificatePem(bytes).mapError((e: X509Error) => CertLoadError.Parse(e)))
+    await Async
+        .fromResult(
+        X509.parseCertificatePem(bytes).mapError((e: X509Error) => CertLoadError.Parse(e))
+    )
 
 private async function acquireChainPem(path: Path): Async<List<X509Certificate>, CertLoadError> =
     let bytes = await File.readBytes(path).mapError((e: FileStreamError) => CertLoadError.Io(e))
-    await Async.fromResult(X509.parseCertificateChainPem(bytes).mapError((e: X509Error) => CertLoadError.Parse(e)))
+    await Async
+        .fromResult(
+        X509.parseCertificateChainPem(bytes).mapError((e: X509Error) => CertLoadError.Parse(e))
+    )
 
 private async function acquireCertDer(path: Path): Async<X509Certificate, CertLoadError> =
     let bytes = await File.readBytes(path).mapError((e: FileStreamError) => CertLoadError.Io(e))
-    await Async.fromResult(X509.parseCertificate(bytes).mapError((e: X509Error) => CertLoadError.Parse(e)))
+    await Async
+        .fromResult(X509.parseCertificate(bytes).mapError((e: X509Error) => CertLoadError.Parse(e)))
 
 private function clearAll(certs: List<X509Certificate>): Unit =
     for cert in certs do
@@ -82,7 +95,9 @@ private function testCertPem(): String =
 
 async function loadCertProgram(setter: (Bool) => Unit): Async<Unit, CertLoadError> =
     let path = Path.of("cert-load-roundtrip.pem")
-    await File.writeString(path, testCertPem(), Charset.Utf8).mapError((e: FileStreamError) => CertLoadError.Io(e))
+    await File
+        .writeString(path, testCertPem(), Charset.Utf8)
+        .mapError((e: FileStreamError) => CertLoadError.Io(e))
     let cert = use X509Certificate.loadPem(path)
     setter((cert.tbsBytes.length > 0) && (cert.publicKey.length > 0))
     await File.remove(path).mapError((e: FileStreamError) => CertLoadError.Io(e))
@@ -100,15 +115,15 @@ function attemptLoad(path: Path): Async<Unit, CertLoadError> =
 
 async function loadGarbageProgram(setter: (Bool) => Unit): Async<Unit, Never> =
     let path = Path.of("cert-load-garbage.pem")
-    await File.writeString(path, "this is not a certificate", Charset.Utf8).fold(
-        (_: FileStreamError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(()))
-    let failed = await attemptLoad(path).fold(
-        (_: CertLoadError) => Async.succeed(true),
-        (_: Unit) => Async.succeed(false))
-    await File.remove(path).fold(
-        (_: FileStreamError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(()))
+    await File
+        .writeString(path, "this is not a certificate", Charset.Utf8)
+        .fold((_: FileStreamError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
+    let failed =
+        await attemptLoad(path)
+            .fold((_: CertLoadError) => Async.succeed(true), (_: Unit) => Async.succeed(false))
+    await File
+        .remove(path)
+        .fold((_: FileStreamError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
     setter(failed)
 
 test "loadPem on a non-certificate file reports an error" =

@@ -10,14 +10,20 @@ import standard.crypto.ConstantTime
 /// `HandshakeType msg_type ‖ uint24 length ‖ body`. This module serialises and
 /// parses the message bodies; the record layer carries them and the transcript
 /// hashes their exact framed bytes.
-
 let htClientHello: Int32 = 1
+
 let htServerHello: Int32 = 2
+
 let htNewSessionTicket: Int32 = 4
+
 let htEncryptedExtensions: Int32 = 8
+
 let htCertificate: Int32 = 11
+
 let htCertificateVerify: Int32 = 15
+
 let htFinished: Int32 = 20
+
 let htKeyUpdate: Int32 = 24
 
 record ClientHelloMessage =
@@ -65,10 +71,38 @@ enum HandshakeMessage =
 /// (RFC 8446 §4.1.3): SHA-256("HelloRetryRequest").
 function helloRetryMagic(): Array<Uint8> =
     [|
-        0xcfu8, 0x21u8, 0xadu8, 0x74u8, 0xe5u8, 0x9au8, 0x61u8, 0x11u8,
-        0xbeu8, 0x1du8, 0x8cu8, 0x02u8, 0x1eu8, 0x65u8, 0xb8u8, 0x91u8,
-        0xc2u8, 0xa2u8, 0x11u8, 0x16u8, 0x7au8, 0xbbu8, 0x8cu8, 0x5eu8,
-        0x07u8, 0x9eu8, 0x09u8, 0xe2u8, 0xc8u8, 0xa8u8, 0x33u8, 0x9cu8,
+        0xcfu8,
+        0x21u8,
+        0xadu8,
+        0x74u8,
+        0xe5u8,
+        0x9au8,
+        0x61u8,
+        0x11u8,
+        0xbeu8,
+        0x1du8,
+        0x8cu8,
+        0x02u8,
+        0x1eu8,
+        0x65u8,
+        0xb8u8,
+        0x91u8,
+        0xc2u8,
+        0xa2u8,
+        0x11u8,
+        0x16u8,
+        0x7au8,
+        0xbbu8,
+        0x8cu8,
+        0x5eu8,
+        0x07u8,
+        0x9eu8,
+        0x09u8,
+        0xe2u8,
+        0xc8u8,
+        0xa8u8,
+        0x33u8,
+        0x9cu8,
     |]
 
 /// Whether a parsed ServerHello is really a HelloRetryRequest.
@@ -78,7 +112,6 @@ function isHelloRetryRequest(sh: ServerHelloMessage): Bool =
 // ---------------------------------------------------------------------------
 // Serialisation
 // ---------------------------------------------------------------------------
-
 /// Frame and serialise a handshake message (type ‖ uint24 length ‖ body).
 function serializeHandshake(msg: HandshakeMessage): Array<Uint8> =
     let pair = bodyOf(msg)
@@ -91,12 +124,16 @@ function bodyOf(msg: HandshakeMessage): (Int32, Array<Uint8>) =
     match msg with
         case ClientHello(ch) => (htClientHello, clientHelloBody(ch))
         case ServerHello(sh) => (htServerHello, serverHelloBody(sh))
-        case EncryptedExtensions(exts) => (htEncryptedExtensions, serializeExtensions(exts, ExtensionContext.EncryptedExtensionsContext))
+        case EncryptedExtensions(exts) =>
+            (
+                htEncryptedExtensions,
+                serializeExtensions(exts, ExtensionContext.EncryptedExtensionsContext)
+            )
         case Certificate(c) => (htCertificate, certificateBody(c))
         case CertificateVerify(cv) => (htCertificateVerify, certificateVerifyBody(cv))
         case Finished(verifyData) => (htFinished, verifyData)
         case NewSessionTicket(t) => (htNewSessionTicket, newSessionTicketBody(t))
-        case KeyUpdate(request) => (htKeyUpdate, [|if request then 1u8 else 0u8|])
+        case KeyUpdate(request) => (htKeyUpdate, [| if request then 1u8 else 0u8 |])
 
 function cipherSuiteListBytes(suites: List<CipherSuite>): Array<Uint8> =
     let inner = ByteWriter.make()
@@ -110,18 +147,20 @@ function clientHelloBody(ch: ClientHelloMessage): Array<Uint8> =
     w.putBytes(ch.random)
     w.putVec8(ch.legacySessionId)
     w.putVec16(cipherSuiteListBytes(ch.cipherSuites))
-    w.putVec8([|0u8|])      // legacy_compression_methods = { null }
+    w.putVec8([| 0u8 |]) // legacy_compression_methods = { null }
     w.putBytes(serializeExtensions(ch.extensions, ExtensionContext.ClientHelloContext))
     w.toBytes()
 
 function serverHelloBody(sh: ServerHelloMessage): Array<Uint8> =
-    let context = if isHelloRetryRequest(sh) then ExtensionContext.HelloRetryRequestContext else ExtensionContext.ServerHelloContext
+    let context =
+        if isHelloRetryRequest(sh) then ExtensionContext.HelloRetryRequestContext
+        else ExtensionContext.ServerHelloContext
     let w = ByteWriter.make()
     w.putU16(0x0303)
     w.putBytes(sh.random)
     w.putVec8(sh.legacySessionId)
     w.putU16(cipherSuiteCode(sh.cipherSuite))
-    w.putU8(0)            // legacy_compression_method
+    w.putU8(0) // legacy_compression_method
     w.putBytes(serializeExtensions(sh.extensions, context))
     w.toBytes()
 
@@ -129,7 +168,10 @@ function certificateBody(c: CertificateMessage): Array<Uint8> =
     let list = ByteWriter.make()
     for entry in c.certificates do
         list.putVec24(entry.certData)
-        list.putBytes(serializeExtensions(entry.extensions, ExtensionContext.EncryptedExtensionsContext))
+        list
+            .putBytes(
+            serializeExtensions(entry.extensions, ExtensionContext.EncryptedExtensionsContext)
+        )
     let w = ByteWriter.make()
     w.putVec8(c.certificateRequestContext)
     w.putVec24(list.toBytes())
@@ -153,7 +195,6 @@ function newSessionTicketBody(t: NewSessionTicketMessage): Array<Uint8> =
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
-
 /// Parse a single complete handshake message occupying all of `bytes`.
 function parseHandshake(bytes: Array<Uint8>): Result<HandshakeMessage, TlsError> =
     let r = ByteReader.make(bytes)
@@ -203,12 +244,17 @@ function parseClientHello(body: Array<Uint8>): Result<HandshakeMessage, TlsError
     if compression.length != 1 || compression.get(0) != 0u8 then
         try Result.Error(TlsError.IllegalParameter("non-null legacy compression method"))
     let extensions = try parseExtensions(r, ExtensionContext.ClientHelloContext)
-    Ok(HandshakeMessage.ClientHello(ClientHelloMessage {
-        random = random
-        legacySessionId = sessionId
-        cipherSuites = codesToCipherSuites(csBytes)
-        extensions = extensions
-    }))
+    Ok(
+        HandshakeMessage
+            .ClientHello(
+            ClientHelloMessage {
+                random = random
+                legacySessionId = sessionId
+                cipherSuites = codesToCipherSuites(csBytes)
+                extensions = extensions
+            }
+        )
+    )
 
 function parseServerHello(body: Array<Uint8>): Result<HandshakeMessage, TlsError> =
     let r = ByteReader.make(body)
@@ -220,16 +266,26 @@ function parseServerHello(body: Array<Uint8>): Result<HandshakeMessage, TlsError
     // RFC 8446 §4.1.3: legacy_compression_method MUST be 0; the client MUST abort otherwise.
     if compression != 0 then
         try Result.Error(TlsError.IllegalParameter("non-null legacy compression method"))
-    let context = if ConstantTime.equal(random, helloRetryMagic()) then ExtensionContext.HelloRetryRequestContext else ExtensionContext.ServerHelloContext
+    let context =
+        if ConstantTime.equal(random, helloRetryMagic()) then
+            ExtensionContext.HelloRetryRequestContext
+        else
+            ExtensionContext.ServerHelloContext
     let extensions = try parseExtensions(r, context)
     match cipherSuiteFromCode(csCode) with
         case None => Error(TlsError.IllegalParameter("unknown cipher suite in ServerHello"))
-        case Some(cs) => Ok(HandshakeMessage.ServerHello(ServerHelloMessage {
-            random = random
-            legacySessionId = sessionId
-            cipherSuite = cs
-            extensions = extensions
-        }))
+        case Some(cs) =>
+            Ok(
+                HandshakeMessage
+                    .ServerHello(
+                    ServerHelloMessage {
+                        random = random
+                        legacySessionId = sessionId
+                        cipherSuite = cs
+                        extensions = extensions
+                    }
+                )
+            )
 
 function parseEncryptedExtensions(body: Array<Uint8>): Result<HandshakeMessage, TlsError> =
     let r = ByteReader.make(body)
@@ -247,10 +303,12 @@ function parseCertificate(body: Array<Uint8>): Result<HandshakeMessage, TlsError
         let exts = try parseExtensions(lr, ExtensionContext.EncryptedExtensionsContext)
         entries = entries.prepend(CertificateEntry { certData = certData; extensions = exts })
     let parsedEntries = entries.reverse()
-    Ok(HandshakeMessage.Certificate(CertificateMessage {
-        certificateRequestContext = context
-        certificates = parsedEntries
-    }))
+    Ok(
+        HandshakeMessage
+            .Certificate(
+            CertificateMessage { certificateRequestContext = context; certificates = parsedEntries }
+        )
+    )
 
 function parseCertificateVerify(body: Array<Uint8>): Result<HandshakeMessage, TlsError> =
     let r = ByteReader.make(body)
@@ -258,10 +316,13 @@ function parseCertificateVerify(body: Array<Uint8>): Result<HandshakeMessage, Tl
     let signature = try r.vec16()
     match sigSchemeFromCode(code) with
         case None => Error(TlsError.IllegalParameter("unknown signature scheme"))
-        case Some(scheme) => Ok(HandshakeMessage.CertificateVerify(CertificateVerifyMessage {
-            algorithm = scheme
-            signature = signature
-        }))
+        case Some(scheme) =>
+            Ok(
+                HandshakeMessage
+                    .CertificateVerify(
+                    CertificateVerifyMessage { algorithm = scheme; signature = signature }
+                )
+            )
 
 function parseNewSessionTicket(body: Array<Uint8>): Result<HandshakeMessage, TlsError> =
     let r = ByteReader.make(body)
@@ -270,13 +331,18 @@ function parseNewSessionTicket(body: Array<Uint8>): Result<HandshakeMessage, Tls
     let nonce = try r.vec8()
     let ticket = try r.vec16()
     let extensions = try parseExtensions(r, ExtensionContext.EncryptedExtensionsContext)
-    Ok(HandshakeMessage.NewSessionTicket(NewSessionTicketMessage {
-        ticketLifetime = lifetime
-        ticketAgeAdd = ageAdd
-        ticketNonce = nonce
-        ticket = ticket
-        extensions = extensions
-    }))
+    Ok(
+        HandshakeMessage
+            .NewSessionTicket(
+            NewSessionTicketMessage {
+                ticketLifetime = lifetime
+                ticketAgeAdd = ageAdd
+                ticketNonce = nonce
+                ticket = ticket
+                extensions = extensions
+            }
+        )
+    )
 
 function parseKeyUpdate(body: Array<Uint8>): Result<HandshakeMessage, TlsError> =
     // RFC 8446 §4.6.3: KeyUpdate carries exactly one byte, request_update, which
@@ -294,14 +360,14 @@ function parseKeyUpdate(body: Array<Uint8>): Result<HandshakeMessage, TlsError> 
 
 test "tls handshake parseKeyUpdate validates request_update (C6)" =
     // RFC 8446 §4.6.3: request_update is exactly one byte, 0 or 1.
-    match parseKeyUpdate([|0u8|]) with
+    match parseKeyUpdate([| 0u8 |]) with
         case Ok(KeyUpdate(req)) => assert req == false
         case _ => assert false
-    match parseKeyUpdate([|1u8|]) with
+    match parseKeyUpdate([| 1u8 |]) with
         case Ok(KeyUpdate(req)) => assert req
         case _ => assert false
     // value 2 is illegal_parameter
-    match parseKeyUpdate([|2u8|]) with
+    match parseKeyUpdate([| 2u8 |]) with
         case Error(TlsError.IllegalParameter(_)) => assert true
         case _ => assert false
     // a zero-byte body is illegal_parameter
@@ -309,23 +375,33 @@ test "tls handshake parseKeyUpdate validates request_update (C6)" =
         case Error(TlsError.IllegalParameter(_)) => assert true
         case _ => assert false
     // a two-byte body is illegal_parameter (trailing byte)
-    match parseKeyUpdate([|1u8, 0u8|]) with
+    match parseKeyUpdate([| 1u8, 0u8 |]) with
         case Error(TlsError.IllegalParameter(_)) => assert true
         case _ => assert false
 
 test "tls handshake ClientHello round-trips" =
-    let ch = ClientHelloMessage {
-        random = Array<Uint8>.fill(32, 0x11u8)
-        legacySessionId = Array<Uint8>.fill(32, 0x22u8)
-        cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.ChaCha20Poly1305Sha256]
-        extensions = [
-            Extension.ServerName("example.com"),
-            Extension.SupportedVersions([versionTls13]),
-            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x33u8) }]),
-        ]
-    }
+    let ch =
+        ClientHelloMessage {
+            random = Array<Uint8>.fill(32, 0x11u8)
+            legacySessionId = Array<Uint8>.fill(32, 0x22u8)
+            cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.ChaCha20Poly1305Sha256]
+            extensions =
+                [
+                    Extension.ServerName("example.com"),
+                    Extension.SupportedVersions([versionTls13]),
+                    Extension
+                        .KeyShare(
+                        [
+                            KeyShareEntry {
+                                group = KeyExchangeGroup.X25519
+                                keyExchange = Array<Uint8>.fill(32, 0x33u8)
+                            }
+                        ]
+                    ),
+                ]
+        }
     let bytes = serializeHandshake(HandshakeMessage.ClientHello(ch))
-    assert bytes.get(0) == 1u8       // client_hello
+    assert bytes.get(0) == 1u8 // client_hello
     match parseHandshake(bytes).require with
         case ClientHello(parsed) =>
             assert parsed.random.length == 32
@@ -335,17 +411,27 @@ test "tls handshake ClientHello round-trips" =
         case _ => assert false
 
 test "tls handshake ServerHello round-trips" =
-    let sh = ServerHelloMessage {
-        random = Array<Uint8>.fill(32, 0x44u8)
-        legacySessionId = Array<Uint8>.fill(0, 0u8)
-        cipherSuite = CipherSuite.Aes256GcmSha384
-        extensions = [
-            Extension.SupportedVersions([versionTls13]),
-            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x55u8) }]),
-        ]
-    }
+    let sh =
+        ServerHelloMessage {
+            random = Array<Uint8>.fill(32, 0x44u8)
+            legacySessionId = Array<Uint8>.fill(0, 0u8)
+            cipherSuite = CipherSuite.Aes256GcmSha384
+            extensions =
+                [
+                    Extension.SupportedVersions([versionTls13]),
+                    Extension
+                        .KeyShare(
+                        [
+                            KeyShareEntry {
+                                group = KeyExchangeGroup.X25519
+                                keyExchange = Array<Uint8>.fill(32, 0x55u8)
+                            }
+                        ]
+                    ),
+                ]
+        }
     let bytes = serializeHandshake(HandshakeMessage.ServerHello(sh))
-    assert bytes.get(0) == 2u8       // server_hello
+    assert bytes.get(0) == 2u8 // server_hello
     match parseHandshake(bytes).require with
         case ServerHello(parsed) =>
             match parsed.cipherSuite with
@@ -355,12 +441,17 @@ test "tls handshake ServerHello round-trips" =
         case _ => assert false
 
 test "tls handshake Certificate and CertificateVerify round-trip" =
-    let certMsg = CertificateMessage {
-        certificateRequestContext = Array<Uint8>.empty()
-        certificates = [
-            CertificateEntry { certData = Array<Uint8>.fill(120, 0x66u8); extensions = List<Extension>.empty },
-        ]
-    }
+    let certMsg =
+        CertificateMessage {
+            certificateRequestContext = Array<Uint8>.empty()
+            certificates =
+                [
+                    CertificateEntry {
+                        certData = Array<Uint8>.fill(120, 0x66u8)
+                        extensions = List<Extension>.empty
+                    },
+                ]
+        }
     let cb = serializeHandshake(HandshakeMessage.Certificate(certMsg))
     match parseHandshake(cb).require with
         case Certificate(parsed) =>
@@ -369,7 +460,11 @@ test "tls handshake Certificate and CertificateVerify round-trip" =
                 case _ => assert false
         case _ => assert false
 
-    let cv = CertificateVerifyMessage { algorithm = SignatureScheme.EcdsaSecp256r1Sha256; signature = Array<Uint8>.fill(72, 0x77u8) }
+    let cv =
+        CertificateVerifyMessage {
+            algorithm = SignatureScheme.EcdsaSecp256r1Sha256
+            signature = Array<Uint8>.fill(72, 0x77u8)
+        }
     let vb = serializeHandshake(HandshakeMessage.CertificateVerify(cv))
     match parseHandshake(vb).require with
         case CertificateVerify(parsed) =>
@@ -391,17 +486,17 @@ test "tls handshake Finished and KeyUpdate round-trip" =
 
 test "tls handshakeMessageLength reads the uint24 header" =
     let fb = serializeHandshake(HandshakeMessage.Finished(Array<Uint8>.fill(48, 0x99u8)))
-    match handshakeMessageLength(fb[|..|]) with
+    match handshakeMessageLength(fb [| .. |]) with
         case Some(len) => assert len == 4 + 48
         case None => assert false
-    let padded = [|255u8|].concat(fb).concat([|255u8|])
-    match handshakeMessageLength(padded[|1..5|]) with
+    let padded = [| 255u8 |].concat(fb).concat([| 255u8 |])
+    match handshakeMessageLength(padded [| 1..5 |]) with
         case Some(len) => assert len == 4 + 48
         case None => assert false
-    match handshakeMessageLength(padded[|1..4|]) with
+    match handshakeMessageLength(padded [| 1..4 |]) with
         case None => assert true
         case Some(_) => assert false
     // a truncated header gives None
-    match handshakeMessageLength([|1u8, 0u8|][|..|]) with
+    match handshakeMessageLength([| 1u8, 0u8 |] [| .. |]) with
         case None => assert true
         case Some(_) => assert false

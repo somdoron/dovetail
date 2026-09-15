@@ -3,7 +3,7 @@ package standard.io.log
 /// Severity of a log event. Ordered `Trace < Debug < Info < Warn < Error`.
 /// A `Logger` with `minLevel = L` emits records whose level is `isAtLeast L`.
 @derive(Equatable)
-public enum LogLevel =
+ public enum LogLevel =
     Trace
     Debug
     Info
@@ -17,21 +17,20 @@ module LogLevel =
         match self with
             case LogLevel.Trace => 0
             case LogLevel.Debug => 1
-            case LogLevel.Info  => 2
-            case LogLevel.Warn  => 3
+            case LogLevel.Info => 2
+            case LogLevel.Warn => 3
             case LogLevel.Error => 4
 
     /// True when `self` is at least as severe as `other`.
-    public function isAtLeast(self, other: LogLevel): Bool =
-        self.value() >= other.value()
+    public function isAtLeast(self, other: LogLevel): Bool = self.value() >= other.value()
 
 implement Display for LogLevel =
     public function format(self: LogLevel): String =
         match self with
             case LogLevel.Trace => "trace"
             case LogLevel.Debug => "debug"
-            case LogLevel.Info  => "info"
-            case LogLevel.Warn  => "warn"
+            case LogLevel.Info => "info"
+            case LogLevel.Warn => "warn"
             case LogLevel.Error => "error"
 
 test "LogLevel.value ranks" =
@@ -41,8 +40,7 @@ test "LogLevel.value ranks" =
     assert LogLevel.Warn.value() == 3
     assert LogLevel.Error.value() == 4
 
-test "LogLevel.isAtLeast same level" =
-    assert LogLevel.Info.isAtLeast(LogLevel.Info)
+test "LogLevel.isAtLeast same level" = assert LogLevel.Info.isAtLeast(LogLevel.Info)
 
 test "LogLevel.isAtLeast higher beats lower" =
     assert LogLevel.Error.isAtLeast(LogLevel.Info)
@@ -55,6 +53,6 @@ test "LogLevel.isAtLeast lower does not beat higher" =
 test "LogLevel Display lowercased" =
     assert LogLevel.Trace.format() == "trace"
     assert LogLevel.Debug.format() == "debug"
-    assert LogLevel.Info.format()  == "info"
-    assert LogLevel.Warn.format()  == "warn"
+    assert LogLevel.Info.format() == "info"
+    assert LogLevel.Warn.format() == "warn"
     assert LogLevel.Error.format() == "error"

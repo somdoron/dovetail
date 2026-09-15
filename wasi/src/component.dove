@@ -14,8 +14,6 @@ package standard.wasi
 // write, when to give up — stays in the library above. That line is also what
 // lets a WIT binding generator emit these: it knows the types, and the types are
 // all these records need.
-
-
 /// An async component call: how to start it, and how to lift its result once the
 /// subtask returns.
 ///
@@ -340,7 +338,6 @@ public function noteCopyProgress(seen: Int32, moved: Int32, subject: String): In
             next
 
 // --- Tests ---
-
 /// A stream end whose result future counts how many times it is actually read
 /// and reports a failure when it is.
 ///
@@ -351,9 +348,10 @@ class EndingCounter(public mutable reads: Int32)
 function countingWrite(counter: EndingCounter): ComponentStreamWrite<Int32> =
     ComponentStreamWrite<Int32> {
         writable = Waitable(0i32)
-        ending = () =>
-            counter.reads = counter.reads + 1i32
-            Error(7i32)
+        ending =
+            () =>
+                counter.reads = counter.reads + 1i32
+                Error(7i32)
         ledger = EndingLedger.fresh()
         start = (bytes: ReadonlySlice<Uint8>) => CopyOperation(0i64)
         cancel = () => EventPayload(0i32)
@@ -388,19 +386,21 @@ test "a stream end's result future is read once however many times it is asked" 
 test "a stream end whose future reports nothing keeps reporting nothing" =
     // The control: `Ok` is a recorded answer too, not "not asked yet".
     let counter = EndingCounter(0i32)
-    let end = ComponentStreamWrite<Int32> {
-        writable = Waitable(0i32)
-        ending = () =>
-            counter.reads = counter.reads + 1i32
-            Ok(())
-        ledger = EndingLedger.fresh()
-        start = (bytes: ReadonlySlice<Uint8>) => CopyOperation(0i64)
-        cancel = () => EventPayload(0i32)
-        canceledError = 0i32
-        stillOpen = () => true
-        dropWritable = () => ()
-        dropResult = () => ()
-    }
+    let end =
+        ComponentStreamWrite<Int32> {
+            writable = Waitable(0i32)
+            ending =
+                () =>
+                    counter.reads = counter.reads + 1i32
+                    Ok(())
+            ledger = EndingLedger.fresh()
+            start = (bytes: ReadonlySlice<Uint8>) => CopyOperation(0i64)
+            cancel = () => EventPayload(0i32)
+            canceledError = 0i32
+            stillOpen = () => true
+            dropWritable = () => ()
+            dropResult = () => ()
+        }
     assert end.spendEnding().isOk
     assert end.spendEnding().isOk
     assert counter.reads == 1i32

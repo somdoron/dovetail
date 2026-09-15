@@ -7,4 +7,3 @@ public function join(self): Async<T, E> =
 public function interrupt(self): Async<Unit, Never> =
     let erased: Fiber<Any, Any> = self
     Interrupt(erased)
-

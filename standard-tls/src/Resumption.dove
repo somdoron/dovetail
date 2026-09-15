@@ -14,7 +14,6 @@ import standard.crypto.Sha256
 /// handshake the server may issue a NewSessionTicket; the client derives a
 /// resumption PSK from it and can offer it on a later connection. The offer is
 /// authenticated by a PSK binder — an HMAC over the truncated ClientHello.
-
 /// A resumption ticket: the opaque identity to echo back, the derived PSK, the
 /// cipher suite it is bound to, and the server's age obfuscation addend.
 public record StoredTicket =
@@ -50,8 +49,7 @@ public class TicketStore(mutable tickets: List<StoredTicket>) =
     public function find(self, identity: Array<Uint8>): Option<StoredTicket> =
         let mutable found: Option<StoredTicket> = None
         for t in self.tickets do
-            if ConstantTime.equal(t.identity, identity) && found.isNone then
-                found = Some(t)
+            if ConstantTime.equal(t.identity, identity) && found.isNone then found = Some(t)
         found
 
     /// Remove every ticket with this identity. The server calls this the moment it
@@ -60,18 +58,18 @@ public class TicketStore(mutable tickets: List<StoredTicket>) =
     /// full handshake, which is the RFC 8446 §8.1 anti-replay mechanism.
     public function remove(self, identity: Array<Uint8>): Unit =
         // `filter` keeps the newest-first order the store relies on.
-        self.tickets = self.tickets.filter(t => ConstantTime.equal(t.identity, identity) == false)
+        self
+            .tickets = self.tickets.filter(t => ConstantTime.equal(t.identity, identity) == false)
 
 /// Derive a resumption PSK from the resumption master secret and a ticket nonce
 /// (RFC 8446 §4.6.1): `HKDF-Expand-Label(rms, "resumption", nonce, Hash.length)`.
-function derivePsk(hash: HashAlgorithm, resumptionMaster: SymmetricKey, nonce: Array<Uint8>): SymmetricKey =
-    expandLabel(Hkdf(hash), resumptionMaster, "resumption", nonce, hash.digestSize)
+function derivePsk(hash: HashAlgorithm, resumptionMaster: SymmetricKey, nonce: Array<Uint8>):
+    SymmetricKey = expandLabel(Hkdf(hash), resumptionMaster, "resumption", nonce, hash.digestSize)
 
 /// The number of trailing ClientHello bytes occupied by a single PSK binder
 /// (its list-length prefix + entry-length byte + the binder itself). Used by the
 /// client, which offers exactly one PSK.
-function bindersOverhead(hash: HashAlgorithm): Int32 =
-    2 + 1 + hash.digestSize
+function bindersOverhead(hash: HashAlgorithm): Int32 = 2 + 1 + hash.digestSize
 
 /// The number of trailing ClientHello bytes occupied by the whole offered
 /// `PskBinderList`: its uint16 length prefix, plus a uint8 length and the binder
@@ -87,11 +85,13 @@ function bindersListLength(binders: List<Array<Uint8>>): Int32 =
 /// Compute a PSK binder (RFC 8446 §4.2.11.2): `HMAC(finished_key,
 /// Transcript-Hash(truncated ClientHello))`, where `finished_key` derives from
 /// the binder key under the Early Secret.
-function computeBinder(hash: HashAlgorithm, psk: SymmetricKey, truncatedTranscript: Array<Uint8>): Array<Uint8> =
+function computeBinder(hash: HashAlgorithm, psk: SymmetricKey, truncatedTranscript: Array<Uint8>):
+    Array<Uint8> =
     let hkdf = Hkdf(hash)
     let early = hkdf.extract(Array<Uint8>.empty(), psk.value)
     let binderKey = deriveSecret(hkdf, hash, early, "res binder", hash.hash(Array<Uint8>.empty()))
-    let finishedKey = expandLabel(hkdf, binderKey, "finished", Array<Uint8>.empty(), hash.digestSize)
+    let finishedKey =
+        expandLabel(hkdf, binderKey, "finished", Array<Uint8>.empty(), hash.digestSize)
     Hmac(hash).compute(finishedKey.value, hash.hash(truncatedTranscript))
 
 /// A placeholder binder (all zero) of the right length, for serialising a
@@ -130,7 +130,7 @@ function offersDheKe(exts: List<Extension>): Bool =
 
 test "tls resumption PSK and binder are deterministic" =
     let rms = SymmetricKey(Array<Uint8>.fill(32, 0x5au8))
-    let nonce = [|0x00u8, 0x01u8|]
+    let nonce = [| 0x00u8, 0x01u8 |]
     let psk1 = derivePsk(Sha256, rms, nonce)
     let psk2 = derivePsk(Sha256, rms, nonce)
     assert ConstantTime.equal(psk1.value, psk2.value)
@@ -147,63 +147,69 @@ test "tls resumption PSK and binder are deterministic" =
 
 test "tls ticket store finds by identity" =
     let store = TicketStore.make()
-    let t = StoredTicket {
-        identity = [|0xaau8, 0xbbu8|]
-        psk = SymmetricKey(Array<Uint8>.fill(32, 0x01u8))
-        cipherSuite = CipherSuite.Aes128GcmSha256
-        ageAdd = 0i64
-    }
+    let t =
+        StoredTicket {
+            identity = [| 0xaau8, 0xbbu8 |]
+            psk = SymmetricKey(Array<Uint8>.fill(32, 0x01u8))
+            cipherSuite = CipherSuite.Aes128GcmSha256
+            ageAdd = 0i64
+        }
     store.add(t)
     assert store.count == 1
-    match store.find([|0xaau8, 0xbbu8|]) with
+    match store.find([| 0xaau8, 0xbbu8 |]) with
         case Some(found) => assert cipherSuiteCode(found.cipherSuite) == 0x1301
         case None => assert false
-    match store.find([|0x00u8|]) with
+    match store.find([| 0x00u8 |]) with
         case Some(_) => assert false
         case None => assert true
 
 test "tls ticket store remove makes a ticket single-use" =
     let store = TicketStore.make()
-    let mk = (id: Array<Uint8>) => StoredTicket {
-        identity = id
-        psk = SymmetricKey(Array<Uint8>.fill(32, 0x01u8))
-        cipherSuite = CipherSuite.Aes128GcmSha256
-        ageAdd = 0i64
-    }
-    store.add(mk([|0xaau8, 0xbbu8|]))
-    store.add(mk([|0xccu8, 0xddu8|]))
+    let mk =
+        (id: Array<Uint8>) =>
+            StoredTicket {
+                identity = id
+                psk = SymmetricKey(Array<Uint8>.fill(32, 0x01u8))
+                cipherSuite = CipherSuite.Aes128GcmSha256
+                ageAdd = 0i64
+            }
+    store.add(mk([| 0xaau8, 0xbbu8 |]))
+    store.add(mk([| 0xccu8, 0xddu8 |]))
     assert store.count == 2
     // consuming one identity (as resumption does) removes exactly that ticket
-    store.remove([|0xaau8, 0xbbu8|])
+    store
+        .remove([| 0xaau8, 0xbbu8 |])
     assert store.count == 1
-    match store.find([|0xaau8, 0xbbu8|]) with
+    match store.find([| 0xaau8, 0xbbu8 |]) with
         case Some(_) => assert false
         case None => assert true
     // the other ticket is untouched; a second remove of a gone identity is a no-op
-    match store.find([|0xccu8, 0xddu8|]) with
+    match store.find([| 0xccu8, 0xddu8 |]) with
         case Some(_) => assert true
         case None => assert false
-    store.remove([|0xaau8, 0xbbu8|])
+    store.remove([| 0xaau8, 0xbbu8 |])
     assert store.count == 1
 
 test "TicketStore.latest returns the most recently added ticket" =
     let store = TicketStore.make()
-    let ticketWith: (Uint8) => StoredTicket = (tag: Uint8) => StoredTicket {
-        identity = [|tag|]
-        psk = SymmetricKey([|0x00u8|])
-        cipherSuite = CipherSuite.Aes128GcmSha256
-        ageAdd = 0i64
-    }
+    let ticketWith: (Uint8) => StoredTicket =
+        (tag: Uint8) =>
+            StoredTicket {
+                identity = [| tag |]
+                psk = SymmetricKey([| 0x00u8 |])
+                cipherSuite = CipherSuite.Aes128GcmSha256
+                ageAdd = 0i64
+            }
     store.add(ticketWith(0x01u8))
     store.add(ticketWith(0x02u8))
     assert store.count == 2
     // Newest first: `latest` must be the SECOND ticket, not the first.
     match store.latest() with
-        case Some(t) => assert ConstantTime.equal(t.identity, [|0x02u8|])
+        case Some(t) => assert ConstantTime.equal(t.identity, [| 0x02u8 |])
         case None => assert false
-    assert store.find([|0x01u8|]).isSome
-    assert store.find([|0x02u8|]).isSome
-    store.remove([|0x02u8|])
+    assert store.find([| 0x01u8 |]).isSome
+    assert store.find([| 0x02u8 |]).isSome
+    store.remove([| 0x02u8 |])
     assert store.count == 1
-    assert store.find([|0x02u8|]).isNone
-    assert store.find([|0x01u8|]).isSome
+    assert store.find([| 0x02u8 |]).isNone
+    assert store.find([| 0x01u8 |]).isSome

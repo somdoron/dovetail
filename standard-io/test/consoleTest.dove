@@ -7,7 +7,6 @@ import standard.io.Fiber
 import standard.io.Promise
 
 // `ConsoleError` Display formatting — covers each variant.
-
 test "ConsoleError.PipeBroken Display" =
     let e: ConsoleError = ConsoleError.PipeBroken
     assert e.format() == "broken pipe"
@@ -24,14 +23,12 @@ test "ConsoleError.Other Display includes code" =
 // runner's stdout/stderr (it inherits stdio). We can't capture inside Dovetail;
 // success is "compiles + runs without panic". Same fidelity as
 // `wasi/test/cli_test.dove`'s blocking-console tests.
-
 // A payload past the host's stdout buffer comes back BLOCKED and has to be
 // finished in several chunks. Through the fiber runtime that parks only the
 // writing fiber; the runtime's own blocking stdio path would park the whole
 // component (see `emit_flush_write`), which is why `Console` no longer uses it.
-
 @timeout(15000)
-test "Console.write: a payload past the host stdout buffer completes" =
+ test "Console.write: a payload past the host stdout buffer completes" =
     // 64 KiB — past both the host's stdout buffer and the scratch arena.
     let payload = "x".repeat(65536i32)
     let program: Async<Unit, ConsoleError> = Console.write(payload ++ "\n")
@@ -65,7 +62,6 @@ test "Console.errorWriteLine smoke" =
 // ever outstanding when the other path starts one. What the split protects
 // against only appears on a host that can exert backpressure — see
 // `dovetail/tests/stdio_blocking.rs`, which supplies one.
-
 test "Console.write and debug interleave" =
     let before: Async<Unit, ConsoleError> = Console.write("[console_test] before debug\n")
     before.run()
@@ -78,10 +74,9 @@ test "Console.write and debug interleave" =
 /// write either finishes or parks, and whoever awaited `ready` resumes behind it.
 async function writeThenSignal(ready: Promise<Unit, Never>): Async<Unit, Never> =
     await ready.complete(())
-    await Console.write("[console_test] from the forked writer\n").fold(
-        (_: ConsoleError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    await Console
+        .write("[console_test] from the forked writer\n")
+        .fold((_: ConsoleError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
 
 async function debugBehindAForkedWrite(): Async<Unit, Never> =
     let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
@@ -91,5 +86,4 @@ async function debugBehindAForkedWrite(): Async<Unit, Never> =
     await writer.join()
 
 @timeout(15000)
-test "debug fired behind a forked Console write does not trap" =
-    debugBehindAForkedWrite().run()
+ test "debug fired behind a forked Console write does not trap" = debugBehindAForkedWrite().run()

@@ -40,7 +40,8 @@ implement JsonDecoder for String =
 
 /// Decodes a `Json.Array` element-wise into `Array<T>`. Returns the first
 /// element decoding failure, if any.
-implement <T> JsonDecoder for Array<T> where T: JsonDecoder =
+implement<T> JsonDecoder for Array<T>
+    where T: JsonDecoder =
     public function fromJson(json: Json): Result<Array<T>, JsonError> =
         match List<T>.fromJson(json) with
             case Ok(items) => Ok(items.toArray())
@@ -48,7 +49,8 @@ implement <T> JsonDecoder for Array<T> where T: JsonDecoder =
 
 /// Decodes a `Json.Array` element-wise into `List<T>`. Returns the first
 /// element decoding failure, if any.
-implement <T> JsonDecoder for List<T> where T: JsonDecoder =
+implement<T> JsonDecoder for List<T>
+    where T: JsonDecoder =
     public function fromJson(json: Json): Result<List<T>, JsonError> =
         match json with
             case Json.Array(items) =>
@@ -65,19 +67,23 @@ implement <T> JsonDecoder for List<T> where T: JsonDecoder =
             case _ => Error(JsonError.TypeError("Array", json.typeName()))
 
 /// Decodes a `Json.Array` of length 2 into a 2-tuple.
-implement <A, B> JsonDecoder for (A, B) where A: JsonDecoder, B: JsonDecoder =
+implement<A, B> JsonDecoder for (A, B)
+    where A: JsonDecoder,
+          B: JsonDecoder =
     public function fromJson(json: Json): Result<(A, B), JsonError> =
         match json with
             case Json.Array([j0, j1]) =>
                 let a = try A.fromJson(j0)
                 let b = try B.fromJson(j1)
                 Ok((a, b))
-            case Json.Array(_) =>
-                Error(JsonError.Custom("expected array of length 2 for 2-tuple"))
+            case Json.Array(_) => Error(JsonError.Custom("expected array of length 2 for 2-tuple"))
             case _ => Error(JsonError.TypeError("Array", json.typeName()))
 
 /// Decodes a `Json.Array` of length 3 into a 3-tuple.
-implement <A, B, C> JsonDecoder for (A, B, C) where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder =
+implement<A, B, C> JsonDecoder for (A, B, C)
+    where A: JsonDecoder,
+          B: JsonDecoder,
+          C: JsonDecoder =
     public function fromJson(json: Json): Result<(A, B, C), JsonError> =
         match json with
             case Json.Array([j0, j1, j2]) =>
@@ -85,13 +91,15 @@ implement <A, B, C> JsonDecoder for (A, B, C) where A: JsonDecoder, B: JsonDecod
                 let b = try B.fromJson(j1)
                 let c = try C.fromJson(j2)
                 Ok((a, b, c))
-            case Json.Array(_) =>
-                Error(JsonError.Custom("expected array of length 3 for 3-tuple"))
+            case Json.Array(_) => Error(JsonError.Custom("expected array of length 3 for 3-tuple"))
             case _ => Error(JsonError.TypeError("Array", json.typeName()))
 
 /// Decodes a `Json.Array` of length 4 into a 4-tuple.
-implement <A, B, C, D> JsonDecoder for (A, B, C, D)
-    where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder, D: JsonDecoder =
+implement<A, B, C, D> JsonDecoder for (A, B, C, D)
+    where A: JsonDecoder,
+          B: JsonDecoder,
+          C: JsonDecoder,
+          D: JsonDecoder =
     public function fromJson(json: Json): Result<(A, B, C, D), JsonError> =
         match json with
             case Json.Array([j0, j1, j2, j3]) =>
@@ -100,13 +108,16 @@ implement <A, B, C, D> JsonDecoder for (A, B, C, D)
                 let c = try C.fromJson(j2)
                 let d = try D.fromJson(j3)
                 Ok((a, b, c, d))
-            case Json.Array(_) =>
-                Error(JsonError.Custom("expected array of length 4 for 4-tuple"))
+            case Json.Array(_) => Error(JsonError.Custom("expected array of length 4 for 4-tuple"))
             case _ => Error(JsonError.TypeError("Array", json.typeName()))
 
 /// Decodes a `Json.Array` of length 5 into a 5-tuple.
-implement <A, B, C, D, E> JsonDecoder for (A, B, C, D, E)
-    where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder, D: JsonDecoder, E: JsonDecoder =
+implement<A, B, C, D, E> JsonDecoder for (A, B, C, D, E)
+    where A: JsonDecoder,
+          B: JsonDecoder,
+          C: JsonDecoder,
+          D: JsonDecoder,
+          E: JsonDecoder =
     public function fromJson(json: Json): Result<(A, B, C, D, E), JsonError> =
         match json with
             case Json.Array([j0, j1, j2, j3, j4]) =>
@@ -116,13 +127,17 @@ implement <A, B, C, D, E> JsonDecoder for (A, B, C, D, E)
                 let d = try D.fromJson(j3)
                 let e = try E.fromJson(j4)
                 Ok((a, b, c, d, e))
-            case Json.Array(_) =>
-                Error(JsonError.Custom("expected array of length 5 for 5-tuple"))
+            case Json.Array(_) => Error(JsonError.Custom("expected array of length 5 for 5-tuple"))
             case _ => Error(JsonError.TypeError("Array", json.typeName()))
 
 /// Decodes a `Json.Array` of length 6 into a 6-tuple.
-implement <A, B, C, D, E, F> JsonDecoder for (A, B, C, D, E, F)
-    where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder, D: JsonDecoder, E: JsonDecoder, F: JsonDecoder =
+implement<A, B, C, D, E, F> JsonDecoder for (A, B, C, D, E, F)
+    where A: JsonDecoder,
+          B: JsonDecoder,
+          C: JsonDecoder,
+          D: JsonDecoder,
+          E: JsonDecoder,
+          F: JsonDecoder =
     public function fromJson(json: Json): Result<(A, B, C, D, E, F), JsonError> =
         match json with
             case Json.Array([j0, j1, j2, j3, j4, j5]) =>
@@ -133,8 +148,7 @@ implement <A, B, C, D, E, F> JsonDecoder for (A, B, C, D, E, F)
                 let e = try E.fromJson(j4)
                 let f = try F.fromJson(j5)
                 Ok((a, b, c, d, e, f))
-            case Json.Array(_) =>
-                Error(JsonError.Custom("expected array of length 6 for 6-tuple"))
+            case Json.Array(_) => Error(JsonError.Custom("expected array of length 6 for 6-tuple"))
             case _ => Error(JsonError.TypeError("Array", json.typeName()))
 
 test "JsonDecoder Bool" =
@@ -188,8 +202,7 @@ test "JsonDecoder Array element error propagates" =
     let result = Array<Int32>.fromJson(parsed)
     assert result.isError
 
-test "JsonDecoder Array wrong root type" =
-    assert Array<Int32>.fromJson(Json.Number(5.0)).isError
+test "JsonDecoder Array wrong root type" = assert Array<Int32>.fromJson(Json.Number(5.0)).isError
 
 test "JsonDecoder 2-tuple direct" =
     let parsed = Json.parse("[5,\"hi\"]").require

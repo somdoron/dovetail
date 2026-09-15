@@ -13,8 +13,7 @@ import standard.wasi.clock.WallClock
 
 extension TimeExtension for Instant =
     /// Reads the current Instant from the wall clock.
-    public property now: Async<Instant, Never> =
-        Async.thunk(() => WallClock.now)
+    public property now: Async<Instant, Never> = Async.thunk(() => WallClock.now)
 
 extension TimeExtension for LocalDateTime =
     /// Reads the current LocalDateTime at UTC from the wall clock.
@@ -71,35 +70,42 @@ extension TimeExtension for ZonedDateTime =
         Async.thunk(() => WallClock.now.toZonedDateTime(tz))
 
 // --- Tests ---
-
 test "Instant.now reads wall clock" =
-    let program: Async<Unit, Never> =
-        Instant.now.map((i: Instant) => assert i.epochSecond > 0i64)
+    let program: Async<Unit, Never> = Instant.now.map((i: Instant) => assert i.epochSecond > 0i64)
     program.run()
 
 test "LocalDate.today matches Instant.now at UTC" =
     let program: Async<Unit, Never> =
-        Instant.now.andThen((i: Instant) =>
-            LocalDate.today.map((d: LocalDate) =>
-                let derived = i.toLocalDate(TimeZone.utc)
-                assert d.year.value == derived.year.value
-                assert d.month.value == derived.month.value
-                assert d.day.value == derived.day.value
-            )
+        Instant
+            .now
+            .andThen(
+            (i: Instant) =>
+                LocalDate
+                    .today
+                    .map(
+                    (d: LocalDate) =>
+                        let derived = i.toLocalDate(TimeZone.utc)
+                        assert d.year.value == derived.year.value
+                        assert d.month.value == derived.month.value
+                        assert d.day.value == derived.day.value
+                )
         )
     program.run()
 
 test "LocalDateTime.nowAt with EST offset differs from UTC by 5 hours" =
     let est = TimeZone.of("EST", -18000)
     let program: Async<Unit, Never> =
-        Instant.now.map((i: Instant) =>
-            let utc = i.toLocalDateTime(TimeZone.utc)
-            let local = i.toLocalDateTime(est)
-            // EST is UTC-5: combine year+day+hour into an absolute hour count
-            // and verify the difference is 5 hours.
-            let utcHours = utc.date.day.value * 24 + utc.time.hour
-            let localHours = local.date.day.value * 24 + local.time.hour
-            assert utcHours - localHours == 5
+        Instant
+            .now
+            .map(
+            (i: Instant) =>
+                let utc = i.toLocalDateTime(TimeZone.utc)
+                let local = i.toLocalDateTime(est)
+                // EST is UTC-5: combine year+day+hour into an absolute hour count
+                // and verify the difference is 5 hours.
+                let utcHours = utc.date.day.value * 24 + utc.time.hour
+                let localHours = local.date.day.value * 24 + local.time.hour
+                assert utcHours - localHours == 5
         )
     program.run()
 
@@ -108,4 +114,6 @@ test "Year.today completes" =
     // pattern-match on the Year payload here because the `Async.map` closure
     // performs an `x as T` cast that the Async machinery flags as potentially
     // panicking for newtypes (Year = Int32 newtype) under full erasure.
-    Year.today.run()
+    Year
+        .today
+        .run()

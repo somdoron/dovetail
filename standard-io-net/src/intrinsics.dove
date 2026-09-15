@@ -35,12 +35,12 @@ import standard.io.Resource
 // connect a subtask; accept reads a stream of sockets; send/receive byte
 // streams).
 // =============================================================================
-
 /// Create a fresh TCP socket, closed on release.
 function tcpSocketResource(family: IpAddressFamily): Resource<TcpSocket, NetError> =
-    let acquire: () => Async<TcpSocket, NetError> = async () =>
-        let result = await Async.thunk(() => TcpSocket.create(family))
-        await Async.fromResult(result.mapError(mapWasiNetError))
+    let acquire: () => Async<TcpSocket, NetError> =
+        async () =>
+            let result = await Async.thunk(() => TcpSocket.create(family))
+            await Async.fromResult(result.mapError(mapWasiNetError))
     Resource.make(acquire, (s: TcpSocket) => Async.thunk(() => s.close()))
 
 /// An already-accepted socket wrapped in a Resource whose release closes it.
@@ -56,11 +56,16 @@ function ownedTcpSocket(handle: TcpSocket): Resource<TcpSocket, NetError> =
 /// An interrupt cancels the subtask and releases its result block; the socket
 /// created a step earlier is closed by `Resource.andThen`'s compensating
 /// release, which catches the interruption cause and runs masked.
-function connectAsync(socket: TcpSocket, address: SocketAddress): Async<Result<Unit, NetworkError>, Never> =
-    Async<Result<Unit, NetworkError>, Never>.subtask(ComponentSubtask<Result<Unit, NetworkError>, Never> {
-        start = () => socket.connectStart(address)
-        finish = (call: AsyncCall) => Ok(TcpSocket.connectFinish(call))
-    }).interruptible()
+function connectAsync(socket: TcpSocket, address: SocketAddress):
+    Async<Result<Unit, NetworkError>, Never> =
+    Async<Result<Unit, NetworkError>, Never>
+        .subtask(
+        ComponentSubtask<Result<Unit, NetworkError>, Never> {
+            start = () => socket.connectStart(address)
+            finish = (call: AsyncCall) => Ok(TcpSocket.connectFinish(call))
+        }
+    )
+        .interruptible()
 
 /// Post an accept on the listening socket's accept stream and block until one
 /// connection arrives, returning the accepted socket.
@@ -89,7 +94,10 @@ async function acceptAsync(listener: TcpListener): Async<TcpSocket, NetError> =
     // The runtime's QUEUE DRAIN is a different mechanism for a different case and
     // does not cover this one: it empties the queue when the listener is being
     // torn down, and this is a listener that is simply finished.
-    let _held = use listener.acceptLock.acquire().orPanicWith((_: MutexError) => "accept re-entered the listener's accept lock")
+    let _held = use listener
+        .acceptLock
+        .acquire()
+        .orPanicWith((_: MutexError) => "accept re-entered the listener's accept lock")
     // Built once per LISTENER (`TcpListener.source`), not once per accept and
     // not once per copy: six closures over a handle that outlives every accept
     // posted on it.
@@ -121,9 +129,8 @@ async function acceptAsync(listener: TcpListener): Async<TcpSocket, NetError> =
             // Only the park. Everything after it — the socket coming back, and
             // `Resource`'s pairing of it with its finalizer — runs masked again,
             // which is the half that must stay atomic.
-            let copied = await Async<Option<TcpSocket>, NetError>
-                .streamRead(source, 1i32)
-                .interruptible()
+            let copied =
+                await Async<Option<TcpSocket>, NetError>.streamRead(source, 1i32).interruptible()
             ending = copied._0
             accepted = copied._1
             // THE REASON COMPONENT IS ALWAYS `None` HERE, and the arm that
@@ -148,8 +155,7 @@ async function acceptAsync(listener: TcpListener): Async<TcpSocket, NetError> =
             // cancelled out from under it and leaves the listener perfectly
             // usable; latching on that would retire a live listener because one
             // acceptor was interrupted.
-            if ending == CopyResult.Dropped then
-                listener.openFlag.open = false
+            if ending == CopyResult.Dropped then listener.openFlag.open = false
             match accepted with
                 case Some(_) => posting = false
                 case None =>
@@ -184,7 +190,12 @@ async function acceptAsync(listener: TcpListener): Async<TcpSocket, NetError> =
                     else
                         // Bounded, on the library's one shared bound rather than
                         // a third hand-rolled copy of it — see `emptyCopyLimit`.
-                        emptyCopies = noteCopyProgress(emptyCopies, 0i32, "accept: a host copy carried no connection and did not end the listener")
+                        emptyCopies =
+                            noteCopyProgress(
+                                emptyCopies,
+                                0i32,
+                                "accept: a host copy carried no connection and did not end the listener"
+                            )
     // The Option is the whole point: an accept that ended or was cancelled can
     // STILL have transferred a socket, and there is no way to reach the socket
     // without deciding what to do with it.
@@ -248,7 +259,8 @@ function acceptEndError(ending: CopyResult): NetError =
 /// accept on whatever stream inherited the index. A flag rather than the
 /// listener itself because the listener is built AROUND this record; see
 /// `OpenFlag`.
-function acceptSource(acceptStream: Int32, open: OpenFlag): ComponentStreamRead<Option<TcpSocket>, NetError> =
+function acceptSource(acceptStream: Int32, open: OpenFlag):
+    ComponentStreamRead<Option<TcpSocket>, NetError> =
     ComponentStreamRead<Option<TcpSocket>, NetError> {
         readable = Waitable(acceptStream)
         ending = () => Ok(())
@@ -262,10 +274,11 @@ function acceptSource(acceptStream: Int32, open: OpenFlag): ComponentStreamRead<
         // that knows how to close it is this record. Lift it the way an accept
         // would have and close it; at a count of zero this is just the
         // buffer's release (`liftAcceptedSocket` discards it).
-        discardElements = (copy: CopyOperation, count: Int32) =>
-            match liftAcceptedSocket(copy, count) with
-                case Some(socket) => socket.close()
-                case None => ()
+        discardElements =
+            (copy: CopyOperation, count: Int32) =>
+                match liftAcceptedSocket(copy, count) with
+                    case Some(socket) => socket.close()
+                    case None => ()
         lift = (copy: CopyOperation, count: Int32) => liftAcceptedSocket(copy, count)
     }
 
@@ -279,25 +292,29 @@ function liftAcceptedSocket(copy: CopyOperation, count: Int32): Option<TcpSocket
 /// AsyncInputStream reading from `socket`'s inbound byte stream. Releasing drops
 /// both halves; nothing can be in flight by then, because the scope unwinds every
 /// fiber that could have posted a read before the finalizer runs.
-function inputStreamFromSocket(socket: TcpSocket): Resource<AsyncInputStream<NetworkError>, NetError> =
-    let open: () => Async<ComponentStreamRead<Array<Uint8>, NetworkError>, NetError> = async () =>
-        let tcpStream = await Async.thunk(() => socket.receive())
-        tcpStream.componentReceive()
+function inputStreamFromSocket(socket: TcpSocket):
+    Resource<AsyncInputStream<NetworkError>, NetError> =
+    let open: () => Async<ComponentStreamRead<Array<Uint8>, NetworkError>, NetError> =
+        async () =>
+            let tcpStream = await Async.thunk(() => socket.receive())
+            tcpStream.componentReceive()
     WasiInputStream<NetworkError>.resource<NetError>(open)
 
 /// AsyncOutputStream writing to `socket`'s outbound byte stream.
-function outputStreamFromSocket(socket: TcpSocket): Resource<AsyncOutputStream<NetworkError>, NetError> =
-    let open: () => Async<ComponentStreamWrite<NetworkError>, NetError> = async () =>
-        let tcpStream = await Async.thunk(() => socket.send())
-        tcpStream.componentSend()
+function outputStreamFromSocket(socket: TcpSocket):
+    Resource<AsyncOutputStream<NetworkError>, NetError> =
+    let open: () => Async<ComponentStreamWrite<NetworkError>, NetError> =
+        async () =>
+            let tcpStream = await Async.thunk(() => socket.send())
+            tcpStream.componentSend()
     // `TornWrite.Fence`: every consumer of a socket byte stream frames above it —
     // HTTP, TLS records, anything length-prefixed — so a hole is invisible to the
     // peer and the next write splices onto a truncated message. Reconnecting is
     // what a caller does about that, and a fenced socket is how it finds out.
-    WasiOutputStream<NetworkError>.resource<NetError>(NetworkError.ConnectionReset, TornWrite.Fence, open)
+    WasiOutputStream<NetworkError>
+        .resource<NetError>(NetworkError.ConnectionReset, TornWrite.Fence, open)
 
 // --- DNS -------------------------------------------------------------------
-
 /// Resolve `hostname` through `wasi:sockets/ip-name-lookup`. Start the async
 /// call, await its subtask, then lift the address list (the finish intrinsic
 /// frees both the element buffer and the call's pinned result block).
@@ -305,19 +322,24 @@ async function resolveWasi(hostname: String): Async<Array<IpAddress>, NetError> 
     // Interruptible for the same reason as `connectAsync`: DNS runs inside the
     // same composite connect acquire, and a resolver that never answers must
     // still be cancellable by a `.timeout` over the `use`.
-    let result = await Async<Result<Array<IpAddress>, DnsError>, Never>.subtask(ComponentSubtask<Result<Array<IpAddress>, DnsError>, Never> {
-        start = () => NameLookup.resolveStart(hostname)
-        finish = (call: AsyncCall) => Ok(NameLookup.resolveFinish(call))
-    }).interruptible()
+    let result =
+        await Async<Result<Array<IpAddress>, DnsError>, Never>
+            .subtask(
+            ComponentSubtask<Result<Array<IpAddress>, DnsError>, Never> {
+                start = () => NameLookup.resolveStart(hostname)
+                finish = (call: AsyncCall) => Ok(NameLookup.resolveFinish(call))
+            }
+        )
+            .interruptible()
     await Async.fromResult(result.mapError(mapWasiDnsError))
 
 // --- UDP -------------------------------------------------------------------
-
 /// Create a fresh UDP socket, closed on release.
 function udpSocketResource(family: IpAddressFamily): Resource<UdpSocket, NetError> =
-    let acquire: () => Async<UdpSocket, NetError> = async () =>
-        let result = await Async.thunk(() => UdpSocket.create(family))
-        await Async.fromResult(result.mapError(mapWasiNetError))
+    let acquire: () => Async<UdpSocket, NetError> =
+        async () =>
+            let result = await Async.thunk(() => UdpSocket.create(family))
+            await Async.fromResult(result.mapError(mapWasiNetError))
     Resource.make(acquire, (s: UdpSocket) => Async.thunk(() => s.close()))
 
 /// Send one datagram. `remoteAddress` must be `None` on a connected socket and
@@ -327,16 +349,24 @@ async function udpSendAsync(
     data: Array<Uint8>,
     remoteAddress: Option<SocketAddress>
 ): Async<Unit, NetError> =
-    let result = await Async<Result<Unit, NetworkError>, Never>.subtask(ComponentSubtask<Result<Unit, NetworkError>, Never> {
-        start = () => socket.sendStart(data, remoteAddress)
-        finish = (call: AsyncCall) => Ok(UdpSocket.sendFinish(call))
-    })
+    let result =
+        await Async<Result<Unit, NetworkError>, Never>
+            .subtask(
+            ComponentSubtask<Result<Unit, NetworkError>, Never> {
+                start = () => socket.sendStart(data, remoteAddress)
+                finish = (call: AsyncCall) => Ok(UdpSocket.sendFinish(call))
+            }
+        )
     await Async.fromResult(result.mapError(mapWasiNetError))
 
 /// Receive one datagram, blocking until one arrives.
 async function udpReceiveAsync(socket: UdpSocket): Async<ReceivedDatagram, NetError> =
-    let result = await Async<Result<ReceivedDatagram, NetworkError>, Never>.subtask(ComponentSubtask<Result<ReceivedDatagram, NetworkError>, Never> {
-        start = () => socket.receiveStart()
-        finish = (call: AsyncCall) => Ok(UdpSocket.receiveFinish(call))
-    })
+    let result =
+        await Async<Result<ReceivedDatagram, NetworkError>, Never>
+            .subtask(
+            ComponentSubtask<Result<ReceivedDatagram, NetworkError>, Never> {
+                start = () => socket.receiveStart()
+                finish = (call: AsyncCall) => Ok(UdpSocket.receiveFinish(call))
+            }
+        )
     await Async.fromResult(result.mapError(mapWasiNetError))

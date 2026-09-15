@@ -29,7 +29,8 @@ test "logfmt: bare message and no fields" =
     assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info msg=ready"
 
 test "logfmt: message with whitespace is quoted" =
-    let event = fixedEvent(LogLevel.Info, "", List<LogSpan>.empty, List<LogField>.empty, "user logged in")
+    let event =
+        fixedEvent(LogLevel.Info, "", List<LogSpan>.empty, List<LogField>.empty, "user logged in")
     assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info msg=\"user logged in\""
 
 test "logfmt: empty message renders as msg=" =
@@ -37,56 +38,59 @@ test "logfmt: empty message renders as msg=" =
     assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=warn msg="
 
 test "logfmt: logger name appears before msg" =
-    let event = fixedEvent(LogLevel.Info, "http.server", List<LogSpan>.empty, List<LogField>.empty, "ok")
+    let event =
+        fixedEvent(LogLevel.Info, "http.server", List<LogSpan>.empty, List<LogField>.empty, "ok")
     assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info logger=http.server msg=ok"
 
 test "logfmt: spans are dotted between logger and msg" =
-    let spans: List<LogSpan> = [
-        LogSpan.make("handleRequest"),
-        LogSpan.make("authenticate"),
-    ]
+    let spans: List<LogSpan> = [LogSpan.make("handleRequest"), LogSpan.make("authenticate"), ]
     let event = fixedEvent(LogLevel.Info, "svc", spans, List<LogField>.empty, "step")
-    assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info logger=svc span=handleRequest.authenticate msg=step"
+    assert Formatter
+        .logfmt(event)
+        == "ts=2024-01-02T03:04:05Z level=info logger=svc span=handleRequest.authenticate msg=step"
 
 test "logfmt: span fields are inlined after msg" =
     let span = LogSpan.make("op").withField("requestId", "abc-123")
     let event = fixedEvent(LogLevel.Info, "", [span], List<LogField>.empty, "doing")
-    assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info span=op msg=doing requestId=abc-123"
+    assert Formatter
+        .logfmt(event)
+        == "ts=2024-01-02T03:04:05Z level=info span=op msg=doing requestId=abc-123"
 
 test "logfmt: logger fields are appended after msg" =
-    let fields: List<LogField> = [
-        LogField.make("userId", 42i32),
-        LogField.make("region", "eu-west"),
-    ]
+    let fields: List<LogField> =
+        [LogField.make("userId", 42i32), LogField.make("region", "eu-west"), ]
     let event = fixedEvent(LogLevel.Info, "", List<LogSpan>.empty, fields, "auth")
-    assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info msg=auth userId=42 region=eu-west"
+    assert Formatter
+        .logfmt(event)
+        == "ts=2024-01-02T03:04:05Z level=info msg=auth userId=42 region=eu-west"
 
 test "logfmt: field value with spaces is quoted" =
-    let event = fixedEvent(
-        LogLevel.Error,
-        "",
-        List<LogSpan>.empty,
-        [LogField.make("path", "/var/log/my service.log")],
-        "bad"
-    )
-    assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=error msg=bad path=\"/var/log/my service.log\""
+    let event =
+        fixedEvent(
+            LogLevel.Error,
+            "",
+            List<LogSpan>.empty,
+            [LogField.make("path", "/var/log/my service.log")],
+            "bad"
+        )
+    assert Formatter
+        .logfmt(event)
+        == "ts=2024-01-02T03:04:05Z level=error msg=bad path=\"/var/log/my service.log\""
 
 test "logfmt: backslash and quote in value are escaped" =
-    let event = fixedEvent(
-        LogLevel.Info,
-        "",
-        List<LogSpan>.empty,
-        [LogField.make("raw", "a\"b\\c")],
-        "x"
-    )
+    let event =
+        fixedEvent(LogLevel.Info, "", List<LogSpan>.empty, [LogField.make("raw", "a\"b\\c")], "x")
     assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info msg=x raw=\"a\\\"b\\\\c\""
 
 test "logfmt: newline and tab in message are escaped" =
-    let event = fixedEvent(
-        LogLevel.Info,
-        "",
-        List<LogSpan>.empty,
-        List<LogField>.empty,
-        "line1\nline2\twith-tab"
-    )
-    assert Formatter.logfmt(event) == "ts=2024-01-02T03:04:05Z level=info msg=\"line1\\nline2\\twith-tab\""
+    let event =
+        fixedEvent(
+            LogLevel.Info,
+            "",
+            List<LogSpan>.empty,
+            List<LogField>.empty,
+            "line1\nline2\twith-tab"
+        )
+    assert Formatter
+        .logfmt(event)
+        == "ts=2024-01-02T03:04:05Z level=info msg=\"line1\\nline2\\twith-tab\""

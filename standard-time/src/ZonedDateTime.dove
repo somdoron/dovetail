@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a date-time paired with a time-zone.
 @derive(Equatable)
-public record ZonedDateTime =
+ public record ZonedDateTime =
     /// The local date-time component.
     dateTime: LocalDateTime
     /// The time-zone associated with this date-time.
@@ -15,8 +15,7 @@ module ZonedDateTime =
         ZonedDateTime { dateTime = dt; zone = zone }
 
     /// Returns the LocalDateTime component of this zoned date-time.
-    public function toLocalDateTime(self): LocalDateTime =
-        self.dateTime
+    public function toLocalDateTime(self): LocalDateTime = self.dateTime
 
 implement Display for ZonedDateTime =
     /// Formats this zoned date-time as "yyyy-MM-ddTHH:mm:ss zone".

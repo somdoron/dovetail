@@ -23,7 +23,6 @@ import standard.tls.SignatureScheme
 /// (`-----BEGIN EC PRIVATE KEY-----`) for ECDSA-P256. (RSA server signing is not
 /// supported by `standard.tls`, so RSA keys are rejected.) The key bytes are
 /// scrubbed on every scope-exit path; consume with `use`.
-
 /// A loaded server signing key together with the TLS signature scheme its
 /// algorithm implies — both are needed to build a `TlsServerConfig`.
 public record ServerKey =
@@ -41,7 +40,6 @@ implement Display for PrivateKeyError =
             case PrivateKeyError.Parse(m) => "private key parse error: " ++ m
 
 // --- minimal DER reader ----------------------------------------------------
-
 /// One parsed DER TLV: its tag and the [contentStart, contentEnd) content range
 /// within the source buffer. The next sibling begins at `contentEnd`.
 record Tlv =
@@ -77,8 +75,10 @@ function readTlv(bytes: Array<Uint8>, pos: Int32): Result<Tlv, PrivateKeyError> 
                 // A 4-byte length with the high bit set wraps `len` negative, and
                 // `cs + len` can overflow Int32 — either yields `ce < cs`, an
                 // inverted range the `ce > bytes.length` bound alone would accept.
-                if len < 0 || ce < cs || ce > bytes.length then Error(PrivateKeyError.Parse("DER length overflow"))
-                else Ok(Tlv { tag = tag; contentStart = cs; contentEnd = ce })
+                if len < 0 || ce < cs || ce > bytes.length then
+                    Error(PrivateKeyError.Parse("DER length overflow"))
+                else
+                    Ok(Tlv { tag = tag; contentStart = cs; contentEnd = ce })
 
 function sliceBytes(bytes: Array<Uint8>, start: Int32, stop: Int32): Array<Uint8> =
     let n = if stop > start then stop - start else 0
@@ -98,12 +98,17 @@ function scalar32(raw: Array<Uint8>): Array<Uint8> =
         dst
 
 // OIDs (the OBJECT IDENTIFIER *content*, sans tag/length).
-function oidEd25519(): Array<Uint8> = [|0x2bu8, 0x65u8, 0x70u8|]
-function oidEcPublicKey(): Array<Uint8> = [|0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x02u8, 0x01u8|]
+function oidEd25519(): Array<Uint8> = [| 0x2bu8, 0x65u8, 0x70u8 |]
+
+function oidEcPublicKey(): Array<Uint8> =
+    [| 0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x02u8, 0x01u8 |]
 
 let tagInteger: Int32 = 0x02
+
 let tagOctetString: Int32 = 0x04
+
 let tagOid: Int32 = 0x06
+
 let tagSequence: Int32 = 0x30
 
 /// Parse a PEM-decoded DER private key into a `ServerKey`. Accepts PKCS#8
@@ -121,11 +126,12 @@ public function parsePrivateKey(der: Array<Uint8>): Result<ServerKey, PrivateKey
             if second.tag == tagSequence then
                 // PKCS#8: second is the AlgorithmIdentifier SEQUENCE.
                 parsePkcs8(der, second)
-            else if second.tag == tagOctetString then
-                // SEC1 ECPrivateKey: second is the scalar OCTET STRING (P-256).
-                ecServerKey(der, second)
             else
-                Error(PrivateKeyError.Parse("unrecognized private key structure"))
+                if second.tag == tagOctetString then
+                    // SEC1 ECPrivateKey: second is the scalar OCTET STRING (P-256).
+                    ecServerKey(der, second)
+                else
+                    Error(PrivateKeyError.Parse("unrecognized private key structure"))
 
 /// PKCS#8: `alg` is the AlgorithmIdentifier SEQUENCE; the privateKey OCTET STRING
 /// follows it.
@@ -138,24 +144,34 @@ function parsePkcs8(der: Array<Uint8>, alg: Tlv): Result<ServerKey, PrivateKeyEr
         let pk = try readTlv(der, alg.contentEnd)
         if pk.tag != tagOctetString then
             Error(PrivateKeyError.Parse("expected privateKey OCTET STRING"))
-        else if ConstantTime.equal(oid, oidEd25519()) then
-            // Ed25519 privateKey = OCTET STRING wrapping the 32-byte seed.
-            let inner = try readTlv(der, pk.contentStart)
-            if inner.tag != tagOctetString || (inner.contentEnd - inner.contentStart) != 32 then
-                Error(PrivateKeyError.Parse("malformed Ed25519 private key"))
-            else
-                Ok(ServerKey { key = SecretKey(sliceBytes(der, inner.contentStart, inner.contentEnd)); scheme = SignatureScheme.Ed25519 })
-        else if ConstantTime.equal(oid, oidEcPublicKey()) then
-            // EC privateKey wraps a SEC1 ECPrivateKey SEQUENCE.
-            let ecSeq = try readTlv(der, pk.contentStart)
-            if ecSeq.tag != tagSequence then
-                Error(PrivateKeyError.Parse("expected ECPrivateKey SEQUENCE"))
-            else
-                let ecVer = try readTlv(der, ecSeq.contentStart)
-                let scalar = try readTlv(der, ecVer.contentEnd)
-                ecServerKey(der, scalar)
         else
-            Error(PrivateKeyError.Parse("unsupported key algorithm (only Ed25519 and EC P-256)"))
+            if ConstantTime.equal(oid, oidEd25519()) then
+                // Ed25519 privateKey = OCTET STRING wrapping the 32-byte seed.
+                let inner = try readTlv(der, pk.contentStart)
+                if inner.tag != tagOctetString || (inner.contentEnd - inner.contentStart) != 32 then
+                    Error(PrivateKeyError.Parse("malformed Ed25519 private key"))
+                else
+                    Ok(
+                        ServerKey {
+                            key = SecretKey(sliceBytes(der, inner.contentStart, inner.contentEnd))
+                            scheme = SignatureScheme.Ed25519
+                        }
+                    )
+            else
+                if ConstantTime.equal(oid, oidEcPublicKey()) then
+                    // EC privateKey wraps a SEC1 ECPrivateKey SEQUENCE.
+                    let ecSeq = try readTlv(der, pk.contentStart)
+                    if ecSeq.tag != tagSequence then
+                        Error(PrivateKeyError.Parse("expected ECPrivateKey SEQUENCE"))
+                    else
+                        let ecVer = try readTlv(der, ecSeq.contentStart)
+                        let scalar = try readTlv(der, ecVer.contentEnd)
+                        ecServerKey(der, scalar)
+                else
+                    Error(
+                        PrivateKeyError
+                            .Parse("unsupported key algorithm (only Ed25519 and EC P-256)")
+                    )
 
 /// Build a P-256 `ServerKey` from a scalar OCTET STRING TLV (validating range).
 function ecServerKey(der: Array<Uint8>, scalarElem: Tlv): Result<ServerKey, PrivateKeyError> =
@@ -164,39 +180,44 @@ function ecServerKey(der: Array<Uint8>, scalarElem: Tlv): Result<ServerKey, Priv
     else
         let raw = sliceBytes(der, scalarElem.contentStart, scalarElem.contentEnd)
         match EcdsaP256.secretKeyFromBytes(scalar32(raw)) with
-            case Some(sk) => Ok(ServerKey { key = sk; scheme = SignatureScheme.EcdsaSecp256r1Sha256 })
+            case Some(sk) =>
+                Ok(ServerKey { key = sk; scheme = SignatureScheme.EcdsaSecp256r1Sha256 })
             case None => Error(PrivateKeyError.Parse("invalid P-256 private scalar"))
 
 // --- file loader -----------------------------------------------------------
-
 extension PrivateKeyFile for ServerKey =
     /// Load and parse a PEM private key from `path`. The key bytes are zeroed on
     /// release. Consume with `use`.
     public function loadPrivateKeyPem(path: Path): Resource<ServerKey, PrivateKeyError> =
-        Resource.make(
+        Resource
+            .make(
             () => acquirePrivateKeyPem(path),
-            (k: ServerKey) => Async.thunk(() => k.key.clear()))
+            (k: ServerKey) => Async.thunk(() => k.key.clear())
+        )
 
 private async function acquirePrivateKeyPem(path: Path): Async<ServerKey, PrivateKeyError> =
     let bytes = await File.readBytes(path).mapError((e: FileStreamError) => PrivateKeyError.Io(e))
-    let der = await Async.fromResult(Pem.decode(bytes).mapError((_: X509Error) => PrivateKeyError.Parse("PEM decode failed")))
+    let der =
+        await Async
+            .fromResult(
+            Pem.decode(bytes).mapError((_: X509Error) => PrivateKeyError.Parse("PEM decode failed"))
+        )
     await Async.fromResult(parsePrivateKey(der))
 
 // --- tests -----------------------------------------------------------------
-
 function derLen(n: Int32): Array<Uint8> =
-    if n < 128 then [|n.toUint8()|]
-    else if n < 256 then [|0x81u8, n.toUint8()|]
-    else [|0x82u8, (n / 256).toUint8(), (n % 256).toUint8()|]
+    if n < 128 then [| n.toUint8() |]
+    else if n < 256 then [| 0x81u8, n.toUint8() |]
+    else [| 0x82u8, (n / 256).toUint8(), (n % 256).toUint8() |]
 
 function tlv(tag: Uint8, content: Array<Uint8>): Array<Uint8> =
-    [|tag|].concat(derLen(content.length)).concat(content)
+    [| tag |].concat(derLen(content.length)).concat(content)
 
 test "parsePrivateKey reads a PKCS#8 Ed25519 key" =
     let seed = Array<Uint8>.fill(32, 0x42u8)
-    let alg = tlv(0x30u8, tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
+    let alg = tlv(0x30u8, tlv(0x06u8, [| 0x2bu8, 0x65u8, 0x70u8 |]))
     let pk = tlv(0x04u8, tlv(0x04u8, seed))
-    let der = tlv(0x30u8, tlv(0x02u8, [|0x00u8|]).concat(alg).concat(pk))
+    let der = tlv(0x30u8, tlv(0x02u8, [| 0x00u8 |]).concat(alg).concat(pk))
     match parsePrivateKey(der) with
         case Ok(sk) =>
             assert ConstantTime.equal(sk.key.value, seed)
@@ -207,10 +228,10 @@ test "parsePrivateKey reads a PKCS#8 Ed25519 key" =
 
 test "parsePrivateKey rejects an unsupported (RSA) key" =
     // PKCS#8 with the RSA OID (1.2.840.113549.1.1.1) -> rejected.
-    let rsaOid = [|0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x01u8|]
+    let rsaOid = [| 0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x01u8 |]
     let alg = tlv(0x30u8, tlv(0x06u8, rsaOid).concat(tlv(0x05u8, Array<Uint8>.empty())))
     let pk = tlv(0x04u8, Array<Uint8>.fill(8, 0x00u8))
-    let der = tlv(0x30u8, tlv(0x02u8, [|0x00u8|]).concat(alg).concat(pk))
+    let der = tlv(0x30u8, tlv(0x02u8, [| 0x00u8 |]).concat(alg).concat(pk))
     match parsePrivateKey(der) with
         case Ok(_) => assert false
         case Error(_) => assert true

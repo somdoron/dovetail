@@ -32,7 +32,6 @@ import standard.wasi.Waitable
 // before it can re-run — and recovers. A third read on the same handle must then
 // still acquire the lock. On the broken runtime it queues forever behind the
 // stranded lock and the run stalls into the event loop's deadlock panic.
-
 /// A non-blocking read on `waitable`: its copy completes in the posting step, so
 /// the reader settles without ever parking or touching the host.
 function completingSource(waitable: Waitable): ComponentStreamRead<Array<Uint8>, CarriedError> =
@@ -41,22 +40,27 @@ function completingSource(waitable: Waitable): ComponentStreamRead<Array<Uint8>,
         ending = () => Ok(())
         // The canonical ABI packs a synchronous completion as `result | count<<4`
         // in the HIGH half of the operation word; the low half is unused here.
-        start = (capacity: Int32) =>
-            CopyOperation((((3i32 << 4) | CopyResult.Completed.code).toInt64()) << 32i64)
+        start =
+            (capacity: Int32) =>
+                CopyOperation((((3i32 << 4) | CopyResult.Completed.code).toInt64()) << 32i64)
         cancel = () => EventPayload.ofCopy(CopyResult.Cancelled, 0i32)
         canceledError = CarriedError.Broken
         stillOpen = () => true
         dropEnd = () => ()
         discardElements = (copy: CopyOperation, count: Int32) => ()
-        lift = (copy: CopyOperation, count: Int32) => [|7u8, 8u8, 9u8|]
+        lift = (copy: CopyOperation, count: Int32) => [| 7u8, 8u8, 9u8 |]
     }
 
 /// The lock holder: reads the blocked source, parks holding the handle's lock,
 /// and swallows whatever ends it (its interrupt hands it the raced payload).
-async function holdLockThenSwallow(source: ComponentStreamRead<Array<Uint8>, CarriedError>): Async<Unit, Never> =
-    await Async<Array<Uint8>, CarriedError>.streamRead(source, 64i32).foldCause<Unit, Never>(
+async function holdLockThenSwallow(source: ComponentStreamRead<Array<Uint8>, CarriedError>):
+    Async<Unit, Never> =
+    await Async<Array<Uint8>, CarriedError>
+        .streamRead(source, 64i32)
+        .foldCause<Unit, Never>(
         (_: Cause<CarriedError>) => Async.succeed(()),
-        (_: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(()))
+        (_: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(())
+    )
 
 /// The queued reader: it queues behind the holder for the same handle's lock. On
 /// its interrupt it recovers through `foldCause` — swallowing the interruption —
@@ -66,9 +70,12 @@ async function queueThenRecover(
     source: ComponentStreamRead<Array<Uint8>, CarriedError>,
     gate: Promise<Int32, Never>
 ): Async<Int32, Never> =
-    await Async<Array<Uint8>, CarriedError>.streamRead(source, 64i32).foldCause<Int32, Never>(
+    await Async<Array<Uint8>, CarriedError>
+        .streamRead(source, 64i32)
+        .foldCause<Int32, Never>(
         (_: Cause<CarriedError>) => gate.awaitPromise(),
-        (_: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(-1i32))
+        (_: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(-1i32)
+    )
 
 async function grantedLockInterruptProgram(landed: Array<String>): Async<Unit, Never> =
     // One real handle for the three readers to serialize on. `racingSource`'s
@@ -76,8 +83,8 @@ async function grantedLockInterruptProgram(landed: Array<String>): Async<Unit, N
     // undoing anything — which is what puts the queued reader in the granted
     // state under test.
     let waitable = idleWaitable()
-    let holderSource = racingSource([|1u8, 2u8|], waitable)
-    let queuedSource = racingSource([|1u8, 2u8|], waitable)
+    let holderSource = racingSource([| 1u8, 2u8 |], waitable)
+    let queuedSource = racingSource([| 1u8, 2u8 |], waitable)
     let probeSource = completingSource(waitable)
     let gate: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
 
@@ -101,9 +108,17 @@ async function grantedLockInterruptProgram(landed: Array<String>): Async<Unit, N
     // The handle's lock must be free again. A fresh read on the SAME handle has
     // to acquire it and complete. On the broken runtime the queued reader
     // stranded the lock, so this read queues forever and the run stalls.
-    landed.set(0, await Async<Array<Uint8>, CarriedError>.streamRead(probeSource, 64i32).fold<String, Never>(
-        (_: CarriedError) => Async.succeed("failed"),
-        (copied: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(copied._1.length.format() ++ " bytes")))
+    landed
+        .set(
+        0,
+        await Async<Array<Uint8>, CarriedError>
+            .streamRead(probeSource, 64i32)
+            .fold<String, Never>(
+            (_: CarriedError) => Async.succeed("failed"),
+            (copied: (CopyResult, Array<Uint8>, Option<CarriedError>)) =>
+                Async.succeed(copied._1.length.format() ++ " bytes")
+        )
+    )
 
     // Release the recovered reader and reap everyone.
     let _released = await gate.complete(0i32)
@@ -112,7 +127,7 @@ async function grantedLockInterruptProgram(landed: Array<String>): Async<Unit, N
     ()
 
 @timeout(10000)
-test "a granted stream lock is released when its fiber is interrupted before posting" =
+ test "a granted stream lock is released when its fiber is interrupted before posting" =
     let landed = Array<String>.fill(1, "")
     grantedLockInterruptProgram(landed).run()
     // The probe read acquired the freed lock and completed with its three bytes.
@@ -130,14 +145,17 @@ async function sleepThenQueueThenRecover(
     gate: Promise<Int32, Never>
 ): Async<Int32, Never> =
     await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
-    await Async<Array<Uint8>, CarriedError>.streamRead(source, 64i32).foldCause<Int32, Never>(
+    await Async<Array<Uint8>, CarriedError>
+        .streamRead(source, 64i32)
+        .foldCause<Int32, Never>(
         (_: Cause<CarriedError>) => gate.awaitPromise(),
-        (_: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(-1i32))
+        (_: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(-1i32)
+    )
 
 async function staleFlagGrantedLockProgram(landed: Array<String>): Async<Unit, Never> =
     let waitable = idleWaitable()
-    let holderSource = racingSource([|1u8, 2u8|], waitable)
-    let queuedSource = racingSource([|1u8, 2u8|], waitable)
+    let holderSource = racingSource([| 1u8, 2u8 |], waitable)
+    let queuedSource = racingSource([| 1u8, 2u8 |], waitable)
     let probeSource = completingSource(waitable)
     let gate: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
     let holder: Fiber<Unit, Never> = await holdLockThenSwallow(holderSource).fork()
@@ -146,17 +164,24 @@ async function staleFlagGrantedLockProgram(landed: Array<String>): Async<Unit, N
     await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
     await holder.interrupt()
     await queued.interrupt()
-    landed.set(0, await Async<Array<Uint8>, CarriedError>.streamRead(probeSource, 64i32).fold<String, Never>(
-        (_: CarriedError) => Async.succeed("failed"),
-        (copied: (CopyResult, Array<Uint8>, Option<CarriedError>)) => Async.succeed(copied._1.length.format() ++ " bytes")))
+    landed
+        .set(
+        0,
+        await Async<Array<Uint8>, CarriedError>
+            .streamRead(probeSource, 64i32)
+            .fold<String, Never>(
+            (_: CarriedError) => Async.succeed("failed"),
+            (copied: (CopyResult, Array<Uint8>, Option<CarriedError>)) =>
+                Async.succeed(copied._1.length.format() ++ " bytes")
+        )
+    )
     let _released = await gate.complete(0i32)
     await holder.join()
     let _q = await queued.join()
     ()
 
 @timeout(10000)
-test "a granted stream lock is released even when its fiber carries a stale flag" =
+ test "a granted stream lock is released even when its fiber carries a stale flag" =
     let landed = Array<String>.fill(1, "")
     staleFlagGrantedLockProgram(landed).run()
     assert landed.get(0) == "3 bytes"
-

@@ -14,7 +14,8 @@ private let BASE: Int64 = 1000000000i64
 module BigInt =
     /// Creates a BigInt from a 32-bit integer.
     public function fromInt32(n: Int32): BigInt =
-        if n == 0 then BigInt.zero()
+        if n == 0 then
+            BigInt.zero()
         else if n > 0 then
             let mag = bigintMagFromUint32(n.toInt64())
             BigInt { sign = true; magnitude = mag }
@@ -24,7 +25,8 @@ module BigInt =
 
     /// Creates a BigInt from a 64-bit integer.
     public function fromInt64(n: Int64): BigInt =
-        if n == 0i64 then BigInt.zero()
+        if n == 0i64 then
+            BigInt.zero()
         else if n > 0i64 then
             let mag = bigintMagFromUint64(n)
             BigInt { sign = true; magnitude = mag }
@@ -33,12 +35,10 @@ module BigInt =
             BigInt { sign = false; magnitude = mag }
 
     /// Returns the BigInt representing zero.
-    public function zero(): BigInt =
-        BigInt { sign = true; magnitude = Array.fill(1, 0) }
+    public function zero(): BigInt = BigInt { sign = true; magnitude = Array.fill(1, 0) }
 
     /// Returns the BigInt representing one.
-    public function one(): BigInt =
-        BigInt { sign = true; magnitude = Array.fill(1, 1) }
+    public function one(): BigInt = BigInt { sign = true; magnitude = Array.fill(1, 1) }
 
     /// Returns the sum of this BigInt and another.
     public function add(self, other: BigInt): BigInt =
@@ -47,7 +47,8 @@ module BigInt =
             BigInt { sign = self.sign; magnitude = mag }
         else
             let cmp = bigintCmpMag(self.magnitude, other.magnitude)
-            if cmp == Ordering.Equal then BigInt.zero()
+            if cmp == Ordering.Equal then
+                BigInt.zero()
             else if cmp == Ordering.Greater then
                 let mag = bigintSubMag(self.magnitude, other.magnitude)
                 BigInt { sign = self.sign; magnitude = mag }
@@ -56,16 +57,16 @@ module BigInt =
                 BigInt { sign = other.sign; magnitude = mag }
 
     /// Returns the difference of this BigInt minus another.
-    public function subtract(self, other: BigInt): BigInt =
-        self.add(other.negate())
+    public function subtract(self, other: BigInt): BigInt = self.add(other.negate())
 
     /// Returns the product of this BigInt and another.
     public function multiply(self, other: BigInt): BigInt =
         let mag = bigintMulMag(self.magnitude, other.magnitude)
-        let sign = if mag.length == 1 then
-            if mag.get(0) == 0 then true
-            else self.sign == other.sign
-        else self.sign == other.sign
+        let sign =
+            if mag.length == 1 then
+                if mag.get(0) == 0 then true else self.sign == other.sign
+            else
+                self.sign == other.sign
         BigInt { sign = sign; magnitude = mag }
 
     /// Returns the negation of this BigInt. Zero remains unchanged.
@@ -74,8 +75,7 @@ module BigInt =
         else BigInt { sign = if self.sign then false else true; magnitude = self.magnitude }
 
     /// Returns the absolute value of this BigInt.
-    public function abs(self): BigInt =
-        BigInt { sign = true; magnitude = self.magnitude }
+    public function abs(self): BigInt = BigInt { sign = true; magnitude = self.magnitude }
 
     /// Converts this BigInt to an Int32, returning None if the value overflows.
     public function toInt32(self): Option<Int32> =
@@ -86,14 +86,12 @@ module BigInt =
                 else Some(value.toInt32())
 
     /// Converts this BigInt to an Int64, returning None if the value overflows.
-    public function toInt64(self): Option<Int64> =
-        bigintMagToInt64(self.magnitude, self.sign)
+    public function toInt64(self): Option<Int64> = bigintMagToInt64(self.magnitude, self.sign)
 
     public property isNegative(self): Bool = !self.sign && !self.isZero
 
     /// Returns true if this BigInt is zero.
-    public property isZero(self): Bool =
-        self.magnitude.length == 1 && self.magnitude.get(0) == 0
+    public property isZero(self): Bool = self.magnitude.length == 1 && self.magnitude.get(0) == 0
 
 implement Equatable for BigInt =
     /// Returns true if two BigInts have the same sign and magnitude.
@@ -104,8 +102,10 @@ implement Equatable for BigInt =
 implement Comparable for BigInt =
     /// Compares two BigInts, returning their relative ordering.
     public function compare(self: BigInt, other: BigInt): Ordering =
-        if self.sign && !other.sign then Ordering.Greater
-        else if !self.sign && other.sign then Ordering.Less
+        if self.sign && !other.sign then
+            Ordering.Greater
+        else if !self.sign && other.sign then
+            Ordering.Less
         else if self.sign then
             bigintCmpMag(self.magnitude, other.magnitude)
         else
@@ -124,13 +124,15 @@ implement Hashable for BigInt =
 implement Display for BigInt =
     /// Formats this BigInt as a decimal string, with a leading minus for negatives.
     public function format(self: BigInt): String =
-        if self.isZero then "0"
+        if self.isZero then
+            "0"
         else
             let s = bigintMagFormat(self.magnitude)
             if self.sign then s else "-" ++ s
 
 function bigintMagFromUint64(n: Int64): Array<Int32> =
-    if n == 0i64 then Array.fill(1, 0)
+    if n == 0i64 then
+        Array.fill(1, 0)
     else
         let mutable parts = Array.fill(0, 0)
         let mutable x = n
@@ -140,14 +142,15 @@ function bigintMagFromUint64(n: Int64): Array<Int32> =
             x = x / BASE
         parts
 
-function bigintMagFromUint32(n: Int64): Array<Int32> =
-    bigintMagFromUint64(n)
+function bigintMagFromUint32(n: Int64): Array<Int32> = bigintMagFromUint64(n)
 
 function bigintCmpMag(a: Array<Int32>, b: Array<Int32>): Ordering =
     let alen = a.length
     let blen = b.length
-    if alen > blen then Ordering.Greater
-    else if alen < blen then Ordering.Less
+    if alen > blen then
+        Ordering.Greater
+    else if alen < blen then
+        Ordering.Less
     else
         let mutable i = alen - 1
         let mutable result = Ordering.Equal
@@ -160,7 +163,8 @@ function bigintCmpMag(a: Array<Int32>, b: Array<Int32>): Ordering =
             else if av < bv then
                 result = Ordering.Less
                 i = -1
-            else i = i - 1
+            else
+                i = i - 1
         result
 
 function bigintAddMag(a: Array<Int32>, b: Array<Int32>): Array<Int32> =
@@ -178,8 +182,7 @@ function bigintAddMag(a: Array<Int32>, b: Array<Int32>): Array<Int32> =
         let digit = (sum % BASE).toInt32()
         result = result.concat(Array.fill(1, digit))
         i = i + 1
-    if carry > 0i64 then
-        result = result.concat(Array.fill(1, carry.toInt32()))
+    if carry > 0i64 then result = result.concat(Array.fill(1, carry.toInt32()))
     bigintNormalize(result)
 
 function bigintSubMag(a: Array<Int32>, b: Array<Int32>): Array<Int32> =
@@ -204,9 +207,12 @@ function bigintSubMag(a: Array<Int32>, b: Array<Int32>): Array<Int32> =
 function bigintMulMag(a: Array<Int32>, b: Array<Int32>): Array<Int32> =
     let alen = a.length
     let blen = b.length
-    if alen == 0 || blen == 0 then Array.fill(1, 0)
-    else if alen == 1 && a.get(0) == 0 then Array.fill(1, 0)
-    else if blen == 1 && b.get(0) == 0 then Array.fill(1, 0)
+    if alen == 0 || blen == 0 then
+        Array.fill(1, 0)
+    else if alen == 1 && a.get(0) == 0 then
+        Array.fill(1, 0)
+    else if blen == 1 && b.get(0) == 0 then
+        Array.fill(1, 0)
     else
         let mutable acc = Array.fill(1, 0)
         let mutable j = 0
@@ -225,8 +231,7 @@ function bigintMulMag(a: Array<Int32>, b: Array<Int32>): Array<Int32> =
                 carry = prod / BASE
                 row = row.concat(Array.fill(1, (prod % BASE).toInt32()))
                 mut_i = mut_i + 1
-            if carry > 0i64 then
-                row = row.concat(Array.fill(1, carry.toInt32()))
+            if carry > 0i64 then row = row.concat(Array.fill(1, carry.toInt32()))
             acc = bigintAddMag(acc, row)
             j = j + 1
         bigintNormalize(acc)
@@ -236,12 +241,15 @@ function bigintNormalize(mag: Array<Int32>): Array<Int32> =
     let mutable result_len = 1
     let mutable k = len - 1
     while k >= 1 do
-        if mag.get(k) == 0 then k = k - 1
+        if mag.get(k) == 0 then
+            k = k - 1
         else
             result_len = k + 1
             k = 0
-    if result_len == 0 then Array.fill(1, 0)
-    else if result_len == len then mag
+    if result_len == 0 then
+        Array.fill(1, 0)
+    else if result_len == len then
+        mag
     else
         let result = Array.fill(result_len, 0)
         let mutable mut_j = 0
@@ -257,14 +265,13 @@ function bigintMagToInt64(mag: Array<Int32>, positive: Bool): Option<Int64> =
     let mutable overflow = false
     while i >= 0 && !overflow do
         let digit = mag.get(i).toInt64()
-        if value < limit / BASE then overflow = true
+        if value < limit / BASE then
+            overflow = true
         else
             value = value * BASE
-            if value < limit + digit then overflow = true
-            else value = value - digit
+            if value < limit + digit then overflow = true else value = value - digit
         i = i - 1
-    if overflow then None
-    else Some(if positive then 0i64 - value else value)
+    if overflow then None else Some(if positive then 0i64 - value else value)
 
 function bigintMagFromNegative(n: Int64): Array<Int32> =
     let mutable parts = Array.fill(0, 0)
@@ -290,7 +297,8 @@ function bigintMagHash(mag: Array<Int32>): Int64 =
 
 function bigintMagFormat(mag: Array<Int32>): String =
     let len = mag.length
-    if len == 0 then "0"
+    if len == 0 then
+        "0"
     else
         let mutable result = ""
         let mutable mut_i = len - 1
@@ -407,14 +415,17 @@ test "BigInt toInt32 overflow" =
 
 implement Add<BigInt> for BigInt =
     type Output = BigInt
+
     public function add(self: BigInt, rhs: BigInt): BigInt = self.add(rhs)
 
 implement Sub<BigInt> for BigInt =
     type Output = BigInt
+
     public function sub(self: BigInt, rhs: BigInt): BigInt = self.subtract(rhs)
 
 implement Mul<BigInt> for BigInt =
     type Output = BigInt
+
     public function mul(self: BigInt, rhs: BigInt): BigInt = self.multiply(rhs)
 
 implement Neg for BigInt =

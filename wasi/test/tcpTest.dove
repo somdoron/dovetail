@@ -12,7 +12,8 @@ import standard.wasi.Waitable
 import standard.wasi.Stream
 
 function awaitTcpCall(call: AsyncCall): Unit =
-    if call.returned then ()
+    if call.returned then
+        ()
     else
         let set = WaitableSet.make()
         set.join(call.subtask.waitable)
@@ -22,10 +23,13 @@ function awaitTcpCall(call: AsyncCall): Unit =
         set.close()
 
 function loopback(port: Uint16): SocketAddress =
-    SocketAddress.V4(Ipv4SocketAddress {
-        port = port
-        address = Ipv4Address { a = 127u8; b = 0u8; c = 0u8; d = 1u8 }
-    })
+    SocketAddress
+        .V4(
+        Ipv4SocketAddress {
+            port = port
+            address = Ipv4Address { a = 127u8; b = 0u8; c = 0u8; d = 1u8 }
+        }
+    )
 
 function localPort(socket: TcpSocket): Uint16 =
     match socket.localAddress().require with
@@ -85,8 +89,8 @@ test "tcp loopback connect accept exchange" =
     // client -> server
     let clientSend = client.send()
     let serverReceive = server.receive()
-    let payload = "!ping p3?".bytes()[|1..8|]
-    let writeOp = TcpSocket.sendWriteStart(clientSend.stream, payload[|..|].readonly)
+    let payload = "!ping p3?".bytes() [| 1..8 |]
+    let writeOp = TcpSocket.sendWriteStart(clientSend.stream, payload [| .. |].readonly)
     if writeOp.blocked then
         let n = awaitStreamOp(clientSend.stream)
         assert n == payload.length
@@ -105,7 +109,8 @@ test "tcp loopback connect accept exchange" =
     assert String.fromBytes(data, 0, data.length) == "ping p3"
 
     // cleanup
-    TcpSocket.dropSendWritable(clientSend.stream)
+    TcpSocket
+        .dropSendWritable(clientSend.stream)
     TcpSocket.dropSendResult(clientSend.resultFuture)
     TcpSocket.dropReceiveReadable(serverReceive.stream)
     TcpSocket.dropReceiveResult(serverReceive.resultFuture)
@@ -134,7 +139,7 @@ test "tcp large write then drop send writable" =
     // Large write to force backpressure/blocking before the server reads.
     let clientSend = client.send()
     let payload = Array<Uint8>.fill(200000, 65u8)
-    let writeOp = TcpSocket.sendWriteStart(clientSend.stream, payload[|..|].readonly)
+    let writeOp = TcpSocket.sendWriteStart(clientSend.stream, payload [| .. |].readonly)
     let mutable written = 0
     if writeOp.blocked then
         // drain via server reads while the write completes
@@ -144,7 +149,8 @@ test "tcp large write then drop send writable" =
         written = writeOp.count
     Stream.discard(writeOp)
     // now drop — this is the operation that traps under HTTP
-    TcpSocket.dropSendResult(clientSend.resultFuture)
+    TcpSocket
+        .dropSendResult(clientSend.resultFuture)
     TcpSocket.dropSendWritable(clientSend.stream)
     assert written > 0
     client.close()

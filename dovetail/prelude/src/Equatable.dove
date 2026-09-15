@@ -42,15 +42,15 @@ implement Equatable for Char =
 implement Equatable for String =
     public function equals(self: String, other: String): Bool = self == other
 
-implement <A, B> Equatable for (A, B) where A: Equatable, B: Equatable =
+implement<A, B> Equatable for (A, B) where A: Equatable, B: Equatable =
     public function equals(self: (A, B), other: (A, B)): Bool =
         if self._0.equals(other._0) then self._1.equals(other._1) else false
 
-implement <T, U> Equatable for T ~ U where T: Tuple, T: Equatable, U: Equatable =
-    public function equals(self: T ~ U, other: T ~ U): Bool =
+implement<T, U> Equatable for T ~U where T: Tuple, T: Equatable, U: Equatable =
+    public function equals(self: T ~U, other: T ~U): Bool =
         self.init.equals(other.init) && self.last.equals(other.last)
 
-implement <T> Equatable for Array<T> where T: Equatable =
+implement<T> Equatable for Array<T> where T: Equatable =
     public function equals(self: Array<T>, other: Array<T>): Bool =
         if self.length == other.length then
             let mutable i = 0
@@ -61,7 +61,8 @@ implement <T> Equatable for Array<T> where T: Equatable =
                     break
                 i = i + 1
             isEquals
-        else false
+        else
+            false
 
 test "Equatable Int32" =
     assert 5i32.equals(5i32) == true

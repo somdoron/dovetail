@@ -12,7 +12,6 @@ import standard.wasi.cli.Console
 import standard.wasi.cli.Process
 
 // --- Static constructors ---
-
 public function succeed(value: T): Async<T, Never> = Succeed(value)
 
 public function fail(error: E): Async<Never, E> =
@@ -22,8 +21,7 @@ public function fail(error: E): Async<Never, E> =
 public function failPanic(message: String): Async<T, E> =
     FailCause<E>(Cause.Panicked(message, emptyTrace()))
 
-public function fromCause(cause: Cause<E>): Async<T, E> =
-    FailCause(cause)
+public function fromCause(cause: Cause<E>): Async<T, E> = FailCause(cause)
 
 /// Lift a `Result<A, E>` into `Async<A, E>`. `Ok(value)` becomes
 /// `succeed(value)`, `Error(error)` becomes `fail(error)`. The Result is
@@ -32,10 +30,12 @@ public function fromCause(cause: Cause<E>): Async<T, E> =
 /// construction time.
 public function fromResult<A>(result: ByName<Result<A, E>>): Async<A, E> =
     let thunked: Async<Result<A, E>, E> = Async.thunk(() => result.get)
-    thunked.andThen<A>((r: Result<A, E>) =>
-        match r with
-            case Ok(value) => Async.succeed(value)
-            case Error(error) => Async.fail(error)
+    thunked
+        .andThen<A>(
+        (r: Result<A, E>) =>
+            match r with
+                case Ok(value) => Async.succeed(value)
+                case Error(error) => Async.fail(error)
     )
 
 /// Run an async component call — start it, park until its subtask returns, lift
@@ -47,8 +47,7 @@ public function fromResult<A>(result: ByName<Result<A, E>>): Async<A, E> =
 /// interpreter step, so there is no window in which a started call has no cancel
 /// path, and delivery consumes the subtask in the same breath as it retires the
 /// suspension.
-public function subtask(call: ComponentSubtask<T, E>): Async<T, E> =
-    RunSubtask<T, E>(call)
+public function subtask(call: ComponentSubtask<T, E>): Async<T, E> = RunSubtask<T, E>(call)
 
 /// Park until a `future<T>` resolves and take its value.
 ///
@@ -78,8 +77,8 @@ public function futureValue(future: ComponentFuture<T, E>): Async<T, E> =
 ///
 /// What `Dropped` *means* — end of input, or a failure — is still the caller's to
 /// decide; the runtime never invents an `E` the result future did not give it.
-public function streamRead(read: ComponentStreamRead<T, E>, capacity: Int32): Async<(CopyResult, T, Option<E>), E> =
-    ReadStream<(CopyResult, T, Option<E>), E>(read, capacity)
+public function streamRead(read: ComponentStreamRead<T, E>, capacity: Int32):
+    Async<(CopyResult, T, Option<E>), E> = ReadStream<(CopyResult, T, Option<E>), E>(read, capacity)
 
 /// Copy the bounded `bytes` view into a stream's writable end, yielding the same three
 /// things `streamRead` does and for the same reasons:
@@ -100,11 +99,11 @@ public function streamRead(read: ComponentStreamRead<T, E>, capacity: Int32): As
 ///
 /// A failure out of this operation now means exactly one thing: this fiber was
 /// detached from the handle. Nothing about the stream.
-public function streamWrite(write: ComponentStreamWrite<E>, bytes: ReadonlySlice<Uint8>): Async<(CopyResult, Int32, Option<E>), E> =
+public function streamWrite(write: ComponentStreamWrite<E>, bytes: ReadonlySlice<Uint8>):
+    Async<(CopyResult, Int32, Option<E>), E> =
     WriteStream<(CopyResult, Int32, Option<E>), E>(write, bytes)
 
-public function thunk(f: () => T): Async<T, Never> =
-    Thunk(f)
+public function thunk(f: () => T): Async<T, Never> = Thunk(f)
 
 /// Detach every fiber from `read`'s readable end so the handle can be dropped:
 /// cancel the copy in flight on it (via that suspension's own canceller, which
@@ -132,18 +131,23 @@ public function cancelStreamWrite(write: ComponentStreamWrite<E>): Async<Unit, N
     CancelStream(write.writable, write.canceledError)
 
 public function makePromise(): Async<Promise<T, E>, Never> =
-    Async.thunk(() =>
-        let state: PromiseState<T, E> = PromiseState.Pending
-        Promise<T, E>(Waiter.make(), state)
+    Async
+        .thunk(
+        () =>
+            let state: PromiseState<T, E> = PromiseState.Pending
+            Promise<T, E>(Waiter.make(), state)
     )
 
 public async function sleep(duration: Duration): Async<Unit, Never> =
     // `MonotonicClock.waitForStart` owns the Duration-to-nanoseconds conversion.
     // The timer carries no result buffer, so `finish` has nothing to lift.
-    await Async<Unit, Never>.subtask(ComponentSubtask<Unit, Never> {
-        start = () => MonotonicClock.waitForStart(duration)
-        finish = (_: AsyncCall) => Ok(())
-    })
+    await Async<Unit, Never>
+        .subtask(
+        ComponentSubtask<Unit, Never> {
+            start = () => MonotonicClock.waitForStart(duration)
+            finish = (_: AsyncCall) => Ok(())
+        }
+    )
 
 /// Yield control to the event loop once: any other ready fiber runs before
 /// this one resumes. A cooperative fairness point for a long CPU-bound or
@@ -157,8 +161,7 @@ public async function sleep(duration: Duration): Async<Unit, Never> =
 /// sibling interrupt this fiber mid-mask and clobber the critical section's
 /// result at mask-pop, defeating the mask. The runtime honors the yield only
 /// once the region is interruptible again.
-public function yieldNow(): Async<Unit, Never> =
-    Yield()
+public function yieldNow(): Async<Unit, Never> = Yield()
 
 /// Open a scope that acquires nothing — `use Async.scope()` on a line of its
 /// own, with everything after it living inside the scope.
@@ -183,14 +186,14 @@ public function yieldNow(): Async<Unit, Never> =
 /// loop with no scope of its own registers on the fiber's root scope, so a
 /// long-lived loop accumulates a finalizer per iteration; opening a scope
 /// inside the loop body bounds each iteration to itself.
-public function scope(): Resource<Unit, Never> =
-    Resource.succeed(())
+public function scope(): Resource<Unit, Never> = Resource.succeed(())
 
 /// Asynchronous while loop: re-evaluate `cond` before each iteration, run
 /// `body` (yielding `Async<Unit, E>`) while cond returns true. Used as the
 /// lowering target for `await` inside `while` loop bodies — callers route
 /// through the `Awaitable.whileLoop` trait method (which forwards here).
-internal function whileLoop(cond: () => Bool, body: () => Async<Unit, E>, trace: SourceLocation): Async<Unit, E> =
+internal function whileLoop(cond: () => Bool, body: () => Async<Unit, E>, trace: SourceLocation):
+    Async<Unit, E> =
     if cond() then
         body().andThen<Unit>((_: Unit) => Async<T, E>.whileLoop(cond, body, trace), trace)
     else
@@ -242,7 +245,10 @@ public function bracketWithResult<V>(
 ): Async<T, E> =
     Bracket<T, E>(
         acquire,
-        (x: Any, outcome: Result<Any, Cause<Any>>) => release(x as V, Async<T, E>.restoreOutcome(outcome)),
+        (
+            (x: Any, outcome: Result<Any, Cause<Any>>) =>
+                release(x as V, Async<T, E>.restoreOutcome(outcome))
+        ),
         (x: Any) => useFn(x as V)
     )
 
@@ -250,32 +256,38 @@ public function bracketWithResult<V>(
 // containers carry Any IDs; only their payloads retain the original types.
 function restoreCause(cause: Cause<Any>): Cause<E> =
     match cause with
-    case Cause.Failed(error, trace) => Cause.Failed(error as E, trace)
-    case Cause.Panicked(message, trace) => Cause.Panicked(message, trace)
-    case Cause.Interrupted(trace) => Cause.Interrupted(trace)
+        case Cause.Failed(error, trace) => Cause.Failed(error as E, trace)
+        case Cause.Panicked(message, trace) => Cause.Panicked(message, trace)
+        case Cause.Interrupted(trace) => Cause.Interrupted(trace)
 
 function restoreOutcome(outcome: Result<Any, Cause<Any>>): Result<T, Cause<E>> =
     match outcome with
-    case Ok(value) => Ok(value as T)
-    case Error(cause) => Error(Async<T, E>.restoreCause(cause))
+        case Ok(value) => Ok(value as T)
+        case Error(cause) => Error(Async<T, E>.restoreCause(cause))
 
 // --- Instance methods (lazy — construct data) ---
-
 public function map<U>(self, f: (T) => U): Async<U, E> =
-    Map<U, E>(self, (x: Any) => f(x as T), SourceLocation { file = ""; line = 0; column = 0; functionName = "" })
+    Map<U, E>(
+        self,
+        (x: Any) => f(x as T),
+        SourceLocation { file = ""; line = 0; column = 0; functionName = "" }
+    )
 
 /// Discard the success value. Handy for fork-and-forget patterns —
 /// `task.fork().asUnit()` returns `Async<Unit, Never>` instead of
 /// `Async<Fiber<T, E>, Never>`, sparing the caller a throwaway `let _`
 /// to type the surrounding block.
-public function asUnit(self): Async<Unit, E> =
-    self.map<Unit>((_: T) => ())
+public function asUnit(self): Async<Unit, E> = self.map<Unit>((_: T) => ())
 
 public function map<U>(self, f: (T) => U, trace: SourceLocation): Async<U, E> =
     Map<U, E>(self, (x: Any) => f(x as T), trace)
 
 public function andThen<U>(self, f: (T) => Async<U, E>): Async<U, E> =
-    AndThen<U, E>(self, (x: Any) => f(x as T), SourceLocation { file = ""; line = 0; column = 0; functionName = "" })
+    AndThen<U, E>(
+        self,
+        (x: Any) => f(x as T),
+        SourceLocation { file = ""; line = 0; column = 0; functionName = "" }
+    )
 
 public function andThen<U>(self, f: (T) => Async<U, E>, trace: SourceLocation): Async<U, E> =
     AndThen<U, E>(self, (x: Any) => f(x as T), trace)
@@ -283,16 +295,24 @@ public function andThen<U>(self, f: (T) => Async<U, E>, trace: SourceLocation): 
 /// Recover from a typed failure with `onFailure` or transform a success with
 /// `onSuccess`. Panics and interruptions propagate unchanged — see
 /// `foldCause` if you need to handle those.
-public function fold<U, E2>(self, onFailure: (E) => Async<U, E2>, onSuccess: (T) => Async<U, E2>): Async<U, E2> =
-    Fold<U, E2>(self, (e: Any) => onFailure(e as E), (t: Any) => onSuccess(t as T))
+public function fold<U, E2>(self, onFailure: (E) => Async<U, E2>, onSuccess: (T) => Async<U, E2>):
+    Async<U, E2> = Fold<U, E2>(self, (e: Any) => onFailure(e as E), (t: Any) => onSuccess(t as T))
 
 /// Handle both outcomes of this Async with full `Cause` visibility. `onCause`
 /// runs when the fiber fails with any cause (a typed error, a panic, or an
 /// interruption), letting you inspect the cause and recover or rethrow.
 /// `onSuccess` runs on the result of a successful computation. The result is
 /// a new Async whose value/error types come from whatever the handlers return.
-public function foldCause<U, E2>(self, onCause: (Cause<E>) => Async<U, E2>, onSuccess: (T) => Async<U, E2>): Async<U, E2> =
-    FoldCause<U, E2>(self, (c: Cause<Any>) => onCause(Async<T, E>.restoreCause(c)), (t: Any) => onSuccess(t as T))
+public function foldCause<U, E2>(
+    self,
+    onCause: (Cause<E>) => Async<U, E2>,
+    onSuccess: (T) => Async<U, E2>
+): Async<U, E2> =
+    FoldCause<U, E2>(
+        self,
+        (c: Cause<Any>) => onCause(Async<T, E>.restoreCause(c)),
+        (t: Any) => onSuccess(t as T)
+    )
 
 /// Run this async in a new fiber belonging to the **innermost open scope** — the
 /// enclosing `use`/`bracket` block, or the whole fiber body when there is none.
@@ -381,8 +401,7 @@ public function interruptible(self): Async<T, E> = Interruptible(self)
 /// mutates state or consumes from a queue/stream on completion is not. Guard
 /// those with an explicit `fork` + cancel where you control the commit point,
 /// or race a signal rather than the consume itself.
-public function race(self, other: Async<T, E>): Async<T, E> =
-    Race<T, E>(self, other)
+public function race(self, other: Async<T, E>): Async<T, E> = Race<T, E>(self, other)
 
 /// Run `self` against a timer: `Some(value)` when self completes first,
 /// `None` when the timer fires first — in which case self was INTERRUPTED
@@ -397,18 +416,20 @@ public function race(self, other: Async<T, E>): Async<T, E> =
 /// cancellable subtask, so the timer loses cleanly when self wins.
 public async function timeout(self, duration: Duration): Async<Option<T>, E> =
     let winner: Async<Option<T>, E> = self.map<Option<T>>((value: T) => Some(value))
-    let timer: Async<Option<T>, E> = Async<Unit, Never>.sleep(duration).map<Option<T>>((_: Unit) => None)
+    let timer: Async<Option<T>, E> =
+        Async<Unit, Never>.sleep(duration).map<Option<T>>((_: Unit) => None)
     await winner.race(timer)
 
 /// Replace the typed error with `f(e)` while leaving success values untouched.
 /// Panics and interruptions pass through unchanged — `f` is only invoked when
 /// the fiber fails with `Cause.Failed(e, _)`.
 public function mapError<E2>(self, f: (E) => E2): Async<T, E2> =
-    let onCause: (Cause<E>) => Async<T, E2> = c =>
-        match c with
-        case Cause.Failed(e, tr) => Async.fromCause(Cause.Failed(f(e), tr))
-        case Cause.Panicked(msg, tr) => Async.fromCause(Cause.Panicked(msg, tr))
-        case Cause.Interrupted(tr) => Async.fromCause(Cause.Interrupted(tr))
+    let onCause: (Cause<E>) => Async<T, E2> =
+        c =>
+            match c with
+                case Cause.Failed(e, tr) => Async.fromCause(Cause.Failed(f(e), tr))
+                case Cause.Panicked(msg, tr) => Async.fromCause(Cause.Panicked(msg, tr))
+                case Cause.Interrupted(tr) => Async.fromCause(Cause.Interrupted(tr))
     let onSuccess: (T) => Async<T, E2> = t => Succeed(t)
     self.foldCause(onCause, onSuccess)
 
@@ -434,8 +455,8 @@ public function catchAll<E2>(self, handler: (E) => Async<T, E2>): Async<T, E2> =
 /// nothing more. Use `orPanicWith` when `E` has no `Display`, or when the call
 /// site can say something more useful than the error can — which invariant broke,
 /// rather than what the failure happens to be called.
-public function orPanic(self): Async<T, Never> where E : Display =
-    self.orPanicWith((e: E) => "unrecoverable error: " ++ e.format())
+public function orPanic(self): Async<T, Never>
+    where E: Display = self.orPanicWith((e: E) => "unrecoverable error: " ++ e.format())
 
 /// `orPanic` with the message supplied by the caller.
 public function orPanicWith(self, message: (E) => String): Async<T, Never> =
@@ -446,96 +467,94 @@ public function orPanicWith(self, message: (E) => String): Async<T, Never> =
 public function orElse(self, alternative: ByName<Async<T, E>>): Async<T, E> =
     self.catchAll(_ => alternative.get)
 
-internal function wake(signal: Waiter): Async<Unit, Never> =
-    Wake(signal)
+internal function wake(signal: Waiter): Async<Unit, Never> = Wake(signal)
 
 internal function awaitCheck(signal: Waiter, check: Async<Option<Any>, Any>): Async<T, E> =
     Await<T, E>(signal, check)
 
 // --- Entry point ---
-
-public function run(self): Unit where E: Display =
+public function run(self): Unit
+    where E: Display =
     let erased: Async<Any, Any> = self
     let runtime = Runtime.make(erased)
     runtime.eventLoop()
     match runtime.mainFiber.completedResult with
-    case Some(FiberResult.Succeeded(_)) => ()
-    case Some(FiberResult.FiberFailed(Cause.Panicked(msg, traces))) =>
-        Console.eprintln("Panic: " ++ msg)
-        printTraces(traces)
-        Process.exit(Error(()))
-    case Some(FiberResult.FiberFailed(Cause.Interrupted(traces))) =>
-        Console.eprintln("Main fiber interrupted")
-        printTraces(traces)
-        Process.exit(Error(()))
-    case Some(FiberResult.FiberFailed(Cause.Failed(error, traces))) =>
-        let e = error as E
-        Console.eprintln("Error: " ++ e.format())
-        printTraces(traces)
-        Process.exit(Error(()))
-    case None => panic "fiber did not complete"
+        case Some(FiberResult.Succeeded(_)) => ()
+        case Some(FiberResult.FiberFailed(Cause.Panicked(msg, traces))) =>
+            Console.eprintln("Panic: " ++ msg)
+            printTraces(traces)
+            Process.exit(Error(()))
+        case Some(FiberResult.FiberFailed(Cause.Interrupted(traces))) =>
+            Console.eprintln("Main fiber interrupted")
+            printTraces(traces)
+            Process.exit(Error(()))
+        case Some(FiberResult.FiberFailed(Cause.Failed(error, traces))) =>
+            let e = error as E
+            Console.eprintln("Error: " ++ e.format())
+            printTraces(traces)
+            Process.exit(Error(()))
+        case None => panic "fiber did not complete"
 
 // --- Tests ---
-
 test "Async: Succeed construction" =
     let p: Async<Int32, String> = Succeed(42)
     match p with
-    case s: Succeed<Int32> => assert s.value == 42
-    case _ => panic "expected Succeed"
+        case s: Succeed<Int32> => assert s.value == 42
+        case _ => panic "expected Succeed"
 
 test "Async: Task alias" =
     let t: Task<Int32> = Succeed(42)
     match t with
-    case s: Succeed<Int32> => assert s.value == 42
-    case _ => panic "expected Succeed"
+        case s: Succeed<Int32> => assert s.value == 42
+        case _ => panic "expected Succeed"
 
 test "Async: Succeed value 0" =
     let p: Async<Int32, Never> = Succeed(0)
     match p with
-    case s: Succeed<Int32> => assert s.value == 0
-    case _ => panic "expected Succeed"
+        case s: Succeed<Int32> => assert s.value == 0
+        case _ => panic "expected Succeed"
 
 test "Async: Succeed with String" =
     let p: Async<String, Never> = Succeed("hello")
     match p with
-    case s: Succeed<String> => assert s.value == "hello"
-    case _ => panic "expected Succeed"
+        case s: Succeed<String> => assert s.value == "hello"
+        case _ => panic "expected Succeed"
 
 test "Async: Succeed with Bool" =
     let p: Async<Bool, Never> = Succeed(true)
     match p with
-    case s: Succeed<Bool> => assert s.value
-    case _ => panic "expected Succeed"
+        case s: Succeed<Bool> => assert s.value
+        case _ => panic "expected Succeed"
 
 test "Async: Succeed negative" =
     let p: Async<Int32, Never> = Succeed(-1)
     match p with
-    case s: Succeed<Int32> => assert s.value == -1
-    case _ => panic "expected Succeed"
+        case s: Succeed<Int32> => assert s.value == -1
+        case _ => panic "expected Succeed"
 
 test "Async: FailCause with Failed" =
     let trace: List<SourceLocation> = List.empty
     let p: Async<Int32, String> = FailCause(Cause.Failed("err", trace))
     match p with
-    case f: FailCause<String> =>
-        match f.cause with
-        case Cause.Failed(e, _) => assert e == "err"
-        case _ => panic "expected Failed"
-    case _ => panic "expected FailCause"
+        case f: FailCause<String> =>
+            match f.cause with
+                case Cause.Failed(e, _) => assert e == "err"
+                case _ => panic "expected Failed"
+        case _ => panic "expected FailCause"
 
 test "Async: Succeed is not FailCause" =
     let p: Async<Int32, String> = Succeed(42)
     match p with
-    case f: FailCause<String> => panic "should not be FailCause"
-    case s: Succeed<Int32> => ()
-    case _ => panic "expected Succeed"
+        case f: FailCause<String> => panic "should not be FailCause"
+        case s: Succeed<Int32> => ()
+        case _ => panic "expected Succeed"
 
 test "Async: Uninterruptible wraps Succeed" =
     let inner: Async<Int32, Never> = Succeed(42)
     let p: Async<Int32, Never> = Uninterruptible(inner)
     match p with
-    case u: Uninterruptible<Int32, Never> =>
-        match u.inner with
-        case s: Succeed<Int32> => assert s.value == 42
-        case _ => panic "expected Succeed inside Uninterruptible"
-    case _ => panic "expected Uninterruptible"
+        case u: Uninterruptible<Int32, Never> =>
+            match u.inner with
+                case s: Succeed<Int32> => assert s.value == 42
+                case _ => panic "expected Succeed inside Uninterruptible"
+        case _ => panic "expected Uninterruptible"

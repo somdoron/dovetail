@@ -7,470 +7,760 @@ import standard.time.Duration
 class StreamTestValue(public value: Int32)
 
 @timeout(5000)
-test "Stream: reusable lazy descriptions and terminal effects" =
+ test "Stream: reusable lazy descriptions and terminal effects" =
     let mutable executions = 0
-    let makeValues = () =>
-        executions = executions + 1
-        [1, 2, 3]
+    let makeValues =
+        () =>
+            executions = executions + 1
+            [1, 2, 3]
     let source = Stream<Int32, String>.fromList(makeValues())
     let collect = source.runCollect()
     assert executions == 0
-    let program: Async<Unit, String> = async do
-        assert (await collect) == [1, 2, 3]
-        assert (await collect) == [1, 2, 3]
-        assert executions == 2
+    let program: Async<Unit, String> =
+        async do
+            assert (await collect) == [1, 2, 3]
+            assert (await collect) == [1, 2, 3]
+            assert executions == 2
     program.run()
 
 @timeout(5000)
-test "Stream: pure transformations preserve order and chunks" =
+ test "Stream: pure transformations preserve order and chunks" =
     let source = Stream<Int32, String>.fromList([1, 2, 3, 4, 5])
-    let program: Async<Unit, String> = async do
-        assert (await source.map((value: Int32) => value * 2).filter((value: Int32) => value > 4).drop(1).take(2).runCollect()) == [8, 10]
-        let mutable lengths: List<Int32> = List.empty
-        await source.map((value: Int32) => value + 1).foreachChunk((chunk: ReadonlySlice<Int32>) => Async.thunk(() => lengths = List.Cons(chunk.length, lengths)))
-        assert lengths == [5]
-        assert (await source.drop(-1).runCollect()) == [1, 2, 3, 4, 5]
+    let program: Async<Unit, String> =
+        async do
+            assert (
+                await source
+                    .map((value: Int32) => value * 2)
+                    .filter((value: Int32) => value > 4)
+                    .drop(1)
+                    .take(2)
+                    .runCollect()
+            )
+                == [8, 10]
+            let mutable lengths: List<Int32> = List.empty
+            await source
+                .map((value: Int32) => value + 1)
+                .foreachChunk(
+                (chunk: ReadonlySlice<Int32>) =>
+                    Async.thunk(() => lengths = List.Cons(chunk.length, lengths))
+            )
+            assert lengths == [5]
+            assert (await source.drop(-1).runCollect()) == [1, 2, 3, 4, 5]
     program.run()
 
 @timeout(5000)
-test "Stream: item effects stop at downstream demand" =
+ test "Stream: item effects stop at downstream demand" =
     let mutable mapped = 0
     let mutable filtered = 0
     let source = Stream<Int32, String>.fromList([1, 2, 3])
-    let mapping: (Int32) => Async<Int32, String> = async (value: Int32) =>
-        mapped = mapped + 1
-        value * 2
-    let predicate: (Int32) => Async<Bool, String> = async (value: Int32) =>
-        filtered = filtered + 1
-        value > 1
-    let program: Async<Unit, String> = async do
-        assert (await source.mapAsync(mapping).take(1).runCollect()) == [2]
-        assert mapped == 1
-        let mutable lengths: List<Int32> = List.empty
-        await source.mapAsync(mapping).foreachChunk((chunk: ReadonlySlice<Int32>) => Async.thunk(() =>
-            lengths = List.Cons(chunk.length, lengths)
-        ))
-        assert lengths == [1, 1, 1]
-        assert mapped == 4
-        assert (await source.filterAsync(predicate).take(1).runCollect()) == [2]
-        assert filtered == 2
+    let mapping: (Int32) => Async<Int32, String> =
+        async (value: Int32) =>
+            mapped = mapped + 1
+            value * 2
+    let predicate: (Int32) => Async<Bool, String> =
+        async (value: Int32) =>
+            filtered = filtered + 1
+            value > 1
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.mapAsync(mapping).take(1).runCollect()) == [2]
+            assert mapped == 1
+            let mutable lengths: List<Int32> = List.empty
+            await source
+                .mapAsync(mapping)
+                .foreachChunk(
+                (chunk: ReadonlySlice<Int32>) =>
+                    Async.thunk(() => lengths = List.Cons(chunk.length, lengths))
+            )
+            assert lengths == [1, 1, 1]
+            assert mapped == 4
+            assert (await source.filterAsync(predicate).take(1).runCollect()) == [2]
+            assert filtered == 2
     program.run()
 
 @timeout(5000)
-test "Stream: chunk effects may resize and empty chunks are skipped" =
+ test "Stream: chunk effects may resize and empty chunks are skipped" =
     let mutable calls = 0
-    let effect: (ReadonlySlice<Int32>) => Async<ReadonlySlice<Int32>, String> = async (chunk: ReadonlySlice<Int32>) =>
-        calls = calls + 1
-        [chunk[0], 8, 9, 10].toArray().readonly
-    let program: Async<Unit, String> = async do
-        assert (await Stream<Int32, String>.fromList([1, 2]).mapChunksAsync(effect).take(1).runCollect()) == [1]
-        assert calls == 1
-        let source = Stream<Int32, String>.unfoldChunkAsync(0, (index: Int32) =>
-            if index == 3 then Async<(ReadonlySlice<Int32>, Int32), Option<String>>.fail(None)
-            else Async.succeed(((if index == 1 then [7] else List<Int32>.empty).toArray().readonly, index + 1))
-        )
-        assert (await source.runCollect()) == [7]
+    let effect: (ReadonlySlice<Int32>) => Async<ReadonlySlice<Int32>, String> =
+        async (chunk: ReadonlySlice<Int32>) =>
+            calls = calls + 1
+            [chunk[0], 8, 9, 10].toArray().readonly
+    let program: Async<Unit, String> =
+        async do
+            assert (
+                await Stream<Int32, String>
+                    .fromList([1, 2])
+                    .mapChunksAsync(effect)
+                    .take(1)
+                    .runCollect()
+            )
+                == [1]
+            assert calls == 1
+            let source =
+                Stream<Int32, String>
+                    .unfoldChunkAsync(
+                    0,
+                    (index: Int32) =>
+                        if index == 3 then
+                            Async<(ReadonlySlice<Int32>, Int32), Option<String>>.fail(None)
+                        else
+                            Async
+                                .succeed(
+                                (
+                                    (if index == 1 then [7] else List<Int32>.empty)
+                                        .toArray()
+                                        .readonly,
+                                    index + 1
+                                )
+                            )
+                )
+            assert (await source.runCollect()) == [7]
     program.run()
 
 @timeout(5000)
-test "Stream: tuple chunks and byte windows retain representation" =
+ test "Stream: tuple chunks and byte windows retain representation" =
     let bytes: Array<Uint8> = [1u8, 2u8, 3u8, 4u8].toArray()
     let source = Stream<Uint8, String>.fromChunk(bytes.readonly.slice(1, 3))
-    let program: Async<Unit, String> = async do
-        assert (await source.runCollect()) == [2u8, 3u8]
-        bytes[1] = 9u8
-        assert (await source.runCollect()) == [9u8, 3u8]
-        let tuples = Stream<(Int32, String), String>.fromList([(1, "one"), (2, "two")])
-        assert (await tuples.map((pair: (Int32, String)) => (pair._1, pair._0)).rechunk(1).runCollect()) == [("one", 1), ("two", 2)]
-        let values = Stream<StreamTestValue, String>.succeed(StreamTestValue(7))
-        assert (await values.map((value: StreamTestValue) => value.value).runCollect()) == [7]
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.runCollect()) == [2u8, 3u8]
+            bytes[1] = 9u8
+            assert (await source.runCollect()) == [9u8, 3u8]
+            let tuples = Stream<(Int32, String), String>.fromList([(1, "one"), (2, "two")])
+            assert (
+                await tuples
+                    .map((pair: (Int32, String)) => (pair._1, pair._0))
+                    .rechunk(1)
+                    .runCollect()
+            )
+                == [("one", 1), ("two", 2)]
+            let values = Stream<StreamTestValue, String>.succeed(StreamTestValue(7))
+            assert (await values.map((value: StreamTestValue) => value.value).runCollect()) == [7]
     program.run()
 
 @timeout(5000)
-test "Stream: rechunk flushes its tail and is reusable" =
+ test "Stream: rechunk flushes its tail and is reusable" =
     let source = Stream<Int32, String>.fromList([1, 2, 3, 4, 5]).rechunk(2)
-    let program: Async<Unit, String> = async do
-        let mutable lengths: List<Int32> = List.empty
-        await source.foreachChunk((chunk: ReadonlySlice<Int32>) => Async.thunk(() => lengths = List.Cons(chunk.length, lengths)))
-        assert lengths.reverse() == [2, 2, 1]
-        assert (await source.runCollect()) == [1, 2, 3, 4, 5]
-        assert (await source.runCollect()) == [1, 2, 3, 4, 5]
+    let program: Async<Unit, String> =
+        async do
+            let mutable lengths: List<Int32> = List.empty
+            await source
+                .foreachChunk(
+                (chunk: ReadonlySlice<Int32>) =>
+                    Async.thunk(() => lengths = List.Cons(chunk.length, lengths))
+            )
+            assert lengths.reverse() == [2, 2, 1]
+            assert (await source.runCollect()) == [1, 2, 3, 4, 5]
+            assert (await source.runCollect()) == [1, 2, 3, 4, 5]
     program.run()
 
 @timeout(5000)
-test "Stream: concat flatMap repeat and typed recovery" =
-    let source = Stream<Int32, String>.fromList([1, 2]).flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value * 10]))
-    let program: Async<Unit, String> = async do
-        assert (await source.concat(Stream<Int32, String>.succeed(3)).runCollect()) == [1, 10, 2, 20, 3]
-        assert (await source.repeat().take(6).runCollect()) == [1, 10, 2, 20, 1, 10]
-        let failed = Stream<Int32, String>.succeed(1).concat(Stream<Int32, String>.fail("error"))
-        assert (await failed.mapError((error: String) => error.length).catchAll((error: Int32) => Stream<Int32, String>.succeed(error)).runCollect()) == [1, 5]
+ test "Stream: concat flatMap repeat and typed recovery" =
+    let source =
+        Stream<Int32, String>
+            .fromList([1, 2])
+            .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value * 10]))
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.concat(Stream<Int32, String>.succeed(3)).runCollect())
+                == [1, 10, 2, 20, 3]
+            assert (await source.repeat().take(6).runCollect()) == [1, 10, 2, 20, 1, 10]
+            let failed =
+                Stream<Int32, String>.succeed(1).concat(Stream<Int32, String>.fail("error"))
+            assert (
+                await failed
+                    .mapError((error: String) => error.length)
+                    .catchAll((error: Int32) => Stream<Int32, String>.succeed(error))
+                    .runCollect()
+            )
+                == [1, 5]
     program.run()
 
 @timeout(5000)
-test "Stream: resource is lazy and held through sequential downstream" =
+ test "Stream: resource is lazy and held through sequential downstream" =
     let mutable acquired = 0
     let mutable released = 0
-    let acquire: Async<Int32, String> = async do
-        acquired = acquired + 1
-        42
-    let source = Stream<Int32, String>.bracket(acquire, (_: Int32) => Async.thunk(() => released = released + 1))
-    let program: Async<Unit, String> = async do
-        await source.take(0).drain()
-        assert acquired == 0
-        await source.flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value])).take(1).foreach((value: Int32) => Async.thunk(() =>
-            assert value == 42
-            assert released == 0
-        ))
-        assert acquired == 1
-        assert released == 1
-        await source.drain()
-        assert acquired == 2
-        assert released == 2
+    let acquire: Async<Int32, String> =
+        async do
+            acquired = acquired + 1
+            42
+    let source =
+        Stream<Int32, String>
+            .bracket(acquire, (_: Int32) => Async.thunk(() => released = released + 1))
+    let program: Async<Unit, String> =
+        async do
+            await source.take(0).drain()
+            assert acquired == 0
+            await source
+                .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value]))
+                .take(1)
+                .foreach(
+                (value: Int32) =>
+                    Async
+                        .thunk(
+                        () =>
+                            assert value == 42
+                            assert released == 0
+                    )
+            )
+            assert acquired == 1
+            assert released == 1
+            await source.drain()
+            assert acquired == 2
+            assert released == 2
     program.run()
 
 @timeout(5000)
-test "Stream: nested resources close inner before outer on early stop" =
+ test "Stream: nested resources close inner before outer on early stop" =
     let mutable releases: List<Int32> = List.empty
-    let outer = Stream<Int32, String>.bracket(Async<Int32, String>.thunk(() => 1), (value: Int32) => Async.thunk(() => releases = List.Cons(value, releases)))
-    let source = outer.flatMap((_: Int32) =>
-        Stream<Int32, String>.bracket(Async<Int32, String>.thunk(() => 2), (value: Int32) => Async.thunk(() => releases = List.Cons(value, releases)))
-            .flatMap((value: Int32) => Stream<Int32, String>.succeed(value).repeat())
-    )
-    let program: Async<Unit, String> = async do
-        assert (await source.take(1).runCollect()) == [2]
-        assert releases.reverse() == [2, 1]
+    let outer =
+        Stream<Int32, String>
+            .bracket(
+            Async<Int32, String>.thunk(() => 1),
+            (value: Int32) => Async.thunk(() => releases = List.Cons(value, releases))
+        )
+    let source =
+        outer
+            .flatMap(
+            (_: Int32) =>
+                Stream<Int32, String>
+                    .bracket(
+                    Async<Int32, String>.thunk(() => 2),
+                    (value: Int32) => Async.thunk(() => releases = List.Cons(value, releases))
+                )
+                    .flatMap((value: Int32) => Stream<Int32, String>.succeed(value).repeat())
+        )
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.take(1).runCollect()) == [2]
+            assert releases.reverse() == [2, 1]
     program.run()
 
 @timeout(5000)
-test "Stream: branches release before switching and finalizers run once" =
+ test "Stream: branches release before switching and finalizers run once" =
     let mutable open = false
     let mutable releases = 0
-    let acquire: Async<Int32, String> = async do
-        assert !open
-        open = true
-        1
-    let source = Stream<Int32, String>.bracket(acquire, (_: Int32) => Async.thunk(() =>
-        open = false
-        releases = releases + 1
-    ))
-    let program: Async<Unit, String> = async do
-        await source.repeat().take(20).drain()
-        assert releases == 20
-        assert !open
-        let mutable ensured = 0
-        await Stream<Int32, String>.empty.ensuring(Async.thunk(() => ensured = ensured + 1)).drain()
-        assert ensured == 1
+    let acquire: Async<Int32, String> =
+        async do
+            assert !open
+            open = true
+            1
+    let source =
+        Stream<Int32, String>
+            .bracket(
+            acquire,
+            (_: Int32) =>
+                Async
+                    .thunk(
+                    () =>
+                        open = false
+                        releases = releases + 1
+                )
+        )
+    let program: Async<Unit, String> =
+        async do
+            await source.repeat().take(20).drain()
+            assert releases == 20
+            assert !open
+            let mutable ensured = 0
+            await Stream<Int32, String>
+                .empty
+                .ensuring(Async.thunk(() => ensured = ensured + 1))
+                .drain()
+            assert ensured == 1
     program.run()
 
 @timeout(5000)
-test "Stream: callback failure closes its source" =
+ test "Stream: callback failure closes its source" =
     let mutable released = false
     let source = Stream<Int32, String>.succeed(1).ensuring(Async.thunk(() => released = true))
-    let program: Async<Unit, Never> = async do
-        await source.foreach((_: Int32) => Async.fail("callback")).fold(
-            (error: String) => Async.thunk(() => assert error == "callback"),
-            (_: Unit) => Async.thunk(() => panic "expected callback failure"))
-        assert released
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .foreach((_: Int32) => Async.fail("callback"))
+                .fold(
+                (error: String) => Async.thunk(() => assert error == "callback"),
+                (_: Unit) => Async.thunk(() => panic "expected callback failure")
+            )
+            assert released
     program.run()
 
 @timeout(5000)
-test "Stream: deep pure composition is stack safe" =
+ test "Stream: deep pure composition is stack safe" =
     let mutable source = Stream<Int32, String>.succeed(0)
     let mutable depth = 0
     while depth < 1000 do
         source = source.map((value: Int32) => value + 1)
         depth = depth + 1
-    let program: Async<Unit, String> = async do
-        assert (await source.runCollect()) == [1000]
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.runCollect()) == [1000]
     program.run()
 
 @timeout(5000)
-test "Stream: empty repeat yields to cancellation" =
-    let program: Async<Unit, Never> = async do
-        let worker = await Stream<Int32, Never>.empty.repeat().drain().forkBackground()
-        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
-        await worker.interrupt()
-        await worker.join().foldCause<Unit, Never>(
-            (cause: Cause<Never>) => Async.thunk(() => match cause with
-                case Cause.Interrupted(_) => ()
-                case _ => panic "expected interruption"
-            ),
-            (_: Unit) => Async.thunk(() => panic "empty repeat should not end"))
+ test "Stream: empty repeat yields to cancellation" =
+    let program: Async<Unit, Never> =
+        async do
+            let worker = await Stream<Int32, Never>.empty.repeat().drain().forkBackground()
+            await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+            await worker.interrupt()
+            await worker
+                .join()
+                .foldCause<Unit, Never>(
+                (
+                    (cause: Cause<Never>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Interrupted(_) => ()
+                                    case _ => panic "expected interruption"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "empty repeat should not end")
+            )
     program.run()
 
 @timeout(5000)
-test "Stream: merge delivers every input in order and waits for all EOFs" =
+ test "Stream: merge delivers every input in order and waits for all EOFs" =
     let first = Stream<Int32, String>.fromList([1, 2, 3]).rechunk(1)
     let second = Stream<Int32, String>.fromList([10, 20, 30]).rechunk(1)
-    let program: Async<Unit, String> = async do
-        let values = await Stream<Int32, String>.mergeAll([first, Stream<Int32, String>.empty, second]).runCollect()
-        assert values.filter((value: Int32) => value < 10) == [1, 2, 3]
-        assert values.filter((value: Int32) => value >= 10) == [10, 20, 30]
-        assert (await Stream<Int32, String>.mergeAll(List.empty).runCollect()) == List.empty
+    let program: Async<Unit, String> =
+        async do
+            let values =
+                await Stream<Int32, String>
+                    .mergeAll([first, Stream<Int32, String>.empty, second])
+                    .runCollect()
+            assert values.filter((value: Int32) => value < 10) == [1, 2, 3]
+            assert values.filter((value: Int32) => value >= 10) == [10, 20, 30]
+            assert (await Stream<Int32, String>.mergeAll(List.empty).runCollect()) == List.empty
     program.run()
 
 @timeout(5000)
-test "Stream: merge early stop cancels blocked offers and releases inputs" =
+ test "Stream: merge early stop cancels blocked offers and releases inputs" =
     let mutable released = 0
-    let source = Stream<Int32, String>.succeed(1).repeat().ensuring(Async.thunk(() => released = released + 1))
-    let program: Async<Unit, String> = async do
-        assert (await source.merge(source).take(1).runCollect()) == [1]
-        assert released == 2
+    let source =
+        Stream<Int32, String>
+            .succeed(1)
+            .repeat()
+            .ensuring(Async.thunk(() => released = released + 1))
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.merge(source).take(1).runCollect()) == [1]
+            assert released == 2
     program.run()
 
 @timeout(5000)
-test "Stream: merge failure follows its preceding chunk" =
+ test "Stream: merge failure follows its preceding chunk" =
     let mutable observed: List<Int32> = List.empty
     let source = Stream<Int32, String>.succeed(7).concat(Stream<Int32, String>.fail("end"))
-    let program: Async<Unit, Never> = async do
-        await source.merge(Stream<Int32, String>.empty).foreach((value: Int32) => Async.thunk(() => observed = List.Cons(value, observed))).fold(
-            (error: String) => Async.thunk(() => assert error == "end"),
-            (_: Unit) => Async.thunk(() => panic "expected merge failure"))
-        assert observed == [7]
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .merge(Stream<Int32, String>.empty)
+                .foreach((value: Int32) => Async.thunk(() => observed = List.Cons(value, observed)))
+                .fold(
+                (error: String) => Async.thunk(() => assert error == "end"),
+                (_: Unit) => Async.thunk(() => panic "expected merge failure")
+            )
+            assert observed == [7]
     program.run()
 
 @timeout(5000)
-test "Stream: merge source may close while downstream processes its chunk" =
+ test "Stream: merge source may close while downstream processes its chunk" =
     let mutable released = false
     let source = Stream<Int32, String>.succeed(1).ensuring(Async.thunk(() => released = true))
-    let program: Async<Unit, String> = async do
-        await source.merge(Stream<Int32, String>.empty).foreach(async (_: Int32) =>
-            while !released do await Async.yieldNow()
-            assert released
-        )
+    let program: Async<Unit, String> =
+        async do
+            await source
+                .merge(Stream<Int32, String>.empty)
+                .foreach(
+                async (_: Int32) =>
+                    while !released do
+                        await Async.yieldNow()
+                    assert released
+            )
     program.run()
 
 @timeout(5000)
-test "Stream: awaited branch heads evaluate once and only run the selected arm" =
+ test "Stream: awaited branch heads evaluate once and only run the selected arm" =
     let mutable subjects = 0
     let mutable selected = 0
-    let subject: Async<Option<Int32>, String> = async do
-        subjects = subjects + 1
-        Some(12)
-    let program: Async<Unit, String> = async do
-        let value = match (await subject) with
-            case Some(value) =>
-                selected = selected + 1
-                await Async<Int32, String>.thunk(() => value + 1)
-            case None => panic "wrong arm"
-        assert value == 13
-        if (await Async<Bool, String>.thunk(() => value == 13)) then
-            await Async<Unit, String>.thunk(() => selected = selected + 1)
-        else panic "wrong condition"
-        assert subjects == 1
-        assert selected == 2
+    let subject: Async<Option<Int32>, String> =
+        async do
+            subjects = subjects + 1
+            Some(12)
+    let program: Async<Unit, String> =
+        async do
+            let value =
+                match (await subject) with
+                    case Some(value) =>
+                        selected = selected + 1
+                        await Async<Int32, String>.thunk(() => value + 1)
+                    case None => panic "wrong arm"
+            assert value == 13
+            if (await Async<Bool, String>.thunk(() => value == 13)) then
+                await Async<Unit, String>.thunk(() => selected = selected + 1)
+            else
+                panic "wrong condition"
+            assert subjects == 1
+            assert selected == 2
     program.run()
 
 @timeout(5000)
-test "Stream: cancellation closes resources during a pending pull" =
+ test "Stream: cancellation closes resources during a pending pull" =
     let mutable acquired = false
     let mutable released = false
-    let acquire: Async<Unit, String> = async do acquired = true
-    let source = Stream<Unit, String>.bracket(acquire, (_: Unit) => Async.thunk(() => released = true))
-        .flatMap((_: Unit) => Stream<Unit, String>.fromAsync(Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))))
-    let program: Async<Unit, Never> = async do
-        let worker = await source.drain().forkBackground()
-        while !acquired do await Async.yieldNow()
-        await worker.interrupt()
-        await worker.join().foldCause<Unit, Never>(
-            (_: Cause<String>) => Async.succeed(()),
-            (_: Unit) => Async.thunk(() => panic "expected interruption"))
-        assert released
+    let acquire: Async<Unit, String> =
+        async do
+            acquired = true
+    let source =
+        Stream<Unit, String>
+            .bracket(acquire, (_: Unit) => Async.thunk(() => released = true))
+            .flatMap(
+            (_: Unit) =>
+                Stream<Unit, String>
+                    .fromAsync(Async<Unit, Never>.sleep(Duration.ofMillis(10000i64)))
+        )
+    let program: Async<Unit, Never> =
+        async do
+            let worker = await source.drain().forkBackground()
+            while !acquired do
+                await Async.yieldNow()
+            await worker.interrupt()
+            await worker
+                .join()
+                .foldCause<Unit, Never>(
+                (_: Cause<String>) => Async.succeed(()),
+                (_: Unit) => Async.thunk(() => panic "expected interruption")
+            )
+            assert released
     program.run()
 
 @timeout(5000)
-test "Stream: cleanup defects do not skip enclosing finalizers" =
+ test "Stream: cleanup defects do not skip enclosing finalizers" =
     let mutable outerReleased = false
     let outer = Stream<Int32, String>.succeed(1).ensuring(Async.thunk(() => outerReleased = true))
-    let source = outer.flatMap((_: Int32) => Stream<Int32, String>.succeed(2).ensuring(Async<Unit, Never>.failPanic("inner release")))
-    let program: Async<Unit, Never> = async do
-        await source.take(1).drain().foldCause<Unit, Never>(
-            (cause: Cause<String>) => Async.thunk(() => match cause with
-                case Cause.Panicked(message, _) => assert message == "inner release"
-                case _ => panic "expected cleanup panic"
-            ),
-            (_: Unit) => Async.thunk(() => panic "expected failure"))
-        assert outerReleased
-    program.run()
-
-@timeout(5000)
-test "Stream: catchAll does not catch defects" =
-    let mutable recovered = false
-    let source = Stream<Int32, String>.fromAsync(Async<Int32, String>.failPanic("source panic"))
-        .catchAll((_: String) =>
-            recovered = true
-            Stream<Int32, String>.succeed(1)
+    let source =
+        outer
+            .flatMap(
+            (_: Int32) =>
+                Stream<Int32, String>
+                    .succeed(2)
+                    .ensuring(Async<Unit, Never>.failPanic("inner release"))
         )
-    let program: Async<Unit, Never> = async do
-        await source.drain().foldCause<Unit, Never>(
-            (cause: Cause<String>) => Async.thunk(() => match cause with
-                case Cause.Panicked(message, _) => assert message == "source panic"
-                case _ => panic "wrong failure"
-            ),
-            (_: Unit) => Async.thunk(() => panic "expected defect"))
-        assert !recovered
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .take(1)
+                .drain()
+                .foldCause<Unit, Never>(
+                (
+                    (cause: Cause<String>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        assert message == "inner release"
+                                    case _ => panic "expected cleanup panic"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "expected failure")
+            )
+            assert outerReleased
     program.run()
 
 @timeout(5000)
-test "Stream: merge cancellation while downstream is processing closes all workers" =
+ test "Stream: catchAll does not catch defects" =
+    let mutable recovered = false
+    let source =
+        Stream<Int32, String>
+            .fromAsync(Async<Int32, String>.failPanic("source panic"))
+            .catchAll(
+            (_: String) =>
+                recovered = true
+                Stream<Int32, String>.succeed(1)
+        )
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .drain()
+                .foldCause<Unit, Never>(
+                (
+                    (cause: Cause<String>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        assert message == "source panic"
+                                    case _ => panic "wrong failure"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "expected defect")
+            )
+            assert !recovered
+    program.run()
+
+@timeout(5000)
+ test "Stream: merge cancellation while downstream is processing closes all workers" =
     let mutable delivered = false
     let mutable released = 0
-    let source = Stream<Int32, String>.succeed(1).repeat().ensuring(Async.thunk(() => released = released + 1))
-    let consume: (Int32) => Async<Unit, String> = async (_: Int32) =>
-        delivered = true
-        await Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
-    let program: Async<Unit, Never> = async do
-        let worker = await source.merge(source).foreach(consume).forkBackground()
-        while !delivered do await Async.yieldNow()
-        await worker.interrupt()
-        await worker.join().foldCause<Unit, Never>((_: Cause<String>) => Async.succeed(()), (_: Unit) => Async.thunk(() => panic "expected interruption"))
-        assert released == 2
+    let source =
+        Stream<Int32, String>
+            .succeed(1)
+            .repeat()
+            .ensuring(Async.thunk(() => released = released + 1))
+    let consume: (Int32) => Async<Unit, String> =
+        async (_: Int32) =>
+            delivered = true
+            await Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
+    let program: Async<Unit, Never> =
+        async do
+            let worker = await source.merge(source).foreach(consume).forkBackground()
+            while !delivered do
+                await Async.yieldNow()
+            await worker.interrupt()
+            await worker
+                .join()
+                .foldCause<Unit, Never>(
+                (_: Cause<String>) => Async.succeed(()),
+                (_: Unit) => Async.thunk(() => panic "expected interruption")
+            )
+            assert released == 2
     program.run()
 
 @timeout(5000)
-test "Stream: merge failure interrupts remaining sources and awaits cleanup" =
+ test "Stream: merge failure interrupts remaining sources and awaits cleanup" =
     let mutable acquired = false
     let mutable released = false
-    let acquire: Async<Int32, String> = async do
-        acquired = true
-        1
-    let source = Stream<Int32, String>.bracket(acquire, (_: Int32) => Async.thunk(() => released = true))
-        .flatMap((value: Int32) => Stream<Int32, String>.succeed(value).repeat())
-    let fail: Async<Int32, String> = async do
-        while !acquired do await Async.yieldNow()
-        await Async<Int32, String>.fail("merge failure")
-    let program: Async<Unit, Never> = async do
-        await source.merge(Stream<Int32, String>.fromAsync(fail)).drain().fold(
-            (error: String) => Async.thunk(() => assert error == "merge failure"),
-            (_: Unit) => Async.thunk(() => panic "expected failure"))
-        assert released
+    let acquire: Async<Int32, String> =
+        async do
+            acquired = true
+            1
+    let source =
+        Stream<Int32, String>
+            .bracket(acquire, (_: Int32) => Async.thunk(() => released = true))
+            .flatMap((value: Int32) => Stream<Int32, String>.succeed(value).repeat())
+    let fail: Async<Int32, String> =
+        async do
+            while !acquired do
+                await Async.yieldNow()
+            await Async<Int32, String>.fail("merge failure")
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .merge(Stream<Int32, String>.fromAsync(fail))
+                .drain()
+                .fold(
+                (error: String) => Async.thunk(() => assert error == "merge failure"),
+                (_: Unit) => Async.thunk(() => panic "expected failure")
+            )
+            assert released
     program.run()
 
 @timeout(5000)
-test "Stream: flatMap scopes nest through concat and take on cancellation" =
+ test "Stream: flatMap scopes nest through concat and take on cancellation" =
     let mutable releases: List<Int32> = List.empty
     let mutable processing = false
-    let resource = (value: Int32) => Stream<Int32, String>.bracket(Async<Int32, String>.thunk(() => value),
-        (item: Int32) => Async.thunk(() => releases = List.Cons(item, releases)))
-    let source = resource(1).concat(Stream<Int32, String>.empty).take(1)
-        .flatMap((_: Int32) => resource(2))
-        .flatMap((_: Int32) => resource(3))
-    let consume: (Int32) => Async<Unit, String> = async (_: Int32) =>
-        processing = true
-        await Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
-    let program: Async<Unit, Never> = async do
-        let worker = await source.foreach(consume).forkBackground()
-        while !processing do await Async.yieldNow()
-        await worker.interrupt()
-        await worker.join().foldCause<Unit, Never>((_: Cause<String>) => Async.succeed(()), (_: Unit) => Async.thunk(() => panic "expected interruption"))
-        assert releases.reverse() == [3, 2, 1]
+    let resource =
+        (value: Int32) =>
+            Stream<Int32, String>
+                .bracket(
+                Async<Int32, String>.thunk(() => value),
+                (item: Int32) => Async.thunk(() => releases = List.Cons(item, releases))
+            )
+    let source =
+        resource(1)
+            .concat(Stream<Int32, String>.empty)
+            .take(1)
+            .flatMap((_: Int32) => resource(2))
+            .flatMap((_: Int32) => resource(3))
+    let consume: (Int32) => Async<Unit, String> =
+        async (_: Int32) =>
+            processing = true
+            await Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
+    let program: Async<Unit, Never> =
+        async do
+            let worker = await source.foreach(consume).forkBackground()
+            while !processing do
+                await Async.yieldNow()
+            await worker.interrupt()
+            await worker
+                .join()
+                .foldCause<Unit, Never>(
+                (_: Cause<String>) => Async.succeed(()),
+                (_: Unit) => Async.thunk(() => panic "expected interruption")
+            )
+            assert releases.reverse() == [3, 2, 1]
     program.run()
 
 @timeout(5000)
-test "Stream: nested flatMap restores each outer cursor after its binding" =
-    let source = Stream<Int32, String>.fromList([1, 2]).concat(Stream<Int32, String>.succeed(3))
-        .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value + 10]))
-        .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value * 2]))
-    let program: Async<Unit, String> = async do
-        assert (await source.runCollect()) == [1, 2, 11, 22, 2, 4, 12, 24, 3, 6, 13, 26]
+ test "Stream: nested flatMap restores each outer cursor after its binding" =
+    let source =
+        Stream<Int32, String>
+            .fromList([1, 2])
+            .concat(Stream<Int32, String>.succeed(3))
+            .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value + 10]))
+            .flatMap((value: Int32) => Stream<Int32, String>.fromList([value, value * 2]))
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.runCollect()) == [1, 2, 11, 22, 2, 4, 12, 24, 3, 6, 13, 26]
     program.run()
 
 @timeout(5000)
-test "Stream: merge preserves source cleanup defects during early stop" =
+ test "Stream: merge preserves source cleanup defects during early stop" =
     let mutable closed = 0
-    let release: Async<Unit, Never> = async do
-        closed = closed + 1
-        await Async<Unit, Never>.failPanic("merge cleanup")
+    let release: Async<Unit, Never> =
+        async do
+            closed = closed + 1
+            await Async<Unit, Never>.failPanic("merge cleanup")
     let source = Stream<Int32, String>.succeed(1).repeat().ensuring(release)
-    let program: Async<Unit, Never> = async do
-        await source.merge(source).take(1).drain().foldCause<Unit, Never>(
-            (cause: Cause<String>) => Async.thunk(() => match cause with
-                case Cause.Panicked(message, _) => assert message == "merge cleanup"
-                case _ => panic "expected cleanup defect"
-            ),
-            (_: Unit) => Async.thunk(() => panic "missing cleanup defect"))
-        assert closed == 2
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .merge(source)
+                .take(1)
+                .drain()
+                .foldCause<Unit, Never>(
+                (
+                    (cause: Cause<String>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        assert message == "merge cleanup"
+                                    case _ => panic "expected cleanup defect"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "missing cleanup defect")
+            )
+            assert closed == 2
     program.run()
 
 @timeout(5000)
-test "Stream: merge startup cancellation never strands acquired inputs" =
+ test "Stream: merge startup cancellation never strands acquired inputs" =
     let mutable acquired = 0
     let mutable released = 0
-    let acquire: Async<Int32, String> = async do
-        acquired = acquired + 1
-        1
-    let source = Stream<Int32, String>.bracket(acquire, (_: Int32) => Async.thunk(() => released = released + 1))
-        .flatMap((value: Int32) => Stream<Int32, String>.succeed(value).repeat())
-    let program: Async<Unit, Never> = async do
-        let mutable offset = 0
-        while offset < 20 do
-            let worker = await Stream<Int32, String>.mergeAll([source, source, source]).drain().forkBackground()
-            let mutable turns = 0
-            while turns < offset do
-                await Async.yieldNow()
-                turns = turns + 1
+    let acquire: Async<Int32, String> =
+        async do
+            acquired = acquired + 1
+            1
+    let source =
+        Stream<Int32, String>
+            .bracket(acquire, (_: Int32) => Async.thunk(() => released = released + 1))
+            .flatMap((value: Int32) => Stream<Int32, String>.succeed(value).repeat())
+    let program: Async<Unit, Never> =
+        async do
+            let mutable offset = 0
+            while offset < 20 do
+                let worker =
+                    await Stream<Int32, String>
+                        .mergeAll([source, source, source])
+                        .drain()
+                        .forkBackground()
+                let mutable turns = 0
+                while turns < offset do
+                    await Async.yieldNow()
+                    turns = turns + 1
+                await worker.interrupt()
+                await worker
+                    .join()
+                    .foldCause<Unit, Never>(
+                    (_: Cause<String>) => Async.succeed(()),
+                    (_: Unit) => Async.succeed(())
+                )
+                assert acquired == released
+                offset = offset + 1
+    program.run()
+
+@timeout(5000)
+ test "Stream: infinite empty chunks yield to timer cancellation" =
+    let source =
+        Stream<Int32, Never>
+            .unfoldChunkAsync((), (_: Unit) => Async.succeed((Array<Int32>.empty().readonly, ())))
+    let program: Async<Unit, Never> =
+        async do
+            let worker = await source.drain().forkBackground()
+            await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
             await worker.interrupt()
-            await worker.join().foldCause<Unit, Never>((_: Cause<String>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
-            assert acquired == released
-            offset = offset + 1
+            await worker
+                .join()
+                .foldCause<Unit, Never>(
+                (_: Cause<Never>) => Async.succeed(()),
+                (_: Unit) => Async.thunk(() => panic "unexpected EOF")
+            )
     program.run()
 
 @timeout(5000)
-test "Stream: infinite empty chunks yield to timer cancellation" =
-    let source = Stream<Int32, Never>.unfoldChunkAsync((), (_: Unit) => Async.succeed((Array<Int32>.empty().readonly, ())))
-    let program: Async<Unit, Never> = async do
-        let worker = await source.drain().forkBackground()
-        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
-        await worker.interrupt()
-        await worker.join().foldCause<Unit, Never>((_: Cause<Never>) => Async.succeed(()), (_: Unit) => Async.thunk(() => panic "unexpected EOF"))
-    program.run()
-
-@timeout(5000)
-test "Stream: recovery starts after failed source resources close" =
+ test "Stream: recovery starts after failed source resources close" =
     let mutable released = false
     let resource = Stream<Int32, String>.succeed(1).ensuring(Async.thunk(() => released = true))
-    let source = resource.flatMap((_: Int32) => Stream<Int32, String>.fail("source"))
-        .catchAll((error: String) =>
-            assert error == "source"
-            assert released
-            Stream<Int32, String>.succeed(2)
+    let source =
+        resource
+            .flatMap((_: Int32) => Stream<Int32, String>.fail("source"))
+            .catchAll(
+            (error: String) =>
+                assert error == "source"
+                assert released
+                Stream<Int32, String>.succeed(2)
         )
-    let program: Async<Unit, String> = async do
-        assert (await source.runCollect()) == [2]
+    let program: Async<Unit, String> =
+        async do
+            assert (await source.runCollect()) == [2]
     program.run()
 
 @timeout(5000)
-test "Stream: upstream recovery does not catch a downstream binding failure" =
+ test "Stream: upstream recovery does not catch a downstream binding failure" =
     let mutable recovered = false
-    let source = Stream<Int32, String>.succeed(1).catchAll((_: String) =>
-        recovered = true
-        Stream<Int32, String>.succeed(2)
-    ).flatMap((_: Int32) => Stream<Int32, String>.fail("downstream"))
-    let program: Async<Unit, Never> = async do
-        await source.drain().fold(
-            (error: String) => Async.thunk(() => assert error == "downstream"),
-            (_: Unit) => Async.thunk(() => panic "expected binding failure"))
-        assert !recovered
+    let source =
+        Stream<Int32, String>
+            .succeed(1)
+            .catchAll(
+            (_: String) =>
+                recovered = true
+                Stream<Int32, String>.succeed(2)
+        )
+            .flatMap((_: Int32) => Stream<Int32, String>.fail("downstream"))
+    let program: Async<Unit, Never> =
+        async do
+            await source
+                .drain()
+                .fold(
+                (error: String) => Async.thunk(() => assert error == "downstream"),
+                (_: Unit) => Async.thunk(() => panic "expected binding failure")
+            )
+            assert !recovered
     program.run()
 
 @panics
-test "Stream: rechunk requires a positive size" =
+ test "Stream: rechunk requires a positive size" =
     Stream<Int32, String>.empty.rechunk(0)
     ()
 
 @timeout(5000)
-test "Stream: early termination discards a queued panic without prioritizing it" =
+ test "Stream: early termination discards a queued panic without prioritizing it" =
     let mutable finalized = false
     let failureEffect: Async<Int32, String> = Async.failPanic("queued panic")
-    let source = Stream<Int32, String>.succeed(1).concat(Stream<Int32, String>.fromAsync(failureEffect))
-        .ensuring(Async.thunk(() => finalized = true))
-    let program: Async<Unit, String> = async do
-        await source.merge(Stream<Int32, String>.empty).take(1).foreach(async (_: Int32) =>
-            while !finalized do await Async.yieldNow()
-            let mutable turns = 0
-            while turns < 4 do
-                await Async.yieldNow()
-                turns = turns + 1
-        )
+    let source =
+        Stream<Int32, String>
+            .succeed(1)
+            .concat(Stream<Int32, String>.fromAsync(failureEffect))
+            .ensuring(Async.thunk(() => finalized = true))
+    let program: Async<Unit, String> =
+        async do
+            await source
+                .merge(Stream<Int32, String>.empty)
+                .take(1)
+                .foreach(
+                async (_: Int32) =>
+                    while !finalized do
+                        await Async.yieldNow()
+                    let mutable turns = 0
+                    while turns < 4 do
+                        await Async.yieldNow()
+                        turns = turns + 1
+            )
     program.run()

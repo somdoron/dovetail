@@ -20,6 +20,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Format Dovetail source files (the local workspace when files are omitted).
+    Fmt {
+        /// Check formatting without changing files.
+        #[arg(long)]
+        check: bool,
+        /// Explicit .dove source files.
+        files: Vec<PathBuf>,
+    },
     /// Fetch or update Git dependencies.
     Deps {
         #[command(subcommand)]
@@ -128,6 +136,14 @@ fn main() {
         ..Default::default()
     };
     match cli.command {
+        Commands::Fmt { check, files } => match dovetail::formatter::files::run(&files, check) {
+            Ok(true) => process::exit(1),
+            Ok(false) => {},
+            Err(error) => {
+                eprintln!("{error}");
+                process::exit(2);
+            }
+        },
         Commands::Deps { command } => {
             let mut options = options;
             options.fetch_all = true;

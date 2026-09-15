@@ -14,7 +14,11 @@ public class MutableMap<K, V>(
     internal mutable deleted: Array<Bool>,
     mutable count: Int32,
     internal mutable capacity: Int32
-) implements Iterable<(K, V)> where K: Hashable, K: Equatable, K: Default, V: Default =
+) implements Iterable<(K, V)>
+    where K: Hashable,
+          K: Equatable,
+          K: Default,
+          V: Default =
     /// Creates a new empty MutableMap.
     public function new(): MutableMap<K, V> =
         let cap = 16
@@ -48,8 +52,10 @@ public class MutableMap<K, V>(
             else
                 idx = (idx + 1) % self.capacity
                 if idx == startIdx then done = true
-        if firstDeleted >= 0 && !(self.occupied.get(idx) && self.keys.get(idx).equals(key)) then firstDeleted
-        else idx
+        if firstDeleted >= 0 && !(self.occupied.get(idx) && self.keys.get(idx).equals(key)) then
+            firstDeleted
+        else
+            idx
 
     function grow(self): Unit =
         let oldKeys = self.keys
@@ -65,8 +71,7 @@ public class MutableMap<K, V>(
         self.count = 0
         let mutable i = 0
         while i < oldCap do
-            if oldOccupied.get(i) then
-                self.put(oldKeys.get(i), oldValues.get(i))
+            if oldOccupied.get(i) then self.put(oldKeys.get(i), oldValues.get(i))
             i = i + 1
 
     /// Inserts or updates a key-value pair.
@@ -100,8 +105,7 @@ public class MutableMap<K, V>(
         result
 
     /// Returns true if the map contains the given key.
-    public function contains(self, key: K): Bool =
-        self.get(key).isSome
+    public function contains(self, key: K): Bool = self.get(key).isSome
 
     /// Removes a key from the map. Does nothing if not present.
     public function remove(self, key: K): Unit =
@@ -111,17 +115,20 @@ public class MutableMap<K, V>(
         while !done do
             if !self.occupied.get(idx) && !self.deleted.get(idx) then
                 done = true
-            else if self.occupied.get(idx) && self.keys.get(idx).equals(key) then
-                self.occupied.set(idx, false)
-                self.deleted.set(idx, true)
-                // Tombstones preserve the probe chain, not the removed objects.
-                self.keys.set(idx, K.default)
-                self.values.set(idx, V.default)
-                self.count = self.count - 1
-                done = true
             else
-                idx = (idx + 1) % self.capacity
-                if idx == startIdx then done = true
+                if self.occupied.get(idx) && self.keys.get(idx).equals(key) then
+                    self.occupied.set(idx, false)
+                    self.deleted.set(idx, true)
+                    // Tombstones preserve the probe chain, not the removed objects.
+                    self
+                        .keys
+                        .set(idx, K.default)
+                    self.values.set(idx, V.default)
+                    self.count = self.count - 1
+                    done = true
+                else
+                    idx = (idx + 1) % self.capacity
+                    if idx == startIdx then done = true
 
     /// Removes all entries.
     public function clear(self): Unit =
@@ -145,10 +152,19 @@ public class MutableMap<K, V>(
     /// Returns an iterator over the key-value pairs in the map.
     public function iterator(self): Iterator<(K, V)> = MutableMapIterator(self, 0)
 
-implement <K, V> Default for MutableMap<K, V> where K: Hashable, K: Equatable, K: Default, V: Default =
+implement<K, V> Default for MutableMap<K, V>
+    where K: Hashable,
+          K: Equatable,
+          K: Default,
+          V: Default =
     public property default: MutableMap<K, V> = MutableMap.new()
 
-class MutableMapIterator<K, V>(map: MutableMap<K, V>, mutable index: Int32) implements Iterator<(K, V)> where K: Hashable, K: Equatable, K: Default, V: Default =
+class MutableMapIterator<K, V>(map: MutableMap<K, V>, mutable index: Int32) implements Iterator<
+    (K, V)>
+    where K: Hashable,
+          K: Equatable,
+          K: Default,
+          V: Default =
     public function next(self): Option<(K, V)> =
         let mutable result: Option<(K, V)> = None
         while true do

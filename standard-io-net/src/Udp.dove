@@ -20,10 +20,10 @@ public record UdpEndpoint =
     connected: Bool
 
 module UdpEndpoint =
-
     /// The address this endpoint is bound to, formatted as "host:port".
     public function localAddress(self): Async<String, NetError> =
-        netCall<SocketAddress>(() => self.socket.localAddress()).map<String>((a: SocketAddress) => formatWasiSocketAddress(a))
+        netCall<SocketAddress>(() => self.socket.localAddress())
+            .map<String>((a: SocketAddress) => formatWasiSocketAddress(a))
 
     /// The connected peer (for endpoints from `Udp.connect`), or `None` for
     /// unconnected ones.
@@ -32,8 +32,7 @@ module UdpEndpoint =
         match result with
             case Ok(wasiAddress) => Some(formatWasiSocketAddress(wasiAddress))
             case Error(NetworkError.InvalidState) => None
-            case Error(error) =>
-                await Async<Option<String>, NetError>.fail(mapWasiNetError(error))
+            case Error(error) => await Async<Option<String>, NetError>.fail(mapWasiNetError(error))
 
     /// Receive one datagram, suspending until one arrives. The returned
     /// `Datagram.remoteAddress` is always `Some` (the sender).
@@ -51,16 +50,14 @@ module UdpEndpoint =
     /// unconnected endpoint and is normally `None` on a connected one (where
     /// the connected peer is the destination).
     public async function send(self, datagram: Datagram): Async<Unit, NetError> =
-        let wasiRemote = match datagram.remoteAddress with
-            case Some(addressString) =>
-                match parseSocketAddressString(addressString) with
-                    case Some(parsed) => Some(parsed)
-                    case None => await Async.fail(NetError.InvalidAddress)
-            case None =>
-                if self.connected then
-                    None
-                else
-                    await Async.fail(NetError.InvalidArgument)
+        let wasiRemote =
+            match datagram.remoteAddress with
+                case Some(addressString) =>
+                    match parseSocketAddressString(addressString) with
+                        case Some(parsed) => Some(parsed)
+                        case None => await Async.fail(NetError.InvalidAddress)
+                case None =>
+                    if self.connected then None else await Async.fail(NetError.InvalidArgument)
         await udpSendAsync(self.socket, datagram.data, wasiRemote)
 
     // --- Socket options -----------------------------------------------------
@@ -68,7 +65,6 @@ module UdpEndpoint =
     // The same three knobs TCP exposes, and with the same caveats: they are
     // synchronous under the hood and `Async` only for uniformity, and a host may
     // answer `NetError.NotSupported` for any of them.
-
     /// IP time-to-live / hop limit for outbound datagrams. Setting 0 fails.
     public function unicastHopLimit(self): Async<Int32, NetError> =
         netCall<Int32>(() => self.socket.unicastHopLimit())
@@ -92,7 +88,6 @@ module UdpEndpoint =
         netCall<Unit>(() => self.socket.setSendBufferSize(value))
 
 module Udp =
-
     /// Bind an unconnected UDP endpoint to `address` (formatted as "host:port";
     /// a zero port picks a free one). Datagrams sent through this endpoint must
     /// carry `remoteAddress = Some(addr)`.
@@ -104,32 +99,34 @@ module Udp =
     /// Datagrams sent without an explicit `remoteAddress` go to `remote`.
     public function connect(local: String, remote: String): Resource<UdpEndpoint, NetError> =
         udpSocketResource(IpAddressFamily.Ipv4)
-            .andThen<UdpEndpoint>((socket: UdpSocket) => bindUdpResource(socket, local, Some(remote)))
+            .andThen<UdpEndpoint>(
+            (socket: UdpSocket) => bindUdpResource(socket, local, Some(remote))
+        )
 
 // --- Internal Resource builder --------------------------------------------
-
 /// Bind `socket` to `local` and, when `remote` is given, associate it with that
 /// peer. Both are synchronous under p3, so this is a plain acquire with a
 /// no-op release — the enclosing `udpSocketResource` closes the socket.
-function bindUdpResource(
-    socket: UdpSocket,
-    local: String,
-    remote: Option<String>
-): Resource<UdpEndpoint, NetError> =
-    let acquire: () => Async<UdpEndpoint, NetError> = async () =>
-        let wasiLocal = match parseSocketAddressString(local) with
-            case Some(parsed) => parsed
-            case None => await Async.fail(NetError.InvalidAddress)
-        let bindResult = await Async.thunk(() => socket.bind(wasiLocal))
-        await Async.fromResult(bindResult.mapError(mapWasiNetError))
-        let isConnected = match remote with
-            case Some(remoteString) =>
-                let wasiRemote = match parseSocketAddressString(remoteString) with
+function bindUdpResource(socket: UdpSocket, local: String, remote: Option<String>):
+    Resource<UdpEndpoint, NetError> =
+    let acquire: () => Async<UdpEndpoint, NetError> =
+        async () =>
+            let wasiLocal =
+                match parseSocketAddressString(local) with
                     case Some(parsed) => parsed
                     case None => await Async.fail(NetError.InvalidAddress)
-                let connectResult = await Async.thunk(() => socket.connect(wasiRemote))
-                await Async.fromResult(connectResult.mapError(mapWasiNetError))
-                true
-            case None => false
-        UdpEndpoint { socket = socket; connected = isConnected }
+            let bindResult = await Async.thunk(() => socket.bind(wasiLocal))
+            await Async.fromResult(bindResult.mapError(mapWasiNetError))
+            let isConnected =
+                match remote with
+                    case Some(remoteString) =>
+                        let wasiRemote =
+                            match parseSocketAddressString(remoteString) with
+                                case Some(parsed) => parsed
+                                case None => await Async.fail(NetError.InvalidAddress)
+                        let connectResult = await Async.thunk(() => socket.connect(wasiRemote))
+                        await Async.fromResult(connectResult.mapError(mapWasiNetError))
+                        true
+                    case None => false
+            UdpEndpoint { socket = socket; connected = isConnected }
     Resource.make(acquire, (_: UdpEndpoint) => Async.succeed(()))

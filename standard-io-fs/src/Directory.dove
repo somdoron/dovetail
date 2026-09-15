@@ -14,9 +14,7 @@ import standard.io.Resource
 public newtype Directory = FileDescriptor
 
 module Directory =
-
     // --- Preopens (Async, no FD lifecycle — runtime owns them) -------------
-
     /// All preopened (mount-path, Directory) pairs. Preopens are owned by the
     /// WASI runtime, so there's no FD lifecycle to manage; this is a plain
     /// async lookup, not a `Resource`.
@@ -45,7 +43,6 @@ module Directory =
         openDirFdResource(path).map<Directory>(fd => Directory(fd))
 
     // --- Static helpers (smart-routed, path-based) -------------------------
-
     /// Create an empty directory at `path`. Parent must exist; for recursive
     /// creation use `createAll`.
     public async function create(path: Path): Async<Unit, FileStreamError> =
@@ -97,14 +94,20 @@ module Directory =
                     if de.name == "." || de.name == ".." then
                         ()
                     else
-                        collected = collected.prepend(DirEntry { name = de.name; entryType = descriptorTypeToEntryType(de.entryType) })
+                        collected =
+                            collected
+                                .prepend(
+                                DirEntry {
+                                    name = de.name
+                                    entryType = descriptorTypeToEntryType(de.entryType)
+                                }
+                            )
             // The ending is a separate question from the entry, and asked after
             // it: a copy that reports the listing over can still be carrying its
             // last entry. Stopping on the ending rather than on an absent entry
             // is what keeps the next iteration from posting a copy on a stream
             // that has already ended.
-            if next._0 != CopyResult.Completed then
-                done = true
+            if next._0 != CopyResult.Completed then done = true
         match failure with
             case Some(reason) => await Async<List<DirEntry>, FileStreamError>.fail(reason)
             case None => collected.reverse()

@@ -38,18 +38,24 @@ module Json =
     /// Parses a JSON string into a Json value.
     /// Returns a ParseError if the input is empty, too large, or syntactically invalid.
     public function parse(s: String): Result<Json, JsonError> =
-        if s.length > 268435456 then Error(JsonError.ParseError("input too large", 0))
+        if s.length > 268435456 then
+            Error(JsonError.ParseError("input too large", 0))
         else
             let trimmed = s.trim()
-            if trimmed.length == 0 then Error(JsonError.ParseError("empty input", 0))
+            if trimmed.length == 0 then
+                Error(JsonError.ParseError("empty input", 0))
             else
                 match parseValue(trimmed, 0, 0) with
                     case Some((json, endPos)) =>
                         // The value must consume the whole (already-trimmed) input; trailing
                         // characters after a complete value ("trueXYZ", "[1,2]junk", "42abc")
                         // are a malformed document, not a success with the remainder ignored.
-                        if endPos == trimmed.length then Ok(json)
-                        else Error(JsonError.ParseError("trailing characters after JSON value", endPos))
+                        if endPos == trimmed.length then
+                            Ok(json)
+                        else
+                            Error(
+                                JsonError.ParseError("trailing characters after JSON value", endPos)
+                            )
                     case None => Error(JsonError.ParseError("parse failed", 0))
 
     /// Returns the JSON type name of this value: `"Null"`, `"Boolean"`,
@@ -79,7 +85,6 @@ module Json =
             case None => Error(JsonError.MissingField(name))
 
     // -- Encoding helpers (StringBuilder) ------------------------------------
-
     private function encodeValue(json: Json, sb: StringBuilder): StringBuilder =
         match json with
             case Json.Null => sb.append("null")
@@ -93,10 +98,10 @@ module Json =
         let s = n.format()
         let len = s.length
         if len >= 2 then
-            if s.getChar(len - 1) == '0' && s.getChar(len - 2) == '.' then
-                s.substring(0, len - 2)
+            if s.getChar(len - 1) == '0' && s.getChar(len - 2) == '.' then s.substring(0, len - 2)
             else s
-        else s
+        else
+            s
 
     private function encodeJsonString(s: String, sb: StringBuilder): StringBuilder =
         sb.appendChar('"')
@@ -113,7 +118,8 @@ module Json =
         sb.appendChar('"')
 
     private function encodeJsonArray(arr: List<Json>, sb: StringBuilder): StringBuilder =
-        if arr.isEmpty then sb.append("[]")
+        if arr.isEmpty then
+            sb.append("[]")
         else
             sb.appendChar('[')
             let mutable separator = ""
@@ -123,8 +129,10 @@ module Json =
                 separator = ","
             sb.appendChar(']')
 
-    private function encodeJsonObject(pairs: List<(String, Json)>, sb: StringBuilder): StringBuilder =
-        if pairs.isEmpty then sb.append("{}")
+    private function encodeJsonObject(pairs: List<(String, Json)>, sb: StringBuilder):
+        StringBuilder =
+        if pairs.isEmpty then
+            sb.append("{}")
         else
             sb.appendChar('{')
             let mutable separator = ""
@@ -137,12 +145,13 @@ module Json =
             sb.appendChar('}')
 
     // -- Parsing helpers (with depth tracking) -------------------------------
-
     private function parseValue(s: String, start: Int32, depth: Int32): Option<(Json, Int32)> =
-        if depth > 512 then None
+        if depth > 512 then
+            None
         else
             let idx = skipWhitespace(s, start)
-            if idx >= s.length then None
+            if idx >= s.length then
+                None
             else
                 let c = s.getChar(idx)
                 if c == 'n' then parseNull(s, idx)
@@ -159,8 +168,7 @@ module Json =
         let mutable i = start
         while i < len do
             let c = s.getChar(i)
-            if c == ' ' || c == '\t' || c == '\n' || c == '\r' then i = i + 1
-            else break
+            if c == ' ' || c == '\t' || c == '\n' || c == '\r' then i = i + 1 else break
         i
 
     private function parseNull(s: String, start: Int32): Option<(Json, Int32)> =
@@ -182,26 +190,30 @@ module Json =
         let len = s.length
         let mutable i = start
         if i < len && s.getChar(i) == '-' then i = i + 1
-        if i >= len then None
+        if i >= len then
+            None
         else
-            while i < len && s.getChar(i) >= '0' && s.getChar(i) <= '9' do i = i + 1
+            while i < len && s.getChar(i) >= '0' && s.getChar(i) <= '9' do
+                i = i + 1
             if i < len && s.getChar(i) == '.' then
                 i = i + 1
-                while i < len && s.getChar(i) >= '0' && s.getChar(i) <= '9' do i = i + 1
+                while i < len && s.getChar(i) >= '0' && s.getChar(i) <= '9' do
+                    i = i + 1
             if i < len && (s.getChar(i) == 'e' || s.getChar(i) == 'E') then
                 i = i + 1
                 if i < len && (s.getChar(i) == '+' || s.getChar(i) == '-') then i = i + 1
-                while i < len && s.getChar(i) >= '0' && s.getChar(i) <= '9' do i = i + 1
+                while i < len && s.getChar(i) >= '0' && s.getChar(i) <= '9' do
+                    i = i + 1
             let numStr = s.substring(start, i)
             match parseFloat64(numStr) with
                 case Some(n) => Some((Json.Number(n), i))
                 case None => None
 
-    private function charToDigit(c: Char): Int32 =
-        String.fromChar(c).bytes().get(0).toInt32() - 48
+    private function charToDigit(c: Char): Int32 = String.fromChar(c).bytes().get(0).toInt32() - 48
 
     private function parseFloat64(s: String): Option<Float64> =
-        if s.length == 0 then None
+        if s.length == 0 then
+            None
         else
             let mutable i = 0
             let neg = s.getChar(0) == '-'
@@ -243,7 +255,8 @@ module Json =
         if exp < 0 then 1.0 / result else result
 
     private function parseString(s: String, start: Int32): Option<(Json, Int32)> =
-        if start >= s.length || s.getChar(start) != '"' then None
+        if start >= s.length || s.getChar(start) != '"' then
+            None
         else
             let mutable result = ""
             let mutable i = start + 1
@@ -251,7 +264,8 @@ module Json =
             let mutable done = false
             let mutable ok = false
             while i < len && !done do
-                if (i - start) > 10000000 then done = true
+                if (i - start) > 10000000 then
+                    done = true
                 else
                     let c = s.getChar(i)
                     if c == '"' then
@@ -266,8 +280,7 @@ module Json =
                     else
                         result = result ++ String.fromChar(c)
                         i = i + 1
-            if ok then Some((Json.Str(result), i + 1))
-            else None
+            if ok then Some((Json.Str(result), i + 1)) else None
 
     private function unescapeChar(c: Char): String =
         if c == '"' then "\""
@@ -281,7 +294,8 @@ module Json =
         else String.fromChar(c)
 
     private function parseArray(s: String, start: Int32, depth: Int32): Option<(Json, Int32)> =
-        if start >= s.length || s.getChar(start) != '[' then None
+        if start >= s.length || s.getChar(start) != '[' then
+            None
         else
             let mutable i = skipWhitespace(s, start + 1)
             let mutable items: List<Json> = List.empty
@@ -299,12 +313,14 @@ module Json =
                             else if i < s.length && s.getChar(i) == ']' then
                                 cont = false
                                 i = i + 1
-                            else cont = false
+                            else
+                                cont = false
                         case None => cont = false
                 Some((Json.Array(items.reverse()), i))
 
     private function parseObject(s: String, start: Int32, depth: Int32): Option<(Json, Int32)> =
-        if start >= s.length || s.getChar(start) != '{' then None
+        if start >= s.length || s.getChar(start) != '{' then
+            None
         else
             let mutable i = skipWhitespace(s, start + 1)
             let mutable pairs: List<(String, Json)> = List.empty
@@ -322,18 +338,22 @@ module Json =
                             else if i < s.length && s.getChar(i) == '}' then
                                 cont = false
                                 i = i + 1
-                            else cont = false
+                            else
+                                cont = false
                         case None => cont = false
                 Some((Json.Object(pairs.reverse()), i))
 
-    private function parseObjectEntry(s: String, start: Int32, depth: Int32): Option<(String, Json, Int32)> =
+    private function parseObjectEntry(s: String, start: Int32, depth: Int32):
+        Option<(String, Json, Int32)> =
         let i = skipWhitespace(s, start)
-        if i >= s.length || s.getChar(i) != '"' then None
+        if i >= s.length || s.getChar(i) != '"' then
+            None
         else
             match parseString(s, i) with
                 case Some((Json.Str(key), next)) =>
                     let j = skipWhitespace(s, next)
-                    if j >= s.length || s.getChar(j) != ':' then None
+                    if j >= s.length || s.getChar(j) != ':' then
+                        None
                     else
                         match parseValue(s, skipWhitespace(s, j + 1), depth + 1) with
                             case Some((value, next2)) => Some((key, value, next2))
@@ -344,8 +364,7 @@ module Json =
 implement Display for Json =
     public function format(self: Json): String = self.encode()
 
-test "encode null" =
-    assert Json.Null.encode() == "null"
+test "encode null" = assert Json.Null.encode() == "null"
 
 test "encode booleans" =
     assert Json.Boolean(true).encode() == "true"
@@ -366,14 +385,12 @@ test "encode string with escapes" =
     assert Json.Str("a\nb").encode() == "\"a\\nb\""
     assert Json.Str("a\tb").encode() == "\"a\\tb\""
 
-test "encode empty array" =
-    assert Json.Array([]).encode() == "[]"
+test "encode empty array" = assert Json.Array([]).encode() == "[]"
 
 test "encode array with elements" =
     assert Json.Array([Json.Number(1.0), Json.Number(2.0)]).encode() == "[1,2]"
 
-test "encode empty object" =
-    assert Json.Object([]).encode() == "{}"
+test "encode empty object" = assert Json.Object([]).encode() == "{}"
 
 test "encode object with fields" =
     assert Json.Object([("name", Json.Str("Alice"))]).encode() == "{\"name\":\"Alice\"}"
@@ -448,8 +465,7 @@ test "decode object with field" =
                 case _ => assert false
         case _ => assert false
 
-test "decode empty input" =
-    assert Json.parse("").isError
+test "decode empty input" = assert Json.parse("").isError
 
 test "decode with whitespace" =
     match Json.parse("  null  ").require with
@@ -466,8 +482,7 @@ test "decode rejects trailing characters after a complete value" =
     // a clean complete value still parses
     assert Json.parse("[1,2,3]").isOk
 
-test "decode input too large" =
-    assert Json.parse("").isError
+test "decode input too large" = assert Json.parse("").isError
 
 test "Json.typeName" =
     assert Json.Null.typeName() == "Null"

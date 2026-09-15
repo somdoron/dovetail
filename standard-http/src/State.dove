@@ -100,9 +100,7 @@ public class StateMachine(
         // Check server switch event validity
         let mutable switchError = false
         match serverSwitchEvent with
-            case Some(switchType) =>
-                if !self.hasPendingSwitch(switchType) then
-                    switchError = true
+            case Some(switchType) => if !self.hasPendingSwitch(switchType) then switchError = true
             case None =>
                 // A regular Response clears pending switch proposals
                 if isResponseType(evtType) then
@@ -111,7 +109,8 @@ public class StateMachine(
 
         if switchError then
             self.setState(role, ConnectionState.Error)
-            self.lastError = Some(HttpError.local("Received server switch event without a pending proposal"))
+            self.lastError =
+                Some(HttpError.local("Received server switch event without a pending proposal"))
             false
         else
             // Fire event-triggered transitions
@@ -122,7 +121,18 @@ public class StateMachine(
                     let evtName = eventTypeName(evtType)
                     let rn = roleName(role)
                     let sn = connectionStateName(state)
-                    self.lastError = Some(HttpError.local("can't handle event type " ++ evtName ++ " when role=" ++ rn ++ " and state=" ++ sn))
+                    self.lastError =
+                        Some(
+                            HttpError
+                                .local(
+                                "can't handle event type "
+                                    ++ evtName
+                                    ++ " when role="
+                                    ++ rn
+                                    ++ " and state="
+                                    ++ sn
+                            )
+                        )
                     false
                 case Some(s) =>
                     self.setState(role, s)
@@ -132,13 +142,18 @@ public class StateMachine(
                         if isClientRole(role) then
                             let serverState = self.serverState
                             match serverState with
-                                case Idle =>
-                                    self.serverState = ConnectionState.SendResponse
+                                case Idle => self.serverState = ConnectionState.SendResponse
                                 case _ =>
-                                    self.lastError = Some(HttpError.local("can't handle event type Request when role=Server and state=" ++ connectionStateName(serverState)))
+                                    self.lastError =
+                                        Some(
+                                            HttpError
+                                                .local(
+                                                "can't handle event type Request when role=Server and state="
+                                                    ++ connectionStateName(serverState)
+                                            )
+                                        )
                                     ok = false
-                    if ok then
-                        self.fireStateTriggeredTransitions()
+                    if ok then self.fireStateTriggeredTransitions()
                     ok
 
     /// Fire state-triggered transitions until a fixed point is reached.
@@ -170,10 +185,13 @@ public class StateMachine(
                     case _ => ()
 
             // Tabular state-triggered transitions
-            self.applyStateTriggeredTransitions()
+            self
+                .applyStateTriggeredTransitions()
 
             // Check for fixed point
-            changed = !sameState(self.clientState, startClient) || !sameState(self.serverState, startServer)
+            changed =
+                !sameState(self.clientState, startClient)
+                    || !sameState(self.serverState, startServer)
 
     /// Apply tabular state-triggered transitions.
     function applyStateTriggeredTransitions(self): Unit =
@@ -221,10 +239,12 @@ public class StateMachine(
                 // Defensive checks: can't reach DONE/DONE with keep_alive disabled
                 // or pending switch proposals, but verify anyway.
                 if !self.keepAlive then
-                    self.lastError = Some(HttpError.local("not in a reusable state: keep_alive is disabled"))
+                    self.lastError =
+                        Some(HttpError.local("not in a reusable state: keep_alive is disabled"))
                     false
                 else if self.hasPendingSwitchProposals then
-                    self.lastError = Some(HttpError.local("not in a reusable state: pending switch proposals"))
+                    self.lastError =
+                        Some(HttpError.local("not in a reusable state: pending switch proposals"))
                     false
                 else
                     self.clientState = ConnectionState.Idle
@@ -391,7 +411,6 @@ public function eventTypeName(evtType: EventType): String =
         case ConnectionClosedType => "ConnectionClosed"
 
 // Tests
-
 test "StateMachine new" =
     let cs = StateMachine.new()
     assert sameState(cs.clientState, ConnectionState.Idle)
@@ -412,17 +431,19 @@ function processEventShouldFail(sm: StateMachine, role: Role, evtType: EventType
     let result = sm.processEvent(role, evtType, None)
     assert !result
 
-function processEventWithSwitch(sm: StateMachine, role: Role, evtType: EventType, sw: SwitchType): Unit =
-    assert sm.processEvent(role, evtType, Some(sw))
+function processEventWithSwitch(sm: StateMachine, role: Role, evtType: EventType, sw: SwitchType):
+    Unit = assert sm.processEvent(role, evtType, Some(sw))
 
-function processEventWithSwitchFails(sm: StateMachine, role: Role, evtType: EventType, sw: SwitchType): Unit =
-    assert !sm.processEvent(role, evtType, Some(sw))
+function processEventWithSwitchFails(
+    sm: StateMachine,
+    role: Role,
+    evtType: EventType,
+    sw: SwitchType
+): Unit = assert !sm.processEvent(role, evtType, Some(sw))
 
-function assertStartNextCycleOk(sm: StateMachine): Unit =
-    assert sm.startNextCycle()
+function assertStartNextCycleOk(sm: StateMachine): Unit = assert sm.startNextCycle()
 
-function assertStartNextCycleFails(sm: StateMachine): Unit =
-    assert !sm.startNextCycle()
+function assertStartNextCycleFails(sm: StateMachine): Unit = assert !sm.startNextCycle()
 
 test "StateMachine illegal double request" =
     let cs = StateMachine.new()

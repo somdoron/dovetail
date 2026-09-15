@@ -13,12 +13,10 @@ import standard.collection.Map
 /// fully-typed params record from the pattern; not in scope here.
 public class PathParams(items: Map<String, String>) =
     /// Empty params — used for routes with no `{name}` segments.
-    public function empty(): PathParams =
-        PathParams(Map<String, String>.empty())
+    public function empty(): PathParams = PathParams(Map<String, String>.empty())
 
     /// Direct lookup. `None` when the name wasn't in the pattern.
-    public function get(self, name: String): Option<String> =
-        self.items.get(name)
+    public function get(self, name: String): Option<String> = self.items.get(name)
 
     /// Like `get` but panics on missing — for required params the
     /// pattern declared. Use sparingly; prefer `get` + match in handlers.
@@ -55,11 +53,13 @@ module PathParams =
     /// Parse a base-10 `Int32`. Optional leading `-`. Returns `None` on any
     /// non-digit, overflow, or empty input.
     function parseInt32(s: String): Option<Int32> =
-        if s.length == 0 then None
+        if s.length == 0 then
+            None
         else
             let bytes = s.bytes()
             let (negative, start) = if bytes.get(0) == 45u8 then (true, 1) else (false, 0)
-            if start >= bytes.length then None
+            if start >= bytes.length then
+                None
             else
                 let mutable acc = 0i32
                 let mutable i = start
@@ -71,22 +71,19 @@ module PathParams =
                             failed = true
                         else
                             let digit = b - 48
-                            if acc > 214748364i32 then
-                                failed = true
-                            else
-                                acc = acc * 10 + digit
+                            if acc > 214748364i32 then failed = true else acc = acc * 10 + digit
                     i = i + 1
-                if failed then None
-                else if negative then Some(0 - acc)
-                else Some(acc)
+                if failed then None else if negative then Some(0 - acc) else Some(acc)
 
     /// Parse a base-10 `Int64`. Same shape as `parseInt32`.
     function parseInt64(s: String): Option<Int64> =
-        if s.length == 0 then None
+        if s.length == 0 then
+            None
         else
             let bytes = s.bytes()
             let (negative, start) = if bytes.get(0) == 45u8 then (true, 1) else (false, 0)
-            if start >= bytes.length then None
+            if start >= bytes.length then
+                None
             else
                 let mutable acc = 0i64
                 let mutable i = start
@@ -98,11 +95,7 @@ module PathParams =
                             failed = true
                         else
                             let digit = (b - 48).toInt64()
-                            if acc > 922337203685477580i64 then
-                                failed = true
-                            else
-                                acc = acc * 10i64 + digit
+                            if acc > 922337203685477580i64 then failed = true
+                            else acc = acc * 10i64 + digit
                     i = i + 1
-                if failed then None
-                else if negative then Some(0i64 - acc)
-                else Some(acc)
+                if failed then None else if negative then Some(0i64 - acc) else Some(acc)

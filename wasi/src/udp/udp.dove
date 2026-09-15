@@ -35,17 +35,22 @@ module UdpSocket =
 
     /// Start sending `data`. `remoteAddress` must be `None` on a connected
     /// socket and `Some` otherwise. Await the call, then `sendFinish`.
-    public function sendStart(self, data: Array<Uint8>, remoteAddress: Option<SocketAddress>): AsyncCall = intrinsic
+    public function sendStart(self, data: Array<Uint8>, remoteAddress: Option<SocketAddress>):
+        AsyncCall = intrinsic
+
     /// Complete a send and free the call's pinned block.
     public function sendFinish(call: AsyncCall): Result<Unit, NetworkError> = intrinsic
 
     /// Start receiving one datagram. Await the call, then `receiveFinish`.
     public function receiveStart(self): AsyncCall = intrinsic
+
     /// Lift the received datagram, freeing the payload buffer and the call's
     /// pinned block.
-    public function receiveFinish(call: AsyncCall): Result<ReceivedDatagram, NetworkError> = intrinsic
+    public function receiveFinish(call: AsyncCall):
+        Result<ReceivedDatagram, NetworkError> = intrinsic
 
     public function localAddress(self): Result<SocketAddress, NetworkError> = intrinsic
+
     public function remoteAddress(self): Result<SocketAddress, NetworkError> = intrinsic
 
     /// The address family this socket was created with.
@@ -55,13 +60,18 @@ module UdpSocket =
     // legitimately answer `NotSupported` — none of them is obligatory.
     /// IP_TTL / IPV6_UNICAST_HOPS. Setting 0 is an `InvalidArgument`.
     public function unicastHopLimit(self): Result<Int32, NetworkError> = intrinsic
+
     public function setUnicastHopLimit(self, value: Int32): Result<Unit, NetworkError> = intrinsic
+
     /// SO_RCVBUF / SO_SNDBUF. Hosts treat these as a cap and may clamp or round,
     /// so a value read back need not equal the value set. Setting 0 is an
     /// `InvalidArgument`.
     public function receiveBufferSize(self): Result<Int64, NetworkError> = intrinsic
+
     public function setReceiveBufferSize(self, value: Int64): Result<Unit, NetworkError> = intrinsic
+
     public function sendBufferSize(self): Result<Int64, NetworkError> = intrinsic
+
     public function setSendBufferSize(self, value: Int64): Result<Unit, NetworkError> = intrinsic
 
     /// Release the socket handle.

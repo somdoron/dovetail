@@ -47,8 +47,7 @@ module List<T> =
         count
 
     /// Returns a new list with the given element prepended.
-    public function prepend(self, value: T): List<T> =
-        List.Cons(value, self)
+    public function prepend(self, value: T): List<T> = List.Cons(value, self)
 
     /// Returns a new list with elements in reverse order.
     public function reverse(self): List<T> =
@@ -112,8 +111,7 @@ module List<T> =
         let mutable found = false
         let mutable current = self
         while !found && !current.isEmpty do
-            if predicate(current.head) then found = true
-            else current = current.tail
+            if predicate(current.head) then found = true else current = current.tail
         found
 
     /// Returns true if all elements satisfy the predicate.
@@ -121,8 +119,7 @@ module List<T> =
         let mutable holds = true
         let mutable current = self
         while holds && !current.isEmpty do
-            if predicate(current.head) then current = current.tail
-            else holds = false
+            if predicate(current.head) then current = current.tail else holds = false
         holds
 
     /// Applies the function to each element for side effects.
@@ -134,13 +131,13 @@ module List<T> =
 
     /// Returns the element at the given index, or None if out of bounds.
     public function get(self, index: Int32): Option<T> =
-        if index < 0 then None
+        if index < 0 then
+            None
         else
             let mutable current = self
             let mutable i = 0
             while i < index do
-                if current.isEmpty then current = current
-                else current = current.tail
+                if current.isEmpty then current = current else current = current.tail
                 i = i + 1
             current.headOption
 
@@ -207,13 +204,12 @@ module List<T> =
         let mutable result: Option<T> = None
         while result.isNone && !current.isEmpty do
             let h = current.head
-            if predicate(h) then result = Some(h)
-            else current = current.tail
+            if predicate(h) then result = Some(h) else current = current.tail
         result
 
     /// True if any element equals `value`.
-    public function contains(self, value: T): Bool where T: Equatable =
-        self.any(a => a == value)
+    public function contains(self, value: T): Bool
+        where T: Equatable = self.any(a => a == value)
 
     /// Returns the number of elements satisfying the predicate.
     public function count(self, predicate: (T) => Bool): Int32 =
@@ -226,8 +222,7 @@ module List<T> =
 
     /// Returns a new list with the element added at the end. O(n) — prefer
     /// `prepend` (O(1)) when order allows.
-    public function append(self, value: T): List<T> =
-        self.concat(List.Cons(value, List.empty))
+    public function append(self, value: T): List<T> = self.concat(List.Cons(value, List.empty))
 
 class ListIterator<T>(mutable current: List<T>) implements Iterator<T> =
     public function next(self): Option<T> =
@@ -237,7 +232,7 @@ class ListIterator<T>(mutable current: List<T>) implements Iterator<T> =
                 Some(h)
             case Nil => None
 
-implement <T> Iterable<T> for List<T> =
+implement<T> Iterable<T> for List<T> =
     public function iterator(self): Iterator<T> = ListIterator<T>(self)
 
 /// `++` on lists appends. `::` prepends a single element; `++` joins two lists.
@@ -245,16 +240,18 @@ implement <T> Iterable<T> for List<T> =
 /// `self.concat(rhs)` is not self-recursive: a module function takes priority
 /// over an `implement` block in method resolution, so this calls
 /// `List.concat` above.
-implement <T> Concat<List<T>> for List<T> =
+implement<T> Concat<List<T>> for List<T> =
     type Output = List<T>
+
     public function concat(self: List<T>, rhs: List<T>): List<T> = self.concat(rhs)
 
-implement <T> Default for List<T> =
+implement<T> Default for List<T> =
     public property default: List<T> = List.empty
 
 /// Lockstep walk rather than comparing lengths — `length` is O(n), so a
 /// length check would make this O(n) even when the heads already differ.
-implement <T> Equatable for List<T> where T: Equatable =
+implement<T> Equatable for List<T>
+    where T: Equatable =
     public function equals(self: List<T>, other: List<T>): Bool =
         let mutable a = self
         let mutable b = other
@@ -263,12 +260,14 @@ implement <T> Equatable for List<T> where T: Equatable =
             if a.head == b.head then
                 a = a.tail
                 b = b.tail
-            else same = false
+            else
+                same = false
         same && a.isEmpty && b.isEmpty
 
 /// Lexicographic: the first differing element decides, otherwise the shorter
 /// list sorts first.
-implement <T> Comparable for List<T> where T: Comparable =
+implement<T> Comparable for List<T>
+    where T: Comparable =
     public function compare(self: List<T>, other: List<T>): Ordering =
         let mutable a = self
         let mutable b = other

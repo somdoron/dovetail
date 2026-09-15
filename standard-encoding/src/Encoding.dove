@@ -14,60 +14,56 @@ public enum EncodingError =
 /// Base64 encoding and decoding, supporting both standard (RFC 4648) and URL-safe alphabets.
 module Base64 =
     private function base64CharStd(n: Int32): String =
-        if n < 26 then
-            String.fromBytes(Array<Uint8>.fill(1, (n + 65).toUint8()), 0, 1)
-        else if n < 52 then
-            String.fromBytes(Array<Uint8>.fill(1, (n - 26 + 97).toUint8()), 0, 1)
-        else if n < 62 then
-            String.fromBytes(Array<Uint8>.fill(1, (n - 52 + 48).toUint8()), 0, 1)
-        else if n == 62 then
-            String.fromChar('+')
-        else
-            String.fromChar('/')
+        if n < 26 then String.fromBytes(Array<Uint8>.fill(1, (n + 65).toUint8()), 0, 1)
+        else if n < 52 then String.fromBytes(Array<Uint8>.fill(1, (n - 26 + 97).toUint8()), 0, 1)
+        else if n < 62 then String.fromBytes(Array<Uint8>.fill(1, (n - 52 + 48).toUint8()), 0, 1)
+        else if n == 62 then String.fromChar('+')
+        else String.fromChar('/')
 
     private function base64CharUrl(n: Int32): String =
-        if n < 26 then
-            String.fromBytes(Array<Uint8>.fill(1, (n + 65).toUint8()), 0, 1)
-        else if n < 52 then
-            String.fromBytes(Array<Uint8>.fill(1, (n - 26 + 97).toUint8()), 0, 1)
-        else if n < 62 then
-            String.fromBytes(Array<Uint8>.fill(1, (n - 52 + 48).toUint8()), 0, 1)
-        else if n == 62 then
-            String.fromChar('-')
-        else
-            String.fromChar('_')
+        if n < 26 then String.fromBytes(Array<Uint8>.fill(1, (n + 65).toUint8()), 0, 1)
+        else if n < 52 then String.fromBytes(Array<Uint8>.fill(1, (n - 26 + 97).toUint8()), 0, 1)
+        else if n < 62 then String.fromBytes(Array<Uint8>.fill(1, (n - 52 + 48).toUint8()), 0, 1)
+        else if n == 62 then String.fromChar('-')
+        else String.fromChar('_')
 
     private function base64ValStd(c: Char): Int32 =
         let bytes = String.fromChar(c).bytes()
         let b = bytes.get(0).toInt32()
         if b >= 65 then
-            if b <= 90 then b - 65
+            if b <= 90 then
+                b - 65
             else if b >= 97 then
-                if b <= 122 then b - 71
-                else -1
-            else -1
+                if b <= 122 then b - 71 else -1
+            else
+                -1
         else if b >= 48 then
-            if b <= 57 then b + 4
-            else -1
-        else if b == 43 then 62
-        else if b == 47 then 63
-        else -1
+            if b <= 57 then b + 4 else -1
+        else if b == 43 then
+            62
+        else if b == 47 then
+            63
+        else
+            -1
 
     private function base64ValUrl(c: Char): Int32 =
         let bytes = String.fromChar(c).bytes()
         let b = bytes.get(0).toInt32()
         if b >= 65 then
-            if b <= 90 then b - 65
-            else if b == 95 then 63
+            if b <= 90 then
+                b - 65
+            else if b == 95 then
+                63
             else if b >= 97 then
-                if b <= 122 then b - 71
-                else -1
-            else -1
+                if b <= 122 then b - 71 else -1
+            else
+                -1
         else if b >= 48 then
-            if b <= 57 then b + 4
-            else -1
-        else if b == 45 then 62
-        else -1
+            if b <= 57 then b + 4 else -1
+        else if b == 45 then
+            62
+        else
+            -1
 
     private function encodeInternal(data: Array<Uint8>, char_fn: (Int32) => String): String =
         let len = data.length
@@ -101,7 +97,8 @@ module Base64 =
             result = result ++ char_fn(n0) ++ char_fn(n1) ++ char_fn(n2) ++ "="
         result
 
-    private function decodeInternal(encoded: String, val_fn: (Char) => Int32): Result<Array<Uint8>, EncodingError> =
+    private function decodeInternal(encoded: String, val_fn: (Char) => Int32):
+        Result<Array<Uint8>, EncodingError> =
         let len = encoded.length
         if len % 4 != 0 then
             Error(EncodingError.InvalidLength("length must be multiple of 4"))
@@ -143,49 +140,64 @@ module Base64 =
                         let v1 = val_fn(encoded.getChar(i + 1))
                         let v2 = val_fn(encoded.getChar(i + 2))
                         let v3 = val_fn(encoded.getChar(i + 3))
-                        if v0 < 0 then Error(EncodingError.InvalidCharacter(i, encoded.getChar(i)))
-                        else if v1 < 0 then Error(EncodingError.InvalidCharacter(i + 1, encoded.getChar(i + 1)))
-                        else if v2 < 0 then
-                            // A padding `=` in the third position REQUIRES a `=` in the
-                            // fourth too (a two-byte-dropped final group is `xx==`). Without
-                            // this check, `AB=C` — data after padding — decodes to a wrong,
-                            // over-length result instead of an InvalidCharacter error.
-                            if encoded.getChar(i + 2) == '=' && encoded.getChar(i + 3) == '=' then
-                                buf.set(pos, ((v0 * 4 + v1 / 16) % 256).toUint8())
-                                Ok(buf)
-                            else Error(EncodingError.InvalidCharacter(i + 2, encoded.getChar(i + 2)))
-                        else if v3 < 0 then
-                            if encoded.getChar(i + 3) == '=' then
-                                buf.set(pos, ((v0 * 4 + v1 / 16) % 256).toUint8())
-                                buf.set(pos + 1, ((v1 * 16 + v2 / 4) % 256).toUint8())
-                                Ok(buf)
-                            else Error(EncodingError.InvalidCharacter(i + 3, encoded.getChar(i + 3)))
+                        if v0 < 0 then
+                            Error(EncodingError.InvalidCharacter(i, encoded.getChar(i)))
                         else
-                            buf.set(pos, ((v0 * 4 + v1 / 16) % 256).toUint8())
-                            buf.set(pos + 1, ((v1 * 16 + v2 / 4) % 256).toUint8())
-                            buf.set(pos + 2, ((v2 * 64 + v3) % 256).toUint8())
-                            Ok(buf)
-                    else Ok(buf)
+                            if v1 < 0 then
+                                Error(EncodingError.InvalidCharacter(i + 1, encoded.getChar(i + 1)))
+                            else
+                                if v2 < 0 then
+                                    // A padding `=` in the third position REQUIRES a `=` in the
+                                    // fourth too (a two-byte-dropped final group is `xx==`). Without
+                                    // this check, `AB=C` — data after padding — decodes to a wrong,
+                                    // over-length result instead of an InvalidCharacter error.
+                                    if encoded
+                                        .getChar(i + 2)
+                                        == '='
+                                        && encoded.getChar(i + 3) == '=' then
+                                        buf.set(pos, ((v0 * 4 + v1 / 16) % 256).toUint8())
+                                        Ok(buf)
+                                    else
+                                        Error(
+                                            EncodingError
+                                                .InvalidCharacter(i + 2, encoded.getChar(i + 2))
+                                        )
+                                else if v3 < 0 then
+                                    if encoded.getChar(i + 3) == '=' then
+                                        buf.set(pos, ((v0 * 4 + v1 / 16) % 256).toUint8())
+                                        buf.set(pos + 1, ((v1 * 16 + v2 / 4) % 256).toUint8())
+                                        Ok(buf)
+                                    else
+                                        Error(
+                                            EncodingError
+                                                .InvalidCharacter(i + 3, encoded.getChar(i + 3))
+                                        )
+                                else
+                                    buf.set(pos, ((v0 * 4 + v1 / 16) % 256).toUint8())
+                                    buf.set(pos + 1, ((v1 * 16 + v2 / 4) % 256).toUint8())
+                                    buf.set(pos + 2, ((v2 * 64 + v3) % 256).toUint8())
+                                    Ok(buf)
+                    else
+                        Ok(buf)
 
     private function base64CountPadding(s: String): Int32 =
         let len = s.length
-        if len < 2 then 0
+        if len < 2 then
+            0
         else if s.getChar(len - 1) == '=' then
-            if s.getChar(len - 2) == '=' then 2
-            else 1
-        else 0
+            if s.getChar(len - 2) == '=' then 2 else 1
+        else
+            0
 
     /// Encodes a byte array to a standard Base64 string with padding.
-    public function encode(data: Array<Uint8>): String =
-        encodeInternal(data, base64CharStd)
+    public function encode(data: Array<Uint8>): String = encodeInternal(data, base64CharStd)
 
     /// Decodes a standard Base64 string back to bytes. Returns an error for invalid input.
     public function decode(encoded: String): Result<Array<Uint8>, EncodingError> =
         decodeInternal(encoded, base64ValStd)
 
     /// Encodes a byte array to a URL-safe Base64 string, using `-` and `_` instead of `+` and `/`.
-    public function encodeUrlSafe(data: Array<Uint8>): String =
-        encodeInternal(data, base64CharUrl)
+    public function encodeUrlSafe(data: Array<Uint8>): String = encodeInternal(data, base64CharUrl)
 
     /// Decodes a URL-safe Base64 string back to bytes. Returns an error for invalid input.
     public function decodeUrlSafe(encoded: String): Result<Array<Uint8>, EncodingError> =
@@ -200,15 +212,16 @@ module Hex =
     private function hexVal(c: Char): Int32 =
         let b = String.fromChar(c).bytes().get(0).toInt32()
         if b >= 48 then
-            if b <= 57 then b - 48
+            if b <= 57 then
+                b - 48
             else if b >= 97 then
-                if b <= 102 then b - 87
-                else -1
+                if b <= 102 then b - 87 else -1
             else if b >= 65 then
-                if b <= 70 then b - 55
-                else -1
-            else -1
-        else -1
+                if b <= 70 then b - 55 else -1
+            else
+                -1
+        else
+            -1
 
     /// Encodes a byte array to a lowercase hexadecimal string.
     public function encode(data: Array<Uint8>): String =
@@ -249,8 +262,7 @@ module Hex =
                 else
                     buf.set(i / 2, (hi * 16 + lo).toUint8())
                     i = i + 2
-            if ok then Ok(buf)
-            else Error(EncodingError.InvalidCharacter(errPos, errChar))
+            if ok then Ok(buf) else Error(EncodingError.InvalidCharacter(errPos, errChar))
 
 test "Base64 encode empty" =
     let data = Array<Uint8>.fill(0, 0u8)
@@ -312,7 +324,12 @@ test "Base64 url safe encode uses dash and underscore" =
     data.set(2, 254u8)
     let std = Base64.encode(data)
     let url = Base64.encodeUrlSafe(data)
-    assert std.contains("+") || std.contains("/") || url.contains("-") || url.contains("_") || std == url
+    assert std
+        .contains("+")
+        || std.contains("/")
+        || url.contains("-")
+        || url.contains("_")
+        || std == url
 
 test "Base64 url safe roundtrip" =
     let data = Array<Uint8>.fill(4, 0u8)

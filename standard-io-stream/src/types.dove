@@ -11,7 +11,9 @@ public sealed abstract class Stream<out T, out E>()
 
 internal final class StreamEmpty<out T, out E>() extends Stream<T, E>()
 
-internal final class StreamFromChunk<out T, out E>(public chunk: Async<ReadonlySlice<T>, E>) extends Stream<T, E>()
+internal final class StreamFromChunk<out T, out E>(
+    public chunk: Async<ReadonlySlice<T>, E>
+) extends Stream<T, E>()
 
 internal final class StreamUnfold<out T, out S, out E>(
     public initial: () => Any,
@@ -28,18 +30,42 @@ internal final class StreamTransformItem<out T, out U, out E>(
     public effect: (Any) => Async<ReadonlySlice<U>, E>
 ) extends Stream<U, E>()
 
-internal final class StreamDrop<out T, out E>(public source: Stream<T, E>, public count: Int32) extends Stream<T, E>()
-internal final class StreamTake<out T, out E>(public source: Stream<T, E>, public count: Int32) extends Stream<T, E>()
-internal final class StreamConcat<out T, out E>(public first: Stream<T, E>, public second: () => Stream<T, E>) extends Stream<T, E>()
-internal final class StreamFlatMap<out T, out U, out E>(public source: Stream<T, E>, public bind: (Any) => Stream<U, E>) extends Stream<U, E>()
+internal final class StreamDrop<out T, out E>(
+    public source: Stream<T, E>,
+    public count: Int32
+) extends Stream<T, E>()
+
+internal final class StreamTake<out T, out E>(
+    public source: Stream<T, E>,
+    public count: Int32
+) extends Stream<T, E>()
+
+internal final class StreamConcat<out T, out E>(
+    public first: Stream<T, E>,
+    public second: () => Stream<T, E>
+) extends Stream<T, E>()
+
+internal final class StreamFlatMap<out T, out U, out E>(
+    public source: Stream<T, E>,
+    public bind: (Any) => Stream<U, E>
+) extends Stream<U, E>()
+
 internal final class StreamRepeat<out T, out E>(public source: Stream<T, E>) extends Stream<T, E>()
-internal final class StreamRecover<out T, out E, out E2>(public source: Stream<T, E>, public recover: (Any) => Stream<T, E2>) extends Stream<T, E2>()
+
+internal final class StreamRecover<out T, out E, out E2>(
+    public source: Stream<T, E>,
+    public recover: (Any) => Stream<T, E2>
+) extends Stream<T, E2>()
+
 internal final class StreamRechunk<out T, out E>(
     public source: Stream<T, E>,
     public size: Int32,
     public assemble: (List<Any>, Int32) => Async<ReadonlySlice<T>, Never>
 ) extends Stream<T, E>()
-internal final class StreamMerge<out T, out E>(public sources: () => List<Stream<T, E>>) extends Stream<T, E>()
+
+internal final class StreamMerge<out T, out E>(
+    public sources: () => List<Stream<T, E>>
+) extends Stream<T, E>()
 
 // Execution progress is separate from the reusable stream description.
 // Dispatch always matches `stream`; there are no operator methods or callbacks.

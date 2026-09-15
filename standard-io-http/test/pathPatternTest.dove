@@ -4,7 +4,6 @@ import standard.io.http.PathPattern
 import standard.io.http.PathParams
 
 // PathPattern parsing + matching, no router, no I/O.
-
 test "PathPattern.parse: single literal segment" =
     let p = PathPattern.parse("/users")
     assert p.specificity == 1
@@ -54,6 +53,6 @@ test "PathPattern.tryMatch: trailing slash treated as equivalent" =
     assert m2.isSome
 
 test "PathPattern.specificity: literals beat params" =
-    let p1 = PathPattern.parse("/users/me")          // 2 literals
-    let p2 = PathPattern.parse("/users/{id}")        // 1 literal, 1 param
+    let p1 = PathPattern.parse("/users/me") // 2 literals
+    let p2 = PathPattern.parse("/users/{id}") // 1 literal, 1 param
     assert p1.specificity > p2.specificity

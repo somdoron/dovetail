@@ -27,7 +27,6 @@ import standard.wasi.cli.StdoutStream
 // Driven synthetically, because the case needs a copy that BLOCKS and then
 // reports elements when it is cancelled, and no transport in this tree can be
 // asked for that: a read parks precisely because the host has nothing yet.
-
 enum CarriedError =
     Broken
 
@@ -69,7 +68,8 @@ function idleWaitable(): Waitable = IdleStdout.shared
 /// A stream end whose copy blocks and whose CANCEL LOSES: it reports that the
 /// host had already transferred `payload`. Cancelling it hands those elements
 /// back rather than undoing anything, which is the whole of the case.
-function racingSource(payload: Array<Uint8>, waitable: Waitable): ComponentStreamRead<Array<Uint8>, CarriedError> =
+function racingSource(payload: Array<Uint8>, waitable: Waitable):
+    ComponentStreamRead<Array<Uint8>, CarriedError> =
     ComponentStreamRead<Array<Uint8>, CarriedError> {
         readable = waitable
         ending = () => Ok(())
@@ -102,10 +102,8 @@ function undoneSource(waitable: Waitable): ComponentStreamRead<Array<Uint8>, Car
 /// A read shaped like every read in this library: a mutex held with `use` across
 /// the copy, so the bytes come back THROUGH a bracket release — and a bracket
 /// release runs masked.
-async function readUnderLock(
-    source: ComponentStreamRead<Array<Uint8>, CarriedError>,
-    lock: Mutex
-): Async<Array<Uint8>, CarriedError> =
+async function readUnderLock(source: ComponentStreamRead<Array<Uint8>, CarriedError>, lock: Mutex):
+    Async<Array<Uint8>, CarriedError> =
     let _held = use lock.acquire().orPanicWith((_: MutexError) => "read re-entered its own lock")
     let copied = await Async<Array<Uint8>, CarriedError>.streamRead(source, 64i32)
     copied._1
@@ -119,12 +117,13 @@ async function depositAfterRead(
     lock: Mutex,
     landed: Array<String>
 ): Async<Unit, Never> =
-    let chunk = await readUnderLock(source, lock)
-        .catchAll<Never>((_: CarriedError) => Async.succeed(Array<Uint8>.empty()))
+    let chunk =
+        await readUnderLock(source, lock)
+            .catchAll<Never>((_: CarriedError) => Async.succeed(Array<Uint8>.empty()))
     landed.set(0, chunk.length.format() ++ " bytes")
 
 @timeout(10000)
-test "an interrupted read deposits the bytes its cancel handed back" =
+ test "an interrupted read deposits the bytes its cancel handed back" =
     let landed = Array<String>.fill(2, "nothing")
     racedReadProgram(landed).run()
     // The bytes reached the buffer they belong to. They used to reach the fiber
@@ -140,7 +139,7 @@ test "an interrupted read deposits the bytes its cancel handed back" =
 
 async function racedReadProgram(landed: Array<String>): Async<Unit, Never> =
     let lock = await Mutex.make()
-    let source = racingSource([|1u8, 2u8, 3u8, 4u8|], idleWaitable())
+    let source = racingSource([| 1u8, 2u8, 3u8, 4u8 |], idleWaitable())
     let reader: Fiber<Unit, Never> = await depositAfterRead(source, lock, landed).fork()
     // Long enough for the reader to be parked on the copy rather than merely
     // enqueued: an interrupt that arrives before a fiber has run is a different
@@ -151,7 +150,7 @@ async function racedReadProgram(landed: Array<String>): Async<Unit, Never> =
     await joinOutcome(reader, landed)
 
 @timeout(10000)
-test "an interrupted read whose cancel won deposits nothing" =
+ test "an interrupted read whose cancel won deposits nothing" =
     let landed = Array<String>.fill(2, "nothing")
     undoneReadProgram(landed).run()
     // The control, and the half that must not change: a cancel that transferred
@@ -176,7 +175,9 @@ async function undoneReadProgram(landed: Array<String>): Async<Unit, Never> =
 /// — a fiber handed a payload finishes and takes its interrupt later — so this is
 /// what each test's own expectation is checked against.
 async function joinOutcome(fiber: Fiber<Unit, Never>, landed: Array<String>): Async<Unit, Never> =
-    await fiber.join().foldCause<Unit, Never>(
+    await fiber
+        .join()
+        .foldCause<Unit, Never>(
         (_: Cause<Never>) => Async.thunk(() => landed.set(1, "unwound")),
         (_: Unit) => Async.thunk(() => landed.set(1, "finished"))
     )
@@ -190,9 +191,10 @@ function failingRacedFuture(waitable: Waitable): ComponentFuture<Unit, CarriedEr
         readable = waitable
         start = () => blockedCopy()
         cancel = () => EventPayload.ofCopy(CopyResult.Completed, 1i32)
-        lift = (copy: CopyOperation) =>
-            let failed: Result<Unit, CarriedError> = Error(CarriedError.Broken)
-            failed
+        lift =
+            (copy: CopyOperation) =>
+                let failed: Result<Unit, CarriedError> = Error(CarriedError.Broken)
+                failed
         dropReadable = () => ()
     }
 
@@ -203,13 +205,14 @@ async function recoverThenTake(
     queue: Queue<Int32>,
     landed: Array<String>
 ): Async<Unit, Never> =
-    await Async<Unit, CarriedError>.futureValue(future)
+    await Async<Unit, CarriedError>
+        .futureValue(future)
         .catchAll<Never>((_: CarriedError) => Async.succeed(()))
     let element = await queue.take()
     landed.set(0, element.format())
 
 @timeout(10000)
-test "an interrupted future whose cancel handed back an error takes the interrupt" =
+ test "an interrupted future whose cancel handed back an error takes the interrupt" =
     let landed = Array<String>.fill(3, "nothing")
     racedErrorProgram(landed).run()
     // The interrupt superseded the typed error at the future, as it supersedes a
@@ -235,4 +238,3 @@ async function racedErrorProgram(landed: Array<String>): Async<Unit, Never> =
     match remaining with
         case Some(element) => landed.set(2, element.format())
         case None => landed.set(2, "lost")
-

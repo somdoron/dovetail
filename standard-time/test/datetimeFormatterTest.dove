@@ -11,7 +11,6 @@ import standard.time.YearMonth
 import standard.time.ZonedDateTime
 
 // ── Preset formatters ─────────────────────────────────────────────────────
-
 test "preset: isoLocalDate" =
     let d = LocalDate.of(2024, 7, 15)
     assert DateTimeFormatter.isoLocalDate.format(d) == "2024-07-15"
@@ -36,7 +35,10 @@ test "preset: isoOffsetDateTime UTC emits Z" =
 test "preset: isoZonedDateTime in NY summer" =
     let i = Instant.ofEpochSecond(1721044800i64)
     let ny = TimeZone.named("America/New_York").require
-    assert DateTimeFormatter.isoZonedDateTime.format(i, ny) == "2024-07-15T08:00:00-04:00[America/New_York]"
+    assert DateTimeFormatter
+        .isoZonedDateTime
+        .format(i, ny)
+        == "2024-07-15T08:00:00-04:00[America/New_York]"
 
 test "preset: isoInstant" =
     let i = Instant.ofEpochSecond(1721044800i64)
@@ -56,7 +58,6 @@ test "preset: basicIsoDate" =
     assert DateTimeFormatter.basicIsoDate.format(d) == "20240715"
 
 // ── DST boundary handling ─────────────────────────────────────────────────
-
 test "DST: format NY just before spring-forward (1:59 EST)" =
     // 2024-03-10 06:59:00Z = 1710053940 — last second of EST
     let i = Instant.ofEpochSecond(1710053940i64)
@@ -85,7 +86,6 @@ test "DST: parse instant in NY winter" =
         case Error(e) => panic "parse failed: " ++ e.message
 
 // ── Calendar edge cases ───────────────────────────────────────────────────
-
 test "edge: leap day Feb 29 2024" =
     let d = LocalDate.of(2024, 2, 29)
     assert DateTimeFormatter.isoLocalDate.format(d) == "2024-02-29"
@@ -108,14 +108,13 @@ test "edge: year boundary Dec 31 / Jan 1" =
     assert DateTimeFormatter.isoLocalDateTime.format(jan1) == "2025-01-01T00:00:00"
 
 test "edge: era BC (negative year)" =
-    let d = LocalDate.of(-44, 3, 15)  // Ides of March, 44 BC
+    let d = LocalDate.of(-44, 3, 15) // Ides of March, 44 BC
     let f = DateTimeFormatter.ofPattern("yyyy-MM-dd G")
     // Negative year emits with leading minus.
     let s = f.format(d)
     assert s.contains("BC")
 
 // ── Pattern feature coverage ──────────────────────────────────────────────
-
 test "feature: day-of-year padding" =
     let d = LocalDate.of(2024, 1, 5)
     let f = DateTimeFormatter.ofPattern("DDD")
@@ -160,7 +159,6 @@ test "feature: offset X width 1 hour-only" =
     assert f.format(zdt) == "-04"
 
 // ── Round-trip integrity ──────────────────────────────────────────────────
-
 test "round-trip: every preset produces parseable output" =
     let i = Instant.ofEpochSecond(1721044800i64)
     let utc = TimeZone.utc
@@ -186,7 +184,6 @@ test "round-trip: every preset produces parseable output" =
         case Error(e) => panic e.message
 
 // ── Error reporting ───────────────────────────────────────────────────────
-
 test "error: missing required field" =
     // Pattern has no day; parseLocalDate needs day.
     match DateTimeFormatter.ofPattern("yyyy-MM").parseLocalDate("2024-07") with

@@ -22,11 +22,12 @@ import standard.time.Duration
 //
 // Reuses `droppableSource`/`burnThenReadOne` from `scheduler_window_test` and
 // `CarriedError` from `interrupt_payload_test` (same package).
-
-async function closeDetachesAndDropsProgram(dropped: Array<Int32>, landed: Array<String>): Async<Unit, Never> =
+async function closeDetachesAndDropsProgram(dropped: Array<Int32>, landed: Array<String>):
+    Async<Unit, Never> =
     let waitable = idleWaitable()
     let stream: AsyncInputStream<CarriedError> =
-        use WasiInputStream<CarriedError>.resource<Never>(() => Async.succeed(droppableSource(waitable, dropped)))
+        use WasiInputStream<CarriedError>
+            .resource<Never>(() => Async.succeed(droppableSource(waitable, dropped)))
     // A reader parked on the handle, holding the runtime's per-handle lock.
     let reader: Fiber<Unit, Never> = await burnThenReadOne(stream, 0i32, landed).fork()
     await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
@@ -40,7 +41,7 @@ async function closeDetachesAndDropsProgram(dropped: Array<Int32>, landed: Array
     await stream.close().catchAll<Never>((_: CarriedError) => Async.succeed(()))
 
 @timeout(10000)
-test "close detaches a parked reader and drops the handle exactly once" =
+ test "close detaches a parked reader and drops the handle exactly once" =
     let dropped = Array<Int32>.fill(1, 0i32)
     let landed = Array<String>.fill(1, "")
     closeDetachesAndDropsProgram(dropped, landed).run()

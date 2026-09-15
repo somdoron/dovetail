@@ -5,49 +5,53 @@ import standard.io.Queue
 import standard.io.stream.Stream
 
 @timeout(5000)
-test "Stream: fromQueue is lazy and takes only demanded items in FIFO order" =
-    let program: Async<Unit, Never> = async do
-        let queue = await Queue<Int32>.makeUnbounded()
-        await queue.offer(1)
-        await queue.offer(2)
-        await queue.offer(3)
-        let mutable starts = 0
-        let sourceQueue = () =>
-            starts = starts + 1
-            queue
-        let source = Stream<Int32, Never>.fromQueue(sourceQueue())
-        let collect = source.take(1).runCollect()
-        assert starts == 0 && queue.size == 3
-        assert (await source.take(0).runCollect()) == List.empty
-        assert starts == 0 && queue.size == 3
-        assert (await collect) == [1]
-        assert starts == 1 && queue.size == 2
-        assert (await collect) == [2]
-        assert starts == 2 && queue.size == 1
-        assert (await queue.take()) == 3
+ test "Stream: fromQueue is lazy and takes only demanded items in FIFO order" =
+    let program: Async<Unit, Never> =
+        async do
+            let queue = await Queue<Int32>.makeUnbounded()
+            await queue.offer(1)
+            await queue.offer(2)
+            await queue.offer(3)
+            let mutable starts = 0
+            let sourceQueue =
+                () =>
+                    starts = starts + 1
+                    queue
+            let source = Stream<Int32, Never>.fromQueue(sourceQueue())
+            let collect = source.take(1).runCollect()
+            assert starts == 0 && queue.size == 3
+            assert (await source.take(0).runCollect()) == List.empty
+            assert starts == 0 && queue.size == 3
+            assert (await collect) == [1]
+            assert starts == 1 && queue.size == 2
+            assert (await collect) == [2]
+            assert starts == 2 && queue.size == 1
+            assert (await queue.take()) == 3
     program.run()
 
 @timeout(5000)
-test "Stream: fromQueue waits for offers and releases bounded capacity" =
-    let program: Async<Unit, Never> = async do
-        let queue = await Queue<Int32>.make(1)
-        let consumer = await Stream<Int32, Never>.fromQueue(queue).take(3).runCollect().fork()
-        await Async.yieldNow()
-        await queue.offer(1)
-        await queue.offer(2)
-        await queue.offer(3)
-        assert (await consumer.join()) == [1, 2, 3]
-        assert queue.isEmpty
+ test "Stream: fromQueue waits for offers and releases bounded capacity" =
+    let program: Async<Unit, Never> =
+        async do
+            let queue = await Queue<Int32>.make(1)
+            let consumer = await Stream<Int32, Never>.fromQueue(queue).take(3).runCollect().fork()
+            await Async.yieldNow()
+            await queue.offer(1)
+            await queue.offer(2)
+            await queue.offer(3)
+            assert (await consumer.join()) == [1, 2, 3]
+            assert queue.isEmpty
     program.run()
 
 @timeout(5000)
-test "Stream: cancelling fromQueue leaves the queue usable" =
-    let program: Async<Unit, Never> = async do
-        let queue = await Queue<Int32>.makeUnbounded()
-        let consumer = await Stream<Int32, Never>.fromQueue(queue).drain().forkBackground()
-        await Async.yieldNow()
-        await consumer.interrupt()
-        await queue.offer(42)
-        assert (await Stream<Int32, Never>.fromQueue(queue).take(1).runCollect()) == [42]
-        assert queue.isEmpty
+ test "Stream: cancelling fromQueue leaves the queue usable" =
+    let program: Async<Unit, Never> =
+        async do
+            let queue = await Queue<Int32>.makeUnbounded()
+            let consumer = await Stream<Int32, Never>.fromQueue(queue).drain().forkBackground()
+            await Async.yieldNow()
+            await consumer.interrupt()
+            await queue.offer(42)
+            assert (await Stream<Int32, Never>.fromQueue(queue).take(1).runCollect()) == [42]
+            assert queue.isEmpty
     program.run()

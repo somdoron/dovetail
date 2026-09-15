@@ -21,14 +21,15 @@ import standard.io.net.NetError
 // End-to-end: real TCP server in a daemon fiber, real HttpClient making
 // the request in the same process. Each test binds 127.0.0.1:0 to avoid
 // port collisions and drives the route-as-handler shape end-to-end.
-
 @timeout(5000)
-test "GET /hello returns 200 with text body via HttpServer + HttpClient" =
+ test "GET /hello returns 200 with text body via HttpServer + HttpClient" =
     let mutable response: Option<Response> = None
-    let program: Async<Unit, Never> = clientAgainstServer("/hello").fold(
-        (_: HttpClientError) => Async.succeed(()),
-        (r: Response) => Async.thunk(() => response = Some(r))
-    )
+    let program: Async<Unit, Never> =
+        clientAgainstServer("/hello")
+            .fold(
+            (_: HttpClientError) => Async.succeed(()),
+            (r: Response) => Async.thunk(() => response = Some(r))
+        )
     program.run()
     match response with
         case None => assert false
@@ -38,12 +39,14 @@ test "GET /hello returns 200 with text body via HttpServer + HttpClient" =
             assert r.bodyAsString() == "hello world"
 
 @timeout(5000)
-test "GET /users/{id} returns path-param echo" =
+ test "GET /users/{id} returns path-param echo" =
     let mutable response: Option<Response> = None
-    let program: Async<Unit, Never> = clientAgainstServer("/users/42").fold(
-        (_: HttpClientError) => Async.succeed(()),
-        (r: Response) => Async.thunk(() => response = Some(r))
-    )
+    let program: Async<Unit, Never> =
+        clientAgainstServer("/users/42")
+            .fold(
+            (_: HttpClientError) => Async.succeed(()),
+            (r: Response) => Async.thunk(() => response = Some(r))
+        )
     program.run()
     match response with
         case None => assert false
@@ -52,19 +55,24 @@ test "GET /users/{id} returns path-param echo" =
             assert r.bodyAsString() == "user 42"
 
 @timeout(5000)
-test "Two sequential GETs against the same server complete" =
+ test "Two sequential GETs against the same server complete" =
     // Smoke test for the per-connection forking: the server must service
     // the second request after the first completes, which exercises the
     // accept loop / semaphore release path.
     let mutable first: Option<Response> = None
     let mutable second: Option<Response> = None
-    let program: Async<Unit, Never> = twoSequentialGets().fold(
-        (_: HttpClientError) => Async.succeed(()),
-        (pair: (Response, Response)) => Async.thunk(() =>
-            first = Some(pair._0)
-            second = Some(pair._1)
+    let program: Async<Unit, Never> =
+        twoSequentialGets()
+            .fold(
+            (_: HttpClientError) => Async.succeed(()),
+            (pair: (Response, Response)) =>
+                Async
+                    .thunk(
+                    () =>
+                        first = Some(pair._0)
+                        second = Some(pair._1)
+                )
         )
-    )
     program.run()
     match (first, second) with
         case (Some(r1), Some(r2)) =>
@@ -73,12 +81,14 @@ test "Two sequential GETs against the same server complete" =
         case _ => assert false
 
 @timeout(5000)
-test "Unmatched path returns 404 via Routes.orNotFound fallback" =
+ test "Unmatched path returns 404 via Routes.orNotFound fallback" =
     let mutable response: Option<Response> = None
-    let program: Async<Unit, Never> = clientAgainstServer("/no/such/route").fold(
-        (_: HttpClientError) => Async.succeed(()),
-        (r: Response) => Async.thunk(() => response = Some(r))
-    )
+    let program: Async<Unit, Never> =
+        clientAgainstServer("/no/such/route")
+            .fold(
+            (_: HttpClientError) => Async.succeed(()),
+            (r: Response) => Async.thunk(() => response = Some(r))
+        )
     program.run()
     match response with
         case None => assert false
@@ -87,7 +97,6 @@ test "Unmatched path returns 404 via Routes.orNotFound fallback" =
             assert !r.isSuccess
 
 // --- Route fixture ----------------------------------------------------------
-
 function simpleApp(): Route =
     let hello: (Context) => Async<Response, ServerError> =
         (_: Context) => Async.succeed(Response.text("hello world"))
@@ -95,13 +104,9 @@ function simpleApp(): Route =
         (ctx: Context) =>
             let id = ctx.pathParams.require("id")
             Async.succeed(Response.text("user " ++ id))
-    Route.choose([|
-        Route.get("/hello", hello),
-        Route.get("/users/{id}", echoId),
-    |])
+    Route.choose([| Route.get("/hello", hello), Route.get("/users/{id}", echoId),  |])
 
 // --- Drivers ----------------------------------------------------------------
-
 async function clientAgainstServer(path: String): Async<Response, HttpClientError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let address = await listener.localAddress().mapError(HttpClientError.from)
@@ -111,10 +116,9 @@ async function clientAgainstServer(path: String): Async<Response, HttpClientErro
     await HttpClient.get(url).send()
 
 function serverFiber(listener: TcpListener, route: Route): Async<Unit, Never> =
-    HttpServer.serveOn(listener, route).fold(
-        (_: ServerError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    HttpServer
+        .serveOn(listener, route)
+        .fold((_: ServerError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
 
 /// Issue two GETs to different paths in sequence against the same
 /// server fiber. Exercises the accept loop's "ready for the next
@@ -136,21 +140,24 @@ async function twoSequentialGets(): Async<(Response, Response), HttpClientError>
 // with a failure; every non-terminal accept failure did the same, while also
 // swallowing the concurrency permit that iteration had taken.
 @timeout(10000)
-test "HttpServer: serveOn unwinds cleanly when the scope owning its listener ends" =
+ test "HttpServer: serveOn unwinds cleanly when the scope owning its listener ends" =
     let mutable outcome = 0i32
     serverOutlivesListener((n: Int32) => outcome = n).run()
     // 2 = the loop unwound on the scope's interrupt; -1 = it failed or panicked
     // out, which is what an accept error must never turn into.
     assert outcome == 2i32
 
-function serverOutcome(listener: TcpListener, route: Route, done: Promise<Int32, Never>): Async<Unit, Never> =
-    let onCause: (Cause<ServerError>) => Async<Unit, Never> = (cause: Cause<ServerError>) =>
-        let code = match cause with
-            case Cause.Interrupted(_) => 2i32
-            case _ => -1i32
-        done.complete(code).map<Unit>((_: Bool) => ())
-    let onSuccess: (Unit) => Async<Unit, Never> = (_: Unit) =>
-        done.complete(1i32).map<Unit>((_: Bool) => ())
+function serverOutcome(listener: TcpListener, route: Route, done: Promise<Int32, Never>):
+    Async<Unit, Never> =
+    let onCause: (Cause<ServerError>) => Async<Unit, Never> =
+        (cause: Cause<ServerError>) =>
+            let code =
+                match cause with
+                    case Cause.Interrupted(_) => 2i32
+                    case _ => -1i32
+            done.complete(code).map<Unit>((_: Bool) => ())
+    let onSuccess: (Unit) => Async<Unit, Never> =
+        (_: Unit) => done.complete(1i32).map<Unit>((_: Bool) => ())
     HttpServer.serveOn(listener, route).foldCause<Unit, Never>(onCause, onSuccess)
 
 /// Serve a real request, then let the scope end — tearing the accept loop down
@@ -161,7 +168,8 @@ async function serveWhileListenerLives(done: Promise<Int32, Never>): Async<Unit,
     let port = parsePortSuffix(address)
     // Background: the loop only ends when the listener closes, so a scope that
     // waited for it would never reach the release that ends it.
-    let _server: Fiber<Unit, Never> = await serverOutcome(listener, simpleApp(), done).forkBackground()
+    let _server: Fiber<Unit, Never> =
+        await serverOutcome(listener, simpleApp(), done).forkBackground()
     let response = await HttpClient.get("http://127.0.0.1:" ++ port.format() ++ "/hello").send()
     assert response.statusCode == 200
     // The client can see its response slightly before the handler fiber returns
@@ -193,28 +201,31 @@ async function serverOutlivesListener(setter: (Int32) => Unit): Async<Unit, Http
 // test, so this pins the observable half — a handler defect answers 500 and the
 // server keeps accepting afterwards — and the `foldCause` covers the rest by
 // construction.
-
 function panicApp(): Route =
     let boom: (Context) => Async<Response, ServerError> =
         // `Async.failPanic`, not the `panic` keyword: a Dovetail `panic` traps the
         // component outright, whereas a defect raised inside an async program is
         // a `Cause.Panicked` that unwinds through the fiber.
-        (_: Context) => Async.failPanic("handler exploded")
+        (
+            _: Context
+        ) => Async.failPanic("handler exploded")
     let ok: (Context) => Async<Response, ServerError> =
         (_: Context) => Async.succeed(Response.text("still serving"))
-    Route.choose([|
-        Route.get("/boom", boom),
-        Route.get("/ok", ok),
-    |])
+    Route.choose([| Route.get("/boom", boom), Route.get("/ok", ok),  |])
 
 function narrowServerFiber(listener: TcpListener, route: Route): Async<Unit, Never> =
-    let config = ServerConfig { maxBodyBytes = 1048576i32; maxConcurrency = 2i32; connectionTimeout = Duration.ofSeconds(30i64) }
-    HttpServer.serveOnWithConfig(listener, route, config).fold(
-        (_: ServerError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    let config =
+        ServerConfig {
+            maxBodyBytes = 1048576i32
+            maxConcurrency = 2i32
+            connectionTimeout = Duration.ofSeconds(30i64)
+        }
+    HttpServer
+        .serveOnWithConfig(listener, route, config)
+        .fold((_: ServerError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
 
-async function survivePanicsProgram(setStatus: (Int32) => Unit, setBody: (String) => Unit): Async<Unit, HttpClientError> =
+async function survivePanicsProgram(setStatus: (Int32) => Unit, setBody: (String) => Unit):
+    Async<Unit, HttpClientError> =
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let address = await listener.localAddress().mapError(HttpClientError.from)
     let port = parsePortSuffix(address)
@@ -233,7 +244,7 @@ async function survivePanicsProgram(setStatus: (Int32) => Unit, setBody: (String
     setBody(response.bodyAsString())
 
 @timeout(15000)
-test "HttpServer: a handler defect answers 500 and leaves the server accepting" =
+ test "HttpServer: a handler defect answers 500 and leaves the server accepting" =
     let mutable status = 0i32
     let mutable body: String = ""
     survivePanicsProgram((n: Int32) => status = n, (s: String) => body = s).run()
@@ -249,28 +260,27 @@ test "HttpServer: a handler defect answers 500 and leaves the server accepting" 
 // fatal, so a served follow-up request proves the permit came back — without the
 // timeout this test would hang until its `@timeout` fired.
 @timeout(15000)
-test "HttpServer drops a silent connection after connectionTimeout and keeps accepting" =
+ test "HttpServer drops a silent connection after connectionTimeout and keeps accepting" =
     let mutable status = 0i32
     silentThenServeProgram((n: Int32) => status = n).run()
     assert status == 200i32
 
-function boundedServerFiber(listener: TcpListener, route: Route, config: ServerConfig): Async<Unit, Never> =
-    HttpServer.serveOnWithConfig(listener, route, config).fold(
-        (_: ServerError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+function boundedServerFiber(listener: TcpListener, route: Route, config: ServerConfig):
+    Async<Unit, Never> =
+    HttpServer
+        .serveOnWithConfig(listener, route, config)
+        .fold((_: ServerError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
 
 /// Open a TCP connection and hold it open, sending nothing, until the server's
 /// `connectionTimeout` interrupts the server-side fiber. `ready` fires once the
 /// socket is connected so the caller can order the follow-up request after this
 /// connection is the one holding the sole permit.
 async function holdSilentConnection(port: Uint16, ready: Promise<Unit, Never>): Async<Unit, Never> =
-    await holdSilentConnectionRaw(port, ready).fold(
-        (_: NetError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    await holdSilentConnectionRaw(port, ready)
+        .fold((_: NetError) => Async.succeed(()), (_: Unit) => Async.succeed(()))
 
-async function holdSilentConnectionRaw(port: Uint16, ready: Promise<Unit, Never>): Async<Unit, NetError> =
+async function holdSilentConnectionRaw(port: Uint16, ready: Promise<Unit, Never>):
+    Async<Unit, NetError> =
     let stream: TcpStream = use Tcp.connect("127.0.0.1", port)
     await ready.complete(()).asUnit()
     await Async<Unit, Never>.sleep(Duration.ofSeconds(10i64))
@@ -281,8 +291,14 @@ async function silentThenServeProgram(setStatus: (Int32) => Unit): Async<Unit, H
     let port = parsePortSuffix(address)
     // maxConcurrency = 1 so the silent connection holds the ONLY permit; a
     // half-second bound so the test does not linger.
-    let config = ServerConfig { maxBodyBytes = 1048576i32; maxConcurrency = 1i32; connectionTimeout = Duration.ofMillis(500i64) }
-    let _server: Fiber<Unit, Never> = await boundedServerFiber(listener, simpleApp(), config).forkBackground()
+    let config =
+        ServerConfig {
+            maxBodyBytes = 1048576i32
+            maxConcurrency = 1i32
+            connectionTimeout = Duration.ofMillis(500i64)
+        }
+    let _server: Fiber<Unit, Never> =
+        await boundedServerFiber(listener, simpleApp(), config).forkBackground()
     let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     let _silent: Fiber<Unit, Never> = await holdSilentConnection(port, ready).forkBackground()
     await ready.awaitPromise()

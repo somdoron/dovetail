@@ -75,7 +75,8 @@ import standard.text.Charset
 /// (8) WHAT A SUBCLASS OWES THE BASE: that `writeBytes` writes ALL of the bytes
 ///     it is handed or fails, and that `checkAlive` and `recordedFailure` answer
 ///     honestly.
-public abstract class AsyncOutputStream<E> where E : IoError =
+public abstract class AsyncOutputStream<E>
+    where E: IoError =
     /// Write all bytes, honoring whatever backpressure protocol the transport
     /// requires.
     ///
@@ -174,10 +175,11 @@ public abstract class AsyncOutputStream<E> where E : IoError =
     public abstract function close(self): Async<Unit, E>
 
     /// UTF-8-encode the string and write all its bytes. v1 only supports UTF-8.
-    public final async function writeString(self, string: String, charset: Charset): Async<Unit, E> =
+    public final async function writeString(self, string: String, charset: Charset):
+        Async<Unit, E> =
         match charset with
-        case Charset.Utf8 => await self.write(string.bytes().readonly)
-        case _ => panic "unsupported charset"
+            case Charset.Utf8 => await self.write(string.bytes().readonly)
+            case _ => panic "unsupported charset"
 
 /// What a stream owes the byte stream when a write stops with part of its buffer
 /// already on the transport.
@@ -266,8 +268,10 @@ internal class WasiOutputStream<E>(
     // holders and neither is reachable from inside the other, so an acquire that
     // finds this fiber already holding it is a bug in this file.
     writeLock: Mutex
-) extends AsyncOutputStream<E>() where E : IoError =
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, E> =
+) extends AsyncOutputStream<E>()
+    where E: IoError =
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, E> =
         // The runtime serializes each individual copy on this stream end, because
         // p3 permits only one outstanding write per end. But a partial write is a
         // LOOP of copies, and a second fiber slipping between two of them would
@@ -279,7 +283,10 @@ internal class WasiOutputStream<E>(
         // holding the lock, which nothing here does. An invariant of this class
         // rather than a condition a caller could recover from, so `MutexError`
         // stays out of `write`'s signature.
-        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "WasiOutputStream.write re-entered its own write lock")
+        let _held = use self
+            .writeLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "WasiOutputStream.write re-entered its own write lock")
         await self.writeReframed(bytes)
 
     /// Pay off the separator a torn write left owed, then write the caller's
@@ -320,19 +327,23 @@ internal class WasiOutputStream<E>(
             case TornWrite.Reframe(separator) =>
                 if self.owedSeparator then
                     self.written = 0i32
-                    let paidOnCause: (Cause<E>) => Async<Unit, E> = (cause: Cause<E>) =>
-                        if self.written >= 1i32 then
+                    let paidOnCause: (Cause<E>) => Async<Unit, E> =
+                        (cause: Cause<E>) =>
+                            if self.written >= 1i32 then self.owedSeparator = false
+                            Async<Unit, E>.fromCause(cause)
+                    let paidOnWritten: (Unit) => Async<Unit, E> =
+                        (_: Unit) =>
                             self.owedSeparator = false
-                        Async<Unit, E>.fromCause(cause)
-                    let paidOnWritten: (Unit) => Async<Unit, E> = (_: Unit) =>
-                        self.owedSeparator = false
-                        Async.succeed(())
-                    await self.writeLocked([|separator|].readonly).foldCause<Unit, E>(paidOnCause, paidOnWritten)
+                            Async.succeed(())
+                    await self
+                        .writeLocked([| separator |].readonly)
+                        .foldCause<Unit, E>(paidOnCause, paidOnWritten)
             case TornWrite.Fence => ()
         self.written = 0i32
-        let onCause: (Cause<E>) => Async<Unit, E> = (cause: Cause<E>) =>
-            self.fenceIncomplete(bytes.length)
-            Async<Unit, E>.fromCause(cause)
+        let onCause: (Cause<E>) => Async<Unit, E> =
+            (cause: Cause<E>) =>
+                self.fenceIncomplete(bytes.length)
+                Async<Unit, E>.fromCause(cause)
         let onWritten: (Unit) => Async<Unit, E> = (written: Unit) => Async.succeed(written)
         await self.writeLocked(bytes).foldCause<Unit, E>(onCause, onWritten)
 
@@ -375,16 +386,16 @@ internal class WasiOutputStream<E>(
                         // this fiber was detached from the handle by somebody's
                         // `close` — and a detached fiber has learnt nothing about
                         // the stream to record.
-                        let copied = await Async<Unit, E>
-                            .streamWrite(self.sink, remaining)
+                        let copied = await Async<Unit, E>.streamWrite(self.sink, remaining)
                         // Counted before it is judged, and for every result. A
                         // cancelled or dropped copy still reports what the host
                         // took, and what the host took is the difference between a
                         // write that failed and a byte stream with a hole in it.
                         // On the cancel path the runtime hands this count over for
                         // that reason alone — see `settleCancelledRead`.
-                        self.written = self.written + copied._1
-                        remaining = remaining[|copied._1..|]
+                        self
+                            .written = self.written + copied._1
+                        remaining = remaining [| copied._1.. |]
                         if copied._0 == CopyResult.Dropped then
                             // The stream ended under this write. This is the only
                             // arm the runtime consults the one-shot result future
@@ -405,10 +416,8 @@ internal class WasiOutputStream<E>(
                             match copied._2 with
                                 case Some(reason) =>
                                     self.latchEnding(Some(reason))
-                                    if self.written < bytes.length then
-                                        await Async.fail(reason)
-                                    else
-                                        posting = false
+                                    if self.written < bytes.length then await Async.fail(reason)
+                                    else posting = false
                                 case None =>
                                     if self.written < bytes.length then
                                         self.latchEnding(Some(self.closedError))
@@ -417,37 +426,38 @@ internal class WasiOutputStream<E>(
                                         let noReason: Option<E> = None
                                         self.latchEnding(noReason)
                                         posting = false
-                        else if copied._0 == CopyResult.Cancelled then
-                            // This WRITE was cancelled, which says nothing about
-                            // the stream: somebody force-closed the handle under
-                            // this fiber, or this fiber is being interrupted. So
-                            // it reports the stream's `canceledError` rather than
-                            // the origin's "the transport is gone", and records no
-                            // ending (4).
-                            //
-                            // Whether it left a hole is the fence's question, asked
-                            // on the way out of the write as a whole. Here there is
-                            // only what to report, and a cancel that took the last
-                            // of the buffer has nothing to report: the bytes are the
-                            // transport's, so the loop goes round and stops on
-                            // `done`.
-                            if remaining.isEmpty() then
-                                ()
-                            else
-                                await Async.fail(self.sink.canceledError)
                         else
-                            // A completed copy that moved no bytes makes no
-                            // progress, and this loop's exit condition is progress.
-                            // The bound is shared with the library's other copy
-                            // loops — see `emptyCopyLimit`.
-                            emptyCopies = noteCopyProgress(emptyCopies, copied._1, "output stream: a host copy accepted no bytes and did not end the stream")
+                            if copied._0 == CopyResult.Cancelled then
+                                // This WRITE was cancelled, which says nothing about
+                                // the stream: somebody force-closed the handle under
+                                // this fiber, or this fiber is being interrupted. So
+                                // it reports the stream's `canceledError` rather than
+                                // the origin's "the transport is gone", and records no
+                                // ending (4).
+                                //
+                                // Whether it left a hole is the fence's question, asked
+                                // on the way out of the write as a whole. Here there is
+                                // only what to report, and a cancel that took the last
+                                // of the buffer has nothing to report: the bytes are the
+                                // transport's, so the loop goes round and stops on
+                                // `done`.
+                                if remaining.isEmpty() then ()
+                                else await Async.fail(self.sink.canceledError)
+                            else
+                                // A completed copy that moved no bytes makes no
+                                // progress, and this loop's exit condition is progress.
+                                // The bound is shared with the library's other copy
+                                // loops — see `emptyCopyLimit`.
+                                emptyCopies =
+                                    noteCopyProgress(
+                                        emptyCopies,
+                                        copied._1,
+                                        "output stream: a host copy accepted no bytes and did not end the stream"
+                                    )
                     case _ =>
                         stillOpen = false
                         posting = false
-        if !stillOpen then
-            await Async.fromResult(self.closedResult())
-        else
-            ()
+        if !stillOpen then await Async.fromResult(self.closedResult()) else ()
 
     /// Record that a copy observed the stream ending, and the transport's reason
     /// if it gave one. The result future is one-shot and the runtime has already
@@ -556,7 +566,10 @@ internal class WasiOutputStream<E>(
         // "not resolved yet" from "resolved cleanly", so a poll would spend the
         // single read that a real, later error needs. `close` is the definitive
         // check: it ends the stream first, which is what makes the future resolve.
-        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "WasiOutputStream.flush re-entered the write lock")
+        let _held = use self
+            .writeLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "WasiOutputStream.flush re-entered the write lock")
         ()
 
     /// Whether this stream could still take a byte, and why not if it could not.
@@ -630,11 +643,15 @@ internal class WasiOutputStream<E>(
                 // The handles are about to go, so the record's probe must say
                 // so before they do — the finalizer path enters here straight
                 // from `Open`, without passing `close`.
-                self.openFlag.open = false
+                self
+                    .openFlag
+                    .open = false
                 // Drop the writable FIRST: the future resolves when the host sees
                 // end-of-stream, so reading it before that would spend the single
                 // read on "not resolved yet".
-                self.sink.dropWritable()
+                self
+                    .sink
+                    .dropWritable()
                 // `spendEnding` and not `ending`: a copy may already have consulted
                 // this future, and reading a spent one-shot future traps. Whether it
                 // has is recorded on the handle rather than here, because the fiber
@@ -719,7 +736,9 @@ internal class WasiOutputStream<E>(
         // Flip the probe in the same synchronous breath as the state: from here
         // to the drop, a copy-posting step anywhere else must see `stillOpen`
         // false, or it posts on a handle this close is about to take away.
-        self.openFlag.open = false
+        self
+            .openFlag
+            .open = false
         await Async<Unit, E>.cancelStreamWrite(self.sink)
         self.dropHandles()
 
@@ -739,16 +758,32 @@ module WasiOutputStream<E> =
     /// stream owes a half-written buffer depends on what reads the far end, and
     /// only the origin knows that. It was decided here once, for every stream in
     /// the tree, and the decision was wrong for some of them.
-    public function resource<E2>(closedError: E, tornWrite: TornWrite, open: () => Async<ComponentStreamWrite<E>, E2>): Resource<AsyncOutputStream<E>, E2> where E : IoError =
-        let acquire: () => Async<WasiOutputStream<E>, E2> = async () =>
-            let raw = await open()
-            // Flag first, probe over it, record rebuilt, then the stream that
-            // flips the flag — see `OpenFlag` for the construction-order knot.
-            let openFlag = OpenFlag(true)
-            let sink = raw.withStillOpen(() => openFlag.open)
-            let writeLock = await Mutex.make()
-            let noError: Option<E> = None
-            WasiOutputStream<E>(sink, openFlag, closedError, StreamState.Open, noError, tornWrite, false, 0i32, writeLock)
+    public function resource<E2>(
+        closedError: E,
+        tornWrite: TornWrite,
+        open: () => Async<ComponentStreamWrite<E>, E2>
+    ): Resource<AsyncOutputStream<E>, E2>
+        where E: IoError =
+        let acquire: () => Async<WasiOutputStream<E>, E2> =
+            async () =>
+                let raw = await open()
+                // Flag first, probe over it, record rebuilt, then the stream that
+                // flips the flag — see `OpenFlag` for the construction-order knot.
+                let openFlag = OpenFlag(true)
+                let sink = raw.withStillOpen(() => openFlag.open)
+                let writeLock = await Mutex.make()
+                let noError: Option<E> = None
+                WasiOutputStream<E>(
+                    sink,
+                    openFlag,
+                    closedError,
+                    StreamState.Open,
+                    noError,
+                    tornWrite,
+                    false,
+                    0i32,
+                    writeLock
+                )
         let held: Resource<WasiOutputStream<E>, E2> =
             Resource.make(acquire, (s: WasiOutputStream<E>) => Async.thunk(() => s.dropHandles()))
         held.map<AsyncOutputStream<E>>((s: WasiOutputStream<E>) => s)
@@ -768,7 +803,6 @@ module WasiOutputStream<E> =
 // peer that will not drain, and that needs a peer. Those four members are
 // `public` on a class that is itself `internal`, so the reach stops at this
 // package — the same latitude `sink` and `dropHandles` already take.
-
 enum FenceProbeError =
     Broken
 
@@ -794,9 +828,15 @@ function fenceProbe(policy: TornWrite): WasiOutputStream<FenceProbeError> =
     // rebuilt, then the stream that flips the flag.
     let openFlag = OpenFlag(true)
     WasiOutputStream<FenceProbeError>(
-        fenceProbeSink().withStillOpen(() => openFlag.open), openFlag,
-        FenceProbeError.Broken, StreamState.Open, noError,
-        policy, false, 0i32, Mutex.makeProcessWide()
+        fenceProbeSink().withStillOpen(() => openFlag.open),
+        openFlag,
+        FenceProbeError.Broken,
+        StreamState.Open,
+        noError,
+        policy,
+        false,
+        0i32,
+        Mutex.makeProcessWide()
     )
 
 test "a torn write retires a stream that owes a fence" =

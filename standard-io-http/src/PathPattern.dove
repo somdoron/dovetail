@@ -32,8 +32,7 @@ public class PathPattern(segments: Array<PathSegment>) =
         // simply drop *all* empties since `/users` and `/users/`
         // are practically equivalent for matching.
         for seg in pattern.split("/") do
-            if seg.length > 0 then
-                parts.add(parseSegment(seg))
+            if seg.length > 0 then parts.add(parseSegment(seg))
         PathPattern(parts.toArray())
 
     /// Match the pattern against an incoming `path` (e.g. `/users/42`).
@@ -44,10 +43,10 @@ public class PathPattern(segments: Array<PathSegment>) =
         // Drop leading-`/` empty segment, same convention as `parse`.
         let trimmed = ArrayList<String>.new()
         for s in path.split("/") do
-            if s.length > 0 then
-                trimmed.add(s)
+            if s.length > 0 then trimmed.add(s)
         let pathSegs = trimmed.toArray()
-        if pathSegs.length != self.segments.length then None
+        if pathSegs.length != self.segments.length then
+            None
         else
             let mutable accum: PathParams = PathParams.empty()
             let mutable j = 0
@@ -57,11 +56,9 @@ public class PathPattern(segments: Array<PathSegment>) =
                     match self.segments.get(j) with
                         case PathSegment.Literal(lit) =>
                             if pathSegs.get(j) != lit then mismatch = true
-                        case PathSegment.Param(name) =>
-                            accum = accum.put(name, pathSegs.get(j))
+                        case PathSegment.Param(name) => accum = accum.put(name, pathSegs.get(j))
                 j = j + 1
-            if mismatch then None
-            else Some(accum)
+            if mismatch then None else Some(accum)
 
     /// Specificity score = count of literal segments. Higher beats lower
     /// in `Router.dispatch` conflict resolution.
@@ -82,10 +79,8 @@ function parseSegment(s: String): PathSegment =
     let bytes = s.bytes()
     if bytes.length >= 2 && bytes.get(0) == 123u8 && bytes.get(bytes.length - 1) == 125u8 then
         let name = s.substring(1, s.length - 1)
-        if name.length == 0 then
-            panic "PathPattern.parse: empty param name in '" ++ s ++ "'"
-        else
-            PathSegment.Param(name)
+        if name.length == 0 then panic "PathPattern.parse: empty param name in '" ++ s ++ "'"
+        else PathSegment.Param(name)
     else
         // Reject unbalanced braces — common typo, easier to catch here.
         if bytes.length > 0 && bytes.get(0) == 123u8 then

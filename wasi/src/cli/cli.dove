@@ -39,8 +39,10 @@ public newtype TerminalOutput = Int32
 module Terminal =
     /// Returns a terminal handle if stdin is connected to a terminal.
     public property stdin: Option<TerminalInput> = intrinsic
+
     /// Returns a terminal handle if stdout is connected to a terminal.
     public property stdout: Option<TerminalOutput> = intrinsic
+
     /// Returns a terminal handle if stderr is connected to a terminal.
     public property stderr: Option<TerminalOutput> = intrinsic
 
@@ -48,8 +50,10 @@ module Terminal =
 module Environment =
     /// Returns all environment variables as key-value pairs.
     public property variables: Array<(String, String)> = intrinsic
+
     /// Returns the command-line arguments.
     public property arguments: Array<String> = intrinsic
+
     /// Returns the initial working directory, if available.
     public property initialCwd: Option<String> = intrinsic
 
@@ -74,10 +78,13 @@ module Environment =
 module Console =
     /// Prints text to stdout (no newline).
     public function print(text: String): Unit = intrinsic
+
     /// Prints text followed by a newline to stdout.
     public function println(line: String): Unit = intrinsic
+
     /// Prints text to stderr (no newline).
     public function eprint(text: String): Unit = intrinsic
+
     /// Prints text followed by a newline to stderr.
     public function eprintln(line: String): Unit = intrinsic
 
@@ -101,8 +108,10 @@ module StdoutStream =
     /// `standard.io.Console` does. That caching is what serializes concurrent
     /// writers onto the one outstanding write p3 permits per stream end.
     public function open(): StdoutStream = intrinsic
+
     /// Post an async write of the bounded byte view into a pinned buffer.
     public function writeStart(self, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+
     /// Cancel an in-flight write (before dropping the writable), returning the
     /// packed status. A cancel can lose the race with a completion that already
     /// copied bytes out, and the count is the only report of that.
@@ -144,8 +153,11 @@ public record StderrStream =
 
 module StderrStream =
     public function open(): StderrStream = intrinsic
+
     public function writeStart(self, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+
     public function cancelWrite(self): Int32 = intrinsic
+
     public function readResult(self): Result<Unit, CliIoError> = intrinsic
 
     public function componentWrite(self): ComponentStreamWrite<CliIoError> =
@@ -182,20 +194,25 @@ public record StdinStream =
 module StdinStream =
     /// Open a stdin stream (wasi `read-via-stream`).
     public function open(): StdinStream = intrinsic
+
     /// Post an async read of up to `capacity` bytes into a pinned buffer.
     /// Consume the completion with `Stream.readFinish` (or `Stream.discard`).
     public function readStart(self, capacity: Int32): CopyOperation = intrinsic
+
     /// Cancel an in-flight read; returns the raw cancel status
     /// (`code | count << 4`). A cancel can race a completion that already
     /// copied bytes into the op's buffer, and `count` is the only way to
     /// learn that they are there.
     public function cancelRead(self): Int32 = intrinsic
+
     /// Drop the readable end of a stdin stream.
     public function dropReadable(self): Unit = intrinsic
+
     /// Read the result future to learn how the input ended: `Ok` for a clean
     /// end-of-input, `Error` for a host failure part-way through. Reads
     /// synchronously, cancelling if it is not yet resolved (which reports `Ok`).
     public function readResult(self): Result<Unit, CliIoError> = intrinsic
+
     /// Drop the result future. Only after `readResult` — the future resolves
     /// when the host sees end-of-input, so the read sits between dropping the
     /// readable end and this.
@@ -210,9 +227,10 @@ module StdinStream =
             cancel = () => EventPayload(self.cancelRead())
             canceledError = CliIoError.canceled
             stillOpen = () => true
-            dropEnd = () =>
-                self.dropReadable()
-                self.dropResultFuture()
+            dropEnd =
+                () =>
+                    self.dropReadable()
+                    self.dropResultFuture()
             // Bytes: releasing elements nobody will receive is freeing the
             // pinned buffer, nothing owned to close.
             discardElements = (copy: CopyOperation, count: Int32) => Stream.discard(copy)

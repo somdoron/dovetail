@@ -12,7 +12,6 @@ import standard.time.Instant
 /// `TlsClient`/`TlsServer` (RFC 8446). The sans-I/O engine reads no clock and no
 /// entropy source: `currentTime` and `randomSeed` are supplied by the caller so
 /// the protocol logic stays pure and deterministically testable.
-
 public record TlsClientConfig =
     serverName: String
     cipherSuites: List<CipherSuite>

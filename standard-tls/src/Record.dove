@@ -19,7 +19,6 @@ import standard.crypto.Aes256Gcm
 /// after `installWriteKeys`/`installReadKeys` they are sealed/opened with the
 /// negotiated AEAD. Sequence numbers reset to zero each time keys change
 /// (handshake→application, KeyUpdate).
-
 /// The key + IV for one traffic direction (RFC 8446 §7.3). The IV is the static
 /// per-connection IV; the per-record nonce is `computeNonce(iv, seq)`.
 record TrafficKeys =
@@ -55,13 +54,7 @@ let maxCiphertext: Int32 = 16384 + 256
 /// The 5-byte record header: type ‖ legacy_version(0x0303) ‖ length. This is
 /// also the AEAD associated data for protected records (RFC 8446 §5.2).
 function recordHeader(contentTypeByte: Int32, length: Int32): Array<Uint8> =
-    [|
-        contentTypeByte.toUint8(),
-        0x03u8,
-        0x03u8,
-        (length >> 8).toUint8(),
-        length.toUint8(),
-    |]
+    [| contentTypeByte.toUint8(), 0x03u8, 0x03u8, (length >> 8).toUint8(), length.toUint8(),  |]
 
 /// The per-record nonce: the static IV with the 64-bit big-endian record
 /// sequence number XORed into its trailing bytes (RFC 8446 §5.3).
@@ -85,8 +78,7 @@ class RecordLayer(
     mutable readSeq: Int64
 ) =
     /// A record layer with no keys installed (everything in the clear).
-    public function make(): RecordLayer =
-        RecordLayer(None, None, None, 0i64, 0i64)
+    public function make(): RecordLayer = RecordLayer(None, None, None, 0i64, 0i64)
 
     /// Install (or rotate) the write-direction traffic keys; resets write seq.
     public function installWriteKeys(self, aead: AeadAlgorithm, keys: TrafficKeys): Unit =
@@ -114,12 +106,13 @@ class RecordLayer(
 
     /// Frame a plaintext fragment as an unprotected record (used before keys
     /// exist and for the ChangeCipherSpec compatibility record).
-    public function framePlaintext(self, contentType: ContentType, fragment: Array<Uint8>): Array<Uint8> =
-        recordHeader(contentTypeCode(contentType), fragment.length).concat(fragment)
+    public function framePlaintext(self, contentType: ContentType, fragment: Array<Uint8>):
+        Array<Uint8> = recordHeader(contentTypeCode(contentType), fragment.length).concat(fragment)
 
     /// Seal `content` of type `contentType` into a protected record (outer type
     /// `application_data`, RFC 8446 §5.2). Returns the full record bytes.
-    public function sealRecord(self, contentType: ContentType, content: ReadonlySlice<Uint8>): Result<Array<Uint8>, TlsError> =
+    public function sealRecord(self, contentType: ContentType, content: ReadonlySlice<Uint8>):
+        Result<Array<Uint8>, TlsError> =
         match self.aead with
             case None => Error(TlsError.InternalError("seal without keys"))
             case Some(aead) =>
@@ -127,10 +120,11 @@ class RecordLayer(
                     case None => Error(TlsError.InternalError("seal without write keys"))
                     case Some(keys) =>
                         let inner = Array<Uint8>.fill(content.length + 1, 0u8)
-                        content.copyTo(inner[|0..content.length|])
+                        content.copyTo(inner [| 0..content.length |])
                         inner[content.length] = contentTypeCode(contentType).toUint8()
                         let recordLen = inner.length + aead.tagSize
-                        let header = recordHeader(contentTypeCode(ContentType.ApplicationData), recordLen)
+                        let header =
+                            recordHeader(contentTypeCode(ContentType.ApplicationData), recordLen)
                         let nonce = computeNonce(keys.iv, self.writeSeq)
                         let ciphertext = aead.encrypt(keys.key, nonce, inner, header)
                         self.writeSeq = self.writeSeq + 1i64
@@ -164,15 +158,17 @@ function stripInner(plaintext: Array<Uint8>): Result<TlsRecord, TlsError> =
         end = end - 1
     if end < 0 then
         Error(TlsError.UnexpectedMessage("record with no content type"))
-    else if end > maxPlaintext then
-        // The recovered TLSInnerPlaintext content MUST NOT exceed 2^14 bytes
-        // (RFC 8446 §5.4). A decrypted fragment claiming more is a record_overflow.
-        Error(TlsError.RecordOverflow)
     else
-        let typeByte = plaintext.get(end).toInt32()
-        match contentTypeFromCode(typeByte) with
-            case None => Error(TlsError.UnexpectedMessage("unknown inner content type"))
-            case Some(ct) => Ok(TlsRecord { contentType = ct; payload = plaintext; contentLength = end })
+        if end > maxPlaintext then
+            // The recovered TLSInnerPlaintext content MUST NOT exceed 2^14 bytes
+            // (RFC 8446 §5.4). A decrypted fragment claiming more is a record_overflow.
+            Error(TlsError.RecordOverflow)
+        else
+            let typeByte = plaintext.get(end).toInt32()
+            match contentTypeFromCode(typeByte) with
+                case None => Error(TlsError.UnexpectedMessage("unknown inner content type"))
+                case Some(ct) =>
+                    Ok(TlsRecord { contentType = ct; payload = plaintext; contentLength = end })
 
 /// Pull the next complete raw record from `reader`, or `None` if fewer than a
 /// full record's bytes are buffered. Enforces the ciphertext size limit.
@@ -216,8 +212,7 @@ class ChunkBuffer(
     public property pending(self): Int32 = self.used - self.start
 
     /// The pending byte at `index` (relative to the unconsumed front).
-    public function byteAt(self, index: Int32): Uint8 =
-        self.data.get(self.start + index)
+    public function byteAt(self, index: Int32): Uint8 = self.data.get(self.start + index)
 
     /// Append `chunk[offset, offset + count)`. Copies into the free tail when
     /// there is room; otherwise reallocates to twice what is actually needed,
@@ -273,8 +268,8 @@ test "tls record layer round-trips a protected handshake record" =
     let recv = RecordLayer.make()
     recv.installReadKeys(Aes128Gcm, keys)
 
-    let backing = [|0xffu8, 0x14u8, 0x00u8, 0x00u8, 0x20u8, 0xaau8, 0xbbu8, 0xccu8, 0xeeu8|]
-    let content = backing.readonly[|1..8|]
+    let backing = [| 0xffu8, 0x14u8, 0x00u8, 0x00u8, 0x20u8, 0xaau8, 0xbbu8, 0xccu8, 0xeeu8 |]
+    let content = backing.readonly [| 1..8 |]
     let recordBytes = send.sealRecord(ContentType.Handshake, content).require
     // outer type is application_data (23) and version is 0x0303
     assert recordBytes.get(0) == 23u8
@@ -303,8 +298,8 @@ test "tls record layer sequence numbers advance independently" =
     let recv = RecordLayer.make()
     recv.installReadKeys(Aes256Gcm, keys)
 
-    let r0 = send.sealRecord(ContentType.ApplicationData, [|0x01u8, 0x02u8|].readonly).require
-    let r1 = send.sealRecord(ContentType.ApplicationData, [|0x03u8, 0x04u8|].readonly).require
+    let r0 = send.sealRecord(ContentType.ApplicationData, [| 0x01u8, 0x02u8 |].readonly).require
+    let r1 = send.sealRecord(ContentType.ApplicationData, [| 0x03u8, 0x04u8 |].readonly).require
     // distinct nonces (seq 0 vs 1) ⇒ distinct ciphertext for distinct content
     let raw0 = readRawRecord(ByteReader.make(r0)).require.require
     let raw1 = readRawRecord(ByteReader.make(r1)).require.require
@@ -322,9 +317,10 @@ test "tls record layer rejects a tampered record with BadRecordMac" =
     let recv = RecordLayer.make()
     recv.installReadKeys(Aes128Gcm, keys)
 
-    let recordBytes = send.sealRecord(ContentType.Handshake, [|0xdeu8, 0xadu8|].readonly).require
+    let recordBytes = send.sealRecord(ContentType.Handshake, [| 0xdeu8, 0xadu8 |].readonly).require
     // flip a ciphertext byte
-    recordBytes.set(6, recordBytes.get(6) ^ 0x01u8)
+    recordBytes
+        .set(6, recordBytes.get(6) ^ 0x01u8)
     let raw = readRawRecord(ByteReader.make(recordBytes)).require.require
     assert recv.openRecord(raw).isError
 
@@ -344,34 +340,35 @@ test "tls ChunkBuffer keeps bytes in order across growth and consumption" =
     assert s.length == 7
     assert s.get(0) == 7u8
     // appends after a consume land after the pending bytes, not over them
-    buffer.append([|0xffu8|])
+    buffer
+        .append([| 0xffu8 |])
     assert buffer.byteAt(buffer.pending - 1) == 0xffu8
 
 test "tls ChunkBuffer resets once fully consumed" =
     let buffer = ChunkBuffer.make()
-    buffer.append([|1u8, 2u8, 3u8|])
+    buffer.append([| 1u8, 2u8, 3u8 |])
     buffer.consume(3)
     assert buffer.pending == 0
-    buffer.append([|9u8|])
+    buffer.append([| 9u8 |])
     assert buffer.byteAt(0) == 9u8
 
 test "tls ChunkBuffer appendSlice copies only the requested window" =
     let buffer = ChunkBuffer.make()
-    buffer.appendSlice([|1u8, 2u8, 3u8, 4u8, 5u8|], 1, 3)
+    buffer.appendSlice([| 1u8, 2u8, 3u8, 4u8, 5u8 |], 1, 3)
     assert buffer.pending == 3
     assert buffer.byteAt(0) == 2u8
     assert buffer.byteAt(2) == 4u8
 
 test "tls pendingHandshakeLength reads the uint24 header at the front" =
     let buffer = ChunkBuffer.make()
-    buffer.append([|0x01u8, 0x00u8|])
+    buffer.append([| 0x01u8, 0x00u8 |])
     assert pendingHandshakeLength(buffer).isNone
-    buffer.append([|0x00u8, 0x05u8|])
+    buffer.append([| 0x00u8, 0x05u8 |])
     assert pendingHandshakeLength(buffer).require == 9
 
 test "tls readRawRecord returns None on a partial record" =
     // header claims 10 bytes but only 2 follow
-    let partial = [|23u8, 0x03u8, 0x03u8, 0x00u8, 0x0au8, 0xaau8, 0xbbu8|]
+    let partial = [| 23u8, 0x03u8, 0x03u8, 0x00u8, 0x0au8, 0xaau8, 0xbbu8 |]
     match readRawRecord(ByteReader.make(partial)).require with
         case None => assert true
         case Some(_) => assert false

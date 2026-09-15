@@ -51,25 +51,29 @@ module TzData =
     /// `None` if the name isn't in the database.
     function findZone(id: String): Option<TzZone> =
         let db = database
-        if db.zoneCount == 0 then None
+        if db.zoneCount == 0 then
+            None
         else
             let idx = binarySearchZone(db, id)
             match idx with
                 case None => None
                 case Some(i) =>
                     let entryOffset = db.indexOffset + i * 16
-                    let nameOffset = readU32(db.bytes[|entryOffset..|]).toInt32()
-                    let nameLength = readU32(db.bytes[|entryOffset + 4..|]).toInt32()
-                    let dataOffset = readU32(db.bytes[|entryOffset + 8..|]).toInt32()
-                    let count = readU32(db.bytes[|dataOffset..|]).toInt32()
-                    let nameStr = String.fromBytes(db.bytes, db.namePoolOffset + nameOffset, nameLength)
-                    Some(TzZone {
-                        id = nameStr
-                        bytes = db.bytes
-                        abbrevPoolOffset = db.abbrevPoolOffset
-                        dataOffset = dataOffset
-                        transitionCount = count
-                    })
+                    let nameOffset = readU32(db.bytes [| entryOffset.. |]).toInt32()
+                    let nameLength = readU32(db.bytes [| entryOffset + 4.. |]).toInt32()
+                    let dataOffset = readU32(db.bytes [| entryOffset + 8.. |]).toInt32()
+                    let count = readU32(db.bytes [| dataOffset.. |]).toInt32()
+                    let nameStr =
+                        String.fromBytes(db.bytes, db.namePoolOffset + nameOffset, nameLength)
+                    Some(
+                        TzZone {
+                            id = nameStr
+                            bytes = db.bytes
+                            abbrevPoolOffset = db.abbrevPoolOffset
+                            dataOffset = dataOffset
+                            transitionCount = count
+                        }
+                    )
 
 module TzZone =
     /// Return the active UTC offset (seconds), DST flag, and abbreviation
@@ -86,36 +90,36 @@ module TzZone =
             // whose epoch is still <= target.
             let mid = (lo + hi + 1) / 2
             let midEpoch = readTransitionEpoch(self, mid)
-            if midEpoch <= epochSecond then
-                lo = mid
-            else
-                hi = mid - 1
+            if midEpoch <= epochSecond then lo = mid else hi = mid - 1
         // lo is the answer.
         let transOffset = self.dataOffset + 4 + lo * 16
-        let offset = readI32(self.bytes[|transOffset + 8..|])
-        let abbrevIdx = readU16(self.bytes[|transOffset + 12..|])
+        let offset = readI32(self.bytes [| transOffset + 8.. |])
+        let abbrevIdx = readU16(self.bytes [| transOffset + 12.. |])
         let flags = self.bytes.get(transOffset + 14)
         let isDst = (flags.toInt32() & 1) != 0
         let abbrev = readCStringAt(self.bytes, self.abbrevPoolOffset + abbrevIdx)
         TzOffset { offsetSeconds = offset; isDst = isDst; abbrev = abbrev }
 
 // --- Internal helpers ------------------------------------------------------
-
 /// Parse the 32-byte header and return a populated `TzDatabase` with the
 /// raw `bytes` alongside cached offsets. Panics if the magic is wrong or
 /// the format version is unknown — both are bugs in the build pipeline,
 /// not user-recoverable runtime errors.
 internal function parseHeader(bytes: Array<Uint8>): TzDatabase =
     if bytes.length < 32 then panic "tzdata blob too small"
-    if bytes.get(0) != 84u8 || bytes.get(1) != 90u8 || bytes.get(2) != 68u8 || bytes.get(3) != 66u8 then
-        panic "tzdata magic mismatch (expected TZDB)"
-    let version = readU32(bytes[|4..|])
+    if bytes
+        .get(0)
+        != 84u8
+        || bytes.get(1) != 90u8
+        || bytes.get(2) != 68u8
+        || bytes.get(3) != 66u8 then panic "tzdata magic mismatch (expected TZDB)"
+    let version = readU32(bytes [| 4.. |])
     if version != 1i64 then panic "tzdata version unsupported"
-    let zoneCount = readU32(bytes[|8..|]).toInt32()
-    let namePoolOffset = readU32(bytes[|12..|]).toInt32()
-    let abbrevPoolOffset = readU32(bytes[|16..|]).toInt32()
-    let zonesOffset = readU32(bytes[|20..|]).toInt32()
-    let leapOffset = readU32(bytes[|24..|]).toInt32()
+    let zoneCount = readU32(bytes [| 8.. |]).toInt32()
+    let namePoolOffset = readU32(bytes [| 12.. |]).toInt32()
+    let abbrevPoolOffset = readU32(bytes [| 16.. |]).toInt32()
+    let zonesOffset = readU32(bytes [| 20.. |]).toInt32()
+    let leapOffset = readU32(bytes [| 24.. |]).toInt32()
     let _ = zonesOffset // not stored — `data_offset` per zone is absolute
     TzDatabase {
         bytes = bytes
@@ -129,7 +133,7 @@ internal function parseHeader(bytes: Array<Uint8>): TzDatabase =
 /// Read the epoch (Int64) of transition `i` for `zone`.
 internal function readTransitionEpoch(zone: TzZone, i: Int32): Int64 =
     let off = zone.dataOffset + 4 + i * 16
-    readI64(zone.bytes[|off..|])
+    readI64(zone.bytes [| off.. |])
 
 /// Binary search the zone_index for `id`. Returns the matching index, or
 /// `None` if not found.
@@ -141,8 +145,8 @@ internal function binarySearchZone(db: TzDatabase, id: String): Option<Int32> =
     while !done && lo <= hi do
         let mid = lo + (hi - lo) / 2
         let entryOffset = db.indexOffset + mid * 16
-        let nameOffset = readU32(db.bytes[|entryOffset..|]).toInt32()
-        let nameLength = readU32(db.bytes[|entryOffset + 4..|]).toInt32()
+        let nameOffset = readU32(db.bytes [| entryOffset.. |]).toInt32()
+        let nameLength = readU32(db.bytes [| entryOffset + 4.. |]).toInt32()
         let cmp = compareStringToBytes(id, db.bytes, db.namePoolOffset + nameOffset, nameLength)
         if cmp == 0 then
             result = Some(mid)
@@ -156,7 +160,8 @@ internal function binarySearchZone(db: TzDatabase, id: String): Option<Int32> =
 /// Compare a String to a byte slice (lexicographically by byte). Returns
 /// `<0` if `s < slice`, `0` if equal, `>0` if greater. Used for
 /// zone-index binary search.
-internal function compareStringToBytes(s: String, bytes: Array<Uint8>, start: Int32, length: Int32): Int32 =
+internal function compareStringToBytes(s: String, bytes: Array<Uint8>, start: Int32, length: Int32):
+    Int32 =
     let sBytes = s.bytes()
     let sLen = sBytes.length
     let mutable i = 0
@@ -171,8 +176,7 @@ internal function compareStringToBytes(s: String, bytes: Array<Uint8>, start: In
             done = true
         else
             i = i + 1
-    if !done then
-        result = sLen - length
+    if !done then result = sLen - length
     result
 
 /// Read a NUL-terminated UTF-8 string starting at `start`.
@@ -212,15 +216,14 @@ internal function readI64(bytes: Slice<Uint8>): Int64 =
     acc
 
 // --- Tests -----------------------------------------------------------------
-
 test "TzData: blob is non-empty and has TZDB magic" =
     let db = TzData.database
     assert db.bytes.length > 32
     assert db.zoneCount > 0
-    assert db.bytes.get(0) == 84u8   // 'T'
-    assert db.bytes.get(1) == 90u8   // 'Z'
-    assert db.bytes.get(2) == 68u8   // 'D'
-    assert db.bytes.get(3) == 66u8   // 'B'
+    assert db.bytes.get(0) == 84u8 // 'T'
+    assert db.bytes.get(1) == 90u8 // 'Z'
+    assert db.bytes.get(2) == 68u8 // 'D'
+    assert db.bytes.get(3) == 66u8 // 'B'
 
 test "TzData: findZone for UTC" =
     match TzData.findZone("UTC") with
@@ -242,7 +245,7 @@ test "TzData: NY offset in summer is -04:00" =
     match TzData.findZone("America/New_York") with
         case Some(z) =>
             let off = z.offsetAt(1721044800i64)
-            assert off.offsetSeconds == -14400  // -4h
+            assert off.offsetSeconds == -14400 // -4h
             assert off.isDst
         case None => panic "zone missing"
 
@@ -251,7 +254,7 @@ test "TzData: NY offset in winter is -05:00" =
     match TzData.findZone("America/New_York") with
         case Some(z) =>
             let off = z.offsetAt(1734264000i64)
-            assert off.offsetSeconds == -18000  // -5h
+            assert off.offsetSeconds == -18000 // -5h
             assert off.isDst == false
         case None => panic "zone missing"
 
@@ -260,5 +263,5 @@ test "TzData: linked alias resolves to same data" =
     match TzData.findZone("Asia/Kolkata") with
         case Some(z) =>
             let off = z.offsetAt(1721044800i64)
-            assert off.offsetSeconds == 19800  // +5:30
+            assert off.offsetSeconds == 19800 // +5:30
         case None => panic "Asia/Kolkata not found"

@@ -1,7 +1,7 @@
 package standard.prelude
 
 @derive(Equatable)
-public enum Ordering =
+ public enum Ordering =
     Less
     Equal
     Greater
@@ -92,7 +92,7 @@ test "Ordering inequality" =
     let eq2 = Ordering.Less == Ordering.Equal
     assert eq2 == false
 
-implement <T> Comparable for Array<T> where T: Comparable =
+implement<T> Comparable for Array<T> where T: Comparable =
     public function compare(self: Array<T>, other: Array<T>): Ordering =
         let mutable i = 0
         let mutable result = Ordering.Equal
@@ -119,15 +119,14 @@ test "Comparable String returns Ordering" =
     assert "abc".compare("abc") == Ordering.Equal
     assert "def".compare("abc") == Ordering.Greater
 
-
-implement <A, B> Comparable for (A, B) where A: Comparable, B: Comparable =
+implement<A, B> Comparable for (A, B) where A: Comparable, B: Comparable =
     public function compare(self: (A, B), other: (A, B)): Ordering =
         match self.init.compare(other.init) with
             case Ordering.Equal => self.last.compare(other.last)
             case result => result
 
-implement <T, U> Comparable for T ~ U where T: Tuple, T: Comparable, U: Comparable =
-    public function compare(self: T ~ U, other: T ~ U): Ordering =
+implement<T, U> Comparable for T ~U where T: Tuple, T: Comparable, U: Comparable =
+    public function compare(self: T ~U, other: T ~U): Ordering =
         match self.init.compare(other.init) with
             case Ordering.Equal => self.last.compare(other.last)
             case result => result

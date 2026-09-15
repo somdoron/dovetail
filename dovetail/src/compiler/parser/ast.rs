@@ -2,7 +2,7 @@ use crate::common::span::{Span, Spanned};
 use crate::common::types::{Fqn, PackagePath, Variance, Visibility};
 
 /// Binary operators.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     Add,        // +
     Concat,     // ++
@@ -54,7 +54,7 @@ impl std::fmt::Display for BinOp {
 }
 
 /// Unary operators.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Neg,    // - (numeric negation)
     Not,    // ! (boolean not)
@@ -72,14 +72,14 @@ impl std::fmt::Display for UnaryOp {
 }
 
 /// Combined AST for a single package, potentially from multiple source files.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct PackageAst {
     pub package_path: PackagePath,
     pub files: Vec<SourceFile>,
 }
 
 /// A parsed source file.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct SourceFile {
     pub package: PackageDecl,
     pub imports: Vec<ImportDecl>,
@@ -87,14 +87,14 @@ pub struct SourceFile {
 }
 
 /// A package declaration: `package a` or `package com.example.myapp`.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct PackageDecl {
     pub path: Vec<Spanned<String>>,
     pub span: Span,
 }
 
 /// An import declaration: `import a.utils.func` or `import a.utils as u`.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ImportDecl {
     pub path: Vec<Spanned<String>>,
     pub alias: Option<Spanned<String>>,
@@ -102,7 +102,7 @@ pub struct ImportDecl {
 }
 
 /// A top-level declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub enum Declaration {
     Function(FunctionDecl),
     GlobalVar(GlobalVarDecl),
@@ -119,7 +119,7 @@ pub enum Declaration {
 }
 
 /// An attribute on a test declaration: `@skip`, `@panics("msg")`, `@timeout(1000)`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub enum TestAttribute {
     Skip { reason: Option<Spanned<String>>, span: Span },
     Panics { message: Option<Spanned<String>>, span: Span },
@@ -131,14 +131,14 @@ pub enum TestAttribute {
 /// `macro_name` is the path to the macro as written at the call site
 /// (e.g. `["Equatable"]` or `["json", "JsonCodec"]`). The macro phase
 /// resolves this against the file's imports + the MacroRegistry.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct DeriveAttribute {
     pub macro_name: Vec<Spanned<String>>,
     pub span: Span,
 }
 
 /// A test declaration: `test "name" = body`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct TestDecl {
     pub attributes: Vec<TestAttribute>,
     pub name: Spanned<String>,
@@ -147,7 +147,7 @@ pub struct TestDecl {
 }
 
 /// A type alias declaration: `type Cents = Int32` or `type Maybe<T> = Option<T>`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct TypeAliasDecl {
     pub visibility: Visibility,
     /// Span of a `@stringLiteral` attribute, when the alias names a prefixed
@@ -162,7 +162,7 @@ pub struct TypeAliasDecl {
 }
 
 /// A class declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ClassDecl {
     pub visibility: Visibility,
     /// Span of a `@stringLiteral` attribute, when this type is itself the
@@ -185,7 +185,7 @@ pub struct ClassDecl {
 }
 
 /// An extends clause: `extends ParentType(args...)`.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ClassExtends {
     pub parent_type: TypeExpr,
     pub super_args: Vec<Expr>,
@@ -193,7 +193,7 @@ pub struct ClassExtends {
 }
 
 /// A constructor parameter in a class declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ConstructorParam {
     pub visibility: Visibility,
     pub mutable: bool,
@@ -205,7 +205,7 @@ pub struct ConstructorParam {
 }
 
 /// A member of a class body.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub enum ClassMember {
     LetBinding(ClassLetBinding),
     Method(FunctionDecl),
@@ -214,7 +214,7 @@ pub enum ClassMember {
 }
 
 /// A let binding inside a class body.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ClassLetBinding {
     pub visibility: Visibility,
     pub is_static: bool,
@@ -227,7 +227,7 @@ pub struct ClassLetBinding {
 }
 
 /// A newtype declaration: `newtype Cents = Int32` or `newtype Wrapper<out T> = T`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct NewtypeDecl {
     /// Compiler-owned opaque type declared with `type ... = intrinsic`.
     pub intrinsic: bool,
@@ -247,7 +247,7 @@ pub struct NewtypeDecl {
 
 /// A module declaration: `module Math = ...`
 /// May have where clause (inherited from associated type): `module Map<K, V> = ...`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ModuleDecl {
     pub name: Spanned<String>,
     pub type_params: Vec<Spanned<String>>,
@@ -262,7 +262,7 @@ pub struct ModuleDecl {
 /// An extension declaration: `extension IntMath for Int32 = ...`
 /// May have type parameters: `extension ArrayHelper<T> for Array<T> = ...`
 /// May have where clause: `extension BoxHelper<T> for Box<T> where T: Display = ...`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ExtensionDecl {
     pub name: Spanned<String>,
     pub type_params: Vec<Spanned<String>>,
@@ -275,7 +275,7 @@ pub struct ExtensionDecl {
 }
 
 /// A property declaration: `property name(self): Type = expression`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct PropertyDecl {
     pub visibility: Visibility,
     pub is_override: bool,
@@ -291,7 +291,7 @@ pub struct PropertyDecl {
 }
 
 /// A global variable declaration: `let x: Int32 = 42` or `let mutable x = 0`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct GlobalVarDecl {
     pub visibility: Visibility,
     pub name: Spanned<String>,
@@ -303,7 +303,7 @@ pub struct GlobalVarDecl {
 }
 
 /// A trait constraint in a where clause: `T: Display + Equatable` or `T: From<Int32>`
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct TraitConstraint {
     pub type_param: Spanned<String>,
     pub trait_bounds: Vec<TypeBound>,
@@ -311,7 +311,7 @@ pub struct TraitConstraint {
 }
 
 /// A nominal constraint or the built-in class category.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub enum TypeBound {
     Named(NamedTraitBound),
     Class(Span),
@@ -327,7 +327,7 @@ impl TypeBound {
 }
 
 /// A function declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct FunctionDecl {
     pub visibility: Visibility,
     pub is_async: bool,
@@ -345,7 +345,7 @@ pub struct FunctionDecl {
 }
 
 /// A function parameter.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct Param {
     pub name: Spanned<String>,
     pub type_annotation: TypeExpr,
@@ -353,7 +353,7 @@ pub struct Param {
 }
 
 /// The kind of a closure parameter.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub enum ClosureParamKind {
     /// A simple named parameter: `x` or `x: Int32`
     Name(Spanned<String>),
@@ -362,7 +362,7 @@ pub enum ClosureParamKind {
 }
 
 /// A closure parameter (type annotation is optional).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct ClosureParam {
     pub kind: ClosureParamKind,
     pub type_annotation: Option<TypeExpr>,
@@ -371,7 +371,7 @@ pub struct ClosureParam {
 
 /// A type parameter with an optional variance annotation.
 /// Used by `RecordDecl`, `EnumDecl`, and `ClassDecl`; other declarations use `Vec<Spanned<String>>`.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct VariantTypeParam {
     pub variance: Variance,
     pub name: Spanned<String>,
@@ -379,7 +379,7 @@ pub struct VariantTypeParam {
 }
 
 /// A record type declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct RecordDecl {
     pub visibility: Visibility,
     pub construction_private: bool,
@@ -399,7 +399,7 @@ pub struct RecordDecl {
 }
 
 /// A field in a record type declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct RecordField {
     pub name: Spanned<String>,
     pub type_annotation: TypeExpr,
@@ -408,7 +408,7 @@ pub struct RecordField {
 }
 
 /// An enum type declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct EnumDecl {
     pub visibility: Visibility,
     pub construction_private: bool,
@@ -424,7 +424,7 @@ pub struct EnumDecl {
 }
 
 /// The payload form of an enum variant declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub enum EnumVariantPayload {
     None,                     // no payload
     Tuple(Vec<TypeExpr>),     // Variant(Type1, Type2)
@@ -432,7 +432,7 @@ pub enum EnumVariantPayload {
 }
 
 /// A variant in an enum type declaration.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct EnumVariant {
     pub name: Spanned<String>,
     pub payload: EnumVariantPayload,
@@ -441,7 +441,7 @@ pub struct EnumVariant {
 }
 
 /// A trait method signature (no body): `function equals(self, other: Self): Bool`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct TraitMethodSignature {
     pub name: Spanned<String>,
     pub type_params: Vec<Spanned<String>>,
@@ -456,7 +456,7 @@ pub struct TraitMethodSignature {
 }
 
 /// An associated type declaration in a trait: `type Foo` or `type Foo<T>`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct AssociatedTypeDecl {
     pub name: Spanned<String>,
     pub type_params: Vec<Spanned<String>>,
@@ -465,7 +465,7 @@ pub struct AssociatedTypeDecl {
 }
 
 /// An associated type definition in an implement block: `type Foo = ConcreteType` or `type Foo<T> = Array<T>`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct AssociatedTypeDef {
     pub name: Spanned<String>,
     pub type_params: Vec<Spanned<String>>,
@@ -478,7 +478,7 @@ pub struct AssociatedTypeDef {
 /// Also used for interface declarations (`interface Drawable = ...`): an
 /// interface is a trait that passes the object-safety check and may appear in
 /// type position. `is_interface` records which keyword introduced the decl.
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct TraitDecl {
     pub visibility: Visibility,
     pub name: Spanned<String>,
@@ -495,7 +495,7 @@ pub struct TraitDecl {
 }
 
 /// An implement block: `implement Trait for Type = methods...`
-#[derive(Debug)]
+#[derive(serde::Serialize, Debug)]
 pub struct ImplementDecl {
     pub trait_name: Spanned<String>,
     pub type_params: Vec<Spanned<String>>,
@@ -510,7 +510,7 @@ pub struct ImplementDecl {
 }
 
 /// A field initializer in a record construction expression.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct FieldInit {
     pub name: Spanned<String>,
     pub value: Box<Expr>,
@@ -518,7 +518,7 @@ pub struct FieldInit {
 }
 
 /// A field pattern in a record pattern match.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct FieldPattern {
     pub name: Spanned<String>,
     pub pattern: Option<Pattern>, // None = bare IDENT shorthand (bind field to same-name variable)
@@ -526,7 +526,7 @@ pub struct FieldPattern {
 }
 
 /// A type expression in the AST (unresolved).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub enum TypeExpr {
     Named(NamedType),
     Tuple(Vec<TypeExpr>, Span),
@@ -553,7 +553,7 @@ impl TypeExpr {
 }
 
 /// A named type reference like `Unit`, `com.example.MyType`, or `Box<Int32>`.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct NamedType {
     pub name: Spanned<String>,
     pub type_args: Vec<TypeExpr>,
@@ -561,7 +561,7 @@ pub struct NamedType {
 }
 
 /// A trait application in a bound, with optional associated-type equalities.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct NamedTraitBound {
     pub name: Spanned<String>,
     pub type_args: Vec<TypeExpr>,
@@ -570,7 +570,7 @@ pub struct NamedTraitBound {
 }
 
 /// An expression in the AST (untyped).
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub enum Expr {
     /// The unit literal `()`.
     UnitLiteral(Span),
@@ -824,7 +824,7 @@ pub enum Expr {
 }
 
 /// One part of a prefixed string literal, after sub-parsing.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub enum LiteralPart {
     /// Literal text between interpolations.
     Text(String, Span),
@@ -905,14 +905,14 @@ impl Expr {
 }
 
 /// A block expression containing a sequence of expressions.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct BlockExpr {
     pub expressions: Vec<Expr>,
     pub span: Span,
 }
 
 /// A pattern in a match expression.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub enum Pattern {
     /// The wildcard pattern `_`.
     Wildcard(Span),
@@ -974,7 +974,7 @@ impl Pattern {
 }
 
 /// A single arm in a match expression.
-#[derive(Debug, Clone)]
+#[derive(serde::Serialize, Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub guard: Option<Box<Expr>>,

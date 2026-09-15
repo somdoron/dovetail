@@ -3,8 +3,10 @@ package standard.prelude
 /// Concatenation through `++`. The operands select the implementation and its Output.
 public trait Concat<R> =
     type Output
+
     function concat(self: Self, rhs: R): Output
 
 implement Concat<String> for String =
     type Output = String
+
     public function concat(self: String, rhs: String): String = intrinsic

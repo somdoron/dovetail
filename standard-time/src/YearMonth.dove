@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a year and month combination, such as 2024-03.
 @derive(Equatable)
-public record YearMonth =
+ public record YearMonth =
     /// The year (e.g. 2024).
     year: Year
     /// The month of the year (1-12).
@@ -22,8 +22,7 @@ function normalizeYearMonth(y: Int32, m: Int32): YearMonth =
 /// Factory methods and operations for YearMonth.
 module YearMonth =
     /// Creates a YearMonth from the given year and month, normalizing if month is out of range.
-    public function of(year: Int32, month: Int32): YearMonth =
-        normalizeYearMonth(year, month)
+    public function of(year: Int32, month: Int32): YearMonth = normalizeYearMonth(year, month)
 
     /// Returns the number of days in this year-month's month.
     public function lengthOfMonth(self): Int32 =
@@ -58,7 +57,8 @@ implement Display for YearMonth =
 function padYearMonth(n: Int32, width: Int32): String =
     let s = n.format()
     let len = s.length
-    if len >= width then s
+    if len >= width then
+        s
     else
         let pad = width - len
         let mutable result = ""

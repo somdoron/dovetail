@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a date-time without a time-zone, combining a LocalDate and a LocalTime.
 @derive(Equatable)
-public record LocalDateTime =
+ public record LocalDateTime =
     /// The date part of this date-time.
     date: LocalDate
     /// The time part of this date-time.
@@ -15,7 +15,14 @@ module LocalDateTime =
         LocalDateTime { date = date; time = time }
 
     /// Creates a LocalDateTime from individual year, month, day, hour, minute, and second values.
-    public function ofParts(year: Int32, month: Int32, day: Int32, hour: Int32, minute: Int32, second: Int32): LocalDateTime =
+    public function ofParts(
+        year: Int32,
+        month: Int32,
+        day: Int32,
+        hour: Int32,
+        minute: Int32,
+        second: Int32
+    ): LocalDateTime =
         let d = LocalDate.of(year, month, day)
         let t = LocalTime.of(hour, minute, second)
         LocalDateTime { date = d; time = t }

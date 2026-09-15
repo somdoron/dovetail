@@ -7,7 +7,9 @@ import standard.prelude.Array
 /// to its initial state for reuse.
 public interface Hasher =
     function update(self, data: Array<Uint8>): Unit
+
     function finalize(self): Array<Uint8>
+
     function reset(self): Unit
 
 /// A hash algorithm singleton (e.g. `Sha256`). Stateless: the mutable state
@@ -15,6 +17,9 @@ public interface Hasher =
 /// convenience equivalent to creating a hasher, updating once, and finalizing.
 public interface HashAlgorithm =
     property digestSize(self): Int32
+
     property blockSize(self): Int32
+
     function hasher(self): Hasher
+
     function hash(self, data: Array<Uint8>): Array<Uint8>

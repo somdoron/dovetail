@@ -10,7 +10,7 @@ import standard.io.Promise
 import standard.time.Duration
 
 @timeout(5000)
-test "Tcp.bind on 127.0.0.1:0 produces a listener with a discoverable address" =
+ test "Tcp.bind on 127.0.0.1:0 produces a listener with a discoverable address" =
     let mutable address: String = ""
     let program: Async<Unit, NetError> = bindProgram((s: String) => address = s)
     program.run()
@@ -28,9 +28,8 @@ async function bindProgram(setter: (String) => Unit): Async<Unit, NetError> =
 // round trip only where the option is actually supported, and asserts that
 // asking never traps or hangs. Ported from the P2-era `test_tcp_socket_options`,
 // which was deleted along with the P2 intrinsics.
-
 @timeout(10000)
-test "TcpStream: keep-alive and buffer-size options round-trip" =
+ test "TcpStream: keep-alive and buffer-size options round-trip" =
     let mutable keepAliveOn = false
     let mutable receiveBuffer = 0i64
     let mutable sendBuffer = 0i64
@@ -42,7 +41,8 @@ test "TcpStream: keep-alive and buffer-size options round-trip" =
         (n: Int64) => sendBuffer = n,
         (n: Int32) => countAfterSet = n,
         (n: Int32) => hop = n
-    ).run()
+    )
+        .run()
     // Set to true above, so a supporting host must report it back.
     assert keepAliveOn
     // Kernel buffers are always positive once a connection exists.
@@ -75,17 +75,21 @@ async function optionsProgram(
     await client.setKeepAliveInterval(Duration.ofSeconds(10i64))
     // hop-limit is a `u8` payload — a different retptr offset from the u64
     // sizes below — and is the one option a host may plausibly not implement.
-    let hopLimit = await client.hopLimit().fold<Int32, Never>(
-        (_: NetError) => Async.succeed(0 - 1i32),
-        (n: Int32) => Async.succeed(n)
-    )
+    let hopLimit =
+        await client
+            .hopLimit()
+            .fold<Int32, Never>(
+            (_: NetError) => Async.succeed(0 - 1i32),
+            (n: Int32) => Async.succeed(n)
+        )
     setHop(hopLimit)
     setReceive(await client.receiveBufferSize())
     setSend(await client.sendBufferSize())
     // The listener half of the surface.
     assert await listener.isListening()
 
-async function acceptAndHold(listener: TcpListener, accepted: Promise<Int32, Never>): Async<Unit, NetError> =
+async function acceptAndHold(listener: TcpListener, accepted: Promise<Int32, Never>):
+    Async<Unit, NetError> =
     let stream: TcpStream = use listener.accept()
     await accepted.complete(1i32)
     await stream.input.read(1i64).mapError(toNetError)

@@ -2,4 +2,5 @@ package standard.wasi.random
 
 module Random =
     public function bytes(len: Int64): Array<Uint8> = intrinsic
+
     public function int64(): Int64 = intrinsic

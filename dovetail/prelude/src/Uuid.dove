@@ -2,7 +2,7 @@ package standard.prelude
 
 /// A universally unique identifier (UUID), stored as two 64-bit integers.
 @derive(Equatable)
-public record Uuid =
+ public record Uuid =
     high: Int64
     low: Int64
 
@@ -15,8 +15,7 @@ module Uuid =
     /// `high`/`low` hold the 128-bit value as two *unsigned* 64-bit words, so
     /// the bit extraction goes through `toUint64()` — a signed division would
     /// misread any UUID whose top bit is set (~half of all random UUIDs).
-    public property version(self): Int32 =
-        ((self.high.toUint64() / 4096u64) % 16u64).toInt32()
+    public property version(self): Int32 = ((self.high.toUint64() / 4096u64) % 16u64).toInt32()
 
     /// Returns a 16-byte big-endian representation.
     public function toBytes(self): Array<Uint8> =
@@ -37,12 +36,12 @@ module Uuid =
 
     /// Parses a UUID from standard "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx".
     public function parse(s: String): Result<Uuid, String> =
-        if s.length != 36 then Error("invalid UUID length")
-        else uuidParseValidated(s)
+        if s.length != 36 then Error("invalid UUID length") else uuidParseValidated(s)
 
     /// Creates a UUID from 16 bytes in big-endian order.
     public function fromBytes(bytes: Array<Uint8>): Result<Uuid, String> =
-        if bytes.length != 16 then Error("expected 16 bytes for UUID")
+        if bytes.length != 16 then
+            Error("expected 16 bytes for UUID")
         else
             let mutable high = 0i64
             let mutable i = 0
@@ -58,13 +57,11 @@ module Uuid =
 implement Comparable for Uuid =
     public function compare(self: Uuid, other: Uuid): Ordering =
         // Unsigned, big-endian order (a UUID's high word is its leading bytes).
-        if self.high == other.high then
-            self.low.toUint64().compare(other.low.toUint64())
+        if self.high == other.high then self.low.toUint64().compare(other.low.toUint64())
         else self.high.toUint64().compare(other.high.toUint64())
 
 implement Hashable for Uuid =
-    public function hash(self: Uuid): Int64 =
-        Hashable.combine(self.high, self.low)
+    public function hash(self: Uuid): Int64 = Hashable.combine(self.high, self.low)
 
 function uuidIsDash(i: Int32): Bool =
     let a = i == 8
@@ -80,7 +77,8 @@ function uuidParseValidated(s: String): Result<Uuid, String> =
     let mutable i = 0
     let mutable pos = 0
     while i < 36 do
-        if uuidIsDash(i) then i = i + 1
+        if uuidIsDash(i) then
+            i = i + 1
         else
             let byte = String.fromChar(s.getChar(i)).bytes().get(0).toInt32()
             let n = uuidHexVal(byte)
@@ -94,20 +92,20 @@ function uuidParseValidated(s: String): Result<Uuid, String> =
                     l = l + n.toInt64() * uuidP16(31 - pos)
                 pos = pos + 1
                 i = i + 1
-    if ok then Ok(Uuid { high = h; low = l })
-    else Error("invalid hex character")
+    if ok then Ok(Uuid { high = h; low = l }) else Error("invalid hex character")
 
 function uuidHexVal(b: Int32): Int32 =
     if b >= 48 then
-        if b <= 57 then b - 48
+        if b <= 57 then
+            b - 48
         else if b >= 97 then
-            if b <= 102 then b - 87
-            else -1
+            if b <= 102 then b - 87 else -1
         else if b >= 65 then
-            if b <= 70 then b - 55
-            else -1
-        else -1
-    else -1
+            if b <= 70 then b - 55 else -1
+        else
+            -1
+    else
+        -1
 
 function uuidHexCh(n: Int32): String =
     let b = if n < 10 then (n + 48).toUint8() else (n + 87).toUint8()
@@ -130,16 +128,16 @@ implement Display for Uuid =
             if i == 12 then result = result ++ "-"
             if i == 16 then result = result ++ "-"
             if i == 20 then result = result ++ "-"
-            let nibble = if i < 16 then
-                ((self.high.toUint64() / uuidP16(15 - i).toUint64()) % 16u64).toInt32()
-            else
-                ((self.low.toUint64() / uuidP16(31 - i).toUint64()) % 16u64).toInt32()
+            let nibble =
+                if i < 16 then
+                    ((self.high.toUint64() / uuidP16(15 - i).toUint64()) % 16u64).toInt32()
+                else
+                    ((self.low.toUint64() / uuidP16(31 - i).toUint64()) % 16u64).toInt32()
             result = result ++ uuidHexCh(nibble)
             i = i + 1
         result
 
 // --- Tests ---
-
 test "Uuid nil is all zeros" =
     let u = Uuid.nil()
     assert u.high == 0i64
@@ -188,10 +186,25 @@ test "Uuid comparable" =
 test "Uuid extraction is unsigned (top bit set)" =
     // Leading byte 0xf0 sets `high`'s sign bit; signed division would misread
     // every extraction. Version nibble is 4 (high nibble of byte 6 = 0x46).
-    let bytes = [|
-        0xf0u8, 0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x46u8, 0x77u8,
-        0x88u8, 0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8,
-    |]
+    let bytes =
+        [|
+            0xf0u8,
+            0x11u8,
+            0x22u8,
+            0x33u8,
+            0x44u8,
+            0x55u8,
+            0x46u8,
+            0x77u8,
+            0x88u8,
+            0x99u8,
+            0xaau8,
+            0xbbu8,
+            0xccu8,
+            0xddu8,
+            0xeeu8,
+            0xffu8,
+        |]
     let u = Uuid.fromBytes(bytes).require
     assert u.version == 4
     // toBytes round-trips despite the high bit.
@@ -205,5 +218,5 @@ test "Uuid extraction is unsigned (top bit set)" =
     // Display renders the leading 'f' and the version digit '4'.
     let s = u.format()
     assert s.length == 36
-    assert s.bytes().get(0) == 102u8   // 'f'
-    assert s.bytes().get(14) == 52u8   // '4' (version position)
+    assert s.bytes().get(0) == 102u8 // 'f'
+    assert s.bytes().get(14) == 52u8 // '4' (version position)

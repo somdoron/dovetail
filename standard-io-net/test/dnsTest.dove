@@ -12,30 +12,43 @@ import standard.io.Cause
 // as-is, with no network traffic — so this case is deterministic offline (it
 // still needs the host's name-lookup permission, which the test runner grants).
 @timeout(5000)
-test "Dns.resolveFirst returns an IP literal unchanged" =
+ test "Dns.resolveFirst returns an IP literal unchanged" =
     let mutable got = ""
-    let program: Async<Unit, Never> = Dns.resolveFirst("127.0.0.1").fold(
-        (e: NetError) => Async.thunk(() => got = "error: " ++ e.format()),
-        (r: Option<String>) => Async.thunk(() =>
-            got = match r with
-                case Some(address) => address
-                case None => "<none>"
+    let program: Async<Unit, Never> =
+        Dns
+            .resolveFirst("127.0.0.1")
+            .fold(
+            (e: NetError) => Async.thunk(() => got = "error: " ++ e.format()),
+            (r: Option<String>) =>
+                Async
+                    .thunk(
+                    () =>
+                        got =
+                            match r with
+                                case Some(address) => address
+                                case None => "<none>"
+                )
         )
-    )
     program.run()
     assert got == "127.0.0.1"
 
 @timeout(5000)
-test "Dns.resolve on an IP literal yields exactly that address" =
+ test "Dns.resolve on an IP literal yields exactly that address" =
     let mutable count = 0i32
     let mutable first = ""
-    let program: Async<Unit, Never> = Dns.resolve("192.0.2.5").fold(
-        (_: NetError) => Async.thunk(() => count = -1i32),
-        (all: List<String>) => Async.thunk(() =>
-            count = all.length
-            first = all.headOption.or("")
+    let program: Async<Unit, Never> =
+        Dns
+            .resolve("192.0.2.5")
+            .fold(
+            (_: NetError) => Async.thunk(() => count = -1i32),
+            (all: List<String>) =>
+                Async
+                    .thunk(
+                    () =>
+                        count = all.length
+                        first = all.headOption.or("")
+                )
         )
-    )
     program.run()
     // The interface never succeeds with zero results.
     assert count == 1i32
@@ -45,21 +58,34 @@ test "Dns.resolve on an IP literal yields exactly that address" =
 // not have. Accept either outcome — but never `Unsupported`, which is what the
 // p3 stub used to report: resolution must actually be wired up now.
 @timeout(10000)
-test "Dns.resolveFirst on localhost resolves or reports a resolver error" =
+ test "Dns.resolveFirst on localhost resolves or reports a resolver error" =
     let mutable outcome = ""
-    let program: Async<Unit, Never> = Dns.resolveFirst("localhost").fold(
-        (e: NetError) => Async.thunk(() =>
-            outcome = match e with
-                case NetError.HostnameNotResolvable => "unresolved"
-                case NetError.Unsupported => "unsupported"
-                case _ => "other-error"
-        ),
-        (r: Option<String>) => Async.thunk(() =>
-            outcome = match r with
-                case Some(_) => "resolved"
-                case None => "empty"
+    let program: Async<Unit, Never> =
+        Dns
+            .resolveFirst("localhost")
+            .fold(
+            (
+                (e: NetError) =>
+                    Async
+                        .thunk(
+                        () =>
+                            outcome =
+                                match e with
+                                    case NetError.HostnameNotResolvable => "unresolved"
+                                    case NetError.Unsupported => "unsupported"
+                                    case _ => "other-error"
+                    )
+            ),
+            (r: Option<String>) =>
+                Async
+                    .thunk(
+                    () =>
+                        outcome =
+                            match r with
+                                case Some(_) => "resolved"
+                                case None => "empty"
+                )
         )
-    )
     program.run()
     assert outcome == "resolved" || outcome == "unresolved"
 
@@ -73,43 +99,37 @@ test "Dns.resolveFirst on localhost resolves or reports a resolver error" =
 // got — the loop runs enough times to hit both. A mishandled free corrupts the
 // pinned free list, so the real resolve at the end is the check.
 @timeout(20000)
-test "Dns: interrupting an in-flight resolve releases the call and keeps the heap sane" =
+ test "Dns: interrupting an in-flight resolve releases the call and keeps the heap sane" =
     let mutable interrupted = 0i32
     let mutable resolved = ""
     interruptResolveLoop(
         () => interrupted = interrupted + 1,
         (address: String) => resolved = address
-    ).run()
+    )
+        .run()
     assert interrupted == 32i32
     assert resolved == "203.0.113.9"
 
-async function blockedResolve(
-    ready: Promise<Unit, Never>,
-    marker: Resource<Int32, Never>
-): Async<Unit, NetError> =
+async function blockedResolve(ready: Promise<Unit, Never>, marker: Resource<Int32, Never>):
+    Async<Unit, NetError> =
     let _guard = use marker
     await ready.complete(())
     let _all = await Dns.resolve("localhost")
     ()
 
-async function interruptResolveLoop(
-    onRelease: () => Unit,
-    setResolved: (String) => Unit
-): Async<Unit, NetError> =
-    let marker: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(1),
-        (_: Int32) => Async.thunk(() => onRelease())
-    )
+async function interruptResolveLoop(onRelease: () => Unit, setResolved: (String) => Unit):
+    Async<Unit, NetError> =
+    let marker: Resource<Int32, Never> =
+        Resource.make(() => Async.succeed(1), (_: Int32) => Async.thunk(() => onRelease()))
     let mutable i = 0i32
     while i < 32i32 do
         let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
         let fiber: Fiber<Unit, NetError> = await blockedResolve(ready, marker).fork()
         await ready.awaitPromise()
         await fiber.interrupt()
-        await fiber.join().foldCause(
-            (_: Cause<NetError>) => Async.succeed(()),
-            (_: Unit) => Async.succeed(())
-        )
+        await fiber
+            .join()
+            .foldCause((_: Cause<NetError>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
         i = i + 1
     // An IP literal is deterministic offline, and still exercises the same lift.
     let all = await Dns.resolve("203.0.113.9")

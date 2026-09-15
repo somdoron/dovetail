@@ -41,5 +41,4 @@ implement Display for ServerError =
 
 /// Auto-conversion at `use` sites: TCP / accept errors become NetworkError.
 implement From<NetError> for ServerError =
-    public function from(value: NetError): ServerError =
-        ServerError.NetworkError(value)
+    public function from(value: NetError): ServerError = ServerError.NetworkError(value)

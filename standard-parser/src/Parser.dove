@@ -2,19 +2,20 @@ package standard.parser
 
 import standard.collection.Range
 
-public enum ParseResult<T> = 
-    Success {value: T, remaining: Slice<Char>}
+public enum ParseResult<T> =
+    Success { value: T; remaining: Slice<Char> }
     Failure(String)
 
 type ParserFn<T> = Slice<Char> => ParseResult<T>
+
 newtype Parser<T> = Slice<Char> => ParseResult<T>
 
-implement <T> Equatable for ParseResult<T> where T: Equatable =
+implement<T> Equatable for ParseResult<T> where T: Equatable =
     function equals(self: ParseResult<T>, other: ParseResult<T>): Bool =
         match self with
-            case ParseResult.Success {value = v1, remaining = r1} =>
+            case ParseResult.Success { value = v1, remaining = r1 } =>
                 match other with
-                    case ParseResult.Success {value = v2, remaining = r2} => v1 == v2 && r1 == r2
+                    case ParseResult.Success { value = v2, remaining = r2 } => v1 == v2 && r1 == r2
                     case _ => false
             case ParseResult.Failure(m1) =>
                 match other with
@@ -22,61 +23,66 @@ implement <T> Equatable for ParseResult<T> where T: Equatable =
                     case _ => false
 
 module Parser<T> =
-    function run(self, input: Slice<Char>): ParseResult<T> =
-        self.value(input)
+    function run(self, input: Slice<Char>): ParseResult<T> = self.value(input)
 
     function map<U>(self, f: T => U): Parser<U> =
-        let f: ParserFn<U> = input =>
-            match self.run(input) with
-                case ParseResult.Success {value = v, remaining = r} => ParseResult.Success {value = f(v); remaining = r}
-                case ParseResult.Failure(m) => ParseResult.Failure(m)
+        let f: ParserFn<U> =
+            input =>
+                match self.run(input) with
+                    case ParseResult.Success { value = v, remaining = r } =>
+                        ParseResult.Success { value = f(v); remaining = r }
+                    case ParseResult.Failure(m) => ParseResult.Failure(m)
         Parser(f)
 
     /// Sequences parsers, extending the left result with the right result as one element.
     /// A scalar left result forms a pair; a tuple left result grows by one element.
     /// Use zip to preserve both results intact as a pair.
-    function append<U>(self, other: Parser<U>): Parser<T ~ U> =
-        let f: ParserFn<T ~ U> = input =>
-            match self.run(input) with
-                case ParseResult.Success {value = v1, remaining = r1} =>
-                    match other.run(r1) with
-                        case ParseResult.Success {value = v2, remaining = r2} =>
-                            ParseResult.Success {value = v1 ~ v2; remaining = r2}
-                        case ParseResult.Failure(m) => ParseResult.Failure(m)
-                case ParseResult.Failure(m) => ParseResult.Failure(m)
+    function append<U>(self, other: Parser<U>): Parser<T ~U> =
+        let f: ParserFn<T ~U> =
+            input =>
+                match self.run(input) with
+                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                        match other.run(r1) with
+                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                                ParseResult.Success { value = v1 ~ v2; remaining = r2 }
+                            case ParseResult.Failure(m) => ParseResult.Failure(m)
+                    case ParseResult.Failure(m) => ParseResult.Failure(m)
         Parser(f)
 
     function zip<U>(self, other: Parser<U>): Parser<(T, U)> =
-        let f: ParserFn<(T, U)> = input =>
-            match self.run(input) with
-                case ParseResult.Success {value = v1, remaining = r1} =>
-                    match other.run(r1) with
-                        case ParseResult.Success {value = v2, remaining = r2} =>
-                            ParseResult.Success {value = (v1, v2); remaining = r2}
-                        case ParseResult.Failure(m) => ParseResult.Failure(m)
-                case ParseResult.Failure(m) => ParseResult.Failure(m)
+        let f: ParserFn<(T, U)> =
+            input =>
+                match self.run(input) with
+                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                        match other.run(r1) with
+                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                                ParseResult.Success { value = (v1, v2); remaining = r2 }
+                            case ParseResult.Failure(m) => ParseResult.Failure(m)
+                    case ParseResult.Failure(m) => ParseResult.Failure(m)
         Parser(f)
 
     function zipLeft<U>(self, other: Parser<U>): Parser<T> =
-        let f: ParserFn<T> = input =>
-            match self.run(input) with
-                case ParseResult.Success {value = v1, remaining = r1} =>
-                    match other.run(r1) with
-                        case ParseResult.Success {value = v2, remaining = r2} =>
-                            ParseResult.Success {value = v1; remaining = r2}
-                        case ParseResult.Failure(m) => ParseResult.Failure(m)
-                case ParseResult.Failure(m) => ParseResult.Failure(m)
+        let f: ParserFn<T> =
+            input =>
+                match self.run(input) with
+                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                        match other.run(r1) with
+                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                                ParseResult.Success { value = v1; remaining = r2 }
+                            case ParseResult.Failure(m) => ParseResult.Failure(m)
+                    case ParseResult.Failure(m) => ParseResult.Failure(m)
         Parser(f)
 
     function zipRight<U>(self, other: Parser<U>): Parser<U> =
-        let f: ParserFn<U> = input =>
-            match self.run(input) with
-                case ParseResult.Success {value = v1, remaining = r1} =>
-                    match other.run(r1) with
-                        case ParseResult.Success {value = v2, remaining = r2} =>
-                            ParseResult.Success {value = v2; remaining = r2}
-                        case ParseResult.Failure(m) => ParseResult.Failure(m)
-                case ParseResult.Failure(m) => ParseResult.Failure(m)
+        let f: ParserFn<U> =
+            input =>
+                match self.run(input) with
+                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                        match other.run(r1) with
+                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                                ParseResult.Success { value = v2; remaining = r2 }
+                            case ParseResult.Failure(m) => ParseResult.Failure(m)
+                    case ParseResult.Failure(m) => ParseResult.Failure(m)
         Parser(f)
 
     /// Applies the parser until it fails, collecting the results.
@@ -84,41 +90,51 @@ module Parser<T> =
     /// Accumulates by prepending and reverses once at the end: appending to an
     /// array per token copied the whole array each time, i.e. O(n^2).
     function many(self): Parser<List<T>> =
-        let f: ParserFn<List<T>> = input =>
-            let mutable result: List<T> = List.empty
-            let mutable remaining = input
-            while remaining.length > 0 do
-                match self.run(remaining) with
-                    case ParseResult.Success {value = v, remaining = r} =>
-                        result = result.prepend(v)
-                        remaining = r
-                    case ParseResult.Failure(m) => break
-            ParseResult.Success {value = result.reverse(); remaining = remaining}
+        let f: ParserFn<List<T>> =
+            input =>
+                let mutable result: List<T> = List.empty
+                let mutable remaining = input
+                while remaining.length > 0 do
+                    match self.run(remaining) with
+                        case ParseResult.Success { value = v, remaining = r } =>
+                            result = result.prepend(v)
+                            remaining = r
+                        case ParseResult.Failure(m) => break
+                ParseResult.Success { value = result.reverse(); remaining = remaining }
         Parser(f)
 
     function orElse(self, other: Parser<T>): Parser<T> =
-        let f: ParserFn<T> = input =>
-            match self.run(input) with
-                case ParseResult.Success {value = v, remaining = r} => ParseResult.Success {value = v; remaining = r}
-                case ParseResult.Failure(m) => other.run(input)
+        let f: ParserFn<T> =
+            input =>
+                match self.run(input) with
+                    case ParseResult.Success { value = v, remaining = r } =>
+                        ParseResult.Success { value = v; remaining = r }
+                    case ParseResult.Failure(m) => other.run(input)
         Parser(f)
 
-implement <T, U> Concat<Parser<U>> for Parser<T> =
-    type Output = Parser<T ~ U>
-    function concat(self, other: Parser<U>): Parser<T ~ U> = self.append(other)
+implement<T, U> Concat<Parser<U>> for Parser<T> =
+    type Output = Parser<T ~U>
+
+    function concat(self, other: Parser<U>): Parser<T ~U> = self.append(other)
 
 test "pchar" =
     let p = parseChar('a').zip(parseChar('b'))
     let result = p.run(Slice.full("abc".chars()))
 
-    assert(result == ParseResult.Success {value = ('a', 'b'); remaining = Slice.full("c".chars()) })
+    assert (
+        result == ParseResult.Success { value = ('a', 'b'); remaining = Slice.full("c".chars()) }
+    )
 
 test "pstring" =
     let p = parseString("hello")
     let result = p.run(Slice.full("hello world".chars()))
-    assert(result == ParseResult.Success {value = "hello"; remaining = Slice.full(" world".chars()) })
+    assert (
+        result == ParseResult.Success { value = "hello"; remaining = Slice.full(" world".chars()) }
+    )
 
 test "many" =
     let p = parseChar('a').many()
     let result = p.run(Slice.full("aab".chars()))
-    assert(result == ParseResult.Success {value = ['a', 'a']; remaining = Slice.full("b".chars()) })
+    assert (
+        result == ParseResult.Success { value = ['a', 'a']; remaining = Slice.full("b".chars()) }
+    )

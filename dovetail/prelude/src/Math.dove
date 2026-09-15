@@ -1,18 +1,33 @@
 module standard.prelude.Math
 
 public function floor(x: Float64): Float64 = intrinsic
+
 public function floor(x: Float32): Float32 = intrinsic
+
 public function trunc(x: Float64): Float64 = intrinsic
+
 public function trunc(x: Float32): Float32 = intrinsic
+
 public function abs(x: Float64): Float64 = intrinsic
+
 public function abs(x: Float32): Float32 = intrinsic
+
 public function fmod(x: Float64, y: Float64): Float64 = intrinsic
+
 public function fmod(x: Float32, y: Float32): Float32 = intrinsic
+
 public function isNan(x: Float64): Bool = intrinsic
+
 public function isNan(x: Float32): Bool = intrinsic
+
 public function isInfinity(x: Float64): Bool = intrinsic
+
 public function isInfinity(x: Float32): Bool = intrinsic
+
 public function nan(): Float64 = 0.0 / 0.0
+
 public function infinity(): Float64 = 1.0 / 0.0
+
 public function nanF32(): Float32 = 0.0f32 / 0.0f32
+
 public function infinityF32(): Float32 = 1.0f32 / 0.0f32

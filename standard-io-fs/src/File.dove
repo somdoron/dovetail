@@ -13,25 +13,27 @@ import standard.text.Charset
 // `openFileFdResource` (FD), `inputStreamResource`/`outputStreamResource`
 // (WASI stream), `parentResource` (for path-relative one-shot ops).
 // =============================================================================
-
 module File =
-
     // --- Stream constructors -----------------------------------------------
-
     /// Open `path` for reading. The returned `Resource` owns both the FD and
     /// the WASI input stream — `use` it for guaranteed LIFO cleanup.
-    public function openInputStream(path: Path): Resource<AsyncInputStream<FileSystemError>, FileStreamError> =
+    public function openInputStream(path: Path):
+        Resource<AsyncInputStream<FileSystemError>, FileStreamError> =
         openFileFdResource(path, openFlagsOpenExisting(), fileFlagsRead())
-            .andThen<AsyncInputStream<FileSystemError>>(fileDescriptor => inputStreamResource(fileDescriptor))
+            .andThen<AsyncInputStream<FileSystemError>>(
+            fileDescriptor => inputStreamResource(fileDescriptor)
+        )
 
     /// Open `path` for writing (create-or-truncate). The returned `Resource`
     /// owns both the FD and the WASI output stream.
-    public function openOutputStream(path: Path): Resource<AsyncOutputStream<FileSystemError>, FileStreamError> =
+    public function openOutputStream(path: Path):
+        Resource<AsyncOutputStream<FileSystemError>, FileStreamError> =
         openFileFdResource(path, openFlagsCreateOrTruncate(), fileFlagsWrite())
-            .andThen<AsyncOutputStream<FileSystemError>>(fileDescriptor => outputStreamResource(fileDescriptor))
+            .andThen<AsyncOutputStream<FileSystemError>>(
+            fileDescriptor => outputStreamResource(fileDescriptor)
+        )
 
     // --- One-shot read helpers ---------------------------------------------
-
     /// Read the entire file at `path`, decoding with the given charset.
     /// Default charsets will be supported once Dovetail has default parameters;
     /// for now callers pass `Charset.Utf8` explicitly.
@@ -46,16 +48,17 @@ module File =
         await stream.readAll().mapError(mapWasiError)
 
     // --- One-shot write helpers --------------------------------------------
-
     /// Write `content` to `path` in the given charset. Default charsets will
     /// be supported once Dovetail has default parameters; for now callers pass
     /// `Charset.Utf8` explicitly.
-    public async function writeString(path: Path, content: String, charset: Charset): Async<Unit, FileStreamError> =
+    public async function writeString(path: Path, content: String, charset: Charset):
+        Async<Unit, FileStreamError> =
         match charset with
             case Charset.Utf8 => await File.writeBytes(path, content.bytes())
             case _ => await Async.fail(FileStreamError.InvalidEncoding)
 
-    public async function writeBytes(path: Path, content: Array<Uint8>): Async<Unit, FileStreamError> =
+    public async function writeBytes(path: Path, content: Array<Uint8>):
+        Async<Unit, FileStreamError> =
         let stream = use File.openOutputStream(path)
         await stream.write(content.readonly).mapError(mapWasiError)
         // `write` resolving only means the host accepted the bytes. A disk that
@@ -66,7 +69,6 @@ module File =
         await stream.close().mapError(mapWasiError)
 
     // --- Misc --------------------------------------------------------------
-
     /// Remove a regular file at `path`. Parent FD lifecycle handled by
     /// `parentResource` (closed if walked, not closed if preopen).
     public async function remove(path: Path): Async<Unit, FileStreamError> =

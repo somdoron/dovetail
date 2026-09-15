@@ -30,13 +30,19 @@ internal class ProducerRequest(
 )
 
 implement Default for ProducerState =
-    public property default: ProducerState = ProducerState(
-        Producer<Any, Any>(FiberId.zero, FiberId.zero), ScopeId(-1),
-        ProducerPhase.Closed, (_: Any) => Async.succeed(()), ScopeId(-1), None
-    )
+    public property default: ProducerState =
+        ProducerState(
+            Producer<Any, Any>(FiberId.zero, FiberId.zero),
+            ScopeId(-1),
+            ProducerPhase.Closed,
+            (_: Any) => Async.succeed(()),
+            ScopeId(-1),
+            None
+        )
 
 implement Default for ProducerRequest =
-    public property default: ProducerRequest = ProducerRequest(FiberId.zero, ProducerState.default, ProducerRequestKind.Stop, false)
+    public property default: ProducerRequest =
+        ProducerRequest(FiberId.zero, ProducerState.default, ProducerRequestKind.Stop, false)
 
 module ProducerPhase =
     internal property isFinished(self): Bool =
@@ -54,4 +60,3 @@ module ProducerPhase =
         match self with
             case Pulling(_) => true
             case _ => false
-

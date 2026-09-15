@@ -38,14 +38,13 @@ import standard.wasi.Waitable
 // rule, that the close gave the fibers it detached. The fixtures' `start`
 // panics, which is a stand-in for what a real post would do: land on a
 // dropped, possibly reused handle index.
-
 // --- a force-close cancel that raced a completion disposes the elements ------
-
 /// A stream end whose copy blocks and whose cancel LOSES: the host had already
 /// transferred one element when the cancel landed. `discardElements` records
 /// what it was given instead of releasing anything — the point is WHO is
 /// called, with WHAT count.
-function strandingSource(waitable: Waitable, disposed: Array<Int32>): ComponentStreamRead<Array<Uint8>, CarriedError> =
+function strandingSource(waitable: Waitable, disposed: Array<Int32>):
+    ComponentStreamRead<Array<Uint8>, CarriedError> =
     ComponentStreamRead<Array<Uint8>, CarriedError> {
         readable = waitable
         ending = () => Ok(())
@@ -54,24 +53,30 @@ function strandingSource(waitable: Waitable, disposed: Array<Int32>): ComponentS
         canceledError = CarriedError.Broken
         stillOpen = () => true
         dropEnd = () => ()
-        discardElements = (copy: CopyOperation, count: Int32) => disposed.set(0, disposed.get(0) + count)
-        lift = (copy: CopyOperation, count: Int32) => [|9u8|]
+        discardElements =
+            (copy: CopyOperation, count: Int32) => disposed.set(0, disposed.get(0) + count)
+        lift = (copy: CopyOperation, count: Int32) => [| 9u8 |]
     }
 
 function reportReadCanceled(error: CarriedError): Async<String, Never> = Async.succeed("canceled")
 
-function reportReadDelivered(copied: (CopyResult, Array<Uint8>, Option<CarriedError>)): Async<String, Never> =
-    Async.succeed("delivered")
+function reportReadDelivered(copied: (CopyResult, Array<Uint8>, Option<CarriedError>)):
+    Async<String, Never> = Async.succeed("delivered")
 
 async function parkedReader(
     source: ComponentStreamRead<Array<Uint8>, CarriedError>,
     landed: Array<String>
 ): Async<Unit, Never> =
-    landed.set(0, await Async<Array<Uint8>, CarriedError>
-        .streamRead(source, 64i32)
-        .fold<String, Never>(reportReadCanceled, reportReadDelivered))
+    landed
+        .set(
+        0,
+        await Async<Array<Uint8>, CarriedError>
+            .streamRead(source, 64i32)
+            .fold<String, Never>(reportReadCanceled, reportReadDelivered)
+    )
 
-async function forceCloseProgram(disposed: Array<Int32>, landed: Array<String>): Async<Unit, Never> =
+async function forceCloseProgram(disposed: Array<Int32>, landed: Array<String>):
+    Async<Unit, Never> =
     let source = strandingSource(idleWaitable(), disposed)
     let reader: Fiber<Unit, Never> = await parkedReader(source, landed).fork()
     // Parked on the copy, not merely enqueued — the force-close must find a
@@ -81,7 +86,7 @@ async function forceCloseProgram(disposed: Array<Int32>, landed: Array<String>):
     await reader.join()
 
 @timeout(10000)
-test "a force-close whose cancel raced a completion disposes the stranded elements" =
+ test "a force-close whose cancel raced a completion disposes the stranded elements" =
     let disposed = Array<Int32>.fill(1, 0i32)
     let landed = Array<String>.fill(1, "")
     forceCloseProgram(disposed, landed).run()
@@ -94,7 +99,6 @@ test "a force-close whose cancel raced a completion disposes the stranded elemen
     assert disposed.get(0) == 1i32
 
 // --- the stillOpen probe is consulted inside the posting step ----------------
-
 /// A read end whose wrapper has closed it: the probe answers false. A copy
 /// posted anyway is exactly the unfixed race — a post chasing a dropped handle
 /// — so `start` says so as loudly as the real thing would be quiet.
@@ -117,7 +121,9 @@ function closedWriteEnd(): ComponentStreamWrite<CarriedError> =
         writable = Waitable(0i32)
         ending = () => Ok(())
         ledger = EndingLedger.fresh()
-        start = (bytes: ReadonlySlice<Uint8>) => panic "a copy was posted on a write end whose probe says closed"
+        start =
+            (bytes: ReadonlySlice<Uint8>) =>
+                panic "a copy was posted on a write end whose probe says closed"
         cancel = () => EventPayload(0i32)
         canceledError = CarriedError.Broken
         stillOpen = () => false
@@ -126,20 +132,28 @@ function closedWriteEnd(): ComponentStreamWrite<CarriedError> =
     }
 
 async function readClosedProbe(landed: Array<String>): Async<Unit, Never> =
-    landed.set(0, await Async<Array<Uint8>, CarriedError>
-        .streamRead(closedReadEnd(), 64i32)
-        .fold<String, Never>(reportReadCanceled, reportReadDelivered))
+    landed
+        .set(
+        0,
+        await Async<Array<Uint8>, CarriedError>
+            .streamRead(closedReadEnd(), 64i32)
+            .fold<String, Never>(reportReadCanceled, reportReadDelivered)
+    )
 
-function reportWriteDelivered(copied: (CopyResult, Int32, Option<CarriedError>)): Async<String, Never> =
-    Async.succeed("delivered")
+function reportWriteDelivered(copied: (CopyResult, Int32, Option<CarriedError>)):
+    Async<String, Never> = Async.succeed("delivered")
 
 async function writeClosedProbe(landed: Array<String>): Async<Unit, Never> =
-    landed.set(0, await Async<Unit, CarriedError>
-        .streamWrite(closedWriteEnd(), [|1u8|][|..|].readonly)
-        .fold<String, Never>(reportReadCanceled, reportWriteDelivered))
+    landed
+        .set(
+        0,
+        await Async<Unit, CarriedError>
+            .streamWrite(closedWriteEnd(), [| 1u8 |] [| .. |].readonly)
+            .fold<String, Never>(reportReadCanceled, reportWriteDelivered)
+    )
 
 @timeout(10000)
-test "a read posted on a closed end fails in the posting step, before the host is touched" =
+ test "a read posted on a closed end fails in the posting step, before the host is touched" =
     let landed = Array<String>.fill(1, "")
     readClosedProbe(landed).run()
     // `canceledError`, exactly what a fiber detached by the close itself is
@@ -148,7 +162,7 @@ test "a read posted on a closed end fails in the posting step, before the host i
     assert landed.get(0) == "canceled"
 
 @timeout(10000)
-test "a write posted on a closed end fails in the posting step, before the host is touched" =
+ test "a write posted on a closed end fails in the posting step, before the host is touched" =
     let landed = Array<String>.fill(1, "")
     writeClosedProbe(landed).run()
     assert landed.get(0) == "canceled"
@@ -161,14 +175,17 @@ test "a write posted on a closed end fails in the posting step, before the host 
 // pending instead of delivering, and a fiber that then recovers, crosses a hard
 // mask (whose pop skips delivery while the flag is set), and finishes without
 // another park completes normally with the interrupt dropped.
-
 async function detachedThenMaskedReader(
     source: ComponentStreamRead<Array<Uint8>, CarriedError>,
     landed: Array<String>
 ): Async<Unit, Never> =
-    landed.set(0, await Async<Array<Uint8>, CarriedError>
-        .streamRead(source, 64i32)
-        .fold<String, Never>(reportReadCanceled, reportReadDelivered))
+    landed
+        .set(
+        0,
+        await Async<Array<Uint8>, CarriedError>
+            .streamRead(source, 64i32)
+            .fold<String, Never>(reportReadCanceled, reportReadDelivered)
+    )
     // A hard mask crossed after recovering: its pop is where a deferred
     // interrupt would be paid — unless the stale flag makes it skip.
     await Async.succeed(()).uninterruptible()
@@ -185,16 +202,22 @@ async function detachThenInterruptProgram(landed: Array<String>): Async<Unit, Ne
     // fiber holding nothing; it must be delivered, not deferred.
     await Async<Array<Uint8>, CarriedError>.cancelStreamRead(source)
     await reader.interrupt()
-    landed.set(1, await reader.join().foldCause<String, Never>(
-        (_: Cause<Never>) => Async.succeed("interrupted"),
-        (_: Unit) => Async.succeed("finished")))
+    landed
+        .set(
+        1,
+        await reader
+            .join()
+            .foldCause<String, Never>(
+            (_: Cause<Never>) => Async.succeed("interrupted"),
+            (_: Unit) => Async.succeed("finished")
+        )
+    )
 
 @timeout(10000)
-test "an interrupt landing on a freshly detached fiber is delivered, not dropped" =
+ test "an interrupt landing on a freshly detached fiber is delivered, not dropped" =
     let landed = Array<String>.fill(2, "")
     detachThenInterruptProgram(landed).run()
     // The reader was interrupted before it could recover and run on. On the
     // broken runtime the failure wake left it marked as carrying, the interrupt
     // went pending, the hard mask's pop skipped it, and the join saw "finished".
     assert landed.get(1) == "interrupted"
-

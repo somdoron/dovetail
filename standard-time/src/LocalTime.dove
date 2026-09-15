@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a time without a date or time-zone, such as 14:30:45.
 @derive(Equatable)
-public record LocalTime =
+ public record LocalTime =
     /// The hour of the day (0-23).
     hour: Int32
     /// The minute of the hour (0-59).
@@ -35,16 +35,14 @@ function normalizeTime(h: Int32, m: Int32, s: Int32, ns: Int32): LocalTime =
 /// Factory methods and operations for LocalTime.
 module LocalTime =
     /// Creates a LocalTime from hour, minute, and second components.
-    public function of(h: Int32, m: Int32, s: Int32): LocalTime =
-        normalizeTime(h, m, s, 0)
+    public function of(h: Int32, m: Int32, s: Int32): LocalTime = normalizeTime(h, m, s, 0)
 
     /// Creates a LocalTime from hour, minute, second, and nanosecond components.
     public function ofNano(h: Int32, m: Int32, s: Int32, nano: Int32): LocalTime =
         normalizeTime(h, m, s, nano)
 
     /// Returns a LocalTime representing midnight (00:00:00).
-    public function midnight(): LocalTime =
-        LocalTime { hour = 0; minute = 0; second = 0; nano = 0 }
+    public function midnight(): LocalTime = LocalTime { hour = 0; minute = 0; second = 0; nano = 0 }
 
     /// Returns a new LocalTime with the given hours added, wrapping around 24 hours.
     public function plusHours(self, h: Int32): LocalTime =

@@ -3,7 +3,11 @@ package standard.collection
 import standard.prelude.Option
 
 /// A mutable LIFO (last-in, first-out) stack backed by a dynamically-resizing array.
-public class MutableStack<T>(internal mutable data: Array<T>, internal mutable size: Int32) implements Iterable<T> where T: Default =
+public class MutableStack<T>(
+    internal mutable data: Array<T>,
+    internal mutable size: Int32
+) implements Iterable<T>
+    where T: Default =
     /// Pushes a value onto the top of the stack, growing capacity if needed.
     public function push(self, value: T): Unit =
         if self.size >= self.data.length then
@@ -13,7 +17,8 @@ public class MutableStack<T>(internal mutable data: Array<T>, internal mutable s
 
     /// Removes and returns the top element, or None if the stack is empty.
     public function pop(self): Option<T> =
-        if self.size == 0 then None
+        if self.size == 0 then
+            None
         else
             let value = self.data.get(self.size - 1)
             self.size = self.size - 1
@@ -21,15 +26,13 @@ public class MutableStack<T>(internal mutable data: Array<T>, internal mutable s
 
     /// Returns the top element without removing it, or None if empty.
     public property peek(self): Option<T> =
-        if self.size == 0 then None
-        else Some(self.data.get(self.size - 1))
+        if self.size == 0 then None else Some(self.data.get(self.size - 1))
 
     /// The number of elements on the stack.
     public property length(self): Int32 = self.size
 
     /// Creates a new empty MutableStack.
-    public function new(): MutableStack<T> =
-        MutableStack(Array.fill(4, T.default), 0)
+    public function new(): MutableStack<T> = MutableStack(Array.fill(4, T.default), 0)
 
     /// Removes all elements that do not satisfy the predicate, preserving order.
     public function filterInPlace(self, predicate: (T) => Bool): Unit =
@@ -48,12 +51,14 @@ public class MutableStack<T>(internal mutable data: Array<T>, internal mutable s
     /// Returns an iterator over the elements of the stack from bottom to top.
     public function iterator(self): Iterator<T> = MutableStackIterator(self, 0)
 
-implement <T> Default for MutableStack<T> where T: Default =
+implement<T> Default for MutableStack<T> where T: Default =
     public property default: MutableStack<T> = MutableStack.new()
 
-class MutableStackIterator<T>(stack: MutableStack<T>, mutable index: Int32) implements Iterator<T> where T: Default =
+class MutableStackIterator<T>(stack: MutableStack<T>, mutable index: Int32) implements Iterator<T>
+    where T: Default =
     public function next(self): Option<T> =
-        if self.index >= self.stack.size then None
+        if self.index >= self.stack.size then
+            None
         else
             let value = self.stack.data.get(self.index)
             self.index = self.index + 1

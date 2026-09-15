@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// A package path like `a` or `com.example.myapp.utils`.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct PackagePath(pub Vec<String>);
 
 impl PackagePath {
@@ -31,7 +31,7 @@ impl fmt::Display for PackagePath {
 }
 
 /// A symbol name within a package.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SymbolName(pub String);
 
 impl fmt::Display for SymbolName {
@@ -41,7 +41,7 @@ impl fmt::Display for SymbolName {
 }
 
 /// Fully-qualified name: package path + symbol name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Fqn {
     pub package: PackagePath,
     pub symbol: SymbolName,
@@ -281,7 +281,7 @@ impl fmt::Display for MangledName {
 /// `Protected` is used for class members only; it acts like `Public` for registry
 /// purposes (not stripped), but is only callable from subclasses. Since we don't
 /// have subclasses yet, protected effectively disallows calling from outside.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[derive(serde::Serialize, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum Visibility {
     Public,
     #[default]
@@ -327,7 +327,7 @@ impl fmt::Display for InterfaceMemberName {
 }
 
 /// Variance of a type parameter on a generic type (record, enum, class).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Variance {
     /// No annotation — invariant in this type parameter.
     Invariant,

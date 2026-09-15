@@ -102,8 +102,10 @@ impl LayoutFilter {
                 } else {
                     self.close_brace_context();
                 }
-                self.last_span = token.span.clone();
-                return token;
+                self.pending_tokens.push_back(token);
+                let next = self.pending_tokens.pop_front().unwrap();
+                self.last_span = next.span.clone();
+                return next;
             }
 
             // 4. Establish pending context if any
@@ -250,12 +252,20 @@ impl LayoutFilter {
         }
     }
 
+    fn follows_explicit_separator(&self) -> bool {
+        self.tokens[..self.pos.saturating_sub(1)]
+            .iter()
+            .rev()
+            .find(|token| token.kind != TokenKind::Newline)
+            .is_some_and(|token| matches!(token.kind, TokenKind::Comma | TokenKind::Semicolon))
+    }
+
     fn should_insert_sep(&self, col: u32, ctx: &OffsideContext, token_kind: &TokenKind) -> bool {
         // Don't insert Sep before closing delimiters
         if token_kind.is_closing_delimiter() {
             return false;
         }
-        col == ctx.column && ctx.is_seq_block
+        col == ctx.column && ctx.is_seq_block && !self.follows_explicit_separator()
     }
 
     fn close_offside_contexts(&mut self, col: u32, token_kind: &TokenKind) {
@@ -281,7 +291,7 @@ impl LayoutFilter {
 
         // After closing, check if we need Sep at the remaining context.
         // Suppress Sep before closing delimiters.
-        if !token_kind.is_closing_delimiter() {
+        if !token_kind.is_closing_delimiter() && !self.follows_explicit_separator() {
             if let Some(ctx) = self.context_stack.last() {
                 if col == ctx.column && ctx.is_seq_block {
                     self.pending_tokens.push_back(self.make_sep_token());
@@ -443,6 +453,41 @@ mod tests {
         let tokens = layout_filter("f(match x with\n    case 3 => 10\n    case _ => 0\n)");
         let k = kinds(&tokens);
         assert!(k.contains(&TokenKind::Match));
+    }
+
+    #[test]
+    fn explicit_field_separator_does_not_get_a_second_layout_separator() {
+        let tokens = layout_filter(
+            r#"Item {
+    first: Int32,
+    second: Int32
+}
+"#,
+        );
+        let kinds = kinds(&tokens);
+        let comma = kinds
+            .iter()
+            .position(|kind| *kind == TokenKind::Comma)
+            .unwrap();
+        assert_eq!(kinds[comma + 1], TokenKind::Ident);
+    }
+
+    #[test]
+    fn brace_follows_ends_of_nested_field_bodies() {
+        let tokens = layout_filter(
+            r#"function f() =
+    Outer {
+        field =
+            Inner { value = 1 }
+    }
+"#,
+        );
+        let kinds = kinds(&tokens);
+        let outer_brace = kinds
+            .iter()
+            .rposition(|kind| *kind == TokenKind::RBrace)
+            .unwrap();
+        assert_eq!(kinds[outer_brace - 1], TokenKind::End);
     }
 
     #[test]

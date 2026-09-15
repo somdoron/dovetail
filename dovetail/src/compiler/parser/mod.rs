@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod syntax;
 
 use crate::common::diagnostics::Diagnostic;
 use crate::common::span::{Span, Spanned};
@@ -10,6 +11,8 @@ pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
     diagnostics: Vec<Diagnostic>,
+    capture_source: bool,
+    syntax: Vec<syntax::SyntaxNode>,
 }
 
 /// How a `property` declaration treats its body at this parse site.
@@ -29,7 +32,28 @@ impl Parser {
             tokens,
             pos: 0,
             diagnostics: Vec::new(),
+            capture_source: false,
+            syntax: Vec::new(),
         }
+    }
+
+    pub fn capturing_source(tokens: Vec<Token>) -> Self {
+        let mut parser = Self::new(tokens);
+        parser.capture_source = true;
+        parser
+    }
+
+    /// Parse an isolated interpolation expression for source tools.
+    pub fn parse_source_expression(&mut self) -> Expr {
+        let expression = self.parse_expression();
+        if !self.at(TokenKind::Eof) {
+            self.error_at_current("unexpected token after expression");
+        }
+        expression
+    }
+
+    pub fn into_syntax(self) -> (Vec<Token>, Vec<syntax::SyntaxNode>) {
+        (self.tokens, self.syntax)
     }
 
     pub fn diagnostics(&self) -> &[Diagnostic] {
@@ -249,6 +273,21 @@ impl Parser {
     // ── Package declaration ──────────────────────────────────────────
 
     fn parse_package_decl(&mut self) -> PackageDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_package_decl_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Package,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_package_decl_inner(&mut self) -> PackageDecl {
         let start = self.peek().span.clone();
 
         if !self.at(TokenKind::Package) {
@@ -287,6 +326,21 @@ impl Parser {
     // ── Import declarations ────────────────────────────────────────────
 
     fn parse_import_decl(&mut self) -> ImportDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_import_decl_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Import,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_import_decl_inner(&mut self) -> ImportDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'import'
 
@@ -327,6 +381,21 @@ impl Parser {
     // ── Declarations ─────────────────────────────────────────────────
 
     fn parse_declaration(&mut self) -> Option<Declaration> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_declaration_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_declaration_inner(&mut self) -> Option<Declaration> {
         // Grab doc comment from the first token of this declaration
         let doc_comment = self.peek().doc_comment.clone();
 
@@ -508,6 +577,18 @@ impl Parser {
     /// exactly where the name is (`import standard.sqlite.sql` enables
     /// `sql"..."`; `import com.pg.sql as pg` renames it to `pg"..."`).
     fn parse_string_literal_attribute(&mut self) -> Option<Span> {
+        let start = self.pos;
+        let result = self.parse_string_literal_attribute_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Attribute,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_string_literal_attribute_inner(&mut self) -> Option<Span> {
         if !(self.at(TokenKind::At)
             && self.peek_at(1).kind == TokenKind::Ident
             && self.peek_at(1).text == "stringLiteral")
@@ -527,6 +608,18 @@ impl Parser {
     }
 
     fn parse_derive_attributes(&mut self) -> Vec<DeriveAttribute> {
+        let start = self.pos;
+        let result = self.parse_derive_attributes_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Attribute,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_derive_attributes_inner(&mut self) -> Vec<DeriveAttribute> {
         let mut attrs = Vec::new();
         while self.at(TokenKind::At)
             && self.peek_at(1).kind == TokenKind::Ident
@@ -570,6 +663,18 @@ impl Parser {
     }
 
     fn parse_test_attributes(&mut self) -> Vec<TestAttribute> {
+        let start = self.pos;
+        let result = self.parse_test_attributes_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Attribute,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_test_attributes_inner(&mut self) -> Vec<TestAttribute> {
         let mut attributes = Vec::new();
         while self.at(TokenKind::At) {
             let at_span = self.peek().span.clone();
@@ -646,6 +751,21 @@ impl Parser {
     }
 
     fn parse_test_decl(&mut self, attributes: Vec<TestAttribute>) -> TestDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_test_decl_inner(attributes);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_test_decl_inner(&mut self, attributes: Vec<TestAttribute>) -> TestDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'test' (Ident)
 
@@ -667,7 +787,27 @@ impl Parser {
         TestDecl { attributes, name, body, span }
     }
 
-    fn parse_function_decl(&mut self, visibility: Visibility, is_async: bool, doc_comment: Option<String>) -> FunctionDecl {
+    fn parse_function_decl(
+        &mut self,
+        visibility: Visibility,
+        is_async: bool,
+        doc_comment: Option<String>,
+    ) -> FunctionDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_function_decl_inner(visibility, is_async, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_function_decl_inner(&mut self, visibility: Visibility, is_async: bool, doc_comment: Option<String>) -> FunctionDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'function'
 
@@ -731,7 +871,27 @@ impl Parser {
     }
 
     /// Parse an abstract method declaration: `abstract function name(params): ReturnType` (no body).
-    fn parse_abstract_method_decl(&mut self, self_type_expr: &TypeExpr, visibility: Visibility, doc_comment: Option<String>) -> FunctionDecl {
+    fn parse_abstract_method_decl(
+        &mut self,
+        self_type_expr: &TypeExpr,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> FunctionDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_abstract_method_decl_inner(self_type_expr, visibility, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_abstract_method_decl_inner(&mut self, self_type_expr: &TypeExpr, visibility: Visibility, doc_comment: Option<String>) -> FunctionDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'function'
 
@@ -783,7 +943,26 @@ impl Parser {
         }
     }
 
-    fn parse_global_var_decl(&mut self, visibility: Visibility, doc_comment: Option<String>) -> GlobalVarDecl {
+    fn parse_global_var_decl(
+        &mut self,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> GlobalVarDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_global_var_decl_inner(visibility, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_global_var_decl_inner(&mut self, visibility: Visibility, doc_comment: Option<String>) -> GlobalVarDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'let'
 
@@ -1135,6 +1314,28 @@ impl Parser {
         properties: &mut Vec<PropertyDecl>,
         associated_types: &mut Vec<AssociatedTypeDecl>,
     ) {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result =
+            self.parse_trait_member_inner(self_type_expr, methods, properties, associated_types);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_trait_member_inner(
+        &mut self,
+        self_type_expr: &TypeExpr,
+        methods: &mut Vec<TraitMethodSignature>,
+        properties: &mut Vec<PropertyDecl>,
+        associated_types: &mut Vec<AssociatedTypeDecl>,
+    ) {
         let doc_comment = self.peek().doc_comment.clone();
         if self.at(TokenKind::Function) {
             methods.push(self.parse_trait_method_signature(self_type_expr, doc_comment));
@@ -1148,6 +1349,21 @@ impl Parser {
     }
 
     fn parse_associated_type_decl(&mut self, doc_comment: Option<String>) -> AssociatedTypeDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_associated_type_decl_inner(doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_associated_type_decl_inner(&mut self, doc_comment: Option<String>) -> AssociatedTypeDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'type'
 
@@ -1176,7 +1392,26 @@ impl Parser {
         }
     }
 
-    fn parse_trait_method_signature(&mut self, self_type_expr: &TypeExpr, doc_comment: Option<String>) -> TraitMethodSignature {
+    fn parse_trait_method_signature(
+        &mut self,
+        self_type_expr: &TypeExpr,
+        doc_comment: Option<String>,
+    ) -> TraitMethodSignature {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_trait_method_signature_inner(self_type_expr, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_trait_method_signature_inner(&mut self, self_type_expr: &TypeExpr, doc_comment: Option<String>) -> TraitMethodSignature {
         let start = self.peek().span.clone();
         self.expect(TokenKind::Function, "expected 'function' in trait body");
 
@@ -1254,6 +1489,7 @@ impl Parser {
         if !self.at(TokenKind::Where) {
             return vec![];
         }
+        let start = self.pos;
         self.advance(); // consume 'where'
 
         let mut constraints = Vec::new();
@@ -1264,6 +1500,12 @@ impl Parser {
             constraints.push(self.parse_trait_constraint());
         }
 
+        if self.capture_source {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::WhereClause,
+                tokens: start..self.pos,
+            });
+        }
         constraints
     }
 
@@ -1497,6 +1739,28 @@ impl Parser {
         properties: &mut Vec<PropertyDecl>,
         associated_types: &mut Vec<AssociatedTypeDef>,
     ) {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result =
+            self.parse_implement_member_inner(for_type, methods, properties, associated_types);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_implement_member_inner(
+        &mut self,
+        for_type: &TypeExpr,
+        methods: &mut Vec<FunctionDecl>,
+        properties: &mut Vec<PropertyDecl>,
+        associated_types: &mut Vec<AssociatedTypeDef>,
+    ) {
         let doc_comment = self.peek().doc_comment.clone();
 
         let visibility = match self.peek().kind {
@@ -1536,6 +1800,21 @@ impl Parser {
     }
 
     fn parse_associated_type_def(&mut self) -> AssociatedTypeDef {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_associated_type_def_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_associated_type_def_inner(&mut self) -> AssociatedTypeDef {
         let start = self.peek().span.clone();
         self.advance(); // consume 'type'
 
@@ -1655,6 +1934,29 @@ impl Parser {
         globals: &mut Vec<GlobalVarDecl>,
         tests: &mut Vec<TestDecl>,
     ) {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result =
+            self.parse_module_member_inner(for_type, functions, properties, globals, tests);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_module_member_inner(
+        &mut self,
+        for_type: &TypeExpr,
+        functions: &mut Vec<FunctionDecl>,
+        properties: &mut Vec<PropertyDecl>,
+        globals: &mut Vec<GlobalVarDecl>,
+        tests: &mut Vec<TestDecl>,
+    ) {
         // Check for test declarations before visibility parsing
         if self.at(TokenKind::At) {
             let attributes = self.parse_test_attributes();
@@ -1723,7 +2025,26 @@ impl Parser {
         }
     }
 
-    fn parse_module_property(&mut self, visibility: Visibility, doc_comment: Option<String>) -> PropertyDecl {
+    fn parse_module_property(
+        &mut self,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> PropertyDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_module_property_inner(visibility, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_module_property_inner(&mut self, visibility: Visibility, doc_comment: Option<String>) -> PropertyDecl {
         let start = self.peek().span.clone();
         self.advance(); // consume 'let'
 
@@ -1991,6 +2312,21 @@ impl Parser {
     }
 
     fn parse_class_member(&mut self, self_type_expr: &TypeExpr) -> ClassMember {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_class_member_inner(self_type_expr);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_class_member_inner(&mut self, self_type_expr: &TypeExpr) -> ClassMember {
         let doc_comment = self.peek().doc_comment.clone();
 
         // Check for visibility prefix
@@ -2061,7 +2397,26 @@ impl Parser {
         ClassMember::Expression(self.parse_expression())
     }
 
-    fn parse_class_let_binding(&mut self, visibility: Visibility, doc_comment: Option<String>) -> ClassLetBinding {
+    fn parse_class_let_binding(
+        &mut self,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> ClassLetBinding {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_class_let_binding_inner(visibility, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_class_let_binding_inner(&mut self, visibility: Visibility, doc_comment: Option<String>) -> ClassLetBinding {
         let start = self.peek().span.clone();
         self.advance(); // consume 'let'
 
@@ -2162,6 +2517,26 @@ impl Parser {
         methods: &mut Vec<FunctionDecl>,
         properties: &mut Vec<PropertyDecl>,
     ) {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_extension_member_inner(for_type, methods, properties);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_extension_member_inner(
+        &mut self,
+        for_type: &TypeExpr,
+        methods: &mut Vec<FunctionDecl>,
+        properties: &mut Vec<PropertyDecl>,
+    ) {
         let doc_comment = self.peek().doc_comment.clone();
 
         // Peek past optional visibility to determine if method or property
@@ -2200,6 +2575,27 @@ impl Parser {
     }
 
     fn parse_property_decl(
+        &mut self,
+        for_type: &TypeExpr,
+        visibility: Visibility,
+        body_mode: PropertyBodyMode,
+        doc_comment: Option<String>,
+    ) -> PropertyDecl {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_property_decl_inner(for_type, visibility, body_mode, doc_comment);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_property_decl_inner(
         &mut self,
         for_type: &TypeExpr,
         visibility: Visibility,
@@ -2297,6 +2693,24 @@ impl Parser {
         visibility: Visibility,
         doc_comment: Option<String>,
     ) -> FunctionDecl {
+        let start = self.pos;
+        let result =
+            self.parse_extension_method_with_visibility_inner(for_type, visibility, doc_comment);
+        if self.capture_source {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Item,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_extension_method_with_visibility_inner(
+        &mut self,
+        for_type: &TypeExpr,
+        visibility: Visibility,
+        doc_comment: Option<String>,
+    ) -> FunctionDecl {
         let start = self.peek().span.clone();
         self.expect(TokenKind::Function, "expected 'function' in extension body");
 
@@ -2362,6 +2776,21 @@ impl Parser {
     }
 
     fn parse_record_fields(&mut self) -> Vec<RecordField> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_record_fields_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Members,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_record_fields_inner(&mut self) -> Vec<RecordField> {
         let mut fields = Vec::new();
 
         if self.at(TokenKind::Begin) {
@@ -2457,6 +2886,21 @@ impl Parser {
     }
 
     fn parse_enum_variants(&mut self) -> Vec<EnumVariant> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_enum_variants_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Members,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_enum_variants_inner(&mut self) -> Vec<EnumVariant> {
         let mut variants = Vec::new();
 
         if self.at(TokenKind::Begin) {
@@ -2616,6 +3060,18 @@ impl Parser {
     }
 
     fn parse_record_with(&mut self, object: Expr) -> Expr {
+        let start = self.pos;
+        let result = self.parse_record_with_inner(object);
+        if self.capture_source {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Update,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_record_with_inner(&mut self, object: Expr) -> Expr {
         let start = object.span();
         self.advance(); // consume 'with'
 
@@ -2769,6 +3225,21 @@ impl Parser {
     // ── Types ────────────────────────────────────────────────────────
 
     fn parse_type_expr(&mut self) -> TypeExpr {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_type_expr_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Type,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_type_expr_inner(&mut self) -> TypeExpr {
         self.parse_type_with_arrow(true)
     }
 
@@ -2880,6 +3351,21 @@ impl Parser {
     // ── Expressions ──────────────────────────────────────────────────
 
     fn parse_block_expr(&mut self) -> Expr {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_block_expr_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Body,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_block_expr_inner(&mut self) -> Expr {
         if self.at(TokenKind::Begin) {
             let start = self.peek().span.clone();
             self.advance(); // consume Begin
@@ -2975,6 +3461,18 @@ impl Parser {
     }
 
     fn parse_expression(&mut self) -> Expr {
+        let start = self.pos;
+        let result = self.parse_expression_inner();
+        if self.capture_source {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Expression,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_expression_inner(&mut self) -> Expr {
         match self.peek().kind {
             TokenKind::Let => self.parse_let_expr(),
             TokenKind::Panic => self.parse_panic_expr(),
@@ -3087,6 +3585,18 @@ impl Parser {
     }
 
     fn parse_if_expr(&mut self) -> Expr {
+        let start = self.pos;
+        let result = self.parse_if_expr_inner();
+        if self.capture_source {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Conditional,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_if_expr_inner(&mut self) -> Expr {
         let start = self.peek().span.clone();
         self.advance(); // consume 'if'
         let condition = self.parse_expr_bp(0);
@@ -3141,6 +3651,18 @@ impl Parser {
     }
 
     fn parse_match_expr(&mut self) -> Expr {
+        let start = self.pos;
+        let result = self.parse_match_expr_inner();
+        if self.capture_source {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Match,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_match_expr_inner(&mut self) -> Expr {
         let start = self.peek().span.clone();
         self.advance(); // consume 'match'
 
@@ -3214,6 +3736,21 @@ impl Parser {
     /// keeps every later phase — inference, exhaustiveness, codegen — unaware
     /// that list patterns exist.
     fn parse_pattern(&mut self) -> Pattern {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_pattern_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Pattern,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_pattern_inner(&mut self) -> Pattern {
         let lhs = self.parse_pattern_atom();
         if self.at(TokenKind::ColonColon) {
             let op_span = self.advance().span.clone();
@@ -3745,6 +4282,18 @@ impl Parser {
 
     /// Pratt (precedence-climbing) expression parser.
     fn parse_expr_bp(&mut self, min_bp: u8) -> Expr {
+        let start = self.pos;
+        let result = self.parse_expr_bp_inner(min_bp);
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Binary,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_expr_bp_inner(&mut self, min_bp: u8) -> Expr {
         // Prefix / atom
         let mut lhs = if let Some(r_bp) = Self::prefix_binding_power(&self.peek().kind) {
             let op_token = self.advance().clone();
@@ -3980,6 +4529,38 @@ impl Parser {
     }
 
     fn parse_primary_expr(&mut self) -> Expr {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_primary_expr_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Primary,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        if self.capture_source && matches!(&result, Expr::Closure { .. }) {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Closure,
+                tokens: start..self.pos,
+            });
+        }
+        if self.capture_source
+            && matches!(
+                &result,
+                Expr::AsyncDo { .. } | Expr::If { .. } | Expr::Match { .. } | Expr::Closure { .. }
+            )
+        {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::Receiver,
+                tokens: start..self.pos,
+            });
+        }
+        result
+    }
+
+    fn parse_primary_expr_inner(&mut self) -> Expr {
         if self.at(TokenKind::Async) && self.peek_at(1).kind == TokenKind::Do {
             let start = self.advance().span.clone();
             self.advance(); // do already opens a layout block
@@ -4776,6 +5357,21 @@ impl Parser {
 
     /// Parse a type parameter list: `<T, U>`. Assumes current token is `<`.
     fn parse_type_param_list(&mut self) -> Vec<Spanned<String>> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_type_param_list_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::TypeParameters,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_type_param_list_inner(&mut self) -> Vec<Spanned<String>> {
         self.advance(); // consume '<'
         let mut params = Vec::new();
 
@@ -4797,6 +5393,21 @@ impl Parser {
     /// Parse a type parameter list with optional variance annotations: `<out T, in U, V>`.
     /// Used only for record and enum declarations.
     fn parse_variant_type_param_list(&mut self) -> Vec<VariantTypeParam> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_variant_type_param_list_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::TypeParameters,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_variant_type_param_list_inner(&mut self) -> Vec<VariantTypeParam> {
         self.advance(); // consume '<'
         let mut params = Vec::new();
 
@@ -4841,6 +5452,21 @@ impl Parser {
 
     /// Parse a type argument list: `<Type1, Type2>`. Assumes current token is `<`.
     fn parse_type_arg_list(&mut self) -> Vec<TypeExpr> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.parse_type_arg_list_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::TypeParameters,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn parse_type_arg_list_inner(&mut self) -> Vec<TypeExpr> {
         self.advance(); // consume '<'
         let mut args = Vec::new();
 
@@ -4863,7 +5489,24 @@ impl Parser {
         } else if self.at(TokenKind::GtGt) {
             // Split ">>" into ">" + ">": consume ">>" and replace with ">"
             let tok = self.peek().clone();
-            self.tokens[self.pos] = Token::new(TokenKind::Gt, tok.span, ">");
+            if self.capture_source {
+                let mut first = tok.clone();
+                first.kind = TokenKind::Gt;
+                first.text = ">".into();
+                let mut second = first.clone();
+                second.span.column += 1;
+                if let Some(range) = tok.source_range.clone() {
+                    first.source_range = Some(range.start..range.start + 1);
+                    second.source_range = Some(range.start + 1..range.end);
+                }
+                self.tokens[self.pos] = first;
+                self.tokens.insert(self.pos + 1, second);
+                self.advance();
+                return;
+            }
+            let mut replacement = Token::new(TokenKind::Gt, tok.span, ">");
+            replacement.source_range = tok.source_range;
+            self.tokens[self.pos] = replacement;
             // Don't advance — the replacement ">" stays for the outer parse_type_arg_list
         } else {
             self.diagnostics.push(Diagnostic {
@@ -4879,6 +5522,21 @@ impl Parser {
     /// Returns `Some(type_args)` if successful, `None` if `<` is not a type arg opener.
     /// On failure, parser position is restored (no diagnostics emitted).
     fn try_parse_type_args(&mut self) -> Option<Vec<TypeExpr>> {
+        let start = self.pos;
+        let checkpoint = self.syntax.len();
+        let result = self.try_parse_type_args_inner();
+        if self.capture_source && self.pos > start {
+            self.syntax.push(syntax::SyntaxNode {
+                kind: syntax::SyntaxKind::TypeParameters,
+                tokens: start..self.pos,
+            });
+        } else {
+            self.syntax.truncate(checkpoint);
+        }
+        result
+    }
+
+    fn try_parse_type_args_inner(&mut self) -> Option<Vec<TypeExpr>> {
         if !self.at(TokenKind::Lt) {
             return None;
         }

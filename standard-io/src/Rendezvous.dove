@@ -12,53 +12,61 @@ public class Rendezvous<T> private (
 /// Clearing the payload also releases references retained by unused queue slots.
 internal class RendezvousEntry<T>(public mutable value: Option<T>, public mutable consumed: Bool)
 
-implement <T> Default for RendezvousEntry<T> =
+implement<T> Default for RendezvousEntry<T> =
     public property default: RendezvousEntry<T> = RendezvousEntry<T>(None, false)
 
 module Rendezvous<T> =
-    public function make(): Async<Rendezvous<T>, Never> = async do
-        Rendezvous<T>(Waiter.make(), Waiter.make(), MutableQueue.new())
+    public function make(): Async<Rendezvous<T>, Never> =
+        async do
+            Rendezvous<T>(Waiter.make(), Waiter.make(), MutableQueue.new())
 
     /// Cancellation withdraws during bracket cleanup. Join an interrupted producer
     /// to wait for withdrawal; a concurrent take may consume it before cleanup.
     public function offer(self, value: T): Async<Unit, Never> =
-        let acquire = async do
-            let entry = RendezvousEntry<T>(Some(value), false)
-            self.pending.enqueue(entry)
-            await Async.wake(self.consumers)
-            entry
-        Async<Unit, Never>.bracket(
+        let acquire =
+            async do
+                let entry = RendezvousEntry<T>(Some(value), false)
+                self.pending.enqueue(entry)
+                await Async.wake(self.consumers)
+                entry
+        Async<Unit, Never>
+            .bracket(
             acquire,
             (entry: RendezvousEntry<T>) => self.withdraw(entry),
             (entry: RendezvousEntry<T>) =>
-                let check: Async<Option<Any>, Any> = async do
-                    if entry.consumed then
-                        let unit: Any = ()
-                        Some(unit)
-                    else None
+                let check: Async<Option<Any>, Any> =
+                    async do
+                        if entry.consumed then
+                            let unit: Any = ()
+                            Some(unit)
+                        else
+                            None
                 Async<Unit, Never>.awaitCheck(self.producers, check)
         )
 
     public function take(self): Async<T, Never> =
-        let check: Async<Option<Any>, Any> = async do
-            match self.pending.dequeue() with
-                case Some(entry) =>
-                    let value = entry.value.require
-                    entry.value = None
-                    entry.consumed = true
-                    await Async.wake(self.producers)
-                    let any: Any = value
-                    Some(any)
-                case None => None
+        let check: Async<Option<Any>, Any> =
+            async do
+                match self.pending.dequeue() with
+                    case Some(entry) =>
+                        let value = entry.value.require
+                        entry.value = None
+                        entry.consumed = true
+                        await Async.wake(self.producers)
+                        let any: Any = value
+                        Some(any)
+                    case None => None
         // Commit and notification are masked together; parking remains interruptible.
-        Async<T, Never>.awaitCheck(self.consumers, check.uninterruptible())
+        Async<T, Never>
+            .awaitCheck(self.consumers, check.uninterruptible())
 
-    function withdraw(self, entry: RendezvousEntry<T>): Async<Unit, Never> = async do
-        if !entry.consumed then
-            entry.value = None
-            // Rotate once to remove this offer while preserving FIFO order.
-            let mutable remaining = self.pending.length
-            while remaining > 0 do
-                let pending = self.pending.dequeue().require
-                if !ClassIdentity.equals(pending, entry) then self.pending.enqueue(pending)
-                remaining = remaining - 1
+    function withdraw(self, entry: RendezvousEntry<T>): Async<Unit, Never> =
+        async do
+            if !entry.consumed then
+                entry.value = None
+                // Rotate once to remove this offer while preserving FIFO order.
+                let mutable remaining = self.pending.length
+                while remaining > 0 do
+                    let pending = self.pending.dequeue().require
+                    if !ClassIdentity.equals(pending, entry) then self.pending.enqueue(pending)
+                    remaining = remaining - 1

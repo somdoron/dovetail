@@ -10,6 +10,9 @@ use token::{LiteralPart, PrefixedLiteralData, Token, TokenKind};
 pub struct Lexer {
     cursor: Cursor,
     diagnostics: Vec<Diagnostic>,
+    capture_source: bool,
+    pub source_comments: Vec<std::ops::Range<usize>>,
+    pub source_interpolations: Vec<std::ops::Range<usize>>,
 }
 
 enum InterpolationPart {
@@ -31,6 +34,9 @@ impl Lexer {
         Self {
             cursor: Cursor::new(source, file),
             diagnostics: Vec::new(),
+            capture_source: false,
+            source_comments: Vec::new(),
+            source_interpolations: Vec::new(),
         }
     }
 
@@ -40,7 +46,16 @@ impl Lexer {
         Self {
             cursor: Cursor::new_at(source, file, line, column),
             diagnostics: Vec::new(),
+            capture_source: false,
+            source_comments: Vec::new(),
+            source_interpolations: Vec::new(),
         }
+    }
+
+    pub fn capturing_source(source: &str, file: FilePath) -> Self {
+        let mut lexer = Self::new(source, file);
+        lexer.capture_source = true;
+        lexer
     }
 
     /// Tokenizes the entire source, returning all tokens (including Newline, Eof).
@@ -55,6 +70,8 @@ impl Lexer {
                 break;
             }
 
+            let source_start = self.cursor.byte_offset();
+            let token_start = tokens.len();
             let ch = self.cursor.peek().unwrap();
 
             match ch {
@@ -81,6 +98,7 @@ impl Lexer {
                 }
                 '/' if self.cursor.peek_at(1) == Some('/') => {
                     self.skip_line_comment();
+                    if self.capture_source { self.source_comments.push(source_start..self.cursor.byte_offset()); }
                 }
                 '/' => {
                     let tok = self.make_token(TokenKind::Slash, "/");
@@ -331,6 +349,10 @@ impl Lexer {
                     });
                     self.cursor.advance();
                 }
+            }
+            if self.capture_source {
+                let range = source_start..self.cursor.byte_offset();
+                for token in &mut tokens[token_start..] { token.source_range = Some(range.clone()); }
             }
         }
 
@@ -899,6 +921,7 @@ impl Lexer {
     }
 
     fn scan_interpolation_expr_text(&mut self, file: &FilePath) -> String {
+        let source_start = self.cursor.byte_offset();
         let mut expr_text = String::new();
         let mut depth: u32 = 1;
 
@@ -989,6 +1012,7 @@ impl Lexer {
             }
         }
 
+        if self.capture_source { self.source_interpolations.push(source_start..self.cursor.byte_offset()); }
         expr_text
     }
 

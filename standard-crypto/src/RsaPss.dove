@@ -45,7 +45,12 @@ module RsaPss =
         res
 
     /// EMSA-PSS-ENCODE (RFC 8017 §9.1.1). `mHash` is `hash` of the message.
-    function emsaPssEncode(hash: HashAlgorithm, mHash: Array<Uint8>, emBits: Int32, salt: Array<Uint8>): Array<Uint8> =
+    function emsaPssEncode(
+        hash: HashAlgorithm,
+        mHash: Array<Uint8>,
+        emBits: Int32,
+        salt: Array<Uint8>
+    ): Array<Uint8> =
         let hLen = hash.digestSize
         let sLen = salt.length
         let emLen = (emBits + 7) / 8
@@ -70,7 +75,13 @@ module RsaPss =
         em
 
     /// EMSA-PSS-VERIFY (RFC 8017 §9.1.2).
-    function emsaPssVerify(hash: HashAlgorithm, mHash: Array<Uint8>, em: Array<Uint8>, emBits: Int32, sLen: Int32): Bool =
+    function emsaPssVerify(
+        hash: HashAlgorithm,
+        mHash: Array<Uint8>,
+        em: Array<Uint8>,
+        emBits: Int32,
+        sLen: Int32
+    ): Bool =
         let hLen = hash.digestSize
         let emLen = (emBits + 7) / 8
         if emLen < hLen + sLen + 2 then
@@ -124,7 +135,12 @@ module RsaPss =
         // traps on it — an unauthenticated parse-time DoS. An absurdly large modulus is a
         // compute-DoS (montMul is O(limbs^2)). Bound both before touching Bignum. Real
         // RSA is <= 8192-bit (1024 bytes).
-        if modLen == 0 || modLen > maxRsaModulusBytes() || exponent.length == 0 || exponent.length > maxRsaExponentBytes() || signature.length != modLen then
+        if modLen
+            == 0
+            || modLen > maxRsaModulusBytes()
+            || exponent.length == 0
+            || exponent.length > maxRsaExponentBytes()
+            || signature.length != modLen then
             false
         else
             let nLimbs = Bignum.fromBytes(modulus, 0, modLen)
@@ -155,18 +171,53 @@ module RsaPss =
         Bignum.toBytes(s, modLen)
 
     // --- PKCS#1 v1.5 (verify only; sign provided for self-test) ---
-
     /// DigestInfo DER prefix for SHA-256.
     function digestInfoSha256(): Array<Uint8> =
-        [|0x30u8, 0x31u8, 0x30u8, 0x0du8, 0x06u8, 0x09u8, 0x60u8, 0x86u8,
-         0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x01u8, 0x05u8,
-         0x00u8, 0x04u8, 0x20u8|]
+        [|
+            0x30u8,
+            0x31u8,
+            0x30u8,
+            0x0du8,
+            0x06u8,
+            0x09u8,
+            0x60u8,
+            0x86u8,
+            0x48u8,
+            0x01u8,
+            0x65u8,
+            0x03u8,
+            0x04u8,
+            0x02u8,
+            0x01u8,
+            0x05u8,
+            0x00u8,
+            0x04u8,
+            0x20u8
+        |]
 
     /// DigestInfo DER prefix for SHA-384.
     function digestInfoSha384(): Array<Uint8> =
-        [|0x30u8, 0x41u8, 0x30u8, 0x0du8, 0x06u8, 0x09u8, 0x60u8, 0x86u8,
-         0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x02u8, 0x05u8,
-         0x00u8, 0x04u8, 0x30u8|]
+        [|
+            0x30u8,
+            0x41u8,
+            0x30u8,
+            0x0du8,
+            0x06u8,
+            0x09u8,
+            0x60u8,
+            0x86u8,
+            0x48u8,
+            0x01u8,
+            0x65u8,
+            0x03u8,
+            0x04u8,
+            0x02u8,
+            0x02u8,
+            0x05u8,
+            0x00u8,
+            0x04u8,
+            0x30u8
+        |]
 
     /// EM = 0x00 ‖ 0x01 ‖ 0xff..ff ‖ 0x00 ‖ t  (EMSA-PKCS1-v1.5).
     private function pkcs1Pad(t: Array<Uint8>, emLen: Int32): Array<Uint8> =
@@ -192,7 +243,12 @@ module RsaPss =
         let modLen = modulus.length
         // See `verify`: reject an empty modulus (would trap in Bignum.n0inv) and an
         // absurdly large one (compute-DoS) before any Bignum work.
-        if modLen == 0 || modLen > maxRsaModulusBytes() || exponent.length == 0 || exponent.length > maxRsaExponentBytes() || signature.length != modLen then
+        if modLen
+            == 0
+            || modLen > maxRsaModulusBytes()
+            || exponent.length == 0
+            || exponent.length > maxRsaExponentBytes()
+            || signature.length != modLen then
             false
         else
             let nLimbs = Bignum.fromBytes(modulus, 0, modLen)
@@ -219,16 +275,47 @@ module RsaPss =
 test "EMSA-PSS encode/verify roundtrip (salted)" =
     let mHash = Sha256.hash("attack at dawn".bytes())
     let emBits = 2047
-    let salt = [|
-        0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8,
-        0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8, 0x00u8,
-        0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8,
-        0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8, 0x00u8,
-    |]
+    let salt =
+        [|
+            0x11u8,
+            0x22u8,
+            0x33u8,
+            0x44u8,
+            0x55u8,
+            0x66u8,
+            0x77u8,
+            0x88u8,
+            0x99u8,
+            0xaau8,
+            0xbbu8,
+            0xccu8,
+            0xddu8,
+            0xeeu8,
+            0xffu8,
+            0x00u8,
+            0x11u8,
+            0x22u8,
+            0x33u8,
+            0x44u8,
+            0x55u8,
+            0x66u8,
+            0x77u8,
+            0x88u8,
+            0x99u8,
+            0xaau8,
+            0xbbu8,
+            0xccu8,
+            0xddu8,
+            0xeeu8,
+            0xffu8,
+            0x00u8,
+        |]
     let em = RsaPss.emsaPssEncode(Sha256, mHash, emBits, salt)
     assert RsaPss.emsaPssVerify(Sha256, mHash, em, emBits, salt.length)
     // wrong message hash must fail
-    assert RsaPss.emsaPssVerify(Sha256, Sha256.hash("retreat".bytes()), em, emBits, salt.length) == false
+    assert RsaPss
+        .emsaPssVerify(Sha256, Sha256.hash("retreat".bytes()), em, emBits, salt.length)
+        == false
 
 test "EMSA-PSS encode/verify roundtrip (empty salt)" =
     let mHash = Sha256.hash("deterministic".bytes())
@@ -240,8 +327,20 @@ test "EMSA-PSS encode/verify roundtrip (empty salt)" =
 test "RSA PSS + PKCS#1 v1.5 roundtrips (generated 512-bit key)" =
     // Build a real RSA key from two known primes (the P-256 field prime and the
     // P-256 group order — both prime). N = P*Q is ~512-bit. d = e^{-1} mod phi.
-    let pPrime = [|0xffffffffffffffffu64, 0x00000000ffffffffu64, 0x0000000000000000u64, 0xffffffff00000001u64|]
-    let qPrime = [|0xf3b9cac2fc632551u64, 0xbce6faada7179e84u64, 0xffffffffffffffffu64, 0xffffffff00000000u64|]
+    let pPrime =
+        [|
+            0xffffffffffffffffu64,
+            0x00000000ffffffffu64,
+            0x0000000000000000u64,
+            0xffffffff00000001u64
+        |]
+    let qPrime =
+        [|
+            0xf3b9cac2fc632551u64,
+            0xbce6faada7179e84u64,
+            0xffffffffffffffffu64,
+            0xffffffff00000000u64
+        |]
     let nLimbs = Bignum.mul(pPrime, qPrime)
     let phi = Bignum.mul(Bignum.subSmall(pPrime, 1u64), Bignum.subSmall(qPrime, 1u64))
     // 65537 and 3 both divide this phi; use M61 = 2^61-1 (coprime to phi).
@@ -250,7 +349,7 @@ test "RSA PSS + PKCS#1 v1.5 roundtrips (generated 512-bit key)" =
     let dLimbs = Bignum.divSmall(Bignum.addSmall(Bignum.mulSmall(phi, e - invPhiE), 1u64), e)._0
     let nBytes = Bignum.toBytes(nLimbs, 64)
     let dBytes = Bignum.toBytes(dLimbs, 64)
-    let eBytes = [|0x1fu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8|]
+    let eBytes = [| 0x1fu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8, 0xffu8 |]
     let message = "the magic words are squeamish ossifrage".bytes()
     let tampered = "the magic words are squeamish ossifragE".bytes()
     let emptySalt: Array<Uint8> = [||]
@@ -265,7 +364,9 @@ test "RSA PSS + PKCS#1 v1.5 roundtrips (generated 512-bit key)" =
     // PKCS#1 v1.5 with SHA-256
     let v15 = RsaPss.pkcs1Sign(Sha256, RsaPss.digestInfoSha256(), nBytes, dBytes, message)
     assert RsaPss.pkcs1Verify(Sha256, RsaPss.digestInfoSha256(), nBytes, eBytes, message, v15)
-    assert RsaPss.pkcs1Verify(Sha256, RsaPss.digestInfoSha256(), nBytes, eBytes, tampered, v15) == false
+    assert RsaPss
+        .pkcs1Verify(Sha256, RsaPss.digestInfoSha256(), nBytes, eBytes, tampered, v15)
+        == false
 
 test "RsaPss verify rejects a zero-length modulus (no Bignum trap)" =
     // An empty modulus + empty signature previously passed the `signature.length == modLen`
@@ -273,7 +374,7 @@ test "RsaPss verify rejects a zero-length modulus (no Bignum trap)" =
     // Reachable from X509.validate on an attacker cert with an `02 00` RSA modulus and an
     // empty `03 00` signature — must be a clean `false`, not a crash.
     let empty = Array<Uint8>.empty()
-    let e = [|0x01u8, 0x00u8, 0x01u8|]
-    let msg = [|0x00u8|]
+    let e = [| 0x01u8, 0x00u8, 0x01u8 |]
+    let msg = [| 0x00u8 |]
     assert RsaPss.verify(Sha256, empty, e, msg, empty, 32) == false
     assert RsaPss.pkcs1Verify(Sha256, RsaPss.digestInfoSha256(), empty, e, msg, empty) == false

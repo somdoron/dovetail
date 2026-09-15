@@ -12,11 +12,21 @@ import standard.prelude.Array
 module P256Field =
     /// The field prime p = 2^256 - 2^224 + 2^192 + 2^96 - 1.
     function p(): Array<Uint64> =
-        [|0xffffffffffffffffu64, 0x00000000ffffffffu64, 0x0000000000000000u64, 0xffffffff00000001u64|]
+        [|
+            0xffffffffffffffffu64,
+            0x00000000ffffffffu64,
+            0x0000000000000000u64,
+            0xffffffff00000001u64
+        |]
 
     /// The group order n.
     function n(): Array<Uint64> =
-        [|0xf3b9cac2fc632551u64, 0xbce6faada7179e84u64, 0xffffffffffffffffu64, 0xffffffff00000000u64|]
+        [|
+            0xf3b9cac2fc632551u64,
+            0xbce6faada7179e84u64,
+            0xffffffffffffffffu64,
+            0xffffffff00000000u64
+        |]
 
     /// -m^{-1} mod 2^64, via Newton's iteration (m is odd).
     function n0inv(m: Array<Uint64>): Uint64 =
@@ -63,14 +73,16 @@ module P256Field =
             i = i + 1
 
     /// Montgomery multiply: a * b * R^{-1} mod m, with R = 2^256. `ni = n0inv(m)`.
-    function montMul(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>, ni: Uint64): Array<Uint64> =
+    function montMul(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>, ni: Uint64):
+        Array<Uint64> =
         let t = Array<Uint64>.fill(6, 0u64)
         let mutable i = 0
         while i < 4 do
             let mutable c = 0u64
             let mutable j = 0
             while j < 4 do
-                let prod = Uint128.multiply(a.get(j), b.get(i)) + t.get(j).toUint128() + c.toUint128()
+                let prod =
+                    Uint128.multiply(a.get(j), b.get(i)) + t.get(j).toUint128() + c.toUint128()
                 t.set(j, prod.low)
                 c = prod.high
                 j = j + 1
@@ -92,16 +104,16 @@ module P256Field =
             t.set(4, t.get(5) + s.high)
             i = i + 1
         condSub(t, m)
-        [|t.get(0), t.get(1), t.get(2), t.get(3)|]
+        [| t.get(0), t.get(1), t.get(2), t.get(3) |]
 
     /// R^2 mod m, computed as 2^512 mod m by 512 modular doublings.
     function rr(m: Array<Uint64>): Array<Uint64> =
-        let mutable x = [|1u64, 0u64, 0u64, 0u64|]
+        let mutable x = [| 1u64, 0u64, 0u64, 0u64 |]
         let mutable i = 0
         while i < 512 do
             let s = add5(x, x)
             condSub(s, m)
-            x = [|s.get(0), s.get(1), s.get(2), s.get(3)|]
+            x = [| s.get(0), s.get(1), s.get(2), s.get(3) |]
             i = i + 1
         x
 
@@ -109,7 +121,7 @@ module P256Field =
     function add(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
         let s = add5(a, b)
         condSub(s, m)
-        [|s.get(0), s.get(1), s.get(2), s.get(3)|]
+        [| s.get(0), s.get(1), s.get(2), s.get(3) |]
 
     /// a - b mod m.
     function sub(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
@@ -132,11 +144,11 @@ module P256Field =
 
     /// Convert out of Montgomery form (a * R^{-1} mod m).
     function fromMont(a: Array<Uint64>, m: Array<Uint64>, ni: Uint64): Array<Uint64> =
-        montMul(a, [|1u64, 0u64, 0u64, 0u64|], m, ni)
+        montMul(a, [| 1u64, 0u64, 0u64, 0u64 |], m, ni)
 
     /// The Montgomery form of 1 (= R mod m).
     function montOne(m: Array<Uint64>, ni: Uint64): Array<Uint64> =
-        toMont([|1u64, 0u64, 0u64, 0u64|], m, ni)
+        toMont([| 1u64, 0u64, 0u64, 0u64 |], m, ni)
 
     /// Modular inverse a^{-1} mod m (Fermat: a^{m-2}), inputs/outputs in
     /// Montgomery form. `m` must be prime.
@@ -157,8 +169,7 @@ module P256Field =
         while i >= 0 do
             result = montMul(result, result, m, ni)
             let bit = (e.get(i / 64) >> (i % 64).toUint64()) & 1u64
-            if bit == 1u64 then
-                result = montMul(result, a, m, ni)
+            if bit == 1u64 then result = montMul(result, a, m, ni)
             i = i - 1
         result
 
@@ -172,14 +183,13 @@ module P256Field =
         diff == 0u64
 
     /// True iff all four limbs are zero.
-    function isZero(a: Array<Uint64>): Bool =
-        equal(a, [|0u64, 0u64, 0u64, 0u64|])
+    function isZero(a: Array<Uint64>): Bool = equal(a, [| 0u64, 0u64, 0u64, 0u64 |])
 
     /// Reduce `x` (value < 2*m) modulo `m`: one conditional subtraction.
     function reduceOnce(x: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
-        let t = [|x.get(0), x.get(1), x.get(2), x.get(3), 0u64|]
+        let t = [| x.get(0), x.get(1), x.get(2), x.get(3), 0u64 |]
         condSub(t, m)
-        [|t.get(0), t.get(1), t.get(2), t.get(3)|]
+        [| t.get(0), t.get(1), t.get(2), t.get(3) |]
 
     /// a < b (constant-time).
     function lessThan(a: Array<Uint64>, b: Array<Uint64>): Bool =
@@ -197,19 +207,25 @@ test "P256Field Montgomery roundtrip and multiply" =
     let m = P256Field.p()
     let ni = P256Field.n0inv(m)
     // fromMont(toMont(x)) == x
-    let x = [|0x1234567890abcdefu64, 0xfedcba0987654321u64, 0x0011223344556677u64, 0x8899aabbccddeeffu64|]
+    let x =
+        [|
+            0x1234567890abcdefu64,
+            0xfedcba0987654321u64,
+            0x0011223344556677u64,
+            0x8899aabbccddeeffu64
+        |]
     let rt = P256Field.fromMont(P256Field.toMont(x, m, ni), m, ni)
     assert P256Field.equal(rt, x)
     // toMont(2)*toMont(3) -> fromMont == 6
-    let two = P256Field.toMont([|2u64, 0u64, 0u64, 0u64|], m, ni)
-    let three = P256Field.toMont([|3u64, 0u64, 0u64, 0u64|], m, ni)
+    let two = P256Field.toMont([| 2u64, 0u64, 0u64, 0u64 |], m, ni)
+    let three = P256Field.toMont([| 3u64, 0u64, 0u64, 0u64 |], m, ni)
     let six = P256Field.fromMont(P256Field.montMul(two, three, m, ni), m, ni)
-    assert P256Field.equal(six, [|6u64, 0u64, 0u64, 0u64|])
+    assert P256Field.equal(six, [| 6u64, 0u64, 0u64, 0u64 |])
 
 test "P256Field inverse" =
     let m = P256Field.p()
     let ni = P256Field.n0inv(m)
-    let a = P256Field.toMont([|0x123456789au64, 0xbeefu64, 0x42u64, 0x1u64|], m, ni)
+    let a = P256Field.toMont([| 0x123456789au64, 0xbeefu64, 0x42u64, 0x1u64 |], m, ni)
     let inv = P256Field.montInv(a, m, ni)
     let prod = P256Field.montMul(a, inv, m, ni)
     assert P256Field.equal(prod, P256Field.montOne(m, ni))
@@ -217,6 +233,6 @@ test "P256Field inverse" =
 test "P256Field add and sub" =
     let m = P256Field.p()
     // (p-1) + 1 == 0
-    let pm1 = P256Field.sub([|0u64, 0u64, 0u64, 0u64|], [|1u64, 0u64, 0u64, 0u64|], m)
-    let back = P256Field.add(pm1, [|1u64, 0u64, 0u64, 0u64|], m)
+    let pm1 = P256Field.sub([| 0u64, 0u64, 0u64, 0u64 |], [| 1u64, 0u64, 0u64, 0u64 |], m)
+    let back = P256Field.add(pm1, [| 1u64, 0u64, 0u64, 0u64 |], m)
     assert P256Field.isZero(back)

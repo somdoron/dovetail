@@ -40,19 +40,23 @@ public class FileSink(
         let line = self.format(event) ++ "\n"
         let lineBytes = line.bytes()
         let lineLength = lineBytes.length.toInt64()
-        let exceedsLimit = match self.maxBytes with
-            case Some(max) => self.bytesWritten > 0i64 && self.bytesWritten + lineLength > max
-            case None => false
+        let exceedsLimit =
+            match self.maxBytes with
+                case Some(max) => self.bytesWritten > 0i64 && self.bytesWritten + lineLength > max
+                case None => false
         if exceedsLimit then
             self.rotate().andThen<Unit>((_: Unit) => self.writeLine(lineBytes, lineLength))
-        else self.writeLine(lineBytes, lineLength)
+        else
+            self.writeLine(lineBytes, lineLength)
 
     /// Swap the current segment for a fresh one. On success the byte counter
     /// resets; on failure the previous segment stays in place (Switchable
     /// leaves the old resource untouched when acquiring the new one fails) and
     /// a diagnostic is written to stderr.
     function rotate(self): Async<Unit, Never> =
-        self.streamSwitch.replace(segmentResource(self.basePath))
+        self
+            .streamSwitch
+            .replace(segmentResource(self.basePath))
             .map<Unit>((_: AsyncOutputStream<FileSystemError>) => self.bytesWritten = 0i64)
             .catchAll((_: FileStreamError) => diagnoseRotate())
 
@@ -74,22 +78,29 @@ public class FileSink(
     /// opening segments to hold a record it can never write is a worse failure
     /// than a missing line.
     function writeLine(self, lineBytes: Array<Uint8>, lineLength: Int64): Async<Unit, Never> =
-        self.writeCurrent(lineBytes, lineLength)
-            .catchAll((_: FileSystemError) =>
-                self.rotate().andThen<Unit>((_: Unit) =>
-                    self.writeCurrent(lineBytes, lineLength)
-                        .catchAll((err: FileSystemError) => diagnoseFs(err))
+        self
+            .writeCurrent(lineBytes, lineLength)
+            .catchAll(
+            (_: FileSystemError) =>
+                self
+                    .rotate()
+                    .andThen<Unit>(
+                    (_: Unit) =>
+                        self
+                            .writeCurrent(lineBytes, lineLength)
+                            .catchAll((err: FileSystemError) => diagnoseFs(err))
                 )
-            )
+        )
 
-    function writeCurrent(self, lineBytes: Array<Uint8>, lineLength: Int64): Async<Unit, FileSystemError> =
-        self.streamSwitch.value().write(lineBytes.readonly)
-            .map<Unit>((_: Unit) =>
-                self.bytesWritten = self.bytesWritten + lineLength
-            )
+    function writeCurrent(self, lineBytes: Array<Uint8>, lineLength: Int64):
+        Async<Unit, FileSystemError> =
+        self
+            .streamSwitch
+            .value()
+            .write(lineBytes.readonly)
+            .map<Unit>((_: Unit) => self.bytesWritten = self.bytesWritten + lineLength)
 
 module FileSink =
-
     /// Open a file sink writing `logfmt` records to a brand-new segment file
     /// derived from `basePath`. The actual filename inserts a
     /// millisecond-precision timestamp before the extension — e.g.
@@ -100,8 +111,8 @@ module FileSink =
 
     /// Like `open`, but rotates into a new segment file once the current one
     /// would exceed `maxBytes`.
-    public function openLimited(basePath: Path, maxBytes: Int64): Resource<LogSink, FileStreamError> =
-        openWith(basePath, Some(maxBytes), Formatter.logfmt)
+    public function openLimited(basePath: Path, maxBytes: Int64):
+        Resource<LogSink, FileStreamError> = openWith(basePath, Some(maxBytes), Formatter.logfmt)
 
     /// Most general form: caller supplies an optional size limit and a custom
     /// formatter.
@@ -110,13 +121,14 @@ module FileSink =
         maxBytes: Option<Int64>,
         format: (LogRecord) => String
     ): Resource<LogSink, FileStreamError> =
-        Resource.switchable(segmentResource(basePath))
-            .map<LogSink>((streamSwitch: Switchable<AsyncOutputStream<FileSystemError>, FileStreamError>) =>
+        Resource
+            .switchable(segmentResource(basePath))
+            .map<LogSink>(
+            (streamSwitch: Switchable<AsyncOutputStream<FileSystemError>, FileStreamError>) =>
                 FileSink(streamSwitch, format, maxBytes, basePath, 0i64) as LogSink
-            )
+        )
 
 // --- Internal helpers -------------------------------------------------------
-
 // Resource for a single segment: read the wall clock, derive a unique path,
 // open it for writing, and CLOSE it on release so the transport's durability
 // verdict is actually read. `flush` is not enough: it only waits for the host
@@ -129,44 +141,48 @@ module FileSink =
 // than swallowed. `File.openOutputStream`'s own finalizer then drops the
 // handles over the top (idempotent). Used both for the initial segment and for
 // each rotation.
-function segmentResource(basePath: Path): Resource<AsyncOutputStream<FileSystemError>, FileStreamError> =
-    clockResource().andThen<AsyncOutputStream<FileSystemError>>((now: Instant) =>
-        let path = uniqueFilePath(basePath, now)
-        File.openOutputStream(path).andThen<AsyncOutputStream<FileSystemError>>((stream: AsyncOutputStream<FileSystemError>) =>
-            Resource.make(
-                () => Async.succeed(stream),
-                (_: AsyncOutputStream<FileSystemError>) =>
-                    stream.close().catchAll((err: FileSystemError) => diagnoseClose(err))
+function segmentResource(basePath: Path):
+    Resource<AsyncOutputStream<FileSystemError>, FileStreamError> =
+    clockResource()
+        .andThen<AsyncOutputStream<FileSystemError>>(
+        (now: Instant) =>
+            let path = uniqueFilePath(basePath, now)
+            File
+                .openOutputStream(path)
+                .andThen<AsyncOutputStream<FileSystemError>>(
+                (stream: AsyncOutputStream<FileSystemError>) =>
+                    Resource
+                        .make(
+                        () => Async.succeed(stream),
+                        (_: AsyncOutputStream<FileSystemError>) =>
+                            stream.close().catchAll((err: FileSystemError) => diagnoseClose(err))
+                    )
             )
-        )
     )
 
 // A resource whose acquire reads the wall clock at the moment of acquisition;
 // the release is a no-op. Used so each segment's timestamp reflects the moment
 // it is opened, not when the sink was constructed.
 function clockResource(): Resource<Instant, FileStreamError> =
-    Resource.make(
-        () => Instant.now,
-        (_: Instant) => Async.succeed(())
-    )
+    Resource.make(() => Instant.now, (_: Instant) => Async.succeed(()))
 
-let timestampFormatter: DateTimeFormatter =
-    DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss-SSS")
+let timestampFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss-SSS")
 
 /// Derive a unique target path from `basePath` by inserting a UTC timestamp
 /// between the stem and the extension. Falls back to `"log"` as the stem and
 /// drops the extension when the base path has no name or extension.
 internal function uniqueFilePath(basePath: Path, instant: Instant): Path =
     let timestamp = timestampFormatter.format(instant, TimeZone.utc)
-    let stem = match basePath.stem with
-        case Some(s) => s
-        case None => "log"
-    let ext = match basePath.ext with
-        case Some(e) => e
-        case None => ""
+    let stem =
+        match basePath.stem with
+            case Some(s) => s
+            case None => "log"
+    let ext =
+        match basePath.ext with
+            case Some(e) => e
+            case None => ""
     let newName =
-        if ext == "" then stem ++ "-" ++ timestamp
-        else stem ++ "-" ++ timestamp ++ "." ++ ext
+        if ext == "" then stem ++ "-" ++ timestamp else stem ++ "-" ++ timestamp ++ "." ++ ext
     basePath.withName(newName)
 
 // Internal diagnostic for file-sink failures. `FileSystemError` doesn't
@@ -174,11 +190,13 @@ internal function uniqueFilePath(basePath: Path, instant: Instant): Path =
 // that something went wrong without inspecting the variant.
 function diagnoseFs(_err: FileSystemError): Async<Unit, Never> =
     // Best-effort: if stderr is gone too there is nothing left to say it to.
-    Console.errorWriteLine("[log-sink: file] write failed")
+    Console
+        .errorWriteLine("[log-sink: file] write failed")
         .catchAll((_: ConsoleError) => Async.succeed(()))
 
 function diagnoseRotate(): Async<Unit, Never> =
-    Console.errorWriteLine("[log-sink: file] rotation failed; continuing on the current segment")
+    Console
+        .errorWriteLine("[log-sink: file] rotation failed; continuing on the current segment")
         .catchAll((_: ConsoleError) => Async.succeed(()))
 
 // A segment's close reports the transport's durability verdict — the only place
@@ -186,5 +204,8 @@ function diagnoseRotate(): Async<Unit, Never> =
 // finalizer that closes it has nowhere to return that error, so it is logged
 // rather than dropped: a truncated tail that says so beats one that does not.
 function diagnoseClose(_err: FileSystemError): Async<Unit, Never> =
-    Console.errorWriteLine("[log-sink: file] closing a segment failed; its final records may not have reached disk")
+    Console
+        .errorWriteLine(
+        "[log-sink: file] closing a segment failed; its final records may not have reached disk"
+    )
         .catchAll((_: ConsoleError) => Async.succeed(()))

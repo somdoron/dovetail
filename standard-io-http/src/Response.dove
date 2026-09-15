@@ -30,61 +30,50 @@ module Response =
     // status code; override via `withStatus(code, reason)` if you need a
     // custom reason.
     // ========================================================================
-
-    public function ok(): Response =
-        emptyBodyResponse(200, "OK")
+    public function ok(): Response = emptyBodyResponse(200, "OK")
 
     public function ok(body: Array<Uint8>): Response =
-        Response {
-            statusCode = 200
-            reason = "OK"
-            headers = Headers.empty()
-            body = body
-        }
+        Response { statusCode = 200; reason = "OK"; headers = Headers.empty(); body = body }
 
     public function ok(status: Int32, reason: String, body: Array<Uint8>): Response =
-        Response {
-            statusCode = status
-            reason = reason
-            headers = Headers.empty()
-            body = body
-        }
+        Response { statusCode = status; reason = reason; headers = Headers.empty(); body = body }
 
     public function created(): Response = emptyBodyResponse(201, "Created")
+
     public function accepted(): Response = emptyBodyResponse(202, "Accepted")
+
     public function noContent(): Response = emptyBodyResponse(204, "No Content")
 
     public function badRequest(): Response = emptyBodyResponse(400, "Bad Request")
+
     public function unauthorized(): Response = emptyBodyResponse(401, "Unauthorized")
+
     public function forbidden(): Response = emptyBodyResponse(403, "Forbidden")
+
     public function notFound(): Response = emptyBodyResponse(404, "Not Found")
+
     public function conflict(): Response = emptyBodyResponse(409, "Conflict")
+
     public function serverError(): Response = emptyBodyResponse(500, "Internal Server Error")
 
     public function error(status: Int32, reason: String, body: Array<Uint8>): Response =
-        Response {
-            statusCode = status
-            reason = reason
-            headers = Headers.empty()
-            body = body
-        }
+        Response { statusCode = status; reason = reason; headers = Headers.empty(); body = body }
 
     // ========================================================================
     // Format helpers. Each wraps a typed body, sets the appropriate
     // `Content-Type` header, and returns a 200 response. Override status via
     // `withStatus` if needed, or use the 2-arg overload.
     // ========================================================================
-
-    public function text(s: String): Response =
-        Response.text(200, "OK", s)
+    public function text(s: String): Response = Response.text(200, "OK", s)
 
     public function text(status: Int32, reason: String, s: String): Response =
-        let resp = Response {
-            statusCode = status
-            reason = reason
-            headers = Headers.empty()
-            body = s.bytes()
-        }
+        let resp =
+            Response {
+                statusCode = status
+                reason = reason
+                headers = Headers.empty()
+                body = s.bytes()
+            }
         resp.withHeader("Content-Type", "text/plain; charset=utf-8")
 
     public function json<T>(value: T): Response where T: JsonEncoder =
@@ -93,28 +82,27 @@ module Response =
     public function json<T>(status: Int32, value: T): Response where T: JsonEncoder =
         Response.json(status, jsonStatusReason(status), value)
 
-    public function json<T>(status: Int32, reason: String, value: T): Response where T: JsonEncoder =
+    public function json<T>(status: Int32, reason: String, value: T): Response
+        where T: JsonEncoder =
         let bytes = value.toJson().encode().bytes()
-        let resp = Response {
-            statusCode = status
-            reason = reason
-            headers = Headers.empty()
-            body = bytes
-        }
+        let resp =
+            Response {
+                statusCode = status
+                reason = reason
+                headers = Headers.empty()
+                body = bytes
+            }
         resp.withHeader("Content-Type", "application/json")
 
-    public function bytes(b: Array<Uint8>): Response =
-        Response.ok(b)
+    public function bytes(b: Array<Uint8>): Response = Response.ok(b)
 
     public function empty(): Response = Response.ok()
 
     // ========================================================================
     // Read-side accessors (used on the client, plus introspection).
     // ========================================================================
-
     /// True for 2xx status codes.
-    public property isSuccess(self): Bool =
-        self.statusCode >= 200 && self.statusCode < 300
+    public property isSuccess(self): Bool = self.statusCode >= 200 && self.statusCode < 300
 
     /// Case-insensitive header lookup, first match wins.
     public function header(self, name: String): Option<String> =
@@ -122,11 +110,11 @@ module Response =
         self.headers.items.find(item => item.name == needle).map(item => item.value)
 
     /// Decode body as UTF-8 text.
-    public function bodyAsString(self): String =
-        String.fromBytes(self.body, 0, self.body.length)
+    public function bodyAsString(self): String = String.fromBytes(self.body, 0, self.body.length)
 
     /// Parse body as JSON and decode into `T`.
-    public function jsonBody<T>(self): Result<T, BodyDecodeError> where T: JsonDecoder =
+    public function jsonBody<T>(self): Result<T, BodyDecodeError>
+        where T: JsonDecoder =
         let text = String.fromBytes(self.body, 0, self.body.length)
         match Json.parse(text) with
             case Error(e) => Error(BodyDecodeError.InvalidJson(e))
@@ -140,14 +128,14 @@ module Response =
     // Header validation panics on rejection; server code controls headers,
     // so a `Result`-returning chain isn't worth the friction.
     // ========================================================================
-
     public function withHeader(self, name: String, value: String): Response =
         let pairs = self.headers.rawItems()
         let extended = pairs.append((name, value))
-        let validated = match normalizeAndValidate(extended) with
-            case Ok(h) => h
-            case Error(e) =>
-                panic "Response.withHeader: invalid header '" ++ name ++ "': " ++ e.message
+        let validated =
+            match normalizeAndValidate(extended) with
+                case Ok(h) => h
+                case Error(e) =>
+                    panic "Response.withHeader: invalid header '" ++ name ++ "': " ++ e.message
         Response {
             statusCode = self.statusCode
             reason = self.reason
@@ -158,10 +146,10 @@ module Response =
     public function withHeaders(self, items: List<(String, String)>): Response =
         let pairs = self.headers.rawItems()
         let extended = pairs.concat(items)
-        let validated = match normalizeAndValidate(extended) with
-            case Ok(h) => h
-            case Error(e) =>
-                panic "Response.withHeaders: invalid header: " ++ e.message
+        let validated =
+            match normalizeAndValidate(extended) with
+                case Ok(h) => h
+                case Error(e) => panic "Response.withHeaders: invalid header: " ++ e.message
         Response {
             statusCode = self.statusCode
             reason = self.reason
@@ -170,12 +158,7 @@ module Response =
         }
 
     public function withStatus(self, code: Int32, reason: String): Response =
-        Response {
-            statusCode = code
-            reason = reason
-            headers = self.headers
-            body = self.body
-        }
+        Response { statusCode = code; reason = reason; headers = self.headers; body = self.body }
 
 /// Internal — empty-body response with the supplied status line.
 function emptyBodyResponse(status: Int32, reason: String): Response =

@@ -47,7 +47,7 @@ implement HasSensitiveData for X509Certificate =
         zeroize(self.signatureValue)
 
 test "clear zeroes a SymmetricKey's bytes" =
-    let k = SymmetricKey([|1u8, 2u8, 3u8, 4u8|])
+    let k = SymmetricKey([| 1u8, 2u8, 3u8, 4u8 |])
     k.clear()
     let mutable i = 0
     let mutable allZero = true
@@ -57,8 +57,8 @@ test "clear zeroes a SymmetricKey's bytes" =
     assert allZero
 
 test "clear zeroes SecretKey and Nonce" =
-    let s = SecretKey([|0xaau8, 0xbbu8, 0xccu8|])
-    let n = Nonce([|0xffu8, 0x11u8|])
+    let s = SecretKey([| 0xaau8, 0xbbu8, 0xccu8 |])
+    let n = Nonce([| 0xffu8, 0x11u8 |])
     s.clear()
     n.clear()
     assert s.value.get(0) == 0u8

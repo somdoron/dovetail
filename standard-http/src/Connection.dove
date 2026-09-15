@@ -54,19 +54,41 @@ public class Connection(
 ) =
     /// Create a client-side connection.
     public function client(): Connection =
-        Connection(Role.Client, Role.Server, StateMachine.new(), ReaderState.ReadingResponse, WriterState.WritingRequest, ReceiveBuffer.new(), false, None, None, false, defaultMaxIncompleteEventSize())
+        Connection(
+            Role.Client,
+            Role.Server,
+            StateMachine.new(),
+            ReaderState.ReadingResponse,
+            WriterState.WritingRequest,
+            ReceiveBuffer.new(),
+            false,
+            None,
+            None,
+            false,
+            defaultMaxIncompleteEventSize()
+        )
 
     /// Create a server-side connection.
     public function server(): Connection =
-        Connection(Role.Server, Role.Client, StateMachine.new(), ReaderState.ReadingRequest, WriterState.NoWriter, ReceiveBuffer.new(), false, None, None, false, defaultMaxIncompleteEventSize())
+        Connection(
+            Role.Server,
+            Role.Client,
+            StateMachine.new(),
+            ReaderState.ReadingRequest,
+            WriterState.NoWriter,
+            ReceiveBuffer.new(),
+            false,
+            None,
+            None,
+            false,
+            defaultMaxIncompleteEventSize()
+        )
 
     /// Our current state.
-    public property ourState(self): ConnectionState =
-        self.stateMachine.getState(self.ourRole)
+    public property ourState(self): ConnectionState = self.stateMachine.getState(self.ourRole)
 
     /// Their current state.
-    public property theirState(self): ConnectionState =
-        self.stateMachine.getState(self.theirRole)
+    public property theirState(self): ConnectionState = self.stateMachine.getState(self.theirRole)
 
     /// Whether they are waiting for 100-continue.
     public property theyAreWaitingFor100Continue(self): Bool =
@@ -74,10 +96,8 @@ public class Connection(
 
     /// Add data to the receive buffer.
     public function receiveData(self, data: Array<Uint8>): Unit =
-        if data.length > 0 then
-            self.receiveBuffer.addBytes(data)
-        else
-            self.receiveBufferClosed = true
+        if data.length > 0 then self.receiveBuffer.addBytes(data)
+        else self.receiveBufferClosed = true
 
     /// Get the next event from the receive buffer.
     public function nextEvent(self): NextEventResult =
@@ -96,20 +116,24 @@ public class Connection(
                         case NeedData =>
                             if self.receiveBuffer.length > self.maxIncompleteEventSize then
                                 self.processError(self.theirRole)
-                                NextEventResult.Error(HttpError.remoteWithHint("Receive buffer too long", 431))
+                                NextEventResult
+                                    .Error(HttpError.remoteWithHint("Receive buffer too long", 431))
                             else if self.receiveBufferClosed then
                                 self.processError(self.theirRole)
-                                NextEventResult.Error(HttpError.remote("peer unexpectedly closed connection"))
-                            else NextEventResult.NeedData
+                                NextEventResult
+                                    .Error(HttpError.remote("peer unexpectedly closed connection"))
+                            else
+                                NextEventResult.NeedData
                         case Paused => NextEventResult.Paused
                         case Event(event) =>
                             let processResult = self.processEvent(self.theirRole, event)
                             if processResult then
                                 NextEventResult.Event(event)
                             else
-                                let err = match self.stateMachine.lastError with
-                                    case Some(e) => e
-                                    case None => HttpError.remote("invalid event")
+                                let err =
+                                    match self.stateMachine.lastError with
+                                        case Some(e) => e
+                                        case None => HttpError.remote("invalid event")
                                 self.processError(self.theirRole)
                                 NextEventResult.Error(err.toRemote())
                         case Error(e) => NextEventResult.Error(e)
@@ -130,9 +154,10 @@ public class Connection(
                     // Process the event through state machine first
                     let ok = self.processEvent(self.ourRole, actualEvent)
                     if !ok then
-                        let err = match self.stateMachine.lastError with
-                            case Some(e) => e
-                            case None => HttpError.local("invalid event")
+                        let err =
+                            match self.stateMachine.lastError with
+                                case Some(e) => e
+                                case None => HttpError.local("invalid event")
                         self.processError(self.ourRole)
                         Error(err)
                     else
@@ -140,7 +165,8 @@ public class Connection(
                         match actualEvent with
                             case ConnectionClosed => Ok(None)
                             case _ =>
-                                let writeResult = self.writeEventWith(actualEvent, writerBeforeProcess)
+                                let writeResult =
+                                    self.writeEventWith(actualEvent, writerBeforeProcess)
                                 match writeResult with
                                     case Error(e) =>
                                         self.processError(self.ourRole)
@@ -156,8 +182,7 @@ public class Connection(
                     case Error(e) =>
                         self.processError(self.ourRole)
                         Error(e)
-                    case Ok(cleanResp) =>
-                        Ok(HttpEvent.Response(cleanResp))
+                    case Ok(cleanResp) => Ok(HttpEvent.Response(cleanResp))
             case _ => Ok(event)
 
     /// Start a new request/response cycle.
@@ -179,7 +204,6 @@ public class Connection(
         (self.receiveBuffer.toBytes(), self.receiveBufferClosed)
 
     // ---- Internal methods ----
-
     /// Extract the next event from the receive buffer based on the current reader state.
     function extractNextReceiveEvent(self): Result<NextEventResult, HttpError> =
         let state = self.theirState
@@ -190,71 +214,84 @@ public class Connection(
             Ok(NextEventResult.Paused)
         else if sameState(state, ConnectionState.SwitchedProtocol) then
             Ok(NextEventResult.Paused)
-        else match self.reader with
-            case ReadingRequest =>
-                let result = readRequest(self.receiveBuffer)
-                match result with
-                    case Error(e) => Error(e)
-                    case Ok(maybeEvent) =>
-                        match maybeEvent with
-                            case Some(event) => Ok(NextEventResult.Event(event))
-                            case None => self.handleNeedDataOrEof()
-            case ReadingResponse =>
-                let result = readResponse(self.receiveBuffer)
-                match result with
-                    case Error(e) => Error(e)
-                    case Ok(maybeEvent) =>
-                        match maybeEvent with
-                            case Some(event) => Ok(NextEventResult.Event(event))
-                            case None => self.handleNeedDataOrEof()
-            case ReadingContentLength(clReader) =>
-                let event = clReader.read(self.receiveBuffer)
-                match event with
-                    case Some(e) => Ok(NextEventResult.Event(e))
-                    case None =>
-                        if !self.receiveBuffer.hasData then
+        else
+            match self.reader with
+                case ReadingRequest =>
+                    let result = readRequest(self.receiveBuffer)
+                    match result with
+                        case Error(e) => Error(e)
+                        case Ok(maybeEvent) =>
+                            match maybeEvent with
+                                case Some(event) => Ok(NextEventResult.Event(event))
+                                case None => self.handleNeedDataOrEof()
+                case ReadingResponse =>
+                    let result = readResponse(self.receiveBuffer)
+                    match result with
+                        case Error(e) => Error(e)
+                        case Ok(maybeEvent) =>
+                            match maybeEvent with
+                                case Some(event) => Ok(NextEventResult.Event(event))
+                                case None => self.handleNeedDataOrEof()
+                case ReadingContentLength(clReader) =>
+                    let event = clReader.read(self.receiveBuffer)
+                    match event with
+                        case Some(e) => Ok(NextEventResult.Event(e))
+                        case None =>
+                            if !self.receiveBuffer.hasData then
+                                if self.receiveBufferClosed then
+                                    match clReader.readEof() with
+                                        case Error(e) => Ok(NextEventResult.Error(e))
+                                        case Ok(ev) => Ok(NextEventResult.Event(ev))
+                                else
+                                    Ok(NextEventResult.NeedData)
+                            else
+                                Ok(NextEventResult.NeedData)
+                case ReadingChunked(chReader) =>
+                    let result = chReader.read(self.receiveBuffer)
+                    match result with
+                        case Error(e) => Error(e)
+                        case Ok(maybeEvent) =>
+                            match maybeEvent with
+                                case Some(event) => Ok(NextEventResult.Event(event))
+                                case None =>
+                                    if !self.receiveBuffer.hasData then
+                                        if self.receiveBufferClosed then
+                                            Ok(
+                                                NextEventResult
+                                                    .Error(
+                                                    HttpError
+                                                        .remote(
+                                                        "peer closed connection without sending complete message body (incomplete chunked read)"
+                                                    )
+                                                )
+                                            )
+                                        else
+                                            Ok(NextEventResult.NeedData)
+                                    else
+                                        Ok(NextEventResult.NeedData)
+                case ReadingEof(eofReader) =>
+                    let event = eofReader.read(self.receiveBuffer)
+                    match event with
+                        case Some(e) => Ok(NextEventResult.Event(e))
+                        case None =>
                             if self.receiveBufferClosed then
-                                match clReader.readEof() with
-                                    case Error(e) => Ok(NextEventResult.Error(e))
-                                    case Ok(ev) => Ok(NextEventResult.Event(ev))
-                            else Ok(NextEventResult.NeedData)
-                        else Ok(NextEventResult.NeedData)
-            case ReadingChunked(chReader) =>
-                let result = chReader.read(self.receiveBuffer)
-                match result with
-                    case Error(e) => Error(e)
-                    case Ok(maybeEvent) =>
-                        match maybeEvent with
-                            case Some(event) => Ok(NextEventResult.Event(event))
-                            case None =>
-                                if !self.receiveBuffer.hasData then
-                                    if self.receiveBufferClosed then
-                                        Ok(NextEventResult.Error(HttpError.remote("peer closed connection without sending complete message body (incomplete chunked read)")))
-                                    else Ok(NextEventResult.NeedData)
-                                else Ok(NextEventResult.NeedData)
-            case ReadingEof(eofReader) =>
-                let event = eofReader.read(self.receiveBuffer)
-                match event with
-                    case Some(e) => Ok(NextEventResult.Event(e))
-                    case None =>
-                        if self.receiveBufferClosed then
-                            Ok(NextEventResult.Event(eofReader.readEof()))
-                        else Ok(NextEventResult.NeedData)
-            case ExpectNothing =>
-                let result = expectNothing(self.receiveBuffer)
-                match result with
-                    case Error(e) => Error(e)
-                    case Ok(_) => self.handleNeedDataOrEof()
-            case NoReader =>
-                Ok(NextEventResult.Paused)
+                                Ok(NextEventResult.Event(eofReader.readEof()))
+                            else
+                                Ok(NextEventResult.NeedData)
+                case ExpectNothing =>
+                    let result = expectNothing(self.receiveBuffer)
+                    match result with
+                        case Error(e) => Error(e)
+                        case Ok(_) => self.handleNeedDataOrEof()
+                case NoReader => Ok(NextEventResult.Paused)
 
     /// Return NeedData or ConnectionClosed depending on EOF state.
     function handleNeedDataOrEof(self): Result<NextEventResult, HttpError> =
         if !self.receiveBuffer.hasData then
-            if self.receiveBufferClosed then
-                Ok(NextEventResult.Event(HttpEvent.ConnectionClosed))
+            if self.receiveBufferClosed then Ok(NextEventResult.Event(HttpEvent.ConnectionClosed))
             else Ok(NextEventResult.NeedData)
-        else Ok(NextEventResult.NeedData)
+        else
+            Ok(NextEventResult.NeedData)
 
     /// Process an event through the state machine, tracking method, version, and keep-alive.
     function processEvent(self, role: Role, event: HttpEvent): Bool =
@@ -273,13 +310,14 @@ public class Connection(
                 case _ => ()
 
         // Determine server switch event
-        let switchEvent = if !isClientRole(role) then serverSwitchEvent(event, self.stateMachine)
-            else None
+        let switchEvent =
+            if !isClientRole(role) then serverSwitchEvent(event, self.stateMachine) else None
 
         // Process through state machine
         let evtType = eventType(event)
         let ok = self.stateMachine.processEvent(role, evtType, switchEvent)
-        if !ok then false
+        if !ok then
+            false
         else
             // Track request method
             match event with
@@ -292,7 +330,8 @@ public class Connection(
                 match event with
                     case Request(req) => self.theirHttpVersion = Some(req.httpVersion)
                     case Response(resp) => self.theirHttpVersion = Some(resp.httpVersion)
-                    case InformationalResponse(resp) => self.theirHttpVersion = Some(resp.httpVersion)
+                    case InformationalResponse(resp) =>
+                        self.theirHttpVersion = Some(resp.httpVersion)
                     case _ => ()
 
             // Keep-alive handling (only for Request/Response, not InformationalResponse)
@@ -308,12 +347,9 @@ public class Connection(
             // 100-continue tracking
             match event with
                 case Request(req) =>
-                    if hasExpect100Continue(req) then
-                        self.clientWaitingFor100Continue = true
-                case InformationalResponse(_) =>
-                    self.clientWaitingFor100Continue = false
-                case Response(_) =>
-                    self.clientWaitingFor100Continue = false
+                    if hasExpect100Continue(req) then self.clientWaitingFor100Continue = true
+                case InformationalResponse(_) => self.clientWaitingFor100Continue = false
+                case Response(_) => self.clientWaitingFor100Continue = false
                 case _ => ()
             if isClientRole(role) then
                 match event with
@@ -332,7 +368,12 @@ public class Connection(
         self.respondToStateChanges(oldOurState, oldTheirState, None)
 
     /// Update reader/writer when connection states change.
-    function respondToStateChanges(self, oldOurState: ConnectionState, oldTheirState: ConnectionState, event: Option<HttpEvent>): Unit =
+    function respondToStateChanges(
+        self,
+        oldOurState: ConnectionState,
+        oldTheirState: ConnectionState,
+        event: Option<HttpEvent>
+    ): Unit =
         let newOurState = self.ourState
         let newTheirState = self.theirState
         if !sameState(newOurState, oldOurState) then
@@ -341,7 +382,8 @@ public class Connection(
             self.reader = self.getReaderForState(newTheirState, event)
 
     /// Select the appropriate reader for a new connection state.
-    function getReaderForState(self, state: ConnectionState, event: Option<HttpEvent>): ReaderState =
+    function getReaderForState(self, state: ConnectionState, event: Option<HttpEvent>):
+        ReaderState =
         match state with
             case Idle =>
                 if isClientRole(self.theirRole) then ReaderState.ReadingRequest
@@ -354,7 +396,8 @@ public class Connection(
             case _ => ReaderState.NoReader
 
     /// Select the appropriate writer for a new connection state.
-    function getWriterForState(self, state: ConnectionState, event: Option<HttpEvent>): WriterState =
+    function getWriterForState(self, state: ConnectionState, event: Option<HttpEvent>):
+        WriterState =
         match state with
             case Idle =>
                 if isClientRole(self.ourRole) then WriterState.WritingRequest
@@ -365,34 +408,39 @@ public class Connection(
 
     /// Create a body reader based on the event's body framing.
     function getBodyReader(self, event: Option<HttpEvent>): ReaderState =
-        let method = match self.requestMethod with
-            case Some(m) => m
-            case None => ""
+        let method =
+            match self.requestMethod with
+                case Some(m) => m
+                case None => ""
         match event with
             case Some(ev) =>
                 let framing = getBodyFramingFromEvent(method, ev)
                 match framing with
-                    case ContentLength(len) => ReaderState.ReadingContentLength(ContentLengthReader.new(len))
+                    case ContentLength(len) =>
+                        ReaderState.ReadingContentLength(ContentLengthReader.new(len))
                     case Chunked => ReaderState.ReadingChunked(ChunkedReader.new())
                     case Http10 => ReaderState.ReadingEof(EofReader.new())
             case None => ReaderState.NoReader
 
     /// Create a body writer based on the event's body framing.
     function getBodyWriter(self, event: Option<HttpEvent>): WriterState =
-        let method = match self.requestMethod with
-            case Some(m) => m
-            case None => ""
+        let method =
+            match self.requestMethod with
+                case Some(m) => m
+                case None => ""
         match event with
             case Some(ev) =>
                 let framing = getBodyFramingFromEvent(method, ev)
                 match framing with
-                    case ContentLength(len) => WriterState.WritingContentLength(ContentLengthWriter.new(len))
+                    case ContentLength(len) =>
+                        WriterState.WritingContentLength(ContentLengthWriter.new(len))
                     case Chunked => WriterState.WritingChunked(ChunkedWriter.new())
                     case Http10 => WriterState.WritingHttp10(Http10Writer.new())
             case None => WriterState.NoWriter
 
     /// Serialize an event to bytes using the given writer state.
-    function writeEventWith(self, event: HttpEvent, w: WriterState): Result<Array<Uint8>, HttpError> =
+    function writeEventWith(self, event: HttpEvent, w: WriterState):
+        Result<Array<Uint8>, HttpError> =
         match event with
             case Request(req) => writeRequest(req)
             case InformationalResponse(resp) => writeResponse(resp)
@@ -413,18 +461,20 @@ public class Connection(
 
     /// Auto-adjust response headers: add Transfer-Encoding/Connection as needed.
     function cleanUpResponseHeaders(self, response: HttpResponse): Result<HttpResponse, HttpError> =
-        let methodForHeaders = match self.requestMethod with
-            case Some(m) => if m == "HEAD" then "GET" else m
-            case None => "GET"
+        let methodForHeaders =
+            match self.requestMethod with
+                case Some(m) => if m == "HEAD" then "GET" else m
+                case None => "GET"
 
         let framing = bodyFraming(methodForHeaders, true, response.statusCode, response.headers)
-        let isUnknownLength = match framing with
-            case Chunked => true
-            case Http10 => true
-            case _ => false
+        let isUnknownLength =
+            match framing with
+                case Chunked => true
+                case Http10 => true
+                case _ => false
 
-        let framingResult = if isUnknownLength then
-                self.adjustFramingHeaders(response.headers)
+        let framingResult =
+            if isUnknownLength then self.adjustFramingHeaders(response.headers)
             else Ok((response.headers, false))
 
         match framingResult with
@@ -432,13 +482,22 @@ public class Connection(
             case Ok(pair) =>
                 let headersAfterFraming = pair._0
                 let needClose = pair._1
-                let connResult = if !self.stateMachine.keepAlive || needClose then
+                let connResult =
+                    if !self.stateMachine.keepAlive || needClose then
                         ensureConnectionClose(headersAfterFraming)
-                    else Ok(headersAfterFraming)
+                    else
+                        Ok(headersAfterFraming)
                 match connResult with
                     case Error(e) => Error(e)
                     case Ok(finalHeaders) =>
-                        Ok(HttpResponse { statusCode = response.statusCode; headers = finalHeaders; httpVersion = response.httpVersion; reason = response.reason })
+                        Ok(
+                            HttpResponse {
+                                statusCode = response.statusCode
+                                headers = finalHeaders
+                                httpVersion = response.httpVersion
+                                reason = response.reason
+                            }
+                        )
 
     /// Adjust framing headers for unknown-length responses (add chunked TE or force close).
     function adjustFramingHeaders(self, headers: Headers): Result<(Headers, Bool), HttpError> =
@@ -447,17 +506,19 @@ public class Connection(
         match clResult with
             case Error(e) => Error(e)
             case Ok(h1) =>
-                let peerIsOld = match self.theirHttpVersion with
-                    case None => true
-                    case Some(v) => v < "1.1"
+                let peerIsOld =
+                    match self.theirHttpVersion with
+                        case None => true
+                        case Some(v) => v < "1.1"
                 if peerIsOld then
                     let teResult = setCommaHeader(h1, "transfer-encoding", List<String>.empty)
                     match teResult with
                         case Error(e) => Error(e)
                         case Ok(h2) =>
-                            let isHead = match self.requestMethod with
-                                case Some(m) => m == "HEAD"
-                                case None => false
+                            let isHead =
+                                match self.requestMethod with
+                                    case Some(m) => m == "HEAD"
+                                    case None => false
                             Ok((h2, !isHead))
                 else
                     let teResult = setCommaHeader(h1, "transfer-encoding", ["chunked"])
@@ -474,7 +535,8 @@ function writeBodyDataWith(data: Array<Uint8>, w: WriterState): Result<Array<Uin
         case _ => Error(HttpError.local("no body writer active"))
 
 /// Write end-of-message using the given writer state, with optional trailers.
-function writeBodyEndOfMessageWith(trailers: Headers, w: WriterState): Result<Array<Uint8>, HttpError> =
+function writeBodyEndOfMessageWith(trailers: Headers, w: WriterState):
+    Result<Array<Uint8>, HttpError> =
     match w with
         case WritingContentLength(cw) => cw.writeEndOfMessage(trailers)
         case WritingChunked(cw) => Ok(cw.writeEndOfMessage(trailers))
@@ -489,23 +551,21 @@ function ensureConnectionClose(headers: Headers): Result<Headers, HttpError> =
 
 /// Check if keep-alive is active for the given headers and version.
 function keepAlive(headers: Headers, httpVersion: String): Bool =
-    if connectionClose(headers) then false
-    else if httpVersion < "1.1" then false
-    else true
+    if connectionClose(headers) then false else if httpVersion < "1.1" then false else true
 
 /// Determine the server switch event for a given event.
 function serverSwitchEvent(event: HttpEvent, sm: StateMachine): Option<SwitchType> =
     match event with
         case InformationalResponse(resp) =>
-            if resp.statusCode == 101 then Some(SwitchType.Upgrade)
-            else None
+            if resp.statusCode == 101 then Some(SwitchType.Upgrade) else None
         case Response(resp) =>
             if sm.pendingConnect then
                 if resp.statusCode >= 200 then
-                    if resp.statusCode < 300 then Some(SwitchType.Connect)
-                    else None
-                else None
-            else None
+                    if resp.statusCode < 300 then Some(SwitchType.Connect) else None
+                else
+                    None
+            else
+                None
         case _ => None
 
 /// Helper to get body framing from an event.
@@ -528,7 +588,6 @@ function sameRole(a: Role, b: Role): Bool =
                 case Server => true
 
 // Tests
-
 test "Connection client basic request-response" =
     let client = Connection.client()
     let server = Connection.server()
@@ -541,7 +600,8 @@ test "Connection client basic request-response" =
     let reqBytes = sendResult.require.require
 
     // Server receives request
-    server.receiveData(reqBytes)
+    server
+        .receiveData(reqBytes)
     let event1 = server.nextEvent()
     match event1 with
         case Event(ev) =>
@@ -555,7 +615,8 @@ test "Connection client basic request-response" =
 test "Connection server sends response" =
     let server = Connection.server()
     // Simulate receiving a request
-    server.receiveData(stringToBytes("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"))
+    server
+        .receiveData(stringToBytes("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"))
     let event = server.nextEvent()
     match event with
         case Event(ev) =>
@@ -566,7 +627,8 @@ test "Connection server sends response" =
 
     // Server sends response
     let headers = normalizeAndValidate([("Content-Length", "5")]).require
-    let resp = HttpResponse { statusCode = 200; headers = headers; httpVersion = "1.1"; reason = "OK" }
+    let resp =
+        HttpResponse { statusCode = 200; headers = headers; httpVersion = "1.1"; reason = "OK" }
     let sendResult = server.send(HttpEvent.Response(resp))
     assert sendResult.isOk
 
@@ -587,13 +649,13 @@ test "Connection client receives response" =
     let _ = client.send(HttpEvent.EndOfMessage(Headers.empty()))
 
     // Receive response
-    client.receiveData(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"))
+    client
+        .receiveData(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"))
     let event1 = client.nextEvent()
     match event1 with
         case Event(ev) =>
             match ev with
-                case Response(resp) =>
-                    assert resp.statusCode == 200
+                case Response(resp) => assert resp.statusCode == 200
                 case _ => assert false
         case _ => assert false
 
@@ -630,7 +692,8 @@ test "Connection paused after done" =
     let _ = client.send(HttpEvent.EndOfMessage(Headers.empty()))
 
     // Receive full response
-    client.receiveData(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\nextra"))
+    client
+        .receiveData(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\nextra"))
     let event1 = client.nextEvent()
     match event1 with
         case Event(ev) =>
@@ -659,7 +722,10 @@ test "Connection connection close" =
     let _ = client.send(HttpEvent.EndOfMessage(Headers.empty()))
 
     // Receive response with Connection: close
-    client.receiveData(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"))
+    client
+        .receiveData(
+        stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+    )
     let event1 = client.nextEvent()
     match event1 with
         case Event(_) => assert true
@@ -676,11 +742,11 @@ test "Connection buffer overflow" =
     let server = Connection.server()
     server.maxIncompleteEventSize = 10
     // Send too much data without a complete event
-    server.receiveData(stringToBytes("GET /very-long-path-that-exceeds-the-limit HTTP/1.1\r\n"))
+    server
+        .receiveData(stringToBytes("GET /very-long-path-that-exceeds-the-limit HTTP/1.1\r\n"))
     let event = server.nextEvent()
     match event with
-        case Error(e) =>
-            assert e.errorStatusHint == 431
+        case Error(e) => assert e.errorStatusHint == 431
         case _ => assert false
 
 test "Connection EOF before complete" =
@@ -699,7 +765,12 @@ test "Connection chunked body" =
     let _ = client.send(HttpEvent.Request(req))
     let _ = client.send(HttpEvent.EndOfMessage(Headers.empty()))
 
-    client.receiveData(stringToBytes("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"))
+    client
+        .receiveData(
+        stringToBytes(
+            "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+        )
+    )
     // Response
     let event1 = client.nextEvent()
     match event1 with
@@ -730,13 +801,16 @@ test "Connection roundtrip" =
     let server = Connection.server()
 
     // Client sends request
-    let reqHeaders = normalizeAndValidate([("Host", "example.com"), ("Content-Length", "0")]).require
-    let req = HttpRequest { method = "GET"; target = "/"; headers = reqHeaders; httpVersion = "1.1" }
+    let reqHeaders =
+        normalizeAndValidate([("Host", "example.com"), ("Content-Length", "0")]).require
+    let req =
+        HttpRequest { method = "GET"; target = "/"; headers = reqHeaders; httpVersion = "1.1" }
     let reqBytes = client.send(HttpEvent.Request(req)).require.require
     let eomBytes = client.send(HttpEvent.EndOfMessage(Headers.empty())).require.require
 
     // Server receives
-    server.receiveData(concatTwo(reqBytes, eomBytes))
+    server
+        .receiveData(concatTwo(reqBytes, eomBytes))
     let sEvent1 = server.nextEvent()
     match sEvent1 with
         case Event(ev) =>
@@ -754,13 +828,15 @@ test "Connection roundtrip" =
 
     // Server sends response
     let respHeaders = normalizeAndValidate([("Content-Length", "2")]).require
-    let resp = HttpResponse { statusCode = 200; headers = respHeaders; httpVersion = "1.1"; reason = "OK" }
+    let resp =
+        HttpResponse { statusCode = 200; headers = respHeaders; httpVersion = "1.1"; reason = "OK" }
     let respBytes = server.send(HttpEvent.Response(resp)).require.require
     let dataBytes = server.send(HttpEvent.Data(stringToBytes("hi"))).require.require
     let respEomBytes = server.send(HttpEvent.EndOfMessage(Headers.empty())).require.require
 
     // Client receives
-    client.receiveData(concatThree(respBytes, dataBytes, respEomBytes))
+    client
+        .receiveData(concatThree(respBytes, dataBytes, respEomBytes))
     let cEvent1 = client.nextEvent()
     match cEvent1 with
         case Event(ev) =>
@@ -788,8 +864,10 @@ test "Connection startNextCycle" =
     let server = Connection.server()
 
     // Complete a request-response cycle
-    let reqHeaders = normalizeAndValidate([("Host", "example.com"), ("Content-Length", "0")]).require
-    let req = HttpRequest { method = "GET"; target = "/"; headers = reqHeaders; httpVersion = "1.1" }
+    let reqHeaders =
+        normalizeAndValidate([("Host", "example.com"), ("Content-Length", "0")]).require
+    let req =
+        HttpRequest { method = "GET"; target = "/"; headers = reqHeaders; httpVersion = "1.1" }
     let reqBytes = client.send(HttpEvent.Request(req)).require.require
     let eomBytes = client.send(HttpEvent.EndOfMessage(Headers.empty())).require.require
 
@@ -798,7 +876,8 @@ test "Connection startNextCycle" =
     let _ = server.nextEvent()
 
     let respHeaders = normalizeAndValidate([("Content-Length", "0")]).require
-    let resp = HttpResponse { statusCode = 200; headers = respHeaders; httpVersion = "1.1"; reason = "OK" }
+    let resp =
+        HttpResponse { statusCode = 200; headers = respHeaders; httpVersion = "1.1"; reason = "OK" }
     let respBytes = server.send(HttpEvent.Response(resp)).require.require
     let respEomBytes = server.send(HttpEvent.EndOfMessage(Headers.empty())).require.require
 

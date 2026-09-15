@@ -9,7 +9,6 @@ import standard.time.Instant
 // interpolation, purely through `SqlBuilder.value`'s signature — the compiler
 // itself knows nothing about SQL. Modeled on `standard.json`'s `JsonEncoder`.
 // =============================================================================
-
 /// A value that can be bound as a SQLite parameter.
 public trait ToSqlValue =
     /// This value as the storage class it should be bound as.
@@ -49,7 +48,6 @@ implement ToSqlValue for Uint32 =
 // `Uint32` is safe because its maximum fits. Store large unsigned values as
 // `Text` (decimal) or `Blob` (big-endian) behind a newtype with a hand-written
 // `ToSqlValue`/`FromSqlValue` pair.
-
 implement ToSqlValue for Float32 =
     public function toSqlValue(self: Float32): SqlValue = SqlValue.Real(self.toFloat64())
 
@@ -70,7 +68,8 @@ implement ToSqlValue for Instant =
 
 /// `None` binds as SQL NULL, so an optional column needs no special handling at
 /// the call site.
-implement <T> ToSqlValue for Option<T> where T: ToSqlValue =
+implement<T> ToSqlValue for Option<T>
+    where T: ToSqlValue =
     public function toSqlValue(self: Option<T>): SqlValue =
         match self with
             case Some(value) => value.toSqlValue()

@@ -11,7 +11,6 @@ import standard.io.Async
 // Integration tests against a real preopened directory. The test runner mounts
 // a writable tempdir as a preopen, so these exercise the live wasi:filesystem
 // host.
-
 test "Directory.preopens returns at least one entry" =
     let mutable count: Int32 = 0
     let program: Async<Unit, FileStreamError> = countPreopens((n: Int32) => count = n)
@@ -25,18 +24,14 @@ async function countPreopens(setter: (Int32) => Unit): Async<Unit, FileStreamErr
 test "Directory.create then Directory.remove round-trip" =
     let mutable existedAfter: Bool = false
     let mutable existedFinal: Bool = true
-    let program: Async<Unit, FileStreamError> = createRemoveProgram(
-        (b: Bool) => existedAfter = b,
-        (b: Bool) => existedFinal = b
-    )
+    let program: Async<Unit, FileStreamError> =
+        createRemoveProgram((b: Bool) => existedAfter = b, (b: Bool) => existedFinal = b)
     program.run()
     assert existedAfter
     assert !existedFinal
 
-async function createRemoveProgram(
-    setAfter: (Bool) => Unit,
-    setFinal: (Bool) => Unit
-): Async<Unit, FileStreamError> =
+async function createRemoveProgram(setAfter: (Bool) => Unit, setFinal: (Bool) => Unit):
+    Async<Unit, FileStreamError> =
     let p: Path = Path.of("dir-roundtrip-test")
     await Directory.create(p)
     let afterCreate: Bool = await Directory.exists(p)
@@ -101,9 +96,8 @@ async function metadataProgram(setter: (Bool) => Unit): Async<Unit, FileStreamEr
 // module's 256-page memory maximum and each call leaks ~56 bytes, so showing
 // exhaustion takes ~300k iterations and minutes of wall clock. There is no
 // introspection on the heap to assert against instead.
-
 @timeout(30000)
-test "Directory.preopens: repeated lookups keep the pinned heap consistent" =
+ test "Directory.preopens: repeated lookups keep the pinned heap consistent" =
     let mutable seen: Int32 = -1i32
     let mutable stillWorks: Bool = false
     pollPreopensProgram((n: Int32) => seen = n, (b: Bool) => stillWorks = b).run()
@@ -112,10 +106,8 @@ test "Directory.preopens: repeated lookups keep the pinned heap consistent" =
     assert seen >= 1i32
     assert stillWorks
 
-async function pollPreopensProgram(
-    setSeen: (Int32) => Unit,
-    setStillWorks: (Bool) => Unit
-): Async<Unit, FileStreamError> =
+async function pollPreopensProgram(setSeen: (Int32) => Unit, setStillWorks: (Bool) => Unit):
+    Async<Unit, FileStreamError> =
     let mutable count = 0i32
     let mutable i = 0i32
     while i < 5000i32 do
@@ -127,4 +119,3 @@ async function pollPreopensProgram(
     // here rather than silently.
     let entries = await Directory.entries(Path.of(""))
     setStillWorks(entries.length >= 0i32)
-

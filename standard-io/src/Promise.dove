@@ -14,7 +14,6 @@ module standard.io.Promise<T, E>
 // for exactly this class of must-complete pair (a bracket's release); an
 // interrupt arriving mid-settle is deferred the few steps to the far side of
 // the wake, not lost.
-
 /// Complete the promise with `value`. Reports `true` if this call is the one
 /// that completed it, `false` if it was already settled.
 public function complete(self, value: T): Async<Bool, Never> =
@@ -38,18 +37,15 @@ public function failCause(self, cause: Cause<E>): Async<Bool, Never> =
 /// separate step so that this one can be a `thunk`.
 function claim(self, outcome: Result<T, Cause<E>>): Bool =
     match self.state with
-    case PromiseState.Completed(_) => false
-    case PromiseState.Pending =>
-        self.state = PromiseState.Completed(outcome)
-        true
+        case PromiseState.Completed(_) => false
+        case PromiseState.Pending =>
+            self.state = PromiseState.Completed(outcome)
+            true
 
 /// Wake the awaiters, but only for the call that actually settled the promise.
 /// A loser has nothing to announce.
 function wakeIfClaimed(self, claimed: Bool): Async<Bool, Never> =
-    if claimed then
-        Async.wake(self.signal).map((_: Unit) => true)
-    else
-        Async.succeed(false)
+    if claimed then Async.wake(self.signal).map((_: Unit) => true) else Async.succeed(false)
 
 /// Wait for the promise and yield what it settled with: the value, or the cause
 /// it failed with.
@@ -59,13 +55,15 @@ function wakeIfClaimed(self, claimed: Bool): Async<Bool, Never> =
 /// a question about the state and not about the value. A check that recognised
 /// only `Completed(Ok(_))` woke an awaiter and told it to park again.
 public function awaitPromise(self): Async<T, E> =
-    let check: Async<Option<Any>, Any> = Thunk<Option<Any>>(() =>
-        match self.state with
-        case PromiseState.Completed(_) =>
-            let settled: Any = true
-            Some(settled)
-        case PromiseState.Pending => None
-    )
+    let check: Async<Option<Any>, Any> =
+        Thunk<Option<Any>>(
+            () =>
+                match self.state with
+                    case PromiseState.Completed(_) =>
+                        let settled: Any = true
+                        Some(settled)
+                    case PromiseState.Pending => None
+        )
     let arrived: Async<Any, E> = Await<Any, E>(self.signal, check)
     arrived.andThen<T>((_: Any) => self.settled())
 
@@ -73,6 +71,6 @@ public function awaitPromise(self): Async<T, E> =
 /// said it is settled.
 function settled(self): Async<T, E> =
     match self.state with
-    case PromiseState.Completed(Ok(value)) => Async.succeed(value)
-    case PromiseState.Completed(Error(cause)) => Async.fromCause(cause)
-    case PromiseState.Pending => panic "promise reported settled and then had no value"
+        case PromiseState.Completed(Ok(value)) => Async.succeed(value)
+        case PromiseState.Completed(Error(cause)) => Async.fromCause(cause)
+        case PromiseState.Pending => panic "promise reported settled and then had no value"

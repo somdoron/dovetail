@@ -3,6 +3,7 @@ package standard.prelude
 private let exactGlobal = 123456789012345678901234567890big
 
 function exactNegate<T>(value: T): T where T: Neg = -value
+
 function exactFresh(): BigInt = 12345678901234567890big
 
 test "exact literal construction and bases" =
@@ -21,7 +22,9 @@ test "bigint arithmetic operators and generic negation" =
     let value = 999999999999999999big
     assert value + 1big == 1000000000000000000big
     assert value - 1000000000000000000big == -1big
-    assert 12345678901234567890big * 98765432109876543210big == 1219326311370217952237463801111263526900big
+    assert 12345678901234567890big
+        * 98765432109876543210big
+        == 1219326311370217952237463801111263526900big
     assert -value == -999999999999999999big
     assert exactNegate(value) == -value
     assert 1big < 2big

@@ -23,20 +23,19 @@ import standard.sqlite.ToSqlValue
 // They travel by two different mechanisms, so each needs its own guard. If
 // either regresses, this file stops compiling — which is the point: the failure
 // is at build time, not a silently skipped test.
-
 @derive(ToSqlValue)
 @derive(FromSqlValue)
 @derive(FromRow)
-newtype WidgetId = Int64
+ newtype WidgetId = Int64
 
 @derive(ToSqlValue)
 @derive(FromSqlValue)
-enum Condition =
+ enum Condition =
     New
     Used
 
 @derive(FromRow)
-record Widget =
+ record Widget =
     id: Int64
     label: String
     condition: Condition
@@ -60,7 +59,7 @@ test "inherited macro registration: derives run without declaring the macros" =
     match Condition.New.toSqlValue() with
         case SqlValue.Text(tag) => assert tag == "New"
         case _ => panic "the derived ToSqlValue should bind Text"
-    let row = Row.make([|"id"|], [|SqlValue.Integer(3i64)|])
+    let row = Row.make([| "id" |], [| SqlValue.Integer(3i64) |])
     match WidgetId.fromRow(row) with
         case Ok(decoded) => assert decoded.value == 3i64
         case Error(e) => panic "expected Ok, got " ++ e.format()
@@ -68,10 +67,8 @@ test "inherited macro registration: derives run without declaring the macros" =
 test "inherited registrations reach a real database end to end" =
     let mutable label = ""
     let mutable count: Int32 = -1
-    let program: Async<Unit, SqliteError> = widgetProgram(
-        (l: String) => label = l,
-        (c: Int32) => count = c
-    )
+    let program: Async<Unit, SqliteError> =
+        widgetProgram((l: String) => label = l, (c: Int32) => count = c)
     program.run()
     assert label == "left-handed"
     assert count == 2
@@ -79,7 +76,8 @@ test "inherited registrations reach a real database end to end" =
 /// Literal, derives, and the transitively composed component, all in one path:
 /// a `sql"..."` fragment carrying derived parameters, executed against the real
 /// shim, decoded through a derived `FromRow`.
-async function widgetProgram(setLabel: (String) => Unit, setCount: (Int32) => Unit): Async<Unit, SqliteError> =
+async function widgetProgram(setLabel: (String) => Unit, setCount: (Int32) => Unit):
+    Async<Unit, SqliteError> =
     let conn = use Connection.open("inheritedRegistrations.db")
     await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, label TEXT, condition TEXT)")
 
@@ -101,5 +99,6 @@ async function widgetProgram(setLabel: (String) => Unit, setCount: (Int32) => Un
 
     let ids: List<Int64> = [1i64, 2i64]
     let all: List<Widget> =
-        await sql"SELECT id, label, condition FROM widgets WHERE id IN ($..ids)".fetchAll<Widget>(conn)
+        await sql"SELECT id, label, condition FROM widgets WHERE id IN ($..ids)"
+            .fetchAll<Widget>(conn)
     setCount(all.length)

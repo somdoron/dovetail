@@ -16,12 +16,13 @@ public function normalizeAndValidate(raw: List<(String, String)>): Result<Header
     normalizeAndValidateInner(raw, false)
 
 /// Like normalizeAndValidate but skips name/value regex validation (used when parsing).
-public function normalizeAndValidateParsed(raw: List<(String, String)>): Result<Headers, HttpError> =
-    normalizeAndValidateInner(raw, true)
+public function normalizeAndValidateParsed(raw: List<(String, String)>):
+    Result<Headers, HttpError> = normalizeAndValidateInner(raw, true)
 
 /// Core implementation for header normalization and validation.
 /// When `parsed` is true, skips name/value character validation (used for parsed wire data).
-function normalizeAndValidateInner(raw: List<(String, String)>, parsed: Bool): Result<Headers, HttpError> =
+function normalizeAndValidateInner(raw: List<(String, String)>, parsed: Bool):
+    Result<Headers, HttpError> =
     let items = ArrayList<HeaderItem>.new()
     let mutable seenContentLength: Option<String> = None
     let mutable sawTransferEncoding = false
@@ -50,20 +51,32 @@ function normalizeAndValidateInner(raw: List<(String, String)>, parsed: Bool): R
             if error.isNone then
                 let name = rawName.toLowerCase()
                 if name == "content-length" then
-                    let clResult = handleContentLength(rawName, name, rawValue, seenContentLength, items)
+                    let clResult =
+                        handleContentLength(rawName, name, rawValue, seenContentLength, items)
                     match clResult with
                         case Ok(newSeen) => seenContentLength = Some(newSeen)
                         case Error(e) => error = Some(e)
                 else if name == "transfer-encoding" then
                     if sawTransferEncoding then
-                        error = Some(HttpError.localWithHint("multiple Transfer-Encoding headers", 501))
+                        error =
+                            Some(HttpError.localWithHint("multiple Transfer-Encoding headers", 501))
                     else
                         let lowerValue = rawValue.toLowerCase()
                         if lowerValue != "chunked" then
-                            error = Some(HttpError.localWithHint("Only Transfer-Encoding: chunked is supported", 501))
+                            error =
+                                Some(
+                                    HttpError
+                                        .localWithHint(
+                                        "Only Transfer-Encoding: chunked is supported",
+                                        501
+                                    )
+                                )
                         else
                             sawTransferEncoding = true
-                            items.add(HeaderItem { rawName = rawName; name = name; value = lowerValue })
+                            items
+                                .add(
+                                HeaderItem { rawName = rawName; name = name; value = lowerValue }
+                            )
                 else
                     items.add(HeaderItem { rawName = rawName; name = name; value = rawValue })
 
@@ -72,7 +85,12 @@ function normalizeAndValidateInner(raw: List<(String, String)>, parsed: Bool): R
     // the body ends) and MUST be rejected, not processed with one header silently kept.
     if error.isNone && sawTransferEncoding then
         match seenContentLength with
-            case Some(_) => error = Some(HttpError.localWithHint("both Content-Length and Transfer-Encoding present", 400))
+            case Some(_) =>
+                error =
+                    Some(
+                        HttpError
+                            .localWithHint("both Content-Length and Transfer-Encoding present", 400)
+                    )
             case None => ()
 
     match error with
@@ -96,35 +114,45 @@ function handleContentLength(
         if trimmed.length > 0 then
             match firstValue with
                 case None => firstValue = Some(trimmed)
-                case Some(existing) =>
-                    if existing != trimmed then
-                        conflict = true
+                case Some(existing) => if existing != trimmed then conflict = true
 
-    if conflict then Error(HttpError.local("conflicting Content-Length headers"))
+    if conflict then
+        Error(HttpError.local("conflicting Content-Length headers"))
     else
         match firstValue with
             case None => Error(HttpError.local("bad Content-Length"))
             case Some(value) =>
                 // Validate: must be all digits
-                if !isAllDigits(value) then Error(HttpError.local("bad Content-Length"))
-                else if value.length > contentLengthMaxDigits() then Error(HttpError.local("bad Content-Length"))
-                // integer-overflow DoS: reject Content-Length values that overflow
-                // Int64 here (a wrapped negative length reaches Array.fill and traps
-                // in ContentLengthReader). The digit-count cap above is not enough.
-                else if parseIntFromString(value).isNone then Error(HttpError.local("bad Content-Length"))
+                if !isAllDigits(value) then
+                    Error(HttpError.local("bad Content-Length"))
                 else
-                    match seenContentLength with
-                        case None =>
-                            items.add(HeaderItem { rawName = rawName; name = name; value = value })
-                            Ok(value)
-                        case Some(existing) =>
-                            if existing != value then Error(HttpError.local("conflicting Content-Length headers"))
-                            else Ok(value)
+                    if value.length > contentLengthMaxDigits() then
+                        Error(HttpError.local("bad Content-Length"))
+                    // integer-overflow DoS: reject Content-Length values that overflow
+                    // Int64 here (a wrapped negative length reaches Array.fill and traps
+                    // in ContentLengthReader). The digit-count cap above is not enough.
+                    else
+                        if parseIntFromString(value).isNone then
+                            Error(HttpError.local("bad Content-Length"))
+                        else
+                            match seenContentLength with
+                                case None =>
+                                    items
+                                        .add(
+                                        HeaderItem { rawName = rawName; name = name; value = value }
+                                    )
+                                    Ok(value)
+                                case Some(existing) =>
+                                    if existing != value then
+                                        Error(HttpError.local("conflicting Content-Length headers"))
+                                    else
+                                        Ok(value)
 
 /// Check if a string is all ASCII digits.
 function isAllDigits(s: String): Bool =
     let bytes = s.bytes()
-    if bytes.length == 0 then false
+    if bytes.length == 0 then
+        false
     else
         let mutable i = 0
         let mutable allDigits = true
@@ -133,7 +161,8 @@ function isAllDigits(s: String): Bool =
             if b < 48 || b > 57 then
                 allDigits = false
                 i = bytes.length
-            else i = i + 1
+            else
+                i = i + 1
         allDigits
 
 /// Get all values for a comma-separated header, lowercased and trimmed.
@@ -144,18 +173,17 @@ public function getCommaHeader(headers: Headers, name: String): List<String> =
         if item.name == name then
             for part in item.value.toLowerCase().split(",") do
                 let trimmed = part.trim()
-                if trimmed.length > 0 then
-                    result = result.prepend(trimmed)
+                if trimmed.length > 0 then result = result.prepend(trimmed)
     result.reverse()
 
 /// Replace all headers with the given name with new values.
 /// Uses title-cased name for the new headers.
-public function setCommaHeader(headers: Headers, name: String, newValues: List<String>): Result<Headers, HttpError> =
+public function setCommaHeader(headers: Headers, name: String, newValues: List<String>):
+    Result<Headers, HttpError> =
     // Everything that doesn't match the name, in order...
     let mutable pairs: List<(String, String)> = List.empty
     for item in headers.items do
-        if item.name != name then
-            pairs = pairs.prepend((item.rawName, item.value))
+        if item.name != name then pairs = pairs.prepend((item.rawName, item.value))
     // ...then the new values under the title-cased name.
     let titleName = titleCase(name)
     for value in newValues do
@@ -173,7 +201,8 @@ function itemAt(headers: Headers, index: Int32): (String, String) =
 /// Title-case a header name (capitalize first letter and after hyphens).
 function titleCase(s: String): String =
     let bytes = s.bytes()
-    if bytes.length == 0 then ""
+    if bytes.length == 0 then
+        ""
     else
         let result = Array.fill(bytes.length, 0u8)
         let mutable capitalize = true
@@ -185,10 +214,10 @@ function titleCase(s: String): String =
                 capitalize = true
             else if capitalize then
                 if b >= 97 then
-                    if b <= 122 then
-                        result.set(i, (b - 32).toUint8())
+                    if b <= 122 then result.set(i, (b - 32).toUint8())
                     else result.set(i, bytes.get(i))
-                else result.set(i, bytes.get(i))
+                else
+                    result.set(i, bytes.get(i))
                 capitalize = false
             else
                 result.set(i, bytes.get(i))
@@ -198,7 +227,8 @@ function titleCase(s: String): String =
 
 /// Check if a request has Expect: 100-continue (only for HTTP/1.1+).
 public function hasExpect100Continue(request: HttpRequest): Bool =
-    if request.httpVersion < "1.1" then false
+    if request.httpVersion < "1.1" then
+        false
     else
         let expect = getCommaHeader(request.headers, "expect")
         expect.contains("100-continue")
@@ -222,7 +252,8 @@ public function contentLength(headers: Headers): Option<Int64> =
 /// Parse a string as an Int64. Returns None if invalid.
 public function parseIntFromString(s: String): Option<Int64> =
     let bytes = s.bytes()
-    if bytes.length == 0 then None
+    if bytes.length == 0 then
+        None
     else
         let maxInt64 = 9223372036854775807i64
         let mutable result = 0i64
@@ -249,8 +280,7 @@ public function parseIntFromString(s: String): Option<Int64> =
                 valid = false
                 i = bytes.length
             i = i + 1
-        if valid then Some(result)
-        else None
+        if valid then Some(result) else None
 
 test "normalizeAndValidate basic" =
     let result = normalizeAndValidate([("Foo", "bar")])
@@ -331,11 +361,16 @@ test "normalizeAndValidate transfer-encoding gzip" =
         case _ => assert false
 
 test "normalizeAndValidate multiple transfer-encoding" =
-    let result = normalizeAndValidate([("Transfer-Encoding", "chunked"), ("Transfer-Encoding", "gzip")])
+    let result =
+        normalizeAndValidate([("Transfer-Encoding", "chunked"), ("Transfer-Encoding", "gzip")])
     assert result.isError
 
 test "getCommaHeader basic" =
-    let h = normalizeAndValidate([("Connection", "close"), ("whatever", "something"), ("Connection", "foo,, , BAR")]).require
+    let h =
+        normalizeAndValidate(
+            [("Connection", "close"), ("whatever", "something"), ("Connection", "foo,, , BAR")]
+        )
+            .require
     let values = getCommaHeader(h, "connection")
     assert values == ["close", "foo", "bar"]
 
@@ -348,14 +383,34 @@ test "setCommaHeader" =
     assert h2.length == 2
 
 test "hasExpect100Continue" =
-    let reqWith = HttpRequest { method = "GET"; target = "/"; headers = normalizeAndValidate([("Host", "example.com"), ("Expect", "100-continue")]).require; httpVersion = "1.1" }
+    let reqWith =
+        HttpRequest {
+            method = "GET"
+            target = "/"
+            headers =
+                normalizeAndValidate([("Host", "example.com"), ("Expect", "100-continue")]).require
+            httpVersion = "1.1"
+        }
     assert hasExpect100Continue(reqWith)
 
-    let reqWithout = HttpRequest { method = "GET"; target = "/"; headers = normalizeAndValidate([("Host", "example.com")]).require; httpVersion = "1.1" }
+    let reqWithout =
+        HttpRequest {
+            method = "GET"
+            target = "/"
+            headers = normalizeAndValidate([("Host", "example.com")]).require
+            httpVersion = "1.1"
+        }
     assert !hasExpect100Continue(reqWithout)
 
 test "hasExpect100Continue HTTP/1.0 ignored" =
-    let req = HttpRequest { method = "GET"; target = "/"; headers = normalizeAndValidate([("Host", "example.com"), ("Expect", "100-continue")]).require; httpVersion = "1.0" }
+    let req =
+        HttpRequest {
+            method = "GET"
+            target = "/"
+            headers =
+                normalizeAndValidate([("Host", "example.com"), ("Expect", "100-continue")]).require
+            httpVersion = "1.0"
+        }
     assert !hasExpect100Continue(req)
 
 test "connectionClose" =
@@ -401,7 +456,8 @@ test "titleCase" =
 test "normalizeAndValidate rejects Content-Length together with Transfer-Encoding (smuggling)" =
     // RFC 7230 §3.3.3: both present -> reject, not silently pick one.
     assert normalizeAndValidate([("Transfer-Encoding", "chunked"), ("Content-Length", "5")]).isError
-    assert normalizeAndValidateParsed([("transfer-encoding", "chunked"), ("content-length", "5")]).isError
+    assert normalizeAndValidateParsed([("transfer-encoding", "chunked"), ("content-length", "5")])
+        .isError
     // each alone is still fine
     assert normalizeAndValidate([("Transfer-Encoding", "chunked")]).isOk
     assert normalizeAndValidate([("Content-Length", "5")]).isOk

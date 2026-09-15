@@ -19,7 +19,6 @@ import standard.collection.StringBuilder
 // are mutable class handles, so a chain of N parts costs O(total bytes) instead
 // of O(N^2) string concatenation.
 // =============================================================================
-
 /// The name of the `sql"..."` literal.
 ///
 /// A prefixed literal's prefix is an ordinary imported name, so `sql"..."` is
@@ -31,7 +30,7 @@ import standard.collection.StringBuilder
 /// The marker sits on a lowercase alias rather than on `SqlBuilder` itself so
 /// the builder keeps its descriptive name while the prefix reads as SQL.
 @stringLiteral
-public type sql = SqlBuilder
+ public type sql = SqlBuilder
 
 /// Accumulator for a `sql"..."` literal. Not meant to be written by hand: use
 /// the literal, and compose fragments with `Query.append` / `Query.whenSome`.
@@ -53,7 +52,8 @@ module SqlBuilder =
         self
 
     /// Append one bound parameter as an anonymous `?`.
-    public function value<T>(self, item: T): SqlBuilder where T: ToSqlValue =
+    public function value<T>(self, item: T): SqlBuilder
+        where T: ToSqlValue =
         self.text.append("?")
         self.params.add(item.toSqlValue())
         self
@@ -67,8 +67,10 @@ module SqlBuilder =
     /// against NULL is unknown. When "not in an empty set matches everything"
     /// is what you mean, guard the fragment with `Query.whenSome` instead of
     /// spreading an empty array.
-    public function spread<T>(self, items: List<T>): SqlBuilder where T: ToSqlValue =
-        if items.isEmpty then self.text.append("NULL")
+    public function spread<T>(self, items: List<T>): SqlBuilder
+        where T: ToSqlValue =
+        if items.isEmpty then
+            self.text.append("NULL")
         else
             // A separator that starts empty, rather than an index compared to 0.
             let mutable separator = ""

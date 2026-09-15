@@ -32,8 +32,7 @@ public async function handleConnection(
     await serveExchange(stream.input, stream.output, netServerMapErr, handler, config)
 
 /// Map a plain-TCP socket error into a `ServerError` (via `NetError`).
-function netServerMapErr(e: NetworkError): ServerError =
-    ServerError.from(NetError.from(e))
+function netServerMapErr(e: NetworkError): ServerError = ServerError.from(NetError.from(e))
 
 /// Map a TLS stream error into a `ServerError`: an underlying transport failure
 /// stays a `NetworkError`; a protocol failure or mid-exchange close is `TlsError`.
@@ -56,7 +55,8 @@ public async function serveExchange<E>(
     mapErr: (E) => ServerError,
     handler: (Context) => Async<Response, ServerError>,
     config: ServerConfig
-): Async<Unit, ServerError> where E : IoError =
+): Async<Unit, ServerError>
+    where E: IoError =
     let conn = Connection.server()
 
     // Phase 1 — read the request line, headers, and body bytes.
@@ -64,18 +64,21 @@ public async function serveExchange<E>(
     let req = await Async.fromResult(buildRequestFromWire(collected))
 
     // Build the context (path params start empty; routing populates them).
-    let ctx = Context {
-        request = req
-        pathParams = PathParams.empty()
-        queryParams = QueryParams.parse(req.uri.query)
-    }
+    let ctx =
+        Context {
+            request = req
+            pathParams = PathParams.empty()
+            queryParams = QueryParams.parse(req.uri.query)
+        }
 
     // Phase 2 — run the handler. Failures map to wire responses below;
     // we never re-throw out of `serveExchange`.
-    let resp = await handler(ctx).foldCause(
-        (c: Cause<ServerError>) => Async.succeed(errorToResponse(causeToServerError(c))),
-        (r: Response) => Async.succeed(r)
-    )
+    let resp =
+        await handler(ctx)
+            .foldCause(
+            (c: Cause<ServerError>) => Async.succeed(errorToResponse(causeToServerError(c))),
+            (r: Response) => Async.succeed(r)
+        )
 
     // Phase 3 — emit the response.
     await writeWireResponse(output, conn, resp, mapErr)
@@ -113,7 +116,8 @@ async function readWireRequest<E>(
     conn: Connection,
     config: ServerConfig,
     mapErr: (E) => ServerError
-): Async<WireRequest, ServerError> where E : IoError =
+): Async<WireRequest, ServerError>
+    where E: IoError =
     let mutable request: Option<HttpRequest> = None
     // Accumulated in a buffer, not by re-concatenating: a large request body
     // would otherwise copy everything received so far on every chunk.
@@ -122,36 +126,32 @@ async function readWireRequest<E>(
     let mutable err: Option<ServerError> = None
 
     while !done do
-        if err.isSome then done = true
+        if err.isSome then
+            done = true
         else
             let evt = conn.nextEvent()
             match evt with
                 case NextEventResult.NeedData =>
-                    let chunk = await input
-                        .read(receiveChunkBytes)
-                        .mapError(mapErr)
+                    let chunk = await input.read(receiveChunkBytes).mapError(mapErr)
                     conn.receiveData(chunk)
-                case NextEventResult.Paused =>
-                    done = true
+                case NextEventResult.Paused => done = true
                 case NextEventResult.Event(event) =>
                     match event with
-                        case HttpEvent.Request(r) =>
-                            request = Some(r)
+                        case HttpEvent.Request(r) => request = Some(r)
                         case HttpEvent.Data(chunk) =>
                             let newLen = bodyBytes.length + chunk.length
                             if newLen > config.maxBodyBytes then
                                 err = Some(ServerError.BadRequest("body exceeds maxBodyBytes"))
                             else
                                 bodyBytes.append(chunk)
-                        case HttpEvent.EndOfMessage(_) =>
-                            done = true
+                        case HttpEvent.EndOfMessage(_) => done = true
                         case HttpEvent.ConnectionClosed =>
                             if request.isNone then
-                                err = Some(ServerError.BadRequest("connection closed before request"))
+                                err =
+                                    Some(ServerError.BadRequest("connection closed before request"))
                             done = true
                         case _ => ()
-                case NextEventResult.Error(e) =>
-                    err = Some(ServerError.BadRequest(e.message))
+                case NextEventResult.Error(e) => err = Some(ServerError.BadRequest(e.message))
                 case _ => ()
 
     match err with
@@ -166,20 +166,23 @@ async function readWireRequest<E>(
 /// maps wire-form method strings back to the `Method` enum.
 function buildRequestFromWire(w: WireRequest): Result<Request, ServerError> =
     let host = findHeader(w.req.headers, "host")
-    let hostStr = match host with
-        case Some(h) => h
-        case None => "localhost"
+    let hostStr =
+        match host with
+            case Some(h) => h
+            case None => "localhost"
     let target = if w.req.target.length == 0 then "/" else w.req.target
     let urlStr = "http://" ++ hostStr ++ target
     match Uri.parse(urlStr) with
         case Error(_) => Error(ServerError.BadRequest("malformed request URI: " ++ urlStr))
         case Ok(uri) =>
-            Ok(Request {
-                method = Method.parse(w.req.method)
-                uri = uri
-                headers = w.req.headers
-                body = w.body
-            })
+            Ok(
+                Request {
+                    method = Method.parse(w.req.method)
+                    uri = uri
+                    headers = w.req.headers
+                    body = w.body
+                }
+            )
 
 /// Encode the response and push the resulting bytes onto the TCP output
 /// stream. Forces `Connection: close` and adds an explicit `Content-Length`
@@ -189,23 +192,23 @@ async function writeWireResponse<E>(
     conn: Connection,
     resp: Response,
     mapErr: (E) => ServerError
-): Async<Unit, ServerError> where E : IoError =
+): Async<Unit, ServerError>
+    where E: IoError =
     let body = resp.body
-    let preparedHeaders = await Async.fromResult(
-        prepareResponseHeaders(resp.headers, body.length)
-    )
-    let httpResp = HttpResponse {
-        statusCode = resp.statusCode
-        headers = preparedHeaders
-        httpVersion = "1.1"
-        reason = if resp.reason.length == 0 then "OK" else resp.reason
-    }
+    let preparedHeaders = await Async.fromResult(prepareResponseHeaders(resp.headers, body.length))
+    let httpResp =
+        HttpResponse {
+            statusCode = resp.statusCode
+            headers = preparedHeaders
+            httpVersion = "1.1"
+            reason = if resp.reason.length == 0 then "OK" else resp.reason
+        }
     await sendEvent(output, conn, HttpEvent.Response(httpResp), mapErr)
-    if body.length > 0 then
-        await sendEvent(output, conn, HttpEvent.Data(body), mapErr)
+    if body.length > 0 then await sendEvent(output, conn, HttpEvent.Data(body), mapErr)
     await sendEvent(output, conn, HttpEvent.EndOfMessage(Headers.empty()), mapErr)
 
-function prepareResponseHeaders(userHeaders: Headers, bodyLength: Int32): Result<Headers, ServerError> =
+function prepareResponseHeaders(userHeaders: Headers, bodyLength: Int32):
+    Result<Headers, ServerError> =
     let pairs = ArrayList<(String, String)>.new()
     pairs.add(("Connection", "close"))
     pairs.add(("Content-Length", bodyLength.format()))
@@ -221,14 +224,14 @@ async function sendEvent<E>(
     conn: Connection,
     event: HttpEvent,
     mapErr: (E) => ServerError
-): Async<Unit, ServerError> where E : IoError =
+): Async<Unit, ServerError>
+    where E: IoError =
     let sendResult = conn.send(event)
-    let bytesOpt = await Async.fromResult(sendResult.mapError((e: HttpError) => ServerError.EmitFailed(e)))
+    let bytesOpt =
+        await Async.fromResult(sendResult.mapError((e: HttpError) => ServerError.EmitFailed(e)))
     match bytesOpt with
         case Some(bytes) =>
-            if bytes.length > 0 then
-                await output.write(bytes.readonly)
-                    .mapError(mapErr)
+            if bytes.length > 0 then await output.write(bytes.readonly).mapError(mapErr)
         case None => ()
 
 function findHeader(headers: Headers, lowerName: String): Option<String> =
@@ -238,13 +241,14 @@ function findHeader(headers: Headers, lowerName: String): Option<String> =
 /// `handleConnection`'s `foldCause` to map handler / routing failures to
 /// wire responses without re-throwing.
 function errorToResponse(e: ServerError): Response =
-    let (status, reason) = match e with
-        case ServerError.BadRequest(_) => (400, "Bad Request")
-        case ServerError.RouteNotFound => (404, "Not Found")
-        case ServerError.HandlerPanicked(_) => (500, "Internal Server Error")
-        case ServerError.EmitFailed(_) => (500, "Internal Server Error")
-        case ServerError.NetworkError(_) => (500, "Internal Server Error")
-        case ServerError.TlsError(_) => (500, "Internal Server Error")
+    let (status, reason) =
+        match e with
+            case ServerError.BadRequest(_) => (400, "Bad Request")
+            case ServerError.RouteNotFound => (404, "Not Found")
+            case ServerError.HandlerPanicked(_) => (500, "Internal Server Error")
+            case ServerError.EmitFailed(_) => (500, "Internal Server Error")
+            case ServerError.NetworkError(_) => (500, "Internal Server Error")
+            case ServerError.TlsError(_) => (500, "Internal Server Error")
     Response {
         statusCode = status
         reason = reason

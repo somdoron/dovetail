@@ -17,6 +17,7 @@ module Slice<T> =
         ReadonlySlice.make(data, start, length)
 
     public property length(self): Int32 = self.value._2
+
     public function isEmpty(self): Bool = self.length == 0
 
     public function get(self, index: Int32): T =
@@ -41,10 +42,12 @@ module Slice<T> =
         self.slice(start, end + 1)
 
     public function drop(self, count: Int32): Slice<T> = self.slice(count, self.length)
+
     public function take(self, count: Int32): Slice<T> = self.slice(0, count)
 
     public function toArray(self): Array<T> =
-        if self.isEmpty() then Array.empty()
+        if self.isEmpty() then
+            Array.empty()
         else
             let result = Array.fill(self.length, self.get(0))
             self.copyTo(Slice.full(result))
@@ -60,16 +63,17 @@ module Slice<T> =
 
 class SliceIterator<T>(slice: Slice<T>, mutable index: Int32) implements Iterator<T> =
     public function next(self): Option<T> =
-        if self.index == self.slice.length then None
+        if self.index == self.slice.length then
+            None
         else
             let item = self.slice.get(self.index)
             self.index = self.index + 1
             Some(item)
 
-implement <T> Iterable<T> for Slice<T> =
+implement<T> Iterable<T> for Slice<T> =
     public function iterator(self): Iterator<T> = SliceIterator<T>(self, 0)
 
-implement <T> Display for Slice<T> where T: Display =
+implement<T> Display for Slice<T> where T: Display =
     public function format(self: Slice<T>): String =
         let mutable parts: List<String> = List.empty
         let mutable i = 0
@@ -78,9 +82,10 @@ implement <T> Display for Slice<T> where T: Display =
             i = i + 1
         "[" ++ String.join(parts.reverse(), "") ++ "]"
 
-implement <T> Equatable for Slice<T> where T: Equatable =
+implement<T> Equatable for Slice<T> where T: Equatable =
     public function equals(self: Slice<T>, other: Slice<T>): Bool =
-        if self.length != other.length then false
+        if self.length != other.length then
+            false
         else
             let mutable equal = true
             let mutable i = 0
@@ -91,10 +96,12 @@ implement <T> Equatable for Slice<T> where T: Equatable =
                 i = i + 1
             equal
 
-implement <T> Index<Int32> for Slice<T> =
+implement<T> Index<Int32> for Slice<T> =
     type Output = T
+
     public function get(self: Slice<T>, index: Int32): T = self.get(index)
 
-implement <T> IndexSet<Int32> for Slice<T> =
+implement<T> IndexSet<Int32> for Slice<T> =
     type Value = T
+
     public function set(self: Slice<T>, index: Int32, value: T): Unit = self.set(index, value)

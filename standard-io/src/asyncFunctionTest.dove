@@ -16,10 +16,11 @@ test "Async functions defer initialization and reuse fresh local state" =
     let computation = reusableAsyncFunction(started)
     let pure = deferredPureAsyncFunction(started)
     assert executions == 0
-    let program: Async<Unit, Never> = async do
-        assert (await computation) == 1
-        assert (await computation) == 1
-        assert (await pure) == 42
-        assert (await pure) == 42
-        assert executions == 4
+    let program: Async<Unit, Never> =
+        async do
+            assert (await computation) == 1
+            assert (await computation) == 1
+            assert (await pure) == 42
+            assert (await pure) == 42
+            assert executions == 4
     program.run()

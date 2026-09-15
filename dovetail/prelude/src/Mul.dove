@@ -3,48 +3,60 @@ package standard.prelude
 /// Defines the result of the mul operator for a right-hand operand R.
 public trait Mul<R> =
     type Output
+
     function mul(self: Self, rhs: R): Output
 
 implement Mul<Int8> for Int8 =
     type Output = Int8
+
     public function mul(self: Int8, rhs: Int8): Int8 = intrinsic
 
 implement Mul<Int16> for Int16 =
     type Output = Int16
+
     public function mul(self: Int16, rhs: Int16): Int16 = intrinsic
 
 implement Mul<Int32> for Int32 =
     type Output = Int32
+
     public function mul(self: Int32, rhs: Int32): Int32 = intrinsic
 
 implement Mul<Int64> for Int64 =
     type Output = Int64
+
     public function mul(self: Int64, rhs: Int64): Int64 = intrinsic
 
 implement Mul<Uint8> for Uint8 =
     type Output = Uint8
+
     public function mul(self: Uint8, rhs: Uint8): Uint8 = intrinsic
 
 implement Mul<Uint16> for Uint16 =
     type Output = Uint16
+
     public function mul(self: Uint16, rhs: Uint16): Uint16 = intrinsic
 
 implement Mul<Uint32> for Uint32 =
     type Output = Uint32
+
     public function mul(self: Uint32, rhs: Uint32): Uint32 = intrinsic
 
 implement Mul<Uint64> for Uint64 =
     type Output = Uint64
+
     public function mul(self: Uint64, rhs: Uint64): Uint64 = intrinsic
 
 implement Mul<Uint128> for Uint128 =
     type Output = Uint128
+
     public function mul(self: Uint128, rhs: Uint128): Uint128 = intrinsic
 
 implement Mul<Float32> for Float32 =
     type Output = Float32
+
     public function mul(self: Float32, rhs: Float32): Float32 = intrinsic
 
 implement Mul<Float64> for Float64 =
     type Output = Float64
+
     public function mul(self: Float64, rhs: Float64): Float64 = intrinsic

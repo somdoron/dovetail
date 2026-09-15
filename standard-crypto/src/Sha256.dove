@@ -10,29 +10,76 @@ import standard.prelude.String
 /// `Sha256` singleton (a `HashAlgorithm`) defined at the bottom of this file.
 module Sha256Core =
     /// Rotate a 32-bit word right by `n` bits (1 <= n <= 31).
-    private function rotr(x: Uint32, n: Uint32): Uint32 =
-        (x >> n) | (x << (32u32 - n))
+    private function rotr(x: Uint32, n: Uint32): Uint32 = (x >> n) | (x << (32u32 - n))
 
     /// Round constants K[0..63] — first 32 bits of the fractional parts of the
     /// cube roots of the first 64 primes.
     private function roundConstants(): Array<Uint32> =
         [|
-            0x428a2f98u32, 0x71374491u32, 0xb5c0fbcfu32, 0xe9b5dba5u32,
-            0x3956c25bu32, 0x59f111f1u32, 0x923f82a4u32, 0xab1c5ed5u32,
-            0xd807aa98u32, 0x12835b01u32, 0x243185beu32, 0x550c7dc3u32,
-            0x72be5d74u32, 0x80deb1feu32, 0x9bdc06a7u32, 0xc19bf174u32,
-            0xe49b69c1u32, 0xefbe4786u32, 0x0fc19dc6u32, 0x240ca1ccu32,
-            0x2de92c6fu32, 0x4a7484aau32, 0x5cb0a9dcu32, 0x76f988dau32,
-            0x983e5152u32, 0xa831c66du32, 0xb00327c8u32, 0xbf597fc7u32,
-            0xc6e00bf3u32, 0xd5a79147u32, 0x06ca6351u32, 0x14292967u32,
-            0x27b70a85u32, 0x2e1b2138u32, 0x4d2c6dfcu32, 0x53380d13u32,
-            0x650a7354u32, 0x766a0abbu32, 0x81c2c92eu32, 0x92722c85u32,
-            0xa2bfe8a1u32, 0xa81a664bu32, 0xc24b8b70u32, 0xc76c51a3u32,
-            0xd192e819u32, 0xd6990624u32, 0xf40e3585u32, 0x106aa070u32,
-            0x19a4c116u32, 0x1e376c08u32, 0x2748774cu32, 0x34b0bcb5u32,
-            0x391c0cb3u32, 0x4ed8aa4au32, 0x5b9cca4fu32, 0x682e6ff3u32,
-            0x748f82eeu32, 0x78a5636fu32, 0x84c87814u32, 0x8cc70208u32,
-            0x90befffau32, 0xa4506cebu32, 0xbef9a3f7u32, 0xc67178f2u32,
+            0x428a2f98u32,
+            0x71374491u32,
+            0xb5c0fbcfu32,
+            0xe9b5dba5u32,
+            0x3956c25bu32,
+            0x59f111f1u32,
+            0x923f82a4u32,
+            0xab1c5ed5u32,
+            0xd807aa98u32,
+            0x12835b01u32,
+            0x243185beu32,
+            0x550c7dc3u32,
+            0x72be5d74u32,
+            0x80deb1feu32,
+            0x9bdc06a7u32,
+            0xc19bf174u32,
+            0xe49b69c1u32,
+            0xefbe4786u32,
+            0x0fc19dc6u32,
+            0x240ca1ccu32,
+            0x2de92c6fu32,
+            0x4a7484aau32,
+            0x5cb0a9dcu32,
+            0x76f988dau32,
+            0x983e5152u32,
+            0xa831c66du32,
+            0xb00327c8u32,
+            0xbf597fc7u32,
+            0xc6e00bf3u32,
+            0xd5a79147u32,
+            0x06ca6351u32,
+            0x14292967u32,
+            0x27b70a85u32,
+            0x2e1b2138u32,
+            0x4d2c6dfcu32,
+            0x53380d13u32,
+            0x650a7354u32,
+            0x766a0abbu32,
+            0x81c2c92eu32,
+            0x92722c85u32,
+            0xa2bfe8a1u32,
+            0xa81a664bu32,
+            0xc24b8b70u32,
+            0xc76c51a3u32,
+            0xd192e819u32,
+            0xd6990624u32,
+            0xf40e3585u32,
+            0x106aa070u32,
+            0x19a4c116u32,
+            0x1e376c08u32,
+            0x2748774cu32,
+            0x34b0bcb5u32,
+            0x391c0cb3u32,
+            0x4ed8aa4au32,
+            0x5b9cca4fu32,
+            0x682e6ff3u32,
+            0x748f82eeu32,
+            0x78a5636fu32,
+            0x84c87814u32,
+            0x8cc70208u32,
+            0x90befffau32,
+            0xa4506cebu32,
+            0xbef9a3f7u32,
+            0xc67178f2u32,
         |]
 
     /// One-shot hash: returns the 32-byte SHA-256 digest of `data`.
@@ -142,20 +189,20 @@ module Sha256Core =
 /// hashes on `finalize`; it satisfies the streaming `Hasher` contract and can be
 /// replaced by a true block-incremental version without changing the API.
 class Sha256Hasher(mutable buffer: Array<Uint8>) implements Hasher =
-    public function update(self, data: Array<Uint8>): Unit =
-        self.buffer = self.buffer.concat(data)
+    public function update(self, data: Array<Uint8>): Unit = self.buffer = self.buffer.concat(data)
 
-    public function finalize(self): Array<Uint8> =
-        Sha256Core.digest(self.buffer)
+    public function finalize(self): Array<Uint8> = Sha256Core.digest(self.buffer)
 
-    public function reset(self): Unit =
-        self.buffer = Array<Uint8>.empty()
+    public function reset(self): Unit = self.buffer = Array<Uint8>.empty()
 
 /// SHA-256 algorithm singleton type.
 class Sha256Algorithm() implements HashAlgorithm =
     public property digestSize(self): Int32 = 32
+
     public property blockSize(self): Int32 = 64
+
     public function hasher(self): Hasher = Sha256Hasher(Array<Uint8>.empty())
+
     public function hash(self, data: Array<Uint8>): Array<Uint8> = Sha256Core.digest(data)
 
 /// The SHA-256 algorithm. Use `Sha256.hash(data)` for one-shot hashing or
@@ -164,12 +211,41 @@ public let Sha256: HashAlgorithm = Sha256Algorithm()
 
 test "SHA-256 empty string" =
     let digest = Sha256.hash("".bytes())
-    let expected = [|
-        0xe3u8, 0xb0u8, 0xc4u8, 0x42u8, 0x98u8, 0xfcu8, 0x1cu8, 0x14u8,
-        0x9au8, 0xfbu8, 0xf4u8, 0xc8u8, 0x99u8, 0x6fu8, 0xb9u8, 0x24u8,
-        0x27u8, 0xaeu8, 0x41u8, 0xe4u8, 0x64u8, 0x9bu8, 0x93u8, 0x4cu8,
-        0xa4u8, 0x95u8, 0x99u8, 0x1bu8, 0x78u8, 0x52u8, 0xb8u8, 0x55u8,
-    |]
+    let expected =
+        [|
+            0xe3u8,
+            0xb0u8,
+            0xc4u8,
+            0x42u8,
+            0x98u8,
+            0xfcu8,
+            0x1cu8,
+            0x14u8,
+            0x9au8,
+            0xfbu8,
+            0xf4u8,
+            0xc8u8,
+            0x99u8,
+            0x6fu8,
+            0xb9u8,
+            0x24u8,
+            0x27u8,
+            0xaeu8,
+            0x41u8,
+            0xe4u8,
+            0x64u8,
+            0x9bu8,
+            0x93u8,
+            0x4cu8,
+            0xa4u8,
+            0x95u8,
+            0x99u8,
+            0x1bu8,
+            0x78u8,
+            0x52u8,
+            0xb8u8,
+            0x55u8,
+        |]
     assert digest.length == 32
     let mutable i = 0
     let mutable ok = true
@@ -180,12 +256,41 @@ test "SHA-256 empty string" =
 
 test "SHA-256 abc" =
     let digest = Sha256.hash("abc".bytes())
-    let expected = [|
-        0xbau8, 0x78u8, 0x16u8, 0xbfu8, 0x8fu8, 0x01u8, 0xcfu8, 0xeau8,
-        0x41u8, 0x41u8, 0x40u8, 0xdeu8, 0x5du8, 0xaeu8, 0x22u8, 0x23u8,
-        0xb0u8, 0x03u8, 0x61u8, 0xa3u8, 0x96u8, 0x17u8, 0x7au8, 0x9cu8,
-        0xb4u8, 0x10u8, 0xffu8, 0x61u8, 0xf2u8, 0x00u8, 0x15u8, 0xadu8,
-    |]
+    let expected =
+        [|
+            0xbau8,
+            0x78u8,
+            0x16u8,
+            0xbfu8,
+            0x8fu8,
+            0x01u8,
+            0xcfu8,
+            0xeau8,
+            0x41u8,
+            0x41u8,
+            0x40u8,
+            0xdeu8,
+            0x5du8,
+            0xaeu8,
+            0x22u8,
+            0x23u8,
+            0xb0u8,
+            0x03u8,
+            0x61u8,
+            0xa3u8,
+            0x96u8,
+            0x17u8,
+            0x7au8,
+            0x9cu8,
+            0xb4u8,
+            0x10u8,
+            0xffu8,
+            0x61u8,
+            0xf2u8,
+            0x00u8,
+            0x15u8,
+            0xadu8,
+        |]
     assert digest.length == 32
     let mutable i = 0
     let mutable ok = true
@@ -202,7 +307,8 @@ test "SHA-256 incremental hasher matches one-shot" =
     let d2 = Sha256.hash("abc".bytes())
     assert ConstantTime.equal(d1, d2)
     // reset and reuse
-    h.reset()
+    h
+        .reset()
     h.update("abc".bytes())
     assert ConstantTime.equal(h.finalize(), d2)
 
@@ -213,12 +319,41 @@ test "SHA-256 digestSize and blockSize" =
 test "SHA-256 two-block message" =
     // 56 bytes forces padding into a second block.
     let digest = Sha256.hash("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".bytes())
-    let expected = [|
-        0x24u8, 0x8du8, 0x6au8, 0x61u8, 0xd2u8, 0x06u8, 0x38u8, 0xb8u8,
-        0xe5u8, 0xc0u8, 0x26u8, 0x93u8, 0x0cu8, 0x3eu8, 0x60u8, 0x39u8,
-        0xa3u8, 0x3cu8, 0xe4u8, 0x59u8, 0x64u8, 0xffu8, 0x21u8, 0x67u8,
-        0xf6u8, 0xecu8, 0xedu8, 0xd4u8, 0x19u8, 0xdbu8, 0x06u8, 0xc1u8,
-    |]
+    let expected =
+        [|
+            0x24u8,
+            0x8du8,
+            0x6au8,
+            0x61u8,
+            0xd2u8,
+            0x06u8,
+            0x38u8,
+            0xb8u8,
+            0xe5u8,
+            0xc0u8,
+            0x26u8,
+            0x93u8,
+            0x0cu8,
+            0x3eu8,
+            0x60u8,
+            0x39u8,
+            0xa3u8,
+            0x3cu8,
+            0xe4u8,
+            0x59u8,
+            0x64u8,
+            0xffu8,
+            0x21u8,
+            0x67u8,
+            0xf6u8,
+            0xecu8,
+            0xedu8,
+            0xd4u8,
+            0x19u8,
+            0xdbu8,
+            0x06u8,
+            0xc1u8,
+        |]
     assert digest.length == 32
     let mutable i = 0
     let mutable ok = true

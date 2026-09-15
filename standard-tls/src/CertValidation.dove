@@ -17,7 +17,6 @@ import standard.time.Instant
 ///
 /// `currentTime` is supplied by the caller (from config) rather than read from
 /// a clock, keeping the protocol engine pure.
-
 /// Maximum certificate chain depth accepted (RFC 5280 path length guidance).
 let maxChainDepth: Int32 = 10
 
@@ -37,7 +36,6 @@ function mapX509Error(e: X509Error): TlsError =
 // ---------------------------------------------------------------------------
 // Hostname / identity verification (RFC 6125 / RFC 6066)
 // ---------------------------------------------------------------------------
-
 /// Parse a single decimal octet (0..255) from an IPv4 literal component.
 function parseOctet(text: String): Option<Uint8> =
     let n = text.length
@@ -50,10 +48,8 @@ function parseOctet(text: String): Option<Uint8> =
         let mutable i = 0
         while i < bytes.length do
             let b = bytes.get(i)
-            if (b < 48u8) || (b > 57u8) then
-                failed = true
-            else
-                value = value * 10 + (b - 48u8).toInt32()
+            if (b < 48u8) || (b > 57u8) then failed = true
+            else value = value * 10 + (b - 48u8).toInt32()
             i = i + 1
         if failed || (value > 255) then None else Some(value.toUint8())
 
@@ -72,8 +68,7 @@ function parseIpv4(host: String): Option<Array<Uint8>> =
 /// IP branch via `isIpLiteral`, so an IPv6 literal with no decoded bytes fails
 /// identity matching CLOSED rather than falling through to DNS matching against
 /// the raw address text.
-function ipLiteralBytes(serverName: String): Option<Array<Uint8>> =
-    parseIpv4(serverName)
+function ipLiteralBytes(serverName: String): Option<Array<Uint8>> = parseIpv4(serverName)
 
 /// Whether `serverName` is an IP literal — a dotted-quad IPv4 address, or an IPv6
 /// literal (detected by a ':'). RFC 6066 §3 forbids IP literals in the SNI
@@ -120,23 +115,24 @@ function dnsNameMatches(pattern: String, host: String): Bool =
         // labels (in particular, never fewer labels than the pattern).
         if pCount != hCount then
             false
-        else if pCount < 3 then
-            // Require the wildcard plus at least two more labels (no `*.com`).
-            false
         else
-            match (pLabels, hLabels) with
-                // `*` must be the ENTIRE leftmost label; `f*.example.com` is
-                // rejected, as is any wildcard not in the leftmost position.
-                case ("*" :: pRest, _ :: hRest) =>
-                    let mutable eq = true
-                    let mutable pCurrent = pRest
-                    let mutable hCurrent = hRest
-                    while !pCurrent.isEmpty && !hCurrent.isEmpty do
-                        if pCurrent.head != hCurrent.head then eq = false
-                        pCurrent = pCurrent.tail
-                        hCurrent = hCurrent.tail
-                    eq
-                case _ => false
+            if pCount < 3 then
+                // Require the wildcard plus at least two more labels (no `*.com`).
+                false
+            else
+                match (pLabels, hLabels) with
+                    // `*` must be the ENTIRE leftmost label; `f*.example.com` is
+                    // rejected, as is any wildcard not in the leftmost position.
+                    case ("*" :: pRest, _ :: hRest) =>
+                        let mutable eq = true
+                        let mutable pCurrent = pRest
+                        let mutable hCurrent = hRest
+                        while !pCurrent.isEmpty && !hCurrent.isEmpty do
+                            if pCurrent.head != hCurrent.head then eq = false
+                            pCurrent = pCurrent.tail
+                            hCurrent = hCurrent.tail
+                        eq
+                    case _ => false
 
 /// True if `host` matches any dNSName SAN entry per `dnsNameMatches`.
 function anyDnsMatches(sans: List<String>, host: String): Bool =
@@ -158,11 +154,21 @@ function verifyIdentity(leaf: X509Certificate, serverName: String): Result<Unit,
                 if anyIpMatches(leaf.sanIpAddresses, ip) then
                     Ok(())
                 else
-                    Error(TlsError.CertificateNameMismatch("no iPAddress SAN matches " ++ serverName))
+                    Error(
+                        TlsError.CertificateNameMismatch("no iPAddress SAN matches " ++ serverName)
+                    )
             case None =>
-                Error(TlsError.CertificateNameMismatch("unsupported IP-literal serverName (IPv6 not decoded): " ++ serverName))
+                Error(
+                    TlsError
+                        .CertificateNameMismatch(
+                        "unsupported IP-literal serverName (IPv6 not decoded): " ++ serverName
+                    )
+                )
     else if leaf.hasSan == false then
-        Error(TlsError.CertificateNameMismatch("certificate has no subjectAltName; refusing CN fallback"))
+        Error(
+            TlsError
+                .CertificateNameMismatch("certificate has no subjectAltName; refusing CN fallback")
+        )
     else if anyDnsMatches(leaf.sanDnsNames, serverName) then
         Ok(())
     else
@@ -184,39 +190,57 @@ function validateChain(
     let entryCount = entries.length
     if entryCount == 0 then
         Error(TlsError.BadCertificate("empty certificate chain"))
-    else if entryCount > maxChainDepth then
-        // D4: reject an over-long Certificate message BEFORE parsing every entry,
-        // so a hostile peer cannot force us to DER-parse an unbounded number of
-        // certificates ahead of X509.validate's own maxChainDepth enforcement.
-        Error(TlsError.BadCertificate("certificate chain too long"))
     else
-        let mutable parsed: List<X509Certificate> = List.empty
-        for entry in entries do
-            match X509.parseCertificate(entry.certData) with
-                case Error(e) => try Result.Error(mapX509Error(e))
-                case Ok(cert) => parsed = parsed.prepend(cert)
-        let chain = parsed.reverse()
-        match X509.validate(chain, trustAnchors, maxChainDepth, currentTime) with
-            case Error(e) => Error(mapX509Error(e))
-            case Ok(_) =>
-                match chain with
-                    case [] => Error(TlsError.BadCertificate("empty certificate chain"))
-                    case leaf :: _ =>
-                        match verifyIdentity(leaf, serverName) with
-                            case Error(e) => Error(e)
-                            case Ok(_) => Ok(chain)
+        if entryCount > maxChainDepth then
+            // D4: reject an over-long Certificate message BEFORE parsing every entry,
+            // so a hostile peer cannot force us to DER-parse an unbounded number of
+            // certificates ahead of X509.validate's own maxChainDepth enforcement.
+            Error(TlsError.BadCertificate("certificate chain too long"))
+        else
+            let mutable parsed: List<X509Certificate> = List.empty
+            for entry in entries do
+                match X509.parseCertificate(entry.certData) with
+                    case Error(e) => try Result.Error(mapX509Error(e))
+                    case Ok(cert) => parsed = parsed.prepend(cert)
+            let chain = parsed.reverse()
+            match X509.validate(chain, trustAnchors, maxChainDepth, currentTime) with
+                case Error(e) => Error(mapX509Error(e))
+                case Ok(_) =>
+                    match chain with
+                        case [] => Error(TlsError.BadCertificate("empty certificate chain"))
+                        case leaf :: _ =>
+                            match verifyIdentity(leaf, serverName) with
+                                case Error(e) => Error(e)
+                                case Ok(_) => Ok(chain)
 
 /// The leaf certificate's public-key bytes, for CertificateVerify.
-function leafPublicKey(chain: List<X509Certificate>): Array<Uint8> =
-    chain.head.publicKey
+function leafPublicKey(chain: List<X509Certificate>): Array<Uint8> = chain.head.publicKey
 
 test "tls validateChain rejects an empty chain" =
-    let result = validateChain(List<CertificateEntry>.empty, List<X509Certificate>.empty, Instant.ofEpochSecond(0i64), "example.com")
+    let result =
+        validateChain(
+            List<CertificateEntry>.empty,
+            List<X509Certificate>.empty,
+            Instant.ofEpochSecond(0i64),
+            "example.com"
+        )
     assert result.isError
 
 test "tls validateChain reports malformed certificate bytes" =
-    let entries = [CertificateEntry { certData = [|0x00u8, 0x01u8, 0x02u8|]; extensions = List<Extension>.empty }]
-    let result = validateChain(entries, List<X509Certificate>.empty, Instant.ofEpochSecond(0i64), "example.com")
+    let entries =
+        [
+            CertificateEntry {
+                certData = [| 0x00u8, 0x01u8, 0x02u8 |]
+                extensions = List<Extension>.empty
+            }
+        ]
+    let result =
+        validateChain(
+            entries,
+            List<X509Certificate>.empty,
+            Instant.ofEpochSecond(0i64),
+            "example.com"
+        )
     match result with
         case Error(BadCertificate(_)) => assert true
         case _ => assert false
@@ -225,57 +249,100 @@ test "tls validateChain rejects an over-long certificate chain before parsing (D
     // A Certificate message with more than maxChainDepth entries is rejected up
     // front, so the (here malformed) entries are never DER-parsed. This bounds the
     // pre-validation parse work a hostile peer can force.
-    let entry = CertificateEntry { certData = [|0x00u8, 0x01u8, 0x02u8|]; extensions = List<Extension>.empty }
+    let entry =
+        CertificateEntry {
+            certData = [| 0x00u8, 0x01u8, 0x02u8 |]
+            extensions = List<Extension>.empty
+        }
     let mutable entries: List<CertificateEntry> = List.empty
     let mutable i = 0
     while i < maxChainDepth + 1 do
         entries = entries.prepend(entry)
         i = i + 1
-    let result = validateChain(entries, List<X509Certificate>.empty, Instant.ofEpochSecond(0i64), "example.com")
+    let result =
+        validateChain(
+            entries,
+            List<X509Certificate>.empty,
+            Instant.ofEpochSecond(0i64),
+            "example.com"
+        )
     match result with
         case Error(BadCertificate(_)) => assert true
         case _ => assert false
 
 // --- hostname / identity verification tests --------------------------------
-
 /// Minimal DER builder for parseable (but unsigned) leaf certificates carrying a
 /// chosen extensions block, used to exercise `verifyIdentity` in isolation.
 module CvTest =
     function derLen(n: Int32): Array<Uint8> =
-        if n < 128 then [|n.toUint8()|]
-        else if n < 256 then [|0x81u8, n.toUint8()|]
-        else [|0x82u8, (n / 256).toUint8(), (n % 256).toUint8()|]
+        if n < 128 then [| n.toUint8() |]
+        else if n < 256 then [| 0x81u8, n.toUint8() |]
+        else [| 0x82u8, (n / 256).toUint8(), (n % 256).toUint8() |]
 
     function tlv(tag: Uint8, content: Array<Uint8>): Array<Uint8> =
-        [|tag|].concat(derLen(content.length)).concat(content)
+        [| tag |].concat(derLen(content.length)).concat(content)
 
-    function ed(): Array<Uint8> = tlv(0x30u8, tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
+    function ed(): Array<Uint8> = tlv(0x30u8, tlv(0x06u8, [| 0x2bu8, 0x65u8, 0x70u8 |]))
 
     function nm(cn: String): Array<Uint8> =
-        tlv(0x30u8, tlv(0x31u8, tlv(0x30u8,
-            tlv(0x06u8, [|0x55u8, 0x04u8, 0x03u8|]).concat(tlv(0x0cu8, cn.bytes())))))
+        tlv(
+            0x30u8,
+            tlv(
+                0x31u8,
+                tlv(
+                    0x30u8,
+                    tlv(0x06u8, [| 0x55u8, 0x04u8, 0x03u8 |]).concat(tlv(0x0cu8, cn.bytes()))
+                )
+            )
+        )
 
     /// A parseable leaf certificate (dummy public key + signature) carrying `exts`.
     public function leafCert(exts: Array<Uint8>): Array<Uint8> =
-        let version = tlv(0xa0u8, tlv(0x02u8, [|0x02u8|]))
-        let serial = tlv(0x02u8, [|0x2au8|])
-        let validity = tlv(0x30u8,
-            tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes())))
-        let spki = tlv(0x30u8, ed().concat(tlv(0x03u8, [|0x00u8|].concat(Array<Uint8>.fill(32, 0x01u8)))))
-        let tbs = tlv(0x30u8,
-            version.concat(serial).concat(ed()).concat(nm("host")).concat(validity).concat(nm("host")).concat(spki).concat(exts))
-        tlv(0x30u8, tbs.concat(ed()).concat(tlv(0x03u8, [|0x00u8|].concat(Array<Uint8>.fill(64, 0x00u8)))))
+        let version = tlv(0xa0u8, tlv(0x02u8, [| 0x02u8 |]))
+        let serial = tlv(0x02u8, [| 0x2au8 |])
+        let validity =
+            tlv(
+                0x30u8,
+                tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes()))
+            )
+        let spki =
+            tlv(
+                0x30u8,
+                ed().concat(tlv(0x03u8, [| 0x00u8 |].concat(Array<Uint8>.fill(32, 0x01u8))))
+            )
+        let tbs =
+            tlv(
+                0x30u8,
+                version
+                    .concat(serial)
+                    .concat(ed())
+                    .concat(nm("host"))
+                    .concat(validity)
+                    .concat(nm("host"))
+                    .concat(spki)
+                    .concat(exts)
+            )
+        tlv(
+            0x30u8,
+            tbs.concat(ed()).concat(tlv(0x03u8, [| 0x00u8 |].concat(Array<Uint8>.fill(64, 0x00u8))))
+        )
 
     public function exts(extensions: Array<Uint8>): Array<Uint8> =
         tlv(0xa3u8, tlv(0x30u8, extensions))
 
     public function sanDns(dns: String): Array<Uint8> =
-        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(
-            tlv(0x04u8, tlv(0x30u8, tlv(0x82u8, dns.bytes())))))
+        tlv(
+            0x30u8,
+            tlv(0x06u8, [| 0x55u8, 0x1du8, 0x11u8 |])
+                .concat(tlv(0x04u8, tlv(0x30u8, tlv(0x82u8, dns.bytes()))))
+        )
 
     public function sanIp(ip: Array<Uint8>): Array<Uint8> =
-        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(
-            tlv(0x04u8, tlv(0x30u8, tlv(0x87u8, ip)))))
+        tlv(
+            0x30u8,
+            tlv(0x06u8, [| 0x55u8, 0x1du8, 0x11u8 |])
+                .concat(tlv(0x04u8, tlv(0x30u8, tlv(0x87u8, ip))))
+        )
 
 test "hostname dNSName exact and case-insensitive match" =
     assert dnsNameMatches("example.com", "example.com")
@@ -307,17 +374,24 @@ test "IPv4 literal parsing" =
     assert parseIpv4("example.com").isNone
 
 test "verifyIdentity matches an iPAddress SAN and rejects a mismatch" =
-    let cert = X509.parseCertificate(CvTest.leafCert(CvTest.exts(CvTest.sanIp([|127u8, 0u8, 0u8, 1u8|])))).require
+    let cert =
+        X509
+            .parseCertificate(
+            CvTest.leafCert(CvTest.exts(CvTest.sanIp([| 127u8, 0u8, 0u8, 1u8 |])))
+        )
+            .require
     assert verifyIdentity(cert, "127.0.0.1").isOk
     match verifyIdentity(cert, "127.0.0.2") with
         case Error(CertificateNameMismatch(_)) => assert true
         case _ => assert false
     // an IP-literal serverName never falls back to a dNSName SAN
-    let dnsCert = X509.parseCertificate(CvTest.leafCert(CvTest.exts(CvTest.sanDns("127.0.0.1")))).require
+    let dnsCert =
+        X509.parseCertificate(CvTest.leafCert(CvTest.exts(CvTest.sanDns("127.0.0.1")))).require
     assert verifyIdentity(dnsCert, "127.0.0.1").isError
 
 test "verifyIdentity matches a dNSName SAN and yields a typed mismatch error" =
-    let cert = X509.parseCertificate(CvTest.leafCert(CvTest.exts(CvTest.sanDns("example.com")))).require
+    let cert =
+        X509.parseCertificate(CvTest.leafCert(CvTest.exts(CvTest.sanDns("example.com")))).require
     assert verifyIdentity(cert, "example.com").isOk
     assert verifyIdentity(cert, "EXAMPLE.COM").isOk
     match verifyIdentity(cert, "evil.com") with

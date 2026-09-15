@@ -29,7 +29,8 @@ public class ConsoleSink(format: (LogRecord) => String) implements LogSink =
         // that is failing for any other reason (a bad descriptor, an encoding
         // fault) would otherwise vanish with no operator signal at all, which is
         // the failure mode a log is supposed to rule out.
-        written.catchAll((e: ConsoleError) => diagnoseConsole(e))
+        written
+            .catchAll((e: ConsoleError) => diagnoseConsole(e))
 
 /// Say once, on stderr, that a log record did not make it. Quiet on a broken
 /// pipe: `prog | head` is the ordinary case, the operator asked for it, and
@@ -41,14 +42,16 @@ function diagnoseConsole(error: ConsoleError): Async<Unit, Never> =
     match error with
         case ConsoleError.PipeBroken => Async.succeed(())
         case _ =>
-            Console.errorWriteLine("[log-sink: console] write failed: " ++ error.format())
+            Console
+                .errorWriteLine("[log-sink: console] write failed: " ++ error.format())
                 .catchAll((_: ConsoleError) => Async.succeed(()))
 
 module ConsoleSink =
     /// Console sink using the logfmt formatter, routing Warn/Error to stderr
     /// and everything below to stdout.
     public function make(): Resource<LogSink, Never> =
-        Resource.make(
+        Resource
+            .make(
             () => Async.succeed(ConsoleSink(Formatter.logfmt) as LogSink),
             (_: LogSink) => Async.succeed(())
         )
@@ -56,8 +59,8 @@ module ConsoleSink =
     /// Console sink with a caller-supplied formatter. Same level-based stream
     /// routing as `make`.
     public function withFormatter(format: (LogRecord) => String): Resource<LogSink, Never> =
-        Resource.make(
+        Resource
+            .make(
             () => Async.succeed(ConsoleSink(format) as LogSink),
             (_: LogSink) => Async.succeed(())
         )
-

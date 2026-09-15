@@ -4,7 +4,7 @@ use std::sync::Arc;
 pub type FilePath = Arc<str>;
 
 /// A source location range. Line and column are 1-indexed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Span {
     pub file: FilePath,
     pub line: u32,
@@ -64,7 +64,7 @@ impl Span {
 }
 
 /// A value with an attached source span.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Spanned<T> {
     pub value: T,
     pub span: Span,

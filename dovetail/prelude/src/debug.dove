@@ -1,4 +1,5 @@
 package standard.prelude
 
 public function debug(value: String): Unit = intrinsic
-public function debug<T>(value: T): Unit where T: Display = intrinsic
+
+public function debug<T>(value: T): Unit where T: Display =intrinsic

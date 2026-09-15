@@ -9,7 +9,6 @@ import standard.time.Instant
 // a static method returning `Result<Self, _>`, so it is called through the type
 // (`Int64.fromSqlValue(cell)`) rather than on a value.
 // =============================================================================
-
 /// A value decodable from one SQLite column cell.
 public trait FromSqlValue =
     /// Decode `value`, or report why its storage class doesn't fit.
@@ -68,7 +67,6 @@ implement FromSqlValue for Uint32 =
 
 // No `Uint64`, for the reason given in ToSqlValue.dove: SQLite's INTEGER is
 // signed 64-bit, so half of `Uint64`'s range cannot round-trip.
-
 implement FromSqlValue for Float32 =
     public function fromSqlValue(value: SqlValue): Result<Float32, SqliteError> =
         match value with
@@ -105,7 +103,8 @@ implement FromSqlValue for Instant =
             case _ => Error(mismatchError("Integer", value))
 
 /// A NULL cell decodes to `None`; anything else delegates to `T`.
-implement <T> FromSqlValue for Option<T> where T: FromSqlValue =
+implement<T> FromSqlValue for Option<T>
+    where T: FromSqlValue =
     public function fromSqlValue(value: SqlValue): Result<Option<T>, SqliteError> =
         match value with
             case SqlValue.Null => Ok(None)
@@ -120,10 +119,14 @@ function narrowed(value: SqlValue, low: Int64, high: Int64): Result<Int64, Sqlit
     match value with
         case SqlValue.Integer(n) =>
             if n < low || n > high then
-                Error(mismatchError(
-                    "an Integer between " ++ low.format() ++ " and " ++ high.format(), value
-                ))
-            else Ok(n)
+                Error(
+                    mismatchError(
+                        "an Integer between " ++ low.format() ++ " and " ++ high.format(),
+                        value
+                    )
+                )
+            else
+                Ok(n)
         case _ => Error(mismatchError("Integer", value))
 
 /// SQLITE_MISMATCH (20) — a cell's storage class isn't what the target needs.

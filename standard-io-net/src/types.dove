@@ -9,7 +9,6 @@ package standard.io.net
 // would shadow the wasi versions in any file that needs to reach both).
 // Structured types can be added in v2 once a clean disambiguation exists.
 // =============================================================================
-
 /// A UDP datagram. On receive, `remoteAddress` is always `Some` (the sender).
 /// On send, `None` means "use the endpoint's connected remote"; `Some(addr)`
 /// overrides per datagram.

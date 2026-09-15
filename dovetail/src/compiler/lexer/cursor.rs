@@ -4,6 +4,7 @@ use crate::common::span::FilePath;
 pub struct Cursor {
     source: Vec<char>,
     pos: usize,
+    byte_offset: usize,
     line: u32,
     column: u32,
     file: FilePath,
@@ -14,6 +15,7 @@ impl Cursor {
         Self {
             source: source.chars().collect(),
             pos: 0,
+            byte_offset: 0,
             line: 1,
             column: 1,
             file,
@@ -34,10 +36,15 @@ impl Cursor {
         Self {
             source: source.chars().collect(),
             pos: 0,
+            byte_offset: 0,
             line,
             column,
             file,
         }
+    }
+
+    pub fn byte_offset(&self) -> usize {
+        self.byte_offset
     }
 
     pub fn file(&self) -> FilePath {
@@ -71,6 +78,7 @@ impl Cursor {
     pub fn advance(&mut self) -> Option<char> {
         let ch = self.source.get(self.pos).copied()?;
         self.pos += 1;
+        self.byte_offset += ch.len_utf8();
         if ch == '\n' {
             self.line += 1;
             self.column = 1;

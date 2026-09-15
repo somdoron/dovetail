@@ -19,26 +19,23 @@ class TranscriptHash(hash: HashAlgorithm, writer: ByteWriter) =
         TranscriptHash(hash, ByteWriter.make())
 
     /// Append a full handshake message (header + body) to the transcript.
-    public function update(self, message: Array<Uint8>): Unit =
-        self.writer.putBytes(message)
+    public function update(self, message: Array<Uint8>): Unit = self.writer.putBytes(message)
 
     /// The hash of every message appended so far.
-    public function currentHash(self): Array<Uint8> =
-        self.hash.hash(self.writer.toBytes())
+    public function currentHash(self): Array<Uint8> = self.hash.hash(self.writer.toBytes())
 
     /// The raw concatenated transcript bytes (used for PSK binder computation).
-    public function bytes(self): Array<Uint8> =
-        self.writer.toBytes()
+    public function bytes(self): Array<Uint8> = self.writer.toBytes()
 
 test "tls transcript hashes the accumulated prefix" =
     let t = TranscriptHash.make(Sha256)
-    t.update([|0x01u8, 0x02u8|])
+    t.update([| 0x01u8, 0x02u8 |])
     let h1 = t.currentHash()
-    t.update([|0x03u8, 0x04u8|])
+    t.update([| 0x03u8, 0x04u8 |])
     let h2 = t.currentHash()
     // h1 = SHA-256(0102), h2 = SHA-256(01020304); the two prefixes differ
     assert h1.length == 32
     assert h2.length == 32
-    assert ConstantTime.equal(h1, Sha256.hash([|0x01u8, 0x02u8|]))
-    assert ConstantTime.equal(h2, Sha256.hash([|0x01u8, 0x02u8, 0x03u8, 0x04u8|]))
+    assert ConstantTime.equal(h1, Sha256.hash([| 0x01u8, 0x02u8 |]))
+    assert ConstantTime.equal(h2, Sha256.hash([| 0x01u8, 0x02u8, 0x03u8, 0x04u8 |]))
     assert ConstantTime.equal(h1, h2) == false

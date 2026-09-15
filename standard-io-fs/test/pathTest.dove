@@ -51,61 +51,61 @@ test "Path / operator with relative Path" =
 test "Path.name returns last segment" =
     let p = Path.of("/var/log/app.txt")
     match p.name with
-    case Some(n) => assert n == "app.txt"
-    case None => panic "expected name"
+        case Some(n) => assert n == "app.txt"
+        case None => panic "expected name"
 
 test "Path.name None on bare root" =
     let p = Path.of("/")
     match p.name with
-    case Some(_) => panic "expected None"
-    case None => assert true
+        case Some(_) => panic "expected None"
+        case None => assert true
 
 test "Path.stem strips extension" =
     let p = Path.of("/var/log/app.txt")
     match p.stem with
-    case Some(s) => assert s == "app"
-    case None => panic "expected stem"
+        case Some(s) => assert s == "app"
+        case None => panic "expected stem"
 
 test "Path.ext returns after last dot" =
     let p = Path.of("/var/log/app.txt")
     match p.ext with
-    case Some(e) => assert e == "txt"
-    case None => panic "expected ext"
+        case Some(e) => assert e == "txt"
+        case None => panic "expected ext"
 
 test "Path.ext None for dotfile" =
     let p = Path.of("/home/.bashrc")
     match p.ext with
-    case Some(_) => panic "dotfile should have no ext"
-    case None => assert true
+        case Some(_) => panic "dotfile should have no ext"
+        case None => assert true
 
 test "Path.parent drops last segment" =
     let p = Path.of("/var/log/app.txt").parent
     match p with
-    case Some(par) =>
-        assert par.isAbsolute
-        assert par.segments.length == 2
-        match par.name with
-        case Some(n) => assert n == "log"
-        case None => panic "expected log"
-    case None => panic "expected parent"
+        case Some(par) =>
+            assert par.isAbsolute
+            assert par.segments.length == 2
+            match par.name with
+                case Some(n) => assert n == "log"
+                case None => panic "expected log"
+        case None => panic "expected parent"
 
 test "Path.parent None on bare root" =
     let p = Path.of("/").parent
     match p with
-    case Some(_) => panic "bare root has no parent"
-    case None => assert true
+        case Some(_) => panic "bare root has no parent"
+        case None => assert true
 
 test "Path.withExtension replaces" =
     let p = Path.of("/var/log/app.txt").withExtension("log")
     match p.name with
-    case Some(n) => assert n == "app.log"
-    case None => panic "expected name"
+        case Some(n) => assert n == "app.log"
+        case None => panic "expected name"
 
 test "Path.withExtension adds when none" =
     let p = Path.of("/var/log/app").withExtension("txt")
     match p.name with
-    case Some(n) => assert n == "app.txt"
-    case None => panic "expected name"
+        case Some(n) => assert n == "app.txt"
+        case None => panic "expected name"
 
 test "Path.normalize collapses dot" =
     let p = Path.of("/var/./log").normalize()

@@ -9,15 +9,13 @@ import standard.json.JsonDecoder
 // Pure constructor tests — no socket, no codec dispatch. Pins one builder
 // path per test: status code, the headers/customizers, and the format
 // helpers.
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-record RespUser =
+ record RespUser =
     id: Int32
     name: String
 
 // --- Status-bearing constructors --------------------------------------------
-
 test "Response.ok() defaults to 200 OK with empty body" =
     let r: Response = Response.ok()
     assert r.statusCode == 200
@@ -26,7 +24,7 @@ test "Response.ok() defaults to 200 OK with empty body" =
     assert r.isSuccess
 
 test "Response.ok(bytes) keeps the bytes" =
-    let r: Response = Response.ok([|1u8, 2u8, 3u8|])
+    let r: Response = Response.ok([| 1u8, 2u8, 3u8 |])
     assert r.statusCode == 200
     assert r.body.length == 3
     assert r.body.get(0) == 1u8
@@ -53,7 +51,6 @@ test "Response.serverError uses 500" =
     assert r.reason == "Internal Server Error"
 
 // --- Format helpers ---------------------------------------------------------
-
 test "Response.text wraps a string and sets Content-Type" =
     let r = Response.text("hello")
     assert r.statusCode == 200
@@ -82,16 +79,12 @@ test "Response.json status lookup falls back to 'Error'" =
     assert r.reason == "Error"
 
 // --- Customizers ------------------------------------------------------------
-
 test "Response.withHeader appends a header" =
     let r: Response = Response.ok().withHeader("X-Foo", "bar")
     assert r.header("X-Foo").require == "bar"
 
 test "Response.withHeaders appends multiple" =
-    let r: Response = Response.ok().withHeaders([
-        ("X-A", "1"),
-        ("X-B", "2")
-    ])
+    let r: Response = Response.ok().withHeaders([("X-A", "1"), ("X-B", "2")])
     assert r.header("X-A").require == "1"
     assert r.header("X-B").require == "2"
 
@@ -107,10 +100,10 @@ test "Response.withHeader does not mutate the source response" =
     assert r2.header("X-Foo").isSome
 
 // --- Chained --------------------------------------------------------------
-
 test "Constructors chain cleanly" =
     let r: Response =
-        Response.json(RespUser { id = 5; name = "Lin" })
+        Response
+            .json(RespUser { id = 5; name = "Lin" })
             .withHeader("X-Cache", "miss")
             .withStatus(201, "Created")
     assert r.statusCode == 201

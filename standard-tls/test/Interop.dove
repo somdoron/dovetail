@@ -28,51 +28,66 @@ import standard.time.Instant
 /// between a `TlsClient` and `TlsServer` with no real I/O, exchange application
 /// data, resume sessions, and check error handling — all through the public
 /// surface only (the engine internals are not imported here).
-
 /// Pump bytes between a client and server until both finish the handshake (or a
 /// safety bound is hit).
 function driveHandshake(client: TlsClient, server: TlsServer): Unit =
     let mutable steps = 0
-    while (client.isHandshakeComplete == false || server.isHandshakeComplete == false) && steps < 20 do
+    while (client.isHandshakeComplete == false || server.isHandshakeComplete == false)
+        && steps < 20 do
         let c2s = client.dataToSend()
-        if c2s.length > 0 then
-            server.receiveData(c2s)
+        if c2s.length > 0 then server.receiveData(c2s)
         let s2c = server.dataToSend()
-        if s2c.length > 0 then
-            client.receiveData(s2c)
+        if s2c.length > 0 then client.receiveData(s2c)
         steps = steps + 1
 
 // --- self-signed Ed25519 certificate fixture (mirrors the X509 test) -------
-
 function derLen(n: Int32): Array<Uint8> =
-    if n < 128 then [|n.toUint8()|]
-    else if n < 256 then [|0x81u8, n.toUint8()|]
-    else [|0x82u8, (n / 256).toUint8(), (n % 256).toUint8()|]
+    if n < 128 then [| n.toUint8() |]
+    else if n < 256 then [| 0x81u8, n.toUint8() |]
+    else [| 0x82u8, (n / 256).toUint8(), (n % 256).toUint8() |]
 
 function tlv(tag: Uint8, content: Array<Uint8>): Array<Uint8> =
-    [|tag|].concat(derLen(content.length)).concat(content)
+    [| tag |].concat(derLen(content.length)).concat(content)
 
 /// Build a self-signed Ed25519 certificate (CN=CA, valid 2020–2030) for the
 /// given 32-byte secret seed.
 function makeSelfSignedEd25519Cert(secret: SecretKey): Array<Uint8> =
     let pub = Ed25519.derivePublicKey(secret).value
-    let edAlg = tlv(0x30u8, tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
-    let cnAttr = tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x04u8, 0x03u8|]).concat(tlv(0x0cu8, "CA".bytes())))
+    let edAlg = tlv(0x30u8, tlv(0x06u8, [| 0x2bu8, 0x65u8, 0x70u8 |]))
+    let cnAttr =
+        tlv(0x30u8, tlv(0x06u8, [| 0x55u8, 0x04u8, 0x03u8 |]).concat(tlv(0x0cu8, "CA".bytes())))
     let name = tlv(0x30u8, tlv(0x31u8, cnAttr))
-    let version = tlv(0xa0u8, tlv(0x02u8, [|0x02u8|]))
-    let serial = tlv(0x02u8, [|0x2au8|])
-    let validity = tlv(0x30u8,
-        tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes())))
-    let spki = tlv(0x30u8, edAlg.concat(tlv(0x03u8, [|0x00u8|].concat(pub))))
+    let version = tlv(0xa0u8, tlv(0x02u8, [| 0x02u8 |]))
+    let serial = tlv(0x02u8, [| 0x2au8 |])
+    let validity =
+        tlv(
+            0x30u8,
+            tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes()))
+        )
+    let spki = tlv(0x30u8, edAlg.concat(tlv(0x03u8, [| 0x00u8 |].concat(pub))))
     // Extensions [3]: subjectAltName { dNSName "example.com" } so the client's
     // RFC 6125 hostname check (serverName = "example.com") passes.
     let dnsName = tlv(0x82u8, "example.com".bytes())
-    let san = tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(tlv(0x04u8, tlv(0x30u8, dnsName))))
+    let san =
+        tlv(
+            0x30u8,
+            tlv(0x06u8, [| 0x55u8, 0x1du8, 0x11u8 |]).concat(tlv(0x04u8, tlv(0x30u8, dnsName)))
+        )
     let exts = tlv(0xa3u8, tlv(0x30u8, san))
-    let tbs = tlv(0x30u8,
-        version.concat(serial).concat(edAlg).concat(name).concat(validity).concat(name).concat(spki).concat(exts))
+    let tbs =
+        tlv(
+            0x30u8,
+            version
+                .concat(serial)
+                .concat(edAlg)
+                .concat(name)
+                .concat(validity)
+                .concat(name)
+                .concat(spki)
+                .concat(exts)
+        )
     let sig = Ed25519.sign(secret, tbs)
-    tlv(0x30u8, tbs.concat(edAlg).concat(tlv(0x03u8, [|0x00u8|].concat(sig))))
+    tlv(0x30u8, tbs.concat(edAlg).concat(tlv(0x03u8, [| 0x00u8 |].concat(sig))))
 
 /// Copy the content prefix of an `ApplicationData` payload (the array carries
 /// the record's trailing type byte / padding past `length`).
@@ -109,7 +124,12 @@ function drainServerAppData(server: TlsServer): Option<Array<Uint8>> =
 function clientConfigFor(cert: X509Certificate, now: Instant): TlsClientConfig =
     TlsClientConfig {
         serverName = "example.com"
-        cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+        cipherSuites =
+            [
+                CipherSuite.Aes128GcmSha256,
+                CipherSuite.Aes256GcmSha384,
+                CipherSuite.ChaCha20Poly1305Sha256
+            ]
         keyExchangeGroups = [KeyExchangeGroup.X25519]
         signatureAlgorithms = [SignatureScheme.Ed25519, SignatureScheme.EcdsaSecp256r1Sha256]
         trustAnchors = [cert]
@@ -119,7 +139,12 @@ function clientConfigFor(cert: X509Certificate, now: Instant): TlsClientConfig =
         resumptionTicket = None
     }
 
-function serverConfigFor(cert: X509Certificate, secret: SecretKey, suite: CipherSuite, now: Instant): TlsServerConfig =
+function serverConfigFor(
+    cert: X509Certificate,
+    secret: SecretKey,
+    suite: CipherSuite,
+    now: Instant
+): TlsServerConfig =
     TlsServerConfig {
         certificateChain = [cert]
         privateKey = secret
@@ -144,14 +169,16 @@ test "tls client/server full 1-RTT handshake interop (Ed25519, AES-128)" =
     assert server.isHandshakeComplete
 
     // application data, server → client
-    server.sendApplicationData("hello from server".bytes().readonly)
+    server
+        .sendApplicationData("hello from server".bytes().readonly)
     client.receiveData(server.dataToSend())
     match drainClientAppData(client) with
         case Some(data) => assert String.fromBytes(data, 0, data.length) == "hello from server"
         case None => assert false
 
     // application data, client → server
-    client.sendApplicationData("hi from client".bytes().readonly)
+    client
+        .sendApplicationData("hi from client".bytes().readonly)
     server.receiveData(client.dataToSend())
     match drainServerAppData(server) with
         case Some(data) => assert String.fromBytes(data, 0, data.length) == "hi from client"
@@ -183,7 +210,8 @@ test "tls handshake interop with ChaCha20-Poly1305" =
     let cert = X509.parseCertificate(certDer).require
     let now = Instant.ofEpochSecond(1748736000i64)
     let client = TlsClient.make(clientConfigFor(cert, now))
-    let server = TlsServer.make(serverConfigFor(cert, secret, CipherSuite.ChaCha20Poly1305Sha256, now))
+    let server =
+        TlsServer.make(serverConfigFor(cert, secret, CipherSuite.ChaCha20Poly1305Sha256, now))
     driveHandshake(client, server)
     assert client.isHandshakeComplete
     assert server.isHandshakeComplete
@@ -199,13 +227,16 @@ test "tls connection survives a KeyUpdate and keeps exchanging data" =
     assert client.isHandshakeComplete
 
     // client requests a key update; server rotates its read key and replies
-    client.sendKeyUpdate(true)
+    client
+        .sendKeyUpdate(true)
     server.receiveData(client.dataToSend())
     // server's responding KeyUpdate back to the client
-    client.receiveData(server.dataToSend())
+    client
+        .receiveData(server.dataToSend())
 
     // data still flows after the rotation, both directions
-    server.sendApplicationData("after rotate".bytes().readonly)
+    server
+        .sendApplicationData("after rotate".bytes().readonly)
     client.receiveData(server.dataToSend())
     match drainClientAppData(client) with
         case Some(data) => assert String.fromBytes(data, 0, data.length) == "after rotate"
@@ -220,7 +251,8 @@ test "tls close_notify is surfaced as ConnectionClosed" =
     let server = TlsServer.make(serverConfigFor(cert, secret, CipherSuite.Aes128GcmSha256, now))
     driveHandshake(client, server)
     // server closes; client should observe ConnectionClosed
-    server.initiateClose()
+    server
+        .initiateClose()
     client.receiveData(server.dataToSend())
     let mutable closed = false
     let mutable cont = true
@@ -233,7 +265,13 @@ test "tls close_notify is surfaced as ConnectionClosed" =
             case Some(_) => ()
     assert closed
 
-function resumeServerConfig(cert: X509Certificate, secret: SecretKey, now: Instant, store: TicketStore, seed: Uint8): TlsServerConfig =
+function resumeServerConfig(
+    cert: X509Certificate,
+    secret: SecretKey,
+    now: Instant,
+    store: TicketStore,
+    seed: Uint8
+): TlsServerConfig =
     TlsServerConfig {
         certificateChain = [cert]
         privateKey = secret
@@ -264,17 +302,18 @@ test "tls session resumption with PSK (full handshake then resumed)" =
     assert store.count >= 1
 
     // second, resumed handshake offering the ticket
-    let resumeConfig = TlsClientConfig {
-        serverName = "example.com"
-        cipherSuites = [CipherSuite.Aes128GcmSha256]
-        keyExchangeGroups = [KeyExchangeGroup.X25519]
-        signatureAlgorithms = [SignatureScheme.Ed25519]
-        trustAnchors = [cert]
-        alpnProtocols = [alpnHttp2]
-        currentTime = now
-        randomSeed = Array<Uint8>.fill(160, 0x03u8)
-        resumptionTicket = tickets.headOption
-    }
+    let resumeConfig =
+        TlsClientConfig {
+            serverName = "example.com"
+            cipherSuites = [CipherSuite.Aes128GcmSha256]
+            keyExchangeGroups = [KeyExchangeGroup.X25519]
+            signatureAlgorithms = [SignatureScheme.Ed25519]
+            trustAnchors = [cert]
+            alpnProtocols = [alpnHttp2]
+            currentTime = now
+            randomSeed = Array<Uint8>.fill(160, 0x03u8)
+            resumptionTicket = tickets.headOption
+        }
     let client2 = TlsClient.make(resumeConfig)
     let server2 = TlsServer.make(resumeServerConfig(cert, secret, now, store, 0x04u8))
     driveHandshake(client2, server2)
@@ -284,7 +323,8 @@ test "tls session resumption with PSK (full handshake then resumed)" =
     assert client2.isResumed
     assert server2.isResumed
     // and the resumed connection carries application data
-    server2.sendApplicationData("resumed!".bytes().readonly)
+    server2
+        .sendApplicationData("resumed!".bytes().readonly)
     client2.receiveData(server2.dataToSend())
     match drainClientAppData(client2) with
         case Some(data) => assert String.fromBytes(data, 0, data.length) == "resumed!"
@@ -300,7 +340,8 @@ test "tls server rejects a tampered (bad MAC) record after handshake" =
     driveHandshake(client, server)
     assert server.isHandshakeComplete
     // client sends application data; corrupt a ciphertext byte before delivery
-    client.sendApplicationData("payload".bytes().readonly)
+    client
+        .sendApplicationData("payload".bytes().readonly)
     let corrupt = client.dataToSend()
     corrupt.set(corrupt.length - 1, corrupt.get(corrupt.length - 1) ^ 0xffu8)
     server.receiveData(corrupt)
@@ -324,7 +365,8 @@ test "tls server rejects an over-length record with record_overflow (FIX 1)" =
     let now = Instant.ofEpochSecond(1748736000i64)
     let server = TlsServer.make(serverConfigFor(cert, secret, CipherSuite.Aes128GcmSha256, now))
     // fragment length 0x4200 = 16896 > 2^14+256 = 16640: record_overflow
-    server.receiveData([|23u8, 0x03u8, 0x03u8, 0x42u8, 0x00u8|])
+    server
+        .receiveData([| 23u8, 0x03u8, 0x03u8, 0x42u8, 0x00u8 |])
     let mutable sawOverflow = false
     let mutable cont = true
     while cont do
@@ -346,7 +388,8 @@ test "tls client rejects an unexpected record before the handshake" =
     let client = TlsClient.make(clientConfigFor(cert, now))
     client.dataToSend()
     // an application_data record (type 23) before any keys exist is illegal
-    client.receiveData([|23u8, 0x03u8, 0x03u8, 0x00u8, 0x01u8, 0xffu8|])
+    client
+        .receiveData([| 23u8, 0x03u8, 0x03u8, 0x00u8, 0x01u8, 0xffu8 |])
     let mutable sawError = false
     let mutable cont = true
     while cont do
@@ -366,17 +409,18 @@ test "tls client rejects a CertificateVerify whose scheme it did not offer (FIX 
     // the client advertises ONLY ecdsa_secp256r1_sha256, but the server signs
     // its CertificateVerify with Ed25519 (RFC 8446 §4.4.3: the scheme must be one
     // the client offered).
-    let clientConfig = TlsClientConfig {
-        serverName = "example.com"
-        cipherSuites = [CipherSuite.Aes128GcmSha256]
-        keyExchangeGroups = [KeyExchangeGroup.X25519]
-        signatureAlgorithms = [SignatureScheme.EcdsaSecp256r1Sha256]
-        trustAnchors = [cert]
-        alpnProtocols = [alpnHttp2]
-        currentTime = now
-        randomSeed = Array<Uint8>.fill(160, 0x01u8)
-        resumptionTicket = None
-    }
+    let clientConfig =
+        TlsClientConfig {
+            serverName = "example.com"
+            cipherSuites = [CipherSuite.Aes128GcmSha256]
+            keyExchangeGroups = [KeyExchangeGroup.X25519]
+            signatureAlgorithms = [SignatureScheme.EcdsaSecp256r1Sha256]
+            trustAnchors = [cert]
+            alpnProtocols = [alpnHttp2]
+            currentTime = now
+            randomSeed = Array<Uint8>.fill(160, 0x01u8)
+            resumptionTicket = None
+        }
     let client = TlsClient.make(clientConfig)
     let server = TlsServer.make(serverConfigFor(cert, secret, CipherSuite.Aes128GcmSha256, now))
     driveHandshake(client, server)

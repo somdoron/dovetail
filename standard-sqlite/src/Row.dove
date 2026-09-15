@@ -8,7 +8,6 @@ package standard.sqlite
 // produces these instead: the names array is fetched once per statement and
 // shared by reference across every row of the result set.
 // =============================================================================
-
 /// A single result row: the result set's column names alongside this row's
 /// values, positionally aligned.
 public record Row =
@@ -30,7 +29,8 @@ module Row =
             if self.names.get(i) == name then
                 found = Some(self.values.get(i))
                 i = self.names.length
-            else i = i + 1
+            else
+                i = i + 1
         match found with
             case Some(value) => Ok(value)
             case None => Error(rangeError("no such column: " ++ name))
@@ -39,19 +39,25 @@ module Row =
     public function at(self, index: Int32): Result<SqlValue, SqliteError> =
         if index < 0 || index >= self.values.length then
             Error(rangeError("column index out of range: " ++ index.format()))
-        else Ok(self.values.get(index))
+        else
+            Ok(self.values.get(index))
 
     /// Fail unless the row is exactly `expected` columns wide.
     ///
     /// Positional decoding checks this first, so a widened `SELECT` list is an
     /// error rather than silently dropping the extra columns.
     public function expectWidth(self, expected: Int32): Result<Unit, SqliteError> =
-        if self.values.length == expected then Ok(())
+        if self.values.length == expected then
+            Ok(())
         else
-            Error(rangeError(
-                "expected " ++ expected.format() ++ " columns, got "
-                    ++ self.values.length.format()
-            ))
+            Error(
+                rangeError(
+                    "expected "
+                        ++ expected.format()
+                        ++ " columns, got "
+                        ++ self.values.length.format()
+                )
+            )
 
     /// The sole value of a single-column row — what the scalar `FromRow`
     /// implementations read, so `fetchOne<Int64>` over `SELECT COUNT(*)` works.
@@ -65,5 +71,4 @@ module Row =
     public property width(self): Int32 = self.values.length
 
 /// SQLITE_RANGE (25) — a column was addressed that the result set doesn't have.
-function rangeError(message: String): SqliteError =
-    SqliteError { code = 25; message = message }
+function rangeError(message: String): SqliteError = SqliteError { code = 25; message = message }

@@ -4,18 +4,14 @@ import standard.io.Async
 
 // Tests for `await` inside a `while` body. The desugar pass lowers these
 // to `Awaitable.whileLoop(cond, body).andThen(_ => rest)` chains.
-
 test "while + await: simple counter sums 1..5" =
     let mutable sum: Int32 = 0
     let program: Async<Unit, Never> = countSumProgram(5, () => sum, (n: Int32) => sum = n)
     program.run()
-    assert sum == 15  // 1+2+3+4+5
+    assert sum == 15 // 1+2+3+4+5
 
-async function countSumProgram(
-    n: Int32,
-    getSum: () => Int32,
-    setSum: (Int32) => Unit
-): Async<Unit, Never> =
+async function countSumProgram(n: Int32, getSum: () => Int32, setSum: (Int32) => Unit):
+    Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < n do
         let v: Int32 = await Async.succeed(i + 1)
@@ -44,20 +40,15 @@ async function zeroIterationsProgram(touch: () => Unit, done: () => Unit): Async
 
 test "while + await: multiple awaits per iteration" =
     let mutable sum: Int32 = 0
-    let program: Async<Unit, Never> = doubleAwaitsProgram(
-        () => sum,
-        (n: Int32) => sum = n
-    )
+    let program: Async<Unit, Never> = doubleAwaitsProgram(() => sum, (n: Int32) => sum = n)
     program.run()
     // i=0: a=1, b=2 → sum += 3 → sum=3
     // i=1: a=2, b=3 → sum += 5 → sum=8
     // i=2: a=3, b=4 → sum += 7 → sum=15
     assert sum == 15
 
-async function doubleAwaitsProgram(
-    getSum: () => Int32,
-    setSum: (Int32) => Unit
-): Async<Unit, Never> =
+async function doubleAwaitsProgram(getSum: () => Int32, setSum: (Int32) => Unit):
+    Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < 3 do
         let a: Int32 = await Async.succeed(i + 1)

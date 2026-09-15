@@ -6,10 +6,9 @@ import standard.json.JsonEncoder
 import standard.json.JsonDecoder
 
 // ── Record: encode, decode, round-trip ─────────────────────────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-record Point =
+ record Point =
     x: Int32
     y: Int32
 
@@ -50,15 +49,14 @@ test "derive: Point wrong root type is an error" =
         case _ => assert false
 
 // ── Nested record ──────────────────────────────────────────────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-record Inner =
+ record Inner =
     n: Int32
 
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-record Outer =
+ record Outer =
     inner: Inner
     tag: String
 
@@ -71,10 +69,9 @@ test "derive: nested records round-trip" =
     assert q.tag == "hi"
 
 // ── Newtype (transparent) ──────────────────────────────────────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-newtype Cents = Int32
+ newtype Cents = Int32
 
 test "derive: newtype encodes transparently" =
     let c = Cents(199)
@@ -95,10 +92,9 @@ test "derive: newtype round-trip" =
     assert decoded.require.value == 7
 
 // ── Enum: no-payload variant ───────────────────────────────────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-enum Color =
+ enum Color =
     Red
     Green
     Blue
@@ -126,10 +122,9 @@ test "derive: enum unknown variant is an error" =
     assert result.isError
 
 // ── Enum: tuple payload (single and multi) ─────────────────────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-enum Shape =
+ enum Shape =
     Single(Int32)
     Pair(Int32, String)
 
@@ -149,9 +144,7 @@ test "derive: enum n-tuple encode" =
     assert j.encode() == "{\"type\":\"Pair\",\"value\":[3,\"hi\"]}"
 
 test "derive: enum n-tuple decode" =
-    let result = Shape.fromJson(
-        Json.parse("{\"type\":\"Pair\",\"value\":[10,\"world\"]}").require
-    )
+    let result = Shape.fromJson(Json.parse("{\"type\":\"Pair\",\"value\":[10,\"world\"]}").require)
     assert result.isOk
     match result.require with
         case Shape.Pair(n, s) =>
@@ -160,9 +153,7 @@ test "derive: enum n-tuple decode" =
         case _ => assert false
 
 test "derive: enum n-tuple wrong arity is an error" =
-    let result = Shape.fromJson(
-        Json.parse("{\"type\":\"Pair\",\"value\":[1]}").require
-    )
+    let result = Shape.fromJson(Json.parse("{\"type\":\"Pair\",\"value\":[1]}").require)
     assert result.isError
 
 test "derive: enum round-trip tuple variants" =
@@ -178,23 +169,19 @@ test "derive: enum round-trip tuple variants" =
         case _ => assert false
 
 // ── Enum: record-style variant (internally tagged hoist) ───────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-enum Event =
+ enum Event =
     Heartbeat
     Login { user: String; ms: Int32 }
     Logout { user: String }
 
 test "derive: enum record-style encode" =
     let j = Event.Login { user = "alice"; ms = 1700000000 }.toJson()
-    assert j.encode() ==
-        "{\"type\":\"Login\",\"user\":\"alice\",\"ms\":1700000000}"
+    assert j.encode() == "{\"type\":\"Login\",\"user\":\"alice\",\"ms\":1700000000}"
 
 test "derive: enum record-style decode" =
-    let result = Event.fromJson(
-        Json.parse("{\"type\":\"Logout\",\"user\":\"bob\"}").require
-    )
+    let result = Event.fromJson(Json.parse("{\"type\":\"Logout\",\"user\":\"bob\"}").require)
     assert result.isOk
     match result.require with
         case Event.Logout { user } => assert user == "bob"
@@ -214,10 +201,9 @@ test "derive: enum mixed-variant round-trip" =
         i = i + 1
 
 // ── Generic record with type-parameter bound ───────────────────────────
-
 @derive(JsonEncoder)
 @derive(JsonDecoder)
-record Box<T> =
+ record Box<T> =
     value: T
 
 test "derive: generic Box<Int32> round-trip" =

@@ -5,7 +5,6 @@ import standard.prelude.Array
 /// Key material typed by cryptographic role. Role-based typing (rather than
 /// per-algorithm types) prevents the most dangerous misuse — swapping a key for
 /// a nonce, or a symmetric key for an asymmetric one — without a type explosion.
-
 /// A symmetric key, used by AEAD ciphers, MACs, and KDFs.
 public newtype SymmetricKey = Array<Uint8>
 

@@ -23,7 +23,8 @@ module Queue<T> =
 
     /// Dequeues the front element, returning a tuple of the value and the remaining queue, or None if empty.
     public function dequeue(self): Option<(T, Queue<T>)> =
-        if self.size == 0 then None
+        if self.size == 0 then
+            None
         else
             let q = ensureFront(self)
             let value = q.front.head
@@ -32,7 +33,8 @@ module Queue<T> =
 
     /// Returns the front element without removing it, or None if empty.
     public property peek(self): Option<T> =
-        if self.size == 0 then None
+        if self.size == 0 then
+            None
         else
             let q = ensureFront(self)
             Some(q.front.head)
@@ -56,16 +58,16 @@ class QueueIterator<T>(mutable front: List<T>, mutable rear: List<T>) implements
                         Some(h)
                     case Nil => None
 
-implement <T> Iterable<T> for Queue<T> =
-    public function iterator(self): Iterator<T> =
-        QueueIterator(self.front, self.rear.reverse())
+implement<T> Iterable<T> for Queue<T> =
+    public function iterator(self): Iterator<T> = QueueIterator(self.front, self.rear.reverse())
 
 /// When front is empty, reverse rear into front.
 function ensureFront<T>(q: Queue<T>): Queue<T> =
     if q.front.isEmpty then
         let nilList: List<T> = List.empty
         Queue { front = q.rear.reverse(); rear = nilList; size = q.size }
-    else q
+    else
+        q
 
 test "Queue empty" =
     let q: Queue<Int32> = Queue.empty()

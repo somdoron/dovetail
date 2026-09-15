@@ -22,7 +22,6 @@ package standard.io
 // until it finishes. Keep release paths bounded: a finalizer that blocks
 // forever now blocks its fiber forever.
 // =============================================================================
-
 module Resource<T, E> =
     /// Delay construction and acquisition, preserving the produced finalizer.
     internal function defer(body: ByName<Resource<T, E>>, trace: SourceLocation): Resource<T, E> =
@@ -34,13 +33,16 @@ module Resource<T, E> =
     /// Build a `Resource` from explicit acquire / release thunks. `acquire`
     /// runs when the resource is used; the resulting finalizer captures the
     /// acquired value and calls `release(value)` on scope exit.
-    public function make(acquire: () => Async<T, E>, release: (T) => Async<Unit, Never>): Resource<T, E> =
+    public function make(acquire: () => Async<T, E>, release: (T) => Async<Unit, Never>):
+        Resource<T, E> =
         let suspended: Async<Async<T, E>, E> = Async.thunk(acquire)
         let acquisition: Async<T, E> = suspended.andThen<T>((program: Async<T, E>) => program)
         let acquired: Async<(T, Finalizer), E> =
-            acquisition.map<(T, Finalizer)>((value: T) =>
-                let finalizer: Finalizer = () => release(value)
-                (value, finalizer)
+            acquisition
+                .map<(T, Finalizer)>(
+                (value: T) =>
+                    let finalizer: Finalizer = () => release(value)
+                    (value, finalizer)
             )
         Resource(acquired)
 
@@ -87,10 +89,8 @@ module Resource<T, E> =
     /// calls `finalizerOf` and passes the acquired value through, so it needs no
     /// erased-tuple handling of its own.
     public function attachToScope(self): Async<T, E> =
-        let node: Async<Any, Any> = Attach<Any, Any>(
-            self.value,
-            (pair: Any) => (pair as (T, Finalizer))._1
-        )
+        let node: Async<Any, Any> =
+            Attach<Any, Any>(self.value, (pair: Any) => (pair as (T, Finalizer))._1)
         let loc = SourceLocation { file = ""; line = 0; column = 0; functionName = "" }
         let projected: Async<T, E> =
             Map<T, E>(node, (pair: Any) => (pair as (T, Finalizer))._0, loc)
@@ -99,8 +99,7 @@ module Resource<T, E> =
     /// Internal: project the underlying acquisition `Async` (`(value, finalizer)`
     /// pair). Same-package code that needs the raw acquisition — e.g.
     /// `Switchable` — goes through here rather than the private inner.
-    internal function acquire(resource: Resource<T, E>): Async<(T, Finalizer), E> =
-        resource.value
+    internal function acquire(resource: Resource<T, E>): Async<(T, Finalizer), E> = resource.value
 
     /// Pure value as a `Resource` — acquire returns the value, finalizer is a
     /// no-op. Identity for `andThen` and a base case in resource composition.
@@ -126,8 +125,8 @@ module Resource<T, E> =
     /// This is `Async.orPanic` lifted to the acquisition — the whole of a
     /// `Resource` is one `Async`, so there is nothing else to do to it. The
     /// finalizer is untouched: a resource that fails to acquire has none.
-    public function orPanic(self): Resource<T, Never> where E : Display =
-        Resource(self.value.orPanic())
+    public function orPanic(self): Resource<T, Never>
+        where E: Display = Resource(self.value.orPanic())
 
     /// `orPanic` with the message supplied by the caller — for an `E` with no
     /// `Display`, or where the call site can name the broken invariant more
@@ -139,9 +138,7 @@ module Resource<T, E> =
     /// through unchanged — `f` is a pure projection over the live value.
     public function map<U>(self, f: (T) => U): Resource<U, E> =
         let mapped: Async<(U, Finalizer), E> =
-            self.value.map<(U, Finalizer)>((pair: (T, Finalizer)) =>
-                (f(pair._0), pair._1)
-            )
+            self.value.map<(U, Finalizer)>((pair: (T, Finalizer)) => (f(pair._0), pair._1))
         Resource(mapped)
 
     /// Chain a dependent resource: outer acquires `T`, `f(t)` constructs the
@@ -149,23 +146,36 @@ module Resource<T, E> =
     /// resource first, then the outer — LIFO.
     public function andThen<U>(self, f: (T) => Resource<U, E>): Resource<U, E> =
         let chained: Async<(U, Finalizer), E> =
-            self.value.andThen<(U, Finalizer)>((outer: (T, Finalizer)) =>
-                f(outer._0).value.foldCause<(U, Finalizer), E>(
-                    // If the dependent (inner) acquire FAILS, the outer resource is already
-                    // live — release it before re-raising, or its finalizer (the only thing
-                    // that frees the underlying handle) is dropped and the resource leaks.
-                    // Without this, a failed `Tcp.connect`/`bind` leaks the socket it created
-                    // (a `use` only brackets the whole composite acquire, which never yielded).
-                    // The compensating release runs UNINTERRUPTIBLY — a `use` under a
-                    // `.timeout` can be interrupted mid-compensation, and a finalizer with
-                    // suspension points (a flushing close, a TLS close_notify) must not be cut
-                    // in half, exactly as a normal bracket release is masked.
-                    (cause: Cause<E>) => outer._1().uninterruptible().andThen<(U, Finalizer)>((_: Unit) => Async.fromCause(cause)),
-                    (inner: (U, Finalizer)) =>
-                        let combined: Finalizer = () =>
-                            inner._1().andThen<Unit>((_: Unit) => outer._1())
-                        Async.succeed((inner._0, combined))
-                )
+            self
+                .value
+                .andThen<(U, Finalizer)>(
+                (outer: (T, Finalizer)) =>
+                    f(outer._0)
+                        .value
+                        .foldCause<(U, Finalizer), E>(
+                        (
+                            // If the dependent (inner) acquire FAILS, the outer resource is already
+                            // live — release it before re-raising, or its finalizer (the only thing
+                            // that frees the underlying handle) is dropped and the resource leaks.
+                            // Without this, a failed `Tcp.connect`/`bind` leaks the socket it created
+                            // (a `use` only brackets the whole composite acquire, which never yielded).
+                            // The compensating release runs UNINTERRUPTIBLY — a `use` under a
+                            // `.timeout` can be interrupted mid-compensation, and a finalizer with
+                            // suspension points (a flushing close, a TLS close_notify) must not be cut
+                            // in half, exactly as a normal bracket release is masked.
+                            (
+                                cause: Cause<E>
+                            ) =>
+                                outer
+                                    ._1()
+                                    .uninterruptible()
+                                    .andThen<(U, Finalizer)>((_: Unit) => Async.fromCause(cause))
+                        ),
+                        (inner: (U, Finalizer)) =>
+                            let combined: Finalizer =
+                                () => inner._1().andThen<Unit>((_: Unit) => outer._1())
+                            Async.succeed((inner._0, combined))
+                    )
             )
         Resource(chained)
 
@@ -173,17 +183,32 @@ module Resource<T, E> =
     /// Both acquired (self first, then other); release is LIFO.
     public function zip<U>(self, other: Resource<U, E>): Resource<(T, U), E> =
         let zipped: Async<((T, U), Finalizer), E> =
-            self.value.andThen<((T, U), Finalizer)>((left: (T, Finalizer)) =>
-                other.value.foldCause<((T, U), Finalizer), E>(
-                    // Release the already-acquired left resource if the right acquire fails,
-                    // so its finalizer is not dropped (see `andThen`); uninterruptibly, so an
-                    // interrupt mid-compensation cannot leave the release half-done.
-                    (cause: Cause<E>) => left._1().uninterruptible().andThen<((T, U), Finalizer)>((_: Unit) => Async.fromCause(cause)),
-                    (right: (U, Finalizer)) =>
-                        let combined: Finalizer = () =>
-                            right._1().andThen<Unit>((_: Unit) => left._1())
-                        Async.succeed(((left._0, right._0), combined))
-                )
+            self
+                .value
+                .andThen<((T, U), Finalizer)>(
+                (left: (T, Finalizer)) =>
+                    other
+                        .value
+                        .foldCause<((T, U), Finalizer), E>(
+                        (
+                            // Release the already-acquired left resource if the right acquire fails,
+                            // so its finalizer is not dropped (see `andThen`); uninterruptibly, so an
+                            // interrupt mid-compensation cannot leave the release half-done.
+                            (
+                                cause: Cause<E>
+                            ) =>
+                                left
+                                    ._1()
+                                    .uninterruptible()
+                                    .andThen<((T, U), Finalizer)>(
+                                    (_: Unit) => Async.fromCause(cause)
+                                )
+                        ),
+                        (right: (U, Finalizer)) =>
+                            let combined: Finalizer =
+                                () => right._1().andThen<Unit>((_: Unit) => left._1())
+                            Async.succeed(((left._0, right._0), combined))
+                    )
             )
         Resource(zipped)
 
@@ -197,19 +222,22 @@ module Resource<T, E> =
     /// releasing them all only at scope exit — for a long-lived loop, an unbounded
     /// accumulation. The loop as a whole is a resource with a no-op finalizer.
     public function whileLoop(cond: () => Bool, body: () => Resource<Unit, E>): Resource<Unit, E> =
-        Resource<Unit, E>.make(
-            () => Resource<Unit, E>.runWhileLoop(cond, body),
-            (_: Unit) => Async.succeed(()))
+        Resource<Unit, E>
+            .make(() => Resource<Unit, E>.runWhileLoop(cond, body), (_: Unit) => Async.succeed(()))
 
-    internal async function runWhileLoop(cond: () => Bool, body: () => Resource<Unit, E>): Async<Unit, E> =
+    internal async function runWhileLoop(cond: () => Bool, body: () => Resource<Unit, E>):
+        Async<Unit, E> =
         while cond() do
-            let emptyBody: ((Unit, Finalizer)) => Async<Unit, E> = (pair: (Unit, Finalizer)) =>
-                let noop: Async<Unit, E> = Async.succeed(())
-                noop
-            await Async<Unit, E>.bracket<(Unit, Finalizer)>(
+            let emptyBody: ((Unit, Finalizer)) => Async<Unit, E> =
+                (pair: (Unit, Finalizer)) =>
+                    let noop: Async<Unit, E> = Async.succeed(())
+                    noop
+            await Async<Unit, E>
+                .bracket<(Unit, Finalizer)>(
                 Resource<Unit, E>.acquire(body()),
                 (pair: (Unit, Finalizer)) => pair._1(),
-                emptyBody)
+                emptyBody
+            )
         ()
 
     /// Acquire this resource in the **current** fiber — so acquisition is
@@ -238,13 +266,17 @@ module Resource<T, E> =
     /// close in half. Spelled with the `Bracket`/`Succeed` constructors (like `use`
     /// below) with the body's concrete result types.
     public function forkAndUse<T2, E2>(self, body: (T) => Async<T2, E2>): Async<Fiber<T2, E2>, E> =
-        self.value.andThen<Fiber<T2, E2>>((pair: (T, Finalizer)) =>
-            let scoped: Async<T2, E2> = Bracket<T2, E2>(
-                Succeed(pair),
-                (p: Any, _: Result<Any, Cause<Any>>) => (p as (T, Finalizer))._1(),
-                (p: Any) => body((p as (T, Finalizer))._0)
-            )
-            scoped.fork()
+        self
+            .value
+            .andThen<Fiber<T2, E2>>(
+            (pair: (T, Finalizer)) =>
+                let scoped: Async<T2, E2> =
+                    Bracket<T2, E2>(
+                        Succeed(pair),
+                        (p: Any, _: Result<Any, Cause<Any>>) => (p as (T, Finalizer))._1(),
+                        (p: Any) => body((p as (T, Finalizer))._0)
+                    )
+                scoped.fork()
         )
 
     /// Wrap `initial` in a `Switchable` whose currently-held resource can be
@@ -253,12 +285,15 @@ module Resource<T, E> =
     /// current at scope exit. Modeled on ZIO's `ZManaged.switchable`.
     public function switchable(initial: Resource<T, E>): Resource<Switchable<T, E>, E> =
         let acquired: Async<(Switchable<T, E>, Finalizer), E> =
-            initial.value.map<(Switchable<T, E>, Finalizer)>((pair: (T, Finalizer)) =>
-                let switch = Switchable<T, E>(pair._0, pair._1)
-                // The switch's own finalizer defers to whatever finalizer is
-                // current at release time (after any number of `replace`s).
-                let finalizer: Finalizer = () => switch.currentFinalizer()
-                (switch, finalizer)
+            initial
+                .value
+                .map<(Switchable<T, E>, Finalizer)>(
+                (pair: (T, Finalizer)) =>
+                    let switch = Switchable<T, E>(pair._0, pair._1)
+                    // The switch's own finalizer defers to whatever finalizer is
+                    // current at release time (after any number of `replace`s).
+                    let finalizer: Finalizer = () => switch.currentFinalizer()
+                    (switch, finalizer)
             )
         Resource(acquired)
 
@@ -300,16 +335,21 @@ module Switchable<T, E> =
 /// so a `self.value.mapError(...)` / `Async.bracket(...)` here would be emitted
 /// with unsubstituted type params and fail codegen. Constructors and casts are
 /// substitution-safe, so we spell the bracket out with them.
-implement <T, E> Usable<T, E> for Resource<T, E> =
+implement<T, E> Usable<T, E> for Resource<T, E> =
     type Wrapped<U, E2> = Async<U, E2>
-    function use<U, E2>(self: Resource<T, E>, f: (T) => Async<U, E2>, errorF: (E) => E2): Async<U, E2> =
+
+    function use<U, E2>(self: Resource<T, E>, f: (T) => Async<U, E2>, errorF: (E) => E2):
+        Async<U, E2> =
         let acquired: Async<Any, Any> = Resource.acquire(self)
         // mapError(errorF), inlined via FoldCause: lift acquire-failure `E` to `E2`.
-        let onCause: (Cause<Any>) => Async<Any, Any> = (cause: Cause<Any>) =>
-            match cause with
-                case Cause.Failed(error, trace) => FailCause<Any>(Cause.Failed(errorF(error as E), trace))
-                case Cause.Panicked(message, trace) => FailCause<Any>(Cause.Panicked(message, trace))
-                case Cause.Interrupted(trace) => FailCause<Any>(Cause.Interrupted(trace))
+        let onCause: (Cause<Any>) => Async<Any, Any> =
+            (cause: Cause<Any>) =>
+                match cause with
+                    case Cause.Failed(error, trace) =>
+                        FailCause<Any>(Cause.Failed(errorF(error as E), trace))
+                    case Cause.Panicked(message, trace) =>
+                        FailCause<Any>(Cause.Panicked(message, trace))
+                    case Cause.Interrupted(trace) => FailCause<Any>(Cause.Interrupted(trace))
         let acquiredE2: Async<Any, Any> =
             FoldCause<Any, Any>(acquired, onCause, (value: Any) => Succeed(value))
         // Acquire the pair; run the finalizer on release, the body on the value.
@@ -318,9 +358,10 @@ implement <T, E> Usable<T, E> for Resource<T, E> =
         // the concrete tuple type, so they match the value at runtime.
         // The `use` block is a fiber scope, so fibers forked inside it are
         // finalized before the finalizer runs.
-        let bracket: Async<U, E2> = Bracket<U, E2>(
-            acquiredE2,
-            (pair: Any, _: Result<Any, Cause<Any>>) => (pair as (T, Finalizer))._1(),
-            (pair: Any) => f((pair as (T, Finalizer))._0)
-        )
+        let bracket: Async<U, E2> =
+            Bracket<U, E2>(
+                acquiredE2,
+                (pair: Any, _: Result<Any, Cause<Any>>) => (pair as (T, Finalizer))._1(),
+                (pair: Any) => f((pair as (T, Finalizer))._0)
+            )
         bracket

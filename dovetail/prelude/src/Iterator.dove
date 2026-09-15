@@ -8,13 +8,14 @@ public interface Iterator<T> =
 
 class ArrayIterator<T>(array: Array<T>, mutable index: Int32) implements Iterator<T> =
     public function next(self): Option<T> =
-        if self.index == self.array.length then None
+        if self.index == self.array.length then
+            None
         else
             let current = self.array.get(self.index)
             self.index = self.index + 1
             Some(current)
 
-implement <T> Iterable<T> for Array<T> =
+implement<T> Iterable<T> for Array<T> =
     public function iterator(self): Iterator<T> = ArrayIterator<T>(self, 0)
 
 module Iterator<T> =

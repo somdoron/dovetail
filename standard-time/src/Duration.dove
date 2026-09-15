@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a time-based duration with second and nanosecond precision.
 @derive(Equatable)
-public record Duration =
+ public record Duration =
     /// The number of seconds in this duration.
     seconds: Int64
     /// The nanosecond adjustment within the second (0 to 999,999,999).
@@ -23,8 +23,7 @@ function durationNormalize(seconds: Int64, nanos: Int32): Duration =
 /// Factory methods and operations for Duration.
 module Duration =
     /// Creates a Duration representing the given number of seconds.
-    public function ofSeconds(s: Int64): Duration =
-        Duration { seconds = s; nanos = 0 }
+    public function ofSeconds(s: Int64): Duration = Duration { seconds = s; nanos = 0 }
 
     /// Creates a Duration from a millisecond value, normalizing into seconds and nanos.
     public function ofMillis(ms: Int64): Duration =
@@ -33,12 +32,10 @@ module Duration =
         durationNormalize(s, n)
 
     /// Creates a Duration representing the given number of minutes.
-    public function ofMinutes(m: Int64): Duration =
-        Duration { seconds = m * 60i64; nanos = 0 }
+    public function ofMinutes(m: Int64): Duration = Duration { seconds = m * 60i64; nanos = 0 }
 
     /// Creates a Duration representing the given number of hours.
-    public function ofHours(h: Int64): Duration =
-        Duration { seconds = h * 3600i64; nanos = 0 }
+    public function ofHours(h: Int64): Duration = Duration { seconds = h * 3600i64; nanos = 0 }
 
     /// Creates a Duration from a nanosecond value, normalizing into seconds and nanos.
     public function ofNanos(n: Int64): Duration =
@@ -47,8 +44,7 @@ module Duration =
         durationNormalize(s, ns)
 
     /// Returns a zero-length Duration.
-    public function zero(): Duration =
-        Duration { seconds = 0i64; nanos = 0 }
+    public function zero(): Duration = Duration { seconds = 0i64; nanos = 0 }
 
     /// Returns a new Duration that is the sum of this and the other Duration.
     public function plus(self, other: Duration): Duration =
@@ -60,26 +56,20 @@ module Duration =
 
     /// Returns the absolute value of this Duration.
     public function abs(self): Duration =
-        if self.isNegative() then
-            Duration.zero().minus(self)
-        else
-            self
+        if self.isNegative() then Duration.zero().minus(self) else self
 
     /// Returns true if this Duration is negative.
-    public function isNegative(self): Bool =
-        self.seconds < 0i64
+    public function isNegative(self): Bool = self.seconds < 0i64
 
     /// Returns true if this Duration has zero length.
-    public function isZero(self): Bool =
-        self.seconds == 0i64 && self.nanos == 0
+    public function isZero(self): Bool = self.seconds == 0i64 && self.nanos == 0
 
     /// Converts this Duration to total milliseconds.
     public function toMillis(self): Int64 =
         self.seconds * 1000i64 + (self.nanos / 1000000).toInt64()
 
     /// Returns the seconds component of this Duration.
-    public function toSeconds(self): Int64 =
-        self.seconds
+    public function toSeconds(self): Int64 = self.seconds
 
 implement Comparable for Duration =
     /// Compares two Durations by seconds, then by nanoseconds.
@@ -95,13 +85,13 @@ implement Display for Duration =
     public function format(self: Duration): String =
         let s = self.seconds
         let n = self.nanos
-        if n == 0 then s.format() ++ "s"
-        else s.format() ++ "." ++ padZero(n, 9) ++ "s"
+        if n == 0 then s.format() ++ "s" else s.format() ++ "." ++ padZero(n, 9) ++ "s"
 
 function padZero(n: Int32, width: Int32): String =
     let s = n.format()
     let len = s.length
-    if len >= width then s
+    if len >= width then
+        s
     else
         let pad = width - len
         let mutable result = ""

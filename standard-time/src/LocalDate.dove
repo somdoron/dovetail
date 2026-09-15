@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a date without a time-zone, such as 2024-03-15.
 @derive(Equatable)
-public record LocalDate =
+ public record LocalDate =
     year: Year
     month: Month
     day: Day
@@ -14,19 +14,30 @@ function isLeapYearImpl(year: Int32): Bool =
     else true
 
 function lengthOfMonthImpl(year: Int32, month: Int32): Int32 =
-    if month == 1 then 31
+    if month == 1 then
+        31
     else if month == 2 then
         if isLeapYearImpl(year) then 29 else 28
-    else if month == 3 then 31
-    else if month == 4 then 30
-    else if month == 5 then 31
-    else if month == 6 then 30
-    else if month == 7 then 31
-    else if month == 8 then 31
-    else if month == 9 then 30
-    else if month == 10 then 31
-    else if month == 11 then 30
-    else 31
+    else if month == 3 then
+        31
+    else if month == 4 then
+        30
+    else if month == 5 then
+        31
+    else if month == 6 then
+        30
+    else if month == 7 then
+        31
+    else if month == 8 then
+        31
+    else if month == 9 then
+        30
+    else if month == 10 then
+        31
+    else if month == 11 then
+        30
+    else
+        31
 
 function normalizeDate(year: Int32, month: Int32, day: Int32): LocalDate =
     let mutable y = year
@@ -84,8 +95,7 @@ module LocalDate =
         LocalDate { year = Year(y); month = self.month; day = Day(d) }
 
     /// Returns true if this date falls in a leap year.
-    public function isLeapYear(self): Bool =
-        isLeapYearImpl(self.year.value)
+    public function isLeapYear(self): Bool = isLeapYearImpl(self.year.value)
 
     /// Returns the number of days in this date's month.
     public function lengthOfMonth(self): Int32 =
@@ -105,7 +115,11 @@ implement Comparable for LocalDate =
 implement Display for LocalDate =
     /// Formats this date in ISO-8601 format (yyyy-MM-dd).
     public function format(self: LocalDate): String =
-        padZero(self.year.value, 4) ++ "-" ++ padZero(self.month.value, 2) ++ "-" ++ padZero(self.day.value, 2)
+        padZero(self.year.value, 4)
+            ++ "-"
+            ++ padZero(self.month.value, 2)
+            ++ "-"
+            ++ padZero(self.day.value, 2)
 
 test "LocalDate of" =
     let d = LocalDate.of(2024, 3, 15)

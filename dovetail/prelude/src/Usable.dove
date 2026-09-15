@@ -24,8 +24,5 @@ package standard.prelude
 /// the rest of the current block as the continuation `f`.
 public trait Usable<T, E> =
     type Wrapped<U, E2>
-    function use<U, E2>(
-        self: Self,
-        f: (T) => Wrapped<U, E2>,
-        errorF: (E) => E2
-    ): Wrapped<U, E2>
+
+    function use<U, E2>(self: Self, f: (T) => Wrapped<U, E2>, errorF: (E) => E2): Wrapped<U, E2>

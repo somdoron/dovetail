@@ -7,8 +7,6 @@ import standard.wasi.CopyResult
 import standard.wasi.IoError
 import standard.text.Charset
 
-
-
 /// The buffer one p3 copy asks for: 64 KiB.
 ///
 /// Package-internal. It is the size this library allocates for one copy, not a
@@ -124,7 +122,8 @@ let readChunkBytes: Int64 = 65536i64
 ///     stream out from under me" is answered by which side of the close the
 ///     scheduler put you on, and the losing side reports a truncated body as a
 ///     complete one.
-public abstract class AsyncInputStream<E> where E : IoError =
+public abstract class AsyncInputStream<E>
+    where E: IoError =
     /// Read up to `bytesLength` bytes: ONE transport copy.
     ///
     /// FEWER bytes than asked for is ordinary and is not a signal — a socket
@@ -147,25 +146,29 @@ public abstract class AsyncInputStream<E> where E : IoError =
     public final async function read(self, bytesLength: Int64): Async<Array<Uint8>, E> =
         if bytesLength < 0i64 then
             panic "input stream: read length must not be negative, got " ++ bytesLength.format()
-        else if bytesLength == 0i64 then
-            // The health check is the whole of a zero-length read: nothing is
-            // asked for, so there is nothing that could be preferred to the
-            // failure. The positive case below goes to the transport WITHOUT it,
-            // because a dead transport may still be holding bytes that are the
-            // caller's by (3).
-            await self.checkAlive()
-            Array<Uint8>.empty()
         else
-            let chunk = await self.readAvailable(bytesLength)
-            // (8): a subclass that hands back more than it was asked for has
-            // taken those bytes off its transport and there is nothing this
-            // class can do with them, so it is reported as the bug it is — named
-            // and at the moment it happens, rather than as a wrong length
-            // somewhere above.
-            if chunk.length.toInt64() > bytesLength then
-                panic "input stream: a subclass returned " ++ chunk.length.format() ++ " bytes for a read of " ++ bytesLength.format()
+            if bytesLength == 0i64 then
+                // The health check is the whole of a zero-length read: nothing is
+                // asked for, so there is nothing that could be preferred to the
+                // failure. The positive case below goes to the transport WITHOUT it,
+                // because a dead transport may still be holding bytes that are the
+                // caller's by (3).
+                await self.checkAlive()
+                Array<Uint8>.empty()
             else
-                chunk
+                let chunk = await self.readAvailable(bytesLength)
+                // (8): a subclass that hands back more than it was asked for has
+                // taken those bytes off its transport and there is nothing this
+                // class can do with them, so it is reported as the bug it is — named
+                // and at the moment it happens, rather than as a wrong length
+                // somewhere above.
+                if chunk.length.toInt64() > bytesLength then
+                    panic "input stream: a subclass returned "
+                        ++ chunk.length.format()
+                        ++ " bytes for a read of "
+                        ++ bytesLength.format()
+                else
+                    chunk
 
     /// One transport read. `bytesLength` is strictly positive — the base
     /// validates it and handles both edges — and keeping (1) is this method's
@@ -221,20 +224,17 @@ public abstract class AsyncInputStream<E> where E : IoError =
         let mutable done = false
         while !done do
             let chunk = await self.read(readChunkBytes)
-            if chunk.length == 0 then
-                done = true
-            else
-                accumulated.append(chunk)
+            if chunk.length == 0 then done = true else accumulated.append(chunk)
         accumulated.toArray()
 
     /// Read until EOF and decode the full content as the given charset.
     /// v1 only supports UTF-8.
     public final async function readStringAll(self, charset: Charset): Async<String, E> =
         match charset with
-        case Charset.Utf8 =>
-            let bytes = await self.readAll()
-            String.fromBytes(bytes, 0, bytes.length)
-        case _ => panic "unsupported charset"
+            case Charset.Utf8 =>
+                let bytes = await self.readAll()
+                String.fromBytes(bytes, 0, bytes.length)
+            case _ => panic "unsupported charset"
 
 /// Where a `Wasi*Stream` is in its life.
 ///
@@ -307,7 +307,8 @@ internal class WasiInputStream<E>(
     // Held across a whole read. It is the state check that needs it, not the
     // ABI — see `readAvailable`.
     readLock: Mutex
-) extends AsyncInputStream<E>() where E : IoError =
+) extends AsyncInputStream<E>()
+    where E: IoError =
     // Every state but `Open` answers from the latch — on the way in, and again
     // before every posted copy (see the loop), because a sibling fiber can close
     // the stream between two copies. The alternative is not a wrong answer but a
@@ -329,12 +330,16 @@ internal class WasiInputStream<E>(
     // nothing, so it has nothing to be ordered against, and making it wait behind
     // a read parked on a peer that never sends would turn the one operation that
     // answers immediately into one that never does.
-    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, E> =
+    protected override async function readAvailable(self, bytesLength: Int64):
+        Async<Array<Uint8>, E> =
         // `orPanicWith`: the only way to fail this acquire is for this fiber to
         // hold the lock already, and nothing here reads a stream from inside a
         // read of it. That is an invariant of this class rather than a condition
         // a caller could act on, so it stays out of `read`'s signature.
-        let _held = use self.readLock.acquire().orPanicWith((_: MutexError) => "WasiInputStream.read re-entered its own read lock")
+        let _held = use self
+            .readLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "WasiInputStream.read re-entered its own read lock")
         match self.state with
             case StreamState.Open => await self.readOpen(bytesLength)
             case _ => await Async.fromResult(self.latchedResult())
@@ -374,7 +379,8 @@ internal class WasiInputStream<E>(
     async function readOpen(self, bytesLength: Int64): Async<Array<Uint8>, E> =
         // One chunk per copy. See `readChunkBytes`: this number is a linear
         // memory allocation, not a limit on the answer.
-        let capacity = if bytesLength > readChunkBytes then readChunkBytes.toInt32() else bytesLength.toInt32()
+        let capacity =
+            if bytesLength > readChunkBytes then readChunkBytes.toInt32() else bytesLength.toInt32()
         let mutable delivered = Array<Uint8>.empty()
         let mutable emptyCopies = 0
         let mutable posting = true
@@ -408,15 +414,15 @@ internal class WasiInputStream<E>(
                     // So the failure channel here means one thing: this fiber was
                     // detached from the handle by a `close`. That is (4), it is
                     // not the transport, and it is not latched.
-                    let copied = await Async<Array<Uint8>, E>
-                        .streamRead(self.source, capacity)
+                    let copied = await Async<Array<Uint8>, E>.streamRead(self.source, capacity)
                     delivered = copied._1
                     match copied._2 with
                         case Some(error) =>
                             // The stream ended and the result future said why.
                             // Latch and stop: the tail hands over whatever this
                             // copy carried, and the NEXT read reports the reason.
-                            self.latchEnding(Some(error))
+                            self
+                                .latchEnding(Some(error))
                             posting = false
                         case None =>
                             if copied._0 == CopyResult.Dropped then
@@ -429,44 +435,48 @@ internal class WasiInputStream<E>(
                                 let noReason: Option<E> = None
                                 self.latchEnding(noReason)
                                 posting = false
-                            else if delivered.length > 0 then
-                                // Bytes, and the stream is still open. Whether
-                                // the copy completed or was cancelled on the way,
-                                // they are the caller's — (3) again, and a cancel
-                                // that lost its race is exactly the copy that
-                                // carries some.
-                                posting = false
-                            else if copied._0 == CopyResult.Cancelled then
-                                // Nothing came of it, and this is the one result
-                                // of the three that is about THIS OPERATION
-                                // rather than the transport: the copy was
-                                // cancelled out from under this fiber. Reported
-                                // with the same value the runtime raises in a
-                                // fiber it detaches. Retrying would send a
-                                // cancelled fiber back around a loop whose
-                                // patience runs out in a panic; returning empty
-                                // would report an interrupt as a clean end of
-                                // stream.
-                                await Async<Unit, E>.fail(self.source.canceledError)
                             else
-                                // A copy that transferred nothing is not an end
-                                // of stream — only `Dropped` ends one — but every
-                                // caller reads an empty array as EOF, so handing
-                                // this back would stop `readAll` with a truncated
-                                // body. The stream is open and the bytes are still
-                                // coming: post again, boundedly. See
-                                // `emptyCopyLimit` for why there is a bound.
-                                emptyCopies = noteCopyProgress(emptyCopies, delivered.length, "input stream: a host copy transferred no bytes and did not end the stream")
-                case _ =>
-                    posting = false
+                                if delivered.length > 0 then
+                                    // Bytes, and the stream is still open. Whether
+                                    // the copy completed or was cancelled on the way,
+                                    // they are the caller's — (3) again, and a cancel
+                                    // that lost its race is exactly the copy that
+                                    // carries some.
+                                    posting = false
+                                else
+                                    if copied._0 == CopyResult.Cancelled then
+                                        // Nothing came of it, and this is the one result
+                                        // of the three that is about THIS OPERATION
+                                        // rather than the transport: the copy was
+                                        // cancelled out from under this fiber. Reported
+                                        // with the same value the runtime raises in a
+                                        // fiber it detaches. Retrying would send a
+                                        // cancelled fiber back around a loop whose
+                                        // patience runs out in a panic; returning empty
+                                        // would report an interrupt as a clean end of
+                                        // stream.
+                                        await Async<Unit, E>.fail(self.source.canceledError)
+                                    else
+                                        // A copy that transferred nothing is not an end
+                                        // of stream — only `Dropped` ends one — but every
+                                        // caller reads an empty array as EOF, so handing
+                                        // this back would stop `readAll` with a truncated
+                                        // body. The stream is open and the bytes are still
+                                        // coming: post again, boundedly. See
+                                        // `emptyCopyLimit` for why there is a bound.
+                                        emptyCopies =
+                                            noteCopyProgress(
+                                                emptyCopies,
+                                                delivered.length,
+                                                "input stream: a host copy transferred no bytes and did not end the stream"
+                                            )
+                case _ => posting = false
         // (3), and the whole of the answer: whatever the copy moved is the
         // caller's, whatever else that copy reported. With nothing moved there is
         // the latch — an end of stream, the failure that ended it, or the
         // `canceledError` of a stream somebody closed.
-        if delivered.length > 0 then
-            delivered
-        else
-            await Async.fromResult(self.latchedResult())
+        if delivered.length > 0 then delivered
+        else await Async.fromResult(self.latchedResult())
 
     /// Record that the stream has ended, and the transport's reason if it gave
     /// one. The result future is one-shot and the runtime has already consumed
@@ -519,11 +529,15 @@ internal class WasiInputStream<E>(
                 // The handles are about to go, so the record's probe must say
                 // so before they do — the finalizer path enters here straight
                 // from `Open`, without passing `close`.
-                self.openFlag.open = false
+                self
+                    .openFlag
+                    .open = false
                 // The runtime reads and drops the paired result future when a
                 // copy reports the stream ended. Closing a stream that never
                 // ended leaves that to `dropEnd`, which drops both halves.
-                self.source.dropEnd()
+                self
+                    .source
+                    .dropEnd()
 
     /// Detach every fiber from this stream's readable end, then drop it.
     ///
@@ -581,7 +595,9 @@ internal class WasiInputStream<E>(
         // Flip the probe in the same synchronous breath as the state: from here
         // to the drop, a copy-posting step anywhere else must see `stillOpen`
         // false, or it posts on a handle this close is about to take away.
-        self.openFlag.open = false
+        self
+            .openFlag
+            .open = false
         await Async<Array<Uint8>, E>.cancelStreamRead(self.source)
         self.dropHandles()
 
@@ -599,19 +615,22 @@ module WasiInputStream<E> =
     /// out be the abstract type: `Resource.map` widens it while keeping the
     /// finalizer intact, so a caller gets an `AsyncInputStream` that closes itself
     /// and never has to know what is underneath.
-    public function resource<E2>(open: () => Async<ComponentStreamRead<Array<Uint8>, E>, E2>): Resource<AsyncInputStream<E>, E2> where E : IoError =
+    public function resource<E2>(open: () => Async<ComponentStreamRead<Array<Uint8>, E>, E2>):
+        Resource<AsyncInputStream<E>, E2>
+        where E: IoError =
         // An `async` acquire rather than a `map`, so that `Mutex.make` can be the
         // effect it is.
-        let acquire: () => Async<WasiInputStream<E>, E2> = async () =>
-            let raw = await open()
-            // The probe outlives this scope inside the record, so it closes
-            // over a flag made first rather than over the stream object made
-            // last — see `OpenFlag` for the construction-order knot this cuts.
-            let openFlag = OpenFlag(true)
-            let source = raw.withStillOpen(() => openFlag.open)
-            let readLock = await Mutex.make()
-            let noError: Option<E> = None
-            WasiInputStream<E>(source, openFlag, StreamState.Open, noError, readLock)
+        let acquire: () => Async<WasiInputStream<E>, E2> =
+            async () =>
+                let raw = await open()
+                // The probe outlives this scope inside the record, so it closes
+                // over a flag made first rather than over the stream object made
+                // last — see `OpenFlag` for the construction-order knot this cuts.
+                let openFlag = OpenFlag(true)
+                let source = raw.withStillOpen(() => openFlag.open)
+                let readLock = await Mutex.make()
+                let noError: Option<E> = None
+                WasiInputStream<E>(source, openFlag, StreamState.Open, noError, readLock)
         let held: Resource<WasiInputStream<E>, E2> =
             Resource.make(acquire, (s: WasiInputStream<E>) => Async.thunk(() => s.dropHandles()))
         held.map<AsyncInputStream<E>>((s: WasiInputStream<E>) => s)

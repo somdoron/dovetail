@@ -41,12 +41,10 @@ public record Uri =
 /// Companion module for Uri with parsing, serialization, and encoding utilities.
 module Uri =
     /// Parses a URI string into its components. Returns a UriError on invalid input.
-    public function parse(s: String): Result<Uri, UriError> =
-        uriParseAll(s)
+    public function parse(s: String): Result<Uri, UriError> = uriParseAll(s)
 
     /// Serializes this URI back into its string representation.
-    public function toString(self: Uri): String =
-        uriToString(self)
+    public function toString(self: Uri): String = uriToString(self)
 
     /// True if the URI has a scheme, making it an absolute URI.
     public property isAbsolute(self: Uri): Bool =
@@ -56,50 +54,80 @@ module Uri =
 
     /// Returns a new Uri with the path replaced by the given value.
     public function withPath(self: Uri, newPath: String): Uri =
-        Uri { scheme = self.scheme; authority = self.authority; path = newPath; query = self.query; fragment = self.fragment }
+        Uri {
+            scheme = self.scheme
+            authority = self.authority
+            path = newPath
+            query = self.query
+            fragment = self.fragment
+        }
 
     /// Returns a new Uri with the scheme replaced by the given value.
     public function withScheme(self: Uri, newScheme: String): Uri =
-        Uri { scheme = Some(newScheme); authority = self.authority; path = self.path; query = self.query; fragment = self.fragment }
+        Uri {
+            scheme = Some(newScheme)
+            authority = self.authority
+            path = self.path
+            query = self.query
+            fragment = self.fragment
+        }
 
     /// Returns a new Uri with the authority replaced by the given value.
     /// Used by proxy code to redirect a request at a different upstream.
     public function withAuthority(self: Uri, newAuthority: Authority): Uri =
-        Uri { scheme = self.scheme; authority = Some(newAuthority); path = self.path; query = self.query; fragment = self.fragment }
+        Uri {
+            scheme = self.scheme
+            authority = Some(newAuthority)
+            path = self.path
+            query = self.query
+            fragment = self.fragment
+        }
 
     /// Returns a new Uri with the authority's host replaced. If the Uri had no
     /// authority, creates a minimal one (no user-info, no port) with the given host.
     public function withHost(self: Uri, newHost: String): Uri =
-        let newAuth = match self.authority with
-            case Some(auth) => Authority { userInfo = auth.userInfo; host = newHost; port = auth.port }
-            case None => Authority { userInfo = None; host = newHost; port = None }
-        Uri { scheme = self.scheme; authority = Some(newAuth); path = self.path; query = self.query; fragment = self.fragment }
+        let newAuth =
+            match self.authority with
+                case Some(auth) =>
+                    Authority { userInfo = auth.userInfo; host = newHost; port = auth.port }
+                case None => Authority { userInfo = None; host = newHost; port = None }
+        Uri {
+            scheme = self.scheme
+            authority = Some(newAuth)
+            path = self.path
+            query = self.query
+            fragment = self.fragment
+        }
 
     /// Returns a new Uri with the authority's port replaced. If the Uri had no
     /// authority, creates one with an empty host and the given port.
     public function withPort(self: Uri, newPort: Option<Int32>): Uri =
-        let newAuth = match self.authority with
-            case Some(auth) => Authority { userInfo = auth.userInfo; host = auth.host; port = newPort }
-            case None => Authority { userInfo = None; host = ""; port = newPort }
-        Uri { scheme = self.scheme; authority = Some(newAuth); path = self.path; query = self.query; fragment = self.fragment }
+        let newAuth =
+            match self.authority with
+                case Some(auth) =>
+                    Authority { userInfo = auth.userInfo; host = auth.host; port = newPort }
+                case None => Authority { userInfo = None; host = ""; port = newPort }
+        Uri {
+            scheme = self.scheme
+            authority = Some(newAuth)
+            path = self.path
+            query = self.query
+            fragment = self.fragment
+        }
 
     /// Percent-encodes a string for safe use in a URI. Unreserved characters are left as-is.
-    public function encode(s: String): String =
-        uriEncode(s)
+    public function encode(s: String): String = uriEncode(s)
 
     /// Decodes a percent-encoded string. Returns an error for malformed sequences.
-    public function decode(s: String): Result<String, UriError> =
-        uriDecode(s)
+    public function decode(s: String): Result<String, UriError> = uriDecode(s)
 
 /// Compares two Uri values for structural equality across all components.
 implement Equatable for Uri =
-    public function equals(self: Uri, other: Uri): Bool =
-        uriEquals(self, other)
+    public function equals(self: Uri, other: Uri): Bool = uriEquals(self, other)
 
 /// Formats a Uri as its string representation for display.
 implement Display for Uri =
-    public function format(self: Uri): String =
-        uriToString(self)
+    public function format(self: Uri): String = uriToString(self)
 
 private function uriParseAll(s: String): Result<Uri, UriError> =
     let schemeResult = uriParseScheme(s)
@@ -115,7 +143,15 @@ private function uriParseAll(s: String): Result<Uri, UriError> =
                             match queryResult with
                                 case Ok((query, rest4)) =>
                                     let fragment = uriParseFragment(rest4)
-                                    Ok(Uri { scheme = scheme; authority = auth; path = path; query = query; fragment = fragment })
+                                    Ok(
+                                        Uri {
+                                            scheme = scheme
+                                            authority = auth
+                                            path = path
+                                            query = query
+                                            fragment = fragment
+                                        }
+                                    )
                                 case Error(e) => Error(e)
                         case Error(e) => Error(e)
                 case Error(e) => Error(e)
@@ -123,7 +159,12 @@ private function uriParseAll(s: String): Result<Uri, UriError> =
 
 private function uriIsSchemeChar(c: Char): Bool =
     let b = String.fromChar(c).bytes().get(0).toInt32()
-    (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 43 || b == 45 || b == 46
+    (b >= 48 && b <= 57)
+        || (b >= 65 && b <= 90)
+        || (b >= 97 && b <= 122)
+        || b == 43
+        || b == 45
+        || b == 46
 
 private function uriParseScheme(s: String): Result<(Option<String>, String), UriError> =
     let colon = uriFindChar(s, ':', 0)
@@ -132,13 +173,11 @@ private function uriParseScheme(s: String): Result<(Option<String>, String), Uri
         case Some(idx) =>
             let scheme = uriTake(s, idx)
             let rest = uriSkip(s, idx + 1)
-            if uriIsScheme(scheme) then Ok((Some(scheme), rest))
-            else Ok((None, s))
+            if uriIsScheme(scheme) then Ok((Some(scheme), rest)) else Ok((None, s))
 
 private function uriIsScheme(s: String): Bool =
     let len = s.length
-    if len == 0 then false
-    else uriIsSchemeChar(s.getChar(0))
+    if len == 0 then false else uriIsSchemeChar(s.getChar(0))
 
 private function uriParseAuthority(s: String): Result<(Option<Authority>, String), UriError> =
     if s.length >= 2 then
@@ -147,14 +186,17 @@ private function uriParseAuthority(s: String): Result<(Option<Authority>, String
         if c0 == '/' && c1 == '/' then
             let rest = uriSkip(s, 2)
             uriParseAuthorityBody(rest)
-        else Ok((None, s))
-    else Ok((None, s))
+        else
+            Ok((None, s))
+    else
+        Ok((None, s))
 
 private function uriParseAuthorityBody(s: String): Result<(Option<Authority>, String), UriError> =
     let end = uriFindAuthorityEnd(s)
     let authStr = uriTake(s, end)
     let rest = uriSkip(s, end)
-    if authStr.length == 0 then Ok((None, rest))
+    if authStr.length == 0 then
+        Ok((None, rest))
     else
         match uriParseHostPort(authStr) with
             case Ok(auth) => Ok((Some(auth), rest))
@@ -169,29 +211,31 @@ private function uriFindAuthorityEnd(s: String): Int32 =
         if c == '/' || c == '?' || c == '#' then
             result = i
             i = len
-        else i = i + 1
+        else
+            i = i + 1
     result
 
 private function uriParseHostPort(s: String): Result<Authority, UriError> =
     let atPos = uriFindChar(s, '@', 0)
-    let (userInfo, hostPort) = match atPos with
-        case None => (None, s)
-        case Some(i) =>
-            (Some(uriTake(s, i)), uriSkip(s, i + 1))
+    let (userInfo, hostPort) =
+        match atPos with
+            case None => (None, s)
+            case Some(i) => (Some(uriTake(s, i)), uriSkip(s, i + 1))
     let colonPos = uriFindChar(hostPort, ':', 0)
     match colonPos with
-        case None =>
-            Ok(Authority { userInfo = userInfo; host = hostPort; port = None })
+        case None => Ok(Authority { userInfo = userInfo; host = hostPort; port = None })
         case Some(i) =>
             let host = uriTake(hostPort, i)
             let portStr = uriSkip(hostPort, i + 1)
             match uriParsePort(portStr) with
-                case Ok(port) => Ok(Authority { userInfo = userInfo; host = host; port = Some(port) })
+                case Ok(port) =>
+                    Ok(Authority { userInfo = userInfo; host = host; port = Some(port) })
                 case Error(e) => Error(e)
 
 private function uriParsePort(s: String): Result<Int32, UriError> =
     let len = s.length
-    if len == 0 then Error(UriError.InvalidPort("empty port"))
+    if len == 0 then
+        Error(UriError.InvalidPort("empty port"))
     else
         let mutable n = 0
         let mutable i = 0
@@ -204,8 +248,7 @@ private function uriParsePort(s: String): Result<Int32, UriError> =
             else
                 ok = false
                 i = len
-        if ok then Ok(n)
-        else Error(UriError.InvalidPort(s))
+        if ok then Ok(n) else Error(UriError.InvalidPort(s))
 
 private function uriParsePath(s: String): Result<(String, String), UriError> =
     let queryPos = uriFindChar(s, '?', 0)
@@ -223,7 +266,8 @@ private function uriParseQuery(s: String): Result<(Option<String>, String), UriE
         let query = uriTake(rest, queryEnd)
         let rest2 = uriSkip(rest, queryEnd)
         Ok((Some(query), rest2))
-    else Ok((None, s))
+    else
+        Ok((None, s))
 
 private function uriOptToLen(len: Int32, opt: Option<Int32>): Int32 =
     match opt with
@@ -231,9 +275,7 @@ private function uriOptToLen(len: Int32, opt: Option<Int32>): Int32 =
         case Some(v) => v
 
 private function uriParseFragment(s: String): Option<String> =
-    if s.length > 0 && s.getChar(0) == '#' then
-        Some(uriSkip(s, 1))
-    else None
+    if s.length > 0 && s.getChar(0) == '#' then Some(uriSkip(s, 1)) else None
 
 private function uriFindChar(s: String, c: Char, start: Int32): Option<Int32> =
     let len = s.length
@@ -258,11 +300,9 @@ private function uriMinPos(len: Int32, a: Option<Int32>, b: Option<Int32>): Int3
                 case None => va
                 case Some(vb) => if va < vb then va else vb
 
-private function uriTake(s: String, n: Int32): String =
-    s.substring(0, n)
+private function uriTake(s: String, n: Int32): String = s.substring(0, n)
 
-private function uriSkip(s: String, n: Int32): String =
-    s.skip(n)
+private function uriSkip(s: String, n: Int32): String = s.skip(n)
 
 private function uriToString(u: Uri): String =
     let mutable result = ""
@@ -290,7 +330,8 @@ private function uriToString(u: Uri): String =
     result
 
 private function formatInt32Simple(n: Int32): String =
-    if n == 0 then "0"
+    if n == 0 then
+        "0"
     else
         let buf = Array<Uint8>.fill(11, 0u8)
         let mutable pos = 10
@@ -309,31 +350,35 @@ private function uriEncode(s: String): String =
     while i < len do
         let c = s.getChar(i)
         let b = String.fromChar(c).bytes().get(0).toInt32()
-        if uriIsUnreserved(b) then
-            result = result ++ String.fromChar(c)
-        else
-            result = result ++ "%" ++ uriHexByte(b)
+        if uriIsUnreserved(b) then result = result ++ String.fromChar(c)
+        else result = result ++ "%" ++ uriHexByte(b)
         i = i + 1
     result
 
 private function uriIsUnreserved(b: Int32): Bool =
     if b >= 48 then
-        if b <= 57 then true
+        if b <= 57 then
+            true
         else if b >= 65 then
-            if b <= 90 then true
+            if b <= 90 then
+                true
             else if b >= 97 then
-                if b <= 122 then true
-                else false
-            else b == 45 || b == 46 || b == 95 || b == 126
-        else false
-    else false
+                if b <= 122 then true else false
+            else
+                b == 45 || b == 46 || b == 95 || b == 126
+        else
+            false
+    else
+        false
 
 private function uriHexByte(b: Int32): String =
     let hi = b / 16
     let lo = b % 16
     let hc = if hi < 10 then (hi + 48).toUint8() else (hi - 10 + 65).toUint8()
     let lc = if lo < 10 then (lo + 48).toUint8() else (lo - 10 + 65).toUint8()
-    String.fromBytes(Array<Uint8>.fill(1, hc), 0, 1) ++ String.fromBytes(Array<Uint8>.fill(1, lc), 0, 1)
+    String
+        .fromBytes(Array<Uint8>.fill(1, hc), 0, 1)
+        ++ String.fromBytes(Array<Uint8>.fill(1, lc), 0, 1)
 
 private function uriDecode(s: String): Result<String, UriError> =
     let len = s.length
@@ -356,25 +401,30 @@ private function uriDecode(s: String): Result<String, UriError> =
                     errPos = i
                     i = len
                 else
-                    result = result ++ String.fromBytes(Array<Uint8>.fill(1, (h * 16 + l).toUint8()), 0, 1)
+                    result =
+                        result
+                            ++ String.fromBytes(Array<Uint8>.fill(1, (h * 16 + l).toUint8()), 0, 1)
                     i = i + 3
         else
             result = result ++ String.fromChar(c)
             i = i + 1
-    if ok then Ok(result)
-    else Error(UriError.InvalidPercentEncoding(errPos))
+    if ok then Ok(result) else Error(UriError.InvalidPercentEncoding(errPos))
 
 private function uriHexVal(b: Int32): Int32 =
     if b >= 48 then
-        if b <= 57 then b - 48
+        if b <= 57 then
+            b - 48
         else if b >= 65 then
-            if b <= 70 then b - 55
+            if b <= 70 then
+                b - 55
             else if b >= 97 then
-                if b <= 102 then b - 87
-                else -1
-            else -1
-        else -1
-    else -1
+                if b <= 102 then b - 87 else -1
+            else
+                -1
+        else
+            -1
+    else
+        -1
 
 private function uriEquals(a: Uri, b: Uri): Bool =
     if !optionStringEq(a.scheme, b.scheme) then false
@@ -404,7 +454,9 @@ private function optionAuthorityEq(a: Option<Authority>, b: Option<Authority>): 
             match b with
                 case None => false
                 case Some(bb) =>
-                    optionStringEq(aa.userInfo, bb.userInfo) && aa.host == bb.host && optionInt32Eq(aa.port, bb.port)
+                    optionStringEq(aa.userInfo, bb.userInfo)
+                        && aa.host == bb.host
+                        && optionInt32Eq(aa.port, bb.port)
 
 private function optionInt32Eq(a: Option<Int32>, b: Option<Int32>): Bool =
     match a with

@@ -21,16 +21,21 @@ implement Display for SinkError =
 // contract the BASE owns, so the subjects are the most naive subclasses anyone
 // could write: the transport hook, the wait, the one-line answer to "can you
 // die", and no guards of their own.
-
 /// A sink that has died. `writeBytes` panics rather than answering: no write is
 /// entitled to reach the transport of a stream that has already failed, and the
 /// empty one is the write this is really about.
 class DeadSink(unused: Bool) extends AsyncOutputStream<SinkError>() =
-    protected override function checkAlive(self): Async<Unit, SinkError> = Async.fail(SinkError.Broken)
-    protected override function recordedFailure(self): Result<Unit, SinkError> = Error(SinkError.Broken)
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, SinkError> =
-        panic "DeadSink.writeBytes must not be reached"
+    protected override function checkAlive(self): Async<Unit, SinkError> =
+        Async.fail(SinkError.Broken)
+
+    protected override function recordedFailure(self): Result<Unit, SinkError> =
+        Error(SinkError.Broken)
+
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, SinkError> = panic "DeadSink.writeBytes must not be reached"
+
     protected override async function flushPending(self): Async<Unit, SinkError> = ()
+
     public override async function close(self): Async<Unit, SinkError> = ()
 
 function sinkFailed(error: SinkError): Async<String, Never> = Async.succeed("failed")
@@ -57,21 +62,32 @@ test "an empty write on a dead stream reports the failure" =
 // `input_stream_contract_test`.
 async function deadWriteProbe(outcomes: Array<String>): Async<Unit, Never> =
     let sink: AsyncOutputStream<SinkError> = DeadSink(true)
-    outcomes.set(0, await sink.write(Array<Uint8>.empty().readonly).fold<String, Never>(sinkFailed, sinkWrote))
-    outcomes.set(1, await sink.write([|1u8|].readonly).fold<String, Never>(sinkFailed, sinkWrote))
+    outcomes
+        .set(
+        0,
+        await sink.write(Array<Uint8>.empty().readonly).fold<String, Never>(sinkFailed, sinkWrote)
+    )
+    outcomes.set(1, await sink.write([| 1u8 |].readonly).fold<String, Never>(sinkFailed, sinkWrote))
 
 /// Records that its wait ran, and reports a failure when asked afterwards — a
 /// sink whose in-flight write is what failed.
 class FlushThenFailSink(public mutable flushes: Int32) extends AsyncOutputStream<SinkError>() =
-    protected override function checkAlive(self): Async<Unit, SinkError> = Async.fail(SinkError.Broken)
+    protected override function checkAlive(self): Async<Unit, SinkError> =
+        Async.fail(SinkError.Broken)
+
     // The failure this sink RECORDED, which is what `flush` reports now that it
     // and `close` ask the same question. Both hooks answer `Broken` here, so the
     // test below pins the ORDER — wait first, report second — rather than which
     // of the two hooks flush happens to call.
-    protected override function recordedFailure(self): Result<Unit, SinkError> = Error(SinkError.Broken)
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, SinkError> = ()
+    protected override function recordedFailure(self): Result<Unit, SinkError> =
+        Error(SinkError.Broken)
+
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, SinkError> = ()
+
     protected override async function flushPending(self): Async<Unit, SinkError> =
         self.flushes = self.flushes + 1
+
     public override async function close(self): Async<Unit, SinkError> = ()
 
 test "flush waits first and reports afterwards" =
@@ -86,8 +102,8 @@ test "flush waits first and reports afterwards" =
     // leaves this at zero.
     assert sink.flushes == 1
 
-async function flushProbe(sink: AsyncOutputStream<SinkError>, setter: (String) => Unit): Async<Unit, Never> =
-    setter(await sink.flush().fold<String, Never>(sinkFailed, sinkWrote))
+async function flushProbe(sink: AsyncOutputStream<SinkError>, setter: (String) => Unit):
+    Async<Unit, Never> = setter(await sink.flush().fold<String, Never>(sinkFailed, sinkWrote))
 
 // --- flush and close ask the same question ------------------------------------
 //
@@ -102,15 +118,19 @@ async function flushProbe(sink: AsyncOutputStream<SinkError>, setter: (String) =
 // cannot take another byte and has nothing to complain about. Real transports
 // reach that state (a `Dropped` copy that accepted the last of the array), but
 // only by an ordering no test in this tree can ask a host for.
-
 /// Finished, and undamaged: `checkAlive` refuses further writes, `recordedFailure`
 /// has nothing to report.
 class FinishedSink(unused: Bool) extends AsyncOutputStream<SinkError>() =
-    protected override function checkAlive(self): Async<Unit, SinkError> = Async.fail(SinkError.Broken)
+    protected override function checkAlive(self): Async<Unit, SinkError> =
+        Async.fail(SinkError.Broken)
+
     protected override function recordedFailure(self): Result<Unit, SinkError> = Ok(())
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, SinkError> =
-        panic "FinishedSink.writeBytes must not be reached"
+
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, SinkError> = panic "FinishedSink.writeBytes must not be reached"
+
     protected override async function flushPending(self): Async<Unit, SinkError> = ()
+
     public override async function close(self): Async<Unit, SinkError> = ()
 
 test "flush reports what was written, not whether more could be" =
@@ -127,4 +147,4 @@ test "flush reports what was written, not whether more could be" =
 async function finishedProbe(outcomes: Array<String>): Async<Unit, Never> =
     let sink: AsyncOutputStream<SinkError> = FinishedSink(true)
     outcomes.set(0, await sink.flush().fold<String, Never>(sinkFailed, sinkWrote))
-    outcomes.set(1, await sink.write([|1u8|].readonly).fold<String, Never>(sinkFailed, sinkWrote))
+    outcomes.set(1, await sink.write([| 1u8 |].readonly).fold<String, Never>(sinkFailed, sinkWrote))

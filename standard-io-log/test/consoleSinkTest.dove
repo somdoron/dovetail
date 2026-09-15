@@ -8,7 +8,6 @@ import standard.io.Async
 // Smoke tests — we can't capture stderr/stdout inside Dovetail, so the bar is
 // "doesn't error end-to-end." Successful runs are visible to a human reading
 // the test runner's stdout/stderr.
-
 test "ConsoleSink routes Info to stdout" =
     let program: Async<Unit, Never> =
         let sink = use ConsoleSink.make()

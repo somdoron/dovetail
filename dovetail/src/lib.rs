@@ -2,6 +2,7 @@ pub mod backtrace;
 pub mod common;
 pub mod compiler;
 pub mod discovery;
+pub mod formatter;
 pub mod lsp;
 pub mod manifest;
 pub mod p3;

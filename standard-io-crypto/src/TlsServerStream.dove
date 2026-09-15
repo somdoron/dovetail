@@ -32,16 +32,17 @@ module TlsServerStream =
     ): Resource<TlsServerStream, Never> =
         // Built INSIDE `acquire`, and by the shared `openTlsConnection` — the
         // client's `connect` differs from this only in the engine it passes.
-        let acquire: () => Async<TlsServerStream, Never> = async () =>
-            let engine = TlsEngineKind.Server(TlsServer.make(config))
-            let conn = await openTlsConnection(engine, underlyingInput, underlyingOutput)
-            TlsServerStream {
-                input = TlsInputStream(conn)
-                output = TlsOutputStream(conn)
-                connection = conn
-            }
-        let release: (TlsServerStream) => Async<Unit, Never> = (s: TlsServerStream) =>
-            s.connection.shutdown()
+        let acquire: () => Async<TlsServerStream, Never> =
+            async () =>
+                let engine = TlsEngineKind.Server(TlsServer.make(config))
+                let conn = await openTlsConnection(engine, underlyingInput, underlyingOutput)
+                TlsServerStream {
+                    input = TlsInputStream(conn)
+                    output = TlsOutputStream(conn)
+                    connection = conn
+                }
+        let release: (TlsServerStream) => Async<Unit, Never> =
+            (s: TlsServerStream) => s.connection.shutdown()
         Resource.make(acquire, release)
 
     /// Await the (background) handshake and return the negotiated parameters

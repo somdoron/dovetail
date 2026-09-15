@@ -18,7 +18,8 @@ import standard.wasi.CopyOperation
 
 // Block until an async call completes; returns after its terminal event.
 function awaitCall(call: AsyncCall): Unit =
-    if call.returned then ()
+    if call.returned then
+        ()
     else
         let set = WaitableSet.make()
         set.join(call.subtask.waitable)
@@ -37,10 +38,24 @@ function openFlags(create: Bool, truncate: Bool): OpenFlags =
     OpenFlags { create = create; directory = false; exclusive = false; truncate = truncate }
 
 function rwFlags(): FileFlags =
-    FileFlags { read = true; write = true; fileIntegritySync = false; dataIntegritySync = false; requestedWriteSync = false; mutateDirectory = false }
+    FileFlags {
+        read = true
+        write = true
+        fileIntegritySync = false
+        dataIntegritySync = false
+        requestedWriteSync = false
+        mutateDirectory = false
+    }
 
 function openFile(root: FileDescriptor, path: String, create: Bool): FileDescriptor =
-    let call = root.openAtStart(PathFlags { symlinkFollow = false }, path, openFlags(create, create), rwFlags())
+    let call =
+        root
+            .openAtStart(
+            PathFlags { symlinkFollow = false },
+            path,
+            openFlags(create, create),
+            rwFlags()
+        )
     awaitCall(call)
     FileDescriptor.openAtFinish(call).require
 
@@ -70,7 +85,11 @@ function pushBytes(stream: Int32, bytes: Slice<Uint8>, op: CopyOperation): Unit 
 /// p3 copy dance is written out unabbreviated on BOTH sides.
 function writeBytesTo(fd: FileDescriptor, offset: Int64, bytes: Array<Uint8>): Unit =
     let writeStream = fd.writeViaStream(offset)
-    pushBytes(writeStream.stream, bytes[|..|], FsStreamOps.writeStart(writeStream.stream, bytes[|..|].readonly))
+    pushBytes(
+        writeStream.stream,
+        bytes [| .. |],
+        FsStreamOps.writeStart(writeStream.stream, bytes [| .. |].readonly)
+    )
     FsStreamOps.dropWritable(writeStream.stream)
     FsStreamOps.dropWriteResult(writeStream.resultFuture)
 
@@ -112,15 +131,14 @@ test "preopens include the test directory" =
         case DescriptorType.Directory => assert true
         case _ => panic "expected directory"
 
-
 test "write then read a file via streams" =
     let root = openRoot()
     let file = openFile(root, "hello.txt", true)
 
     // write "hello p3" through a write stream
     let writeStream = file.writeViaStream(0i64)
-    let bytes = "!hello p3?".bytes()[|1..9|]
-    let op = FsStreamOps.writeStart(writeStream.stream, bytes[|..|].readonly)
+    let bytes = "!hello p3?".bytes() [| 1..9 |]
+    let op = FsStreamOps.writeStart(writeStream.stream, bytes [| .. |].readonly)
     if op.blocked then
         let set = WaitableSet.make()
         set.join(Waitable(writeStream.stream))
@@ -163,7 +181,7 @@ test "empty bounded slice writes no backing bytes" =
     let root = openRoot()
     let file = openFile(root, "empty-slice.txt", true)
     let stream = file.writeViaStream(0i64)
-    let empty = "sentinel".bytes()[|3..3|]
+    let empty = "sentinel".bytes() [| 3..3 |]
     pushBytes(stream.stream, empty, FsStreamOps.writeStart(stream.stream, empty.readonly))
     FsStreamOps.dropWritable(stream.stream)
     FsStreamOps.dropWriteResult(stream.resultFuture)
@@ -176,7 +194,11 @@ test "empty bottom slice writes no bytes after widening" =
     let file = openFile(root, "empty-bottom-slice.txt", true)
     let stream = file.writeViaStream(0i64)
     let empty: ReadonlySlice<Uint8> = Array<Never>.empty().readonly
-    pushBytes(stream.stream, Array<Uint8>.empty()[|..|], FsStreamOps.writeStart(stream.stream, empty))
+    pushBytes(
+        stream.stream,
+        Array<Uint8>.empty() [| .. |],
+        FsStreamOps.writeStart(stream.stream, empty)
+    )
     FsStreamOps.dropWritable(stream.stream)
     FsStreamOps.dropWriteResult(stream.resultFuture)
     assert readAllFrom(file, 16).length == 0
@@ -279,13 +301,12 @@ test "wave 3: readDirectory, symlink readlink, setTimes" =
             else
                 let entry = FsStreamOps.entryReadFinish(op)
                 if entry.name == "w3.txt" then found = true
+        else if op.result == CopyResult.Dropped then
+            Stream.discard(op)
+            scanning = false
         else
-            if op.result == CopyResult.Dropped then
-                Stream.discard(op)
-                scanning = false
-            else
-                let entry = FsStreamOps.entryReadFinish(op)
-                if entry.name == "w3.txt" then found = true
+            let entry = FsStreamOps.entryReadFinish(op)
+            if entry.name == "w3.txt" then found = true
     assert found
     FsStreamOps.dropEntryReadable(dirStream.stream)
     FsStreamOps.dropEntryResult(dirStream.resultFuture)
@@ -322,11 +343,16 @@ test "wave 3: readDirectory, symlink readlink, setTimes" =
 // payload offset shows up here and nowhere else. The point is not that the
 // operations fail — it is that every `*Finish` in this list decodes a failure
 // without trapping and without inventing a success.
-
 test "openAt on a nonexistent file without create fails" =
     let root = openRoot()
-    let call = root.openAtStart(PathFlags { symlinkFollow = false }, "no-such-file.txt",
-        openFlags(false, false), rwFlags())
+    let call =
+        root
+            .openAtStart(
+            PathFlags { symlinkFollow = false },
+            "no-such-file.txt",
+            openFlags(false, false),
+            rwFlags()
+        )
     awaitCall(call)
     assert FileDescriptor.openAtFinish(call).isError
 
@@ -399,7 +425,6 @@ test "symlinkAt onto an existing entry fails" =
 // param block and (for advise) their own enum lowering. Nothing else in the
 // library calls them, so without these two they are four uncovered code paths
 // of exactly the class this migration kept finding bugs in.
-
 test "append stream writes at the end, not over the beginning" =
     let root = openRoot()
     let file = openFile(root, "append.txt", true)
@@ -409,14 +434,20 @@ test "append stream writes at the end, not over the beginning" =
     // The whole point of `appendViaStream`: it takes no offset, so a wrong
     // lowering shows up as bytes landing at 0 and the file staying 3 long.
     let appender = openFile(root, "append.txt", false)
-    let tail = "!de?".bytes()[|1..3|]
+    let tail = "!de?".bytes() [| 1..3 |]
     let appendStream = appender.appendViaStream()
-    pushBytes(appendStream.stream, tail[|..|], FsStreamOps.appendWriteStart(appendStream.stream, tail[|..|].readonly))
+    pushBytes(
+        appendStream.stream,
+        tail [| .. |],
+        FsStreamOps.appendWriteStart(appendStream.stream, tail [| .. |].readonly)
+    )
     FsStreamOps.dropWritable(appendStream.stream)
     // The append stream's own error channel, and the only one it has: a write
     // the host rejected still ACCEPTS zero bytes and ends the stream, which to
     // the copy alone is indistinguishable from a peer that simply stopped.
-    FsStreamOps.readAppendResult(appendStream.resultFuture).require
+    FsStreamOps
+        .readAppendResult(appendStream.resultFuture)
+        .require
     FsStreamOps.dropAppendResult(appendStream.resultFuture)
     appender.close()
 
@@ -451,19 +482,21 @@ test "append stream drops through the write-via-stream lifecycle built-ins" =
     file.close()
 
     let appender = openFile(root, "append-cancel.txt", false)
-    let tail = "!de?".bytes()[|1..3|]
+    let tail = "!de?".bytes() [| 1..3 |]
     let appendStream = appender.appendViaStream()
-    let op = FsStreamOps.appendWriteStart(appendStream.stream, tail[|..|].readonly)
+    let op = FsStreamOps.appendWriteStart(appendStream.stream, tail [| .. |].readonly)
     if op.blocked then
         // In-flight write: cancel it on the append handle (write built-in),
         // consuming any raced completion, then release the copy.
-        FsStreamOps.cancelWrite(appendStream.stream)
+        FsStreamOps
+            .cancelWrite(appendStream.stream)
         Stream.discard(op)
     else
         assert op.count == tail.length
         Stream.discard(op)
     // drop-writable + future.read + future.drop on the append handle.
-    FsStreamOps.dropWritable(appendStream.stream)
+    FsStreamOps
+        .dropWritable(appendStream.stream)
     // Cancellation may report failure; this test checks handle cleanup.
     let _ = FsStreamOps.readAppendResult(appendStream.resultFuture)
     FsStreamOps.dropAppendResult(appendStream.resultFuture)
@@ -484,7 +517,6 @@ test "append stream drops through the write-via-stream lifecycle built-ins" =
 // does apply: an offset dropped, truncated to 32 bits, or wired to the wrong
 // argument would silently write over the start of the file, and nothing in the
 // suite would notice.
-
 test "a write stream opened at an offset writes there, not at the start" =
     let root = openRoot()
     let file = openFile(root, "offsets.txt", true)
@@ -528,7 +560,6 @@ test "a read stream opened at an offset reads from there" =
     unlink(root, "read-offset.txt")
 
 // --- durability ------------------------------------------------------------
-
 test "sync and syncData report, or say they are unsupported" =
     // `syncStart` / `syncDataStart` had no caller anywhere in the tree: two
     // async imports whose param blocks and finish wiring had never once been
@@ -586,7 +617,13 @@ test "getFlags on a closed-over directory still reports, and setTimesAt on a mis
     let flagsCall = root.getFlagsStart()
     awaitCall(flagsCall)
     FileDescriptor.getFlagsFinish(flagsCall).require
-    let call = root.setTimesAtStart(PathFlags { symlinkFollow = false }, "no-such-path",
-        NewTimestamp.Now, NewTimestamp.Now)
+    let call =
+        root
+            .setTimesAtStart(
+            PathFlags { symlinkFollow = false },
+            "no-such-path",
+            NewTimestamp.Now,
+            NewTimestamp.Now
+        )
     awaitCall(call)
     assert FileDescriptor.unitFinish(call).isError

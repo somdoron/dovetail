@@ -40,13 +40,19 @@ public enum CopyResult =
 module CopyResult =
     /// Decode the canonical ABI's low four bits.
     public function ofCode(code: Int32): CopyResult =
-        if code == 0 then CopyResult.Completed
-        else if code == 1 then CopyResult.Dropped
-        else if code == 2 then CopyResult.Cancelled
-        // Codes 3..15 are undefined. Fail loudly on an ABI violation rather than reporting
-        // a phantom successful copy — a silent `Completed` would feed the empty-copy retry
-        // loop or deliver bytes as if all were well (matches `deliver`'s unknown-event panic).
-        else panic "CopyResult.ofCode: invalid canonical-ABI copy status code"
+        if code == 0 then
+            CopyResult.Completed
+        else
+            if code == 1 then
+                CopyResult.Dropped
+            else
+                if code == 2 then
+                    CopyResult.Cancelled
+                // Codes 3..15 are undefined. Fail loudly on an ABI violation rather than reporting
+                // a phantom successful copy — a silent `Completed` would feed the empty-copy retry
+                // loop or deliver bytes as if all were well (matches `deliver`'s unknown-event panic).
+                else
+                    panic "CopyResult.ofCode: invalid canonical-ABI copy status code"
 
     public property code(self): Int32 =
         match self with
@@ -108,35 +114,49 @@ public record WaitableEvent =
 module WaitableEvent =
     /// Component-model event codes.
     public property isSubtask(self): Bool = self.event == 1
+
     public property isStreamRead(self): Bool = self.event == 2
+
     public property isStreamWrite(self): Bool = self.event == 3
+
     public property isFutureRead(self): Bool = self.event == 4
+
     public property isFutureWrite(self): Bool = self.event == 5
+
     public property isCancelled(self): Bool = self.event == 6
+
     /// How the copy ended, from a stream/future read/write event payload.
     public property copyResult(self): CopyResult = self.payload.copyResult
+
     /// Elements copied, from a stream/future read/write event payload.
     public property copyCount(self): Int32 = self.payload.copyCount
 
 module WaitableSet =
     public function make(): WaitableSet = intrinsic
+
     /// Add a waitable (subtask or stream end) to this set. A waitable
     /// belongs to at most one set; joining moves it.
     public function join(self, waitable: Waitable): Unit = intrinsic
+
     /// Remove a waitable from whatever set it is in. A set must be empty
     /// before `close`.
     public function remove(waitable: Waitable): Unit = intrinsic
+
     /// Block until an event arrives for a member of this set. Blocking is
     /// legal anywhere in Dovetail code: every export is async-typed, so the
     /// host parks this task and keeps running others.
     public function wait(self): WaitableEvent = intrinsic
+
     /// Give host tasks a scheduling turn without waiting for a specific event.
     public function yieldToHost(): Unit = intrinsic
+
     /// Check for one ready event without waiting for a future completion.
     public function poll(self): Option<WaitableEvent> =
         let event = self.pollEvent()
         if event.event == 0 then None else Some(event)
+
     function pollEvent(self): WaitableEvent = intrinsic
+
     public function close(self): Unit = intrinsic
 
 /// An in-flight async call (component-model subtask handle).
@@ -149,6 +169,7 @@ module SubtaskHandle =
     /// Release a finished subtask. Must be called exactly once after the
     /// terminal event was received (or after `cancel` resolved).
     public function drop(self): Unit = intrinsic
+
     /// Cancel an in-flight subtask. Returns the resolution state: 2 if the
     /// call had already returned (its result remains valid), 4 if it was
     /// cancelled before returning. Traps if the terminal event was already
@@ -164,8 +185,7 @@ public newtype AsyncCall = Int64
 module AsyncCall =
     /// The canonical ABI state (low 4 bits of the packed result):
     /// 2 means the call completed synchronously and the result is ready.
-    public property state(self): Int32 =
-        (self.value >> 32i64).toInt32() & 15
+    public property state(self): Int32 = (self.value >> 32i64).toInt32() & 15
 
     /// The subtask handle (only meaningful when `state` is 1 = started).
     ///
@@ -178,8 +198,7 @@ module AsyncCall =
         SubtaskHandle((self.value >> 36i64).toInt32() & 0x0FFFFFFFi32)
 
     /// The pinned result-buffer pointer (0 = no result).
-    public property retptr(self): Int32 =
-        self.value.toInt32()
+    public property retptr(self): Int32 = self.value.toInt32()
 
     /// Did the call complete synchronously?
     public property returned(self): Bool = self.state == 2
@@ -202,8 +221,7 @@ public newtype CopyOperation = Int64
 module CopyOperation =
     /// Did the copy return the `BLOCKED` sentinel — will it execute
     /// concurrently? Its completion then arrives as a waitable event.
-    public property blocked(self): Bool =
-        (self.value >> 32i64).toInt32() == -1
+    public property blocked(self): Bool = (self.value >> 32i64).toInt32() == -1
 
     /// How the copy ended. Only valid when not blocked.
     public property result(self): CopyResult =
@@ -214,29 +232,26 @@ module CopyOperation =
     /// Masked for the same reason as `EventPayload.copyCount`: the count is the
     /// top 28 bits of the status word, and an arithmetic shift would decode a
     /// count of 2²⁷ or more as negative.
-    public property count(self): Int32 =
-        ((self.value >> 32i64).toInt32() >> 4) & 0x0FFFFFFFi32
+    public property count(self): Int32 = ((self.value >> 32i64).toInt32() >> 4) & 0x0FFFFFFFi32
 
     /// This completion as the `EventPayload` the event loop would have
     /// delivered, so a synchronous completion and a delivered one are the same
     /// value and go down one code path. Only valid when not blocked.
-    public property packed(self): EventPayload =
-        EventPayload.ofCopy(self.result, self.count)
+    public property packed(self): EventPayload = EventPayload.ofCopy(self.result, self.count)
 
     /// The pinned buffer this copy reads into or writes out of.
-    public property buffer(self): Int32 =
-        self.value.toInt32()
+    public property buffer(self): Int32 = self.value.toInt32()
 
 /// Area-independent helpers for pinned stream buffers.
 module Stream =
     /// Copy `count` bytes out of a read op's pinned buffer into a fresh
     /// array and free the buffer.
     public function readFinish(op: CopyOperation, count: Int32): Array<Uint8> = intrinsic
+
     /// Free a posted op's pinned buffer without copying (dropped/cancelled).
     public function discard(op: CopyOperation): Unit = intrinsic
 
 // --- Tests ---
-
 test "CopyResult: the canonical ABI codes round-trip" =
     assert CopyResult.ofCode(0i32) == CopyResult.Completed
     assert CopyResult.ofCode(1i32) == CopyResult.Dropped

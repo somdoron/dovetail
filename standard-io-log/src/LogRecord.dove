@@ -16,8 +16,8 @@ module LogField =
     /// let f = LogField.make("rowCount", 42)
     /// // f.key == "rowCount", f.value == "42"
     /// ```
-    public function make<T>(key: String, value: T): LogField where T: Display =
-        LogField { key = key; value = value.format() }
+    public function make<T>(key: String, value: T): LogField
+        where T: Display = LogField { key = key; value = value.format() }
 
 /// A named scope around a unit of work. Attaching a span to a `Logger`
 /// (via `withSpan`) tags every record emitted under that logger until it
@@ -39,7 +39,8 @@ module LogSpan =
         LogSpan { name = name; fields = List<LogField>.empty }
 
     /// Append a single field, formatted via `Display`. Chainable.
-    public function withField<T>(self, key: String, value: T): LogSpan where T: Display =
+    public function withField<T>(self, key: String, value: T): LogSpan
+        where T: Display =
         LogSpan { name = self.name; fields = self.fields.append(LogField.make(key, value)) }
 
     /// Append a pre-built `LogField`. Use when the field value is already a
@@ -94,10 +95,7 @@ test "LogSpan.withLogField appends pre-built" =
         case _ => assert false
 
 test "LogSpan.withFields appends many" =
-    let fs: List<LogField> = [
-        LogField.make("a", 1i32),
-        LogField.make("b", "two"),
-    ]
+    let fs: List<LogField> = [LogField.make("a", 1i32), LogField.make("b", "two"), ]
     let s = LogSpan.make("x").withFields(fs)
     match s.fields with
         case [first, second] =>

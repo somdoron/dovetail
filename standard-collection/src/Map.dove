@@ -13,7 +13,9 @@ enum MapNode<K, V> =
 /// An immutable hash map from keys to values, backed by a hash-array mapped trie (CHAMP).
 /// Keys must implement Hashable and Equatable.
 /// All mutating operations return a new Map, leaving the original unchanged.
-public record Map<K, V> where K: Hashable, K: Equatable =
+public record Map<K, V>
+    where K: Hashable,
+          K: Equatable =
     root: MapNode<K, V>
     count: Int32
 
@@ -25,15 +27,14 @@ function popcount(x: Int32): Int32 =
     let e = d + (d >> 16)
     e & 63
 
-function champMask(hash: Int64, shift: Int32): Int32 =
-    ((hash >> shift.toInt64()) & 31i64).toInt32()
+function champMask(hash: Int64, shift: Int32): Int32 = ((hash >> shift.toInt64()) & 31i64).toInt32()
 
 function champBitpos(idx: Int32): Int32 = 1 << idx
 
-function champIndex(bitmap: Int32, bit: Int32): Int32 =
-    popcount(bitmap & (bit - 1))
+function champIndex(bitmap: Int32, bit: Int32): Int32 = popcount(bitmap & (bit - 1))
 
-function nodeArrayInsert<K, V>(arr: Array<MapNode<K, V>>, idx: Int32, value: MapNode<K, V>): Array<MapNode<K, V>> =
+function nodeArrayInsert<K, V>(arr: Array<MapNode<K, V>>, idx: Int32, value: MapNode<K, V>):
+    Array<MapNode<K, V>> =
     let newArr = Array.fill(arr.length + 1, value)
     let mutable i = 0
     while i < idx do
@@ -75,7 +76,13 @@ function collisionArrayRemove<K, V>(arr: Array<(K, V)>, idx: Int32): Array<(K, V
         i = i + 1
     newArr
 
-function mergeLeaves<K, V>(shift: Int32, hash1: Int64, node1: MapNode<K, V>, hash2: Int64, node2: MapNode<K, V>): MapNode<K, V> =
+function mergeLeaves<K, V>(
+    shift: Int32,
+    hash1: Int64,
+    node1: MapNode<K, V>,
+    hash2: Int64,
+    node2: MapNode<K, V>
+): MapNode<K, V> =
     let frag1 = champMask(hash1, shift)
     let frag2 = champMask(hash2, shift)
     if frag1 == frag2 then
@@ -94,11 +101,18 @@ function mergeLeaves<K, V>(shift: Int32, hash1: Int64, node1: MapNode<K, V>, has
             arr.set(1, node1)
             MapNode.BitmapNode(bitmap, arr)
 
-function handleBitmapChildRemoval<K, V>(bitmap: Int32, children: Array<MapNode<K, V>>, idx: Int32, bit: Int32, newChild: MapNode<K, V>): (MapNode<K, V>, Bool) =
+function handleBitmapChildRemoval<K, V>(
+    bitmap: Int32,
+    children: Array<MapNode<K, V>>,
+    idx: Int32,
+    bit: Int32,
+    newChild: MapNode<K, V>
+): (MapNode<K, V>, Bool) =
     match newChild with
         case EmptyNode =>
             let newBitmap = bitmap ^ bit
-            if newBitmap == 0 then (MapNode.EmptyNode, true)
+            if newBitmap == 0 then
+                (MapNode.EmptyNode, true)
             else
                 let newChildren = nodeArrayRemove(children, idx)
                 if popcount(newBitmap) == 1 then
@@ -106,26 +120,30 @@ function handleBitmapChildRemoval<K, V>(bitmap: Int32, children: Array<MapNode<K
                     match remaining with
                         case LeafNode(_, _, _) => (remaining, true)
                         case _ => (MapNode.BitmapNode(newBitmap, newChildren), true)
-                else (MapNode.BitmapNode(newBitmap, newChildren), true)
+                else
+                    (MapNode.BitmapNode(newBitmap, newChildren), true)
         case _ =>
             let newChildren = children.clone()
             newChildren.set(idx, newChild)
             (MapNode.BitmapNode(bitmap, newChildren), true)
 
-function nodeGet<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K): Option<V> where K: Equatable =
+function nodeGet<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K): Option<V>
+    where K: Equatable =
     match node with
         case EmptyNode => None
         case LeafNode(h, k, v) =>
             if h == hash then
                 if k.equals(key) then Some(v) else None
-            else None
+            else
+                None
         case BitmapNode(bitmap, children) =>
             let frag = champMask(hash, shift)
             let bit = champBitpos(frag)
             if (bitmap & bit) == 0 then None
             else nodeGet(children.get(champIndex(bitmap, bit)), hash, shift + 5, key)
         case HashCollision(h, entries) =>
-            if h != hash then None
+            if h != hash then
+                None
             else
                 let mutable i = 0
                 let mutable result: Option<V> = None
@@ -133,16 +151,19 @@ function nodeGet<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K): 
                     if entries.get(i)._0.equals(key) then
                         result = Some(entries.get(i)._1)
                         i = entries.length
-                    else i = i + 1
+                    else
+                        i = i + 1
                 result
 
-function nodePut<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K, value: V): (MapNode<K, V>, Bool) where K: Equatable =
+function nodePut<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K, value: V):
+    (MapNode<K, V>, Bool)
+    where K: Equatable =
     match node with
-        case EmptyNode =>
-            (MapNode.LeafNode(hash, key, value), true)
+        case EmptyNode => (MapNode.LeafNode(hash, key, value), true)
         case LeafNode(h, k, v) =>
             if h == hash then
-                if k.equals(key) then (MapNode.LeafNode(hash, key, value), false)
+                if k.equals(key) then
+                    (MapNode.LeafNode(hash, key, value), false)
                 else
                     let entries = Array.fill(2, (k, v))
                     entries.set(1, (key, value))
@@ -171,7 +192,8 @@ function nodePut<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K, v
                     if entries.get(i)._0.equals(key) then
                         found = i
                         i = entries.length
-                    else i = i + 1
+                    else
+                        i = i + 1
                 if found >= 0 then
                     let newEntries = entries.clone()
                     newEntries.set(found, (key, value))
@@ -185,25 +207,29 @@ function nodePut<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K, v
                 let wrapped: MapNode<K, V> = MapNode.BitmapNode(bit, Array.fill(1, node))
                 nodePut(wrapped, hash, shift, key, value)
 
-function nodeRemove<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K): (MapNode<K, V>, Bool) where K: Equatable =
+function nodeRemove<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K):
+    (MapNode<K, V>, Bool)
+    where K: Equatable =
     match node with
         case EmptyNode => (node, false)
         case LeafNode(h, k, v) =>
             if h == hash then
-                if k.equals(key) then (MapNode.EmptyNode, true)
-                else (node, false)
-            else (node, false)
+                if k.equals(key) then (MapNode.EmptyNode, true) else (node, false)
+            else
+                (node, false)
         case BitmapNode(bitmap, children) =>
             let frag = champMask(hash, shift)
             let bit = champBitpos(frag)
-            if (bitmap & bit) == 0 then (node, false)
+            if (bitmap & bit) == 0 then
+                (node, false)
             else
                 let idx = champIndex(bitmap, bit)
                 let result = nodeRemove(children.get(idx), hash, shift + 5, key)
                 if !result._1 then (node, false)
                 else handleBitmapChildRemoval(bitmap, children, idx, bit, result._0)
         case HashCollision(h, entries) =>
-            if h != hash then (node, false)
+            if h != hash then
+                (node, false)
             else
                 let mutable foundIdx = -1
                 let mutable i = 0
@@ -211,8 +237,10 @@ function nodeRemove<K, V>(node: MapNode<K, V>, hash: Int64, shift: Int32, key: K
                     if entries.get(i)._0.equals(key) then
                         foundIdx = i
                         i = entries.length
-                    else i = i + 1
-                if foundIdx < 0 then (node, false)
+                    else
+                        i = i + 1
+                if foundIdx < 0 then
+                    (node, false)
                 else if entries.length == 2 then
                     let remaining = if foundIdx == 0 then entries.get(1) else entries.get(0)
                     (MapNode.LeafNode(h, remaining._0, remaining._1), true)
@@ -253,27 +281,30 @@ function nodeFillEntries<K, V>(node: MapNode<K, V>, result: Slice<(K, V)>): Int3
             result[0] = (k, v)
             1
         case HashCollision(_, entries) =>
-            entries[|..|].copyTo(result)
+            entries [| .. |].copyTo(result)
             entries.length
         case BitmapNode(_, children) =>
             let mutable i = 0
             let mutable written = 0
             while i < children.length do
-                written = written + nodeFillEntries(children.get(i), result[|written..|])
+                written = written + nodeFillEntries(children.get(i), result [| written.. |])
                 i = i + 1
             written
 
 function mapCollectEntries<K, V>(root: MapNode<K, V>, count: Int32): Array<(K, V)> =
-    if count == 0 then Array.empty()
+    if count == 0 then
+        Array.empty()
     else
         let first = nodeFindFirst(root)
         let entries = Array.fill(count, first)
-        let _ = nodeFillEntries(root, entries[|..|])
+        let _ = nodeFillEntries(root, entries [| .. |])
         entries
 
-class MapEntryIterator<K, V>(entries: Array<(K, V)>, mutable index: Int32) implements Iterator<(K, V)> =
+class MapEntryIterator<K, V>(entries: Array<(K, V)>, mutable index: Int32) implements Iterator<
+    (K, V)> =
     public function next(self): Option<(K, V)> =
-        if self.index >= self.entries.length then None
+        if self.index >= self.entries.length then
+            None
         else
             let entry = self.entries.get(self.index)
             self.index = self.index + 1
@@ -293,12 +324,10 @@ module Map<K, V> =
         Map { root = result._0; count = newCount }
 
     /// Returns the value associated with the key, or None if not found.
-    public function get(self, key: K): Option<V> =
-        nodeGet(self.root, key.hash(), 0, key)
+    public function get(self, key: K): Option<V> = nodeGet(self.root, key.hash(), 0, key)
 
     /// Returns true if the map contains the given key.
-    public function contains(self, key: K): Bool =
-        self.get(key).isSome
+    public function contains(self, key: K): Bool = self.get(key).isSome
 
     /// Returns a new map with the given key removed. Returns the same map if the key is not present.
     public function remove(self, key: K): Map<K, V> =
@@ -319,7 +348,9 @@ module Map<K, V> =
 
 // TODO: Replace eager collect-to-array iterator with a lazy CHAMP traversal
 // using an explicit stack of (BitmapNode, child-index) frames to avoid O(n) up-front allocation.
-implement <K, V> Iterable<(K, V)> for Map<K, V> where K: Hashable, K: Equatable =
+implement<K, V> Iterable<(K, V)> for Map<K, V>
+    where K: Hashable,
+          K: Equatable =
     public function iterator(self): Iterator<(K, V)> =
         MapEntryIterator(mapCollectEntries(self.root, self.count), 0)
 

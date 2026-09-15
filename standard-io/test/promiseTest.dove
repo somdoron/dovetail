@@ -14,7 +14,6 @@ import standard.time.Duration
 // The tests below are the three shapes that made visible: a description built
 // and discarded, a description handed to another fiber, and an awaiter of a
 // promise that fails.
-
 enum PromiseTestError =
     Refused
 
@@ -61,7 +60,7 @@ async function forkThenCompleteProgram(outcome: Array<Int32>): Async<Unit, Never
     ()
 
 @timeout(10000)
-test "awaiting a promise that fails reports the failure instead of waiting forever" =
+ test "awaiting a promise that fails reports the failure instead of waiting forever" =
     let outcome = Array<String>.fill(1, "")
     failedPromiseProgram(outcome).run()
     // The awaiter parked first and was woken by the failure. Its check used to
@@ -72,7 +71,8 @@ test "awaiting a promise that fails reports the failure instead of waiting forev
     assert outcome.get(0) == "failed"
 
 async function failedPromiseProgram(outcome: Array<String>): Async<Unit, Never> =
-    let promise: Promise<Int32, PromiseTestError> = await Async<Int32, PromiseTestError>.makePromise()
+    let promise: Promise<Int32, PromiseTestError> =
+        await Async<Int32, PromiseTestError>.makePromise()
     let waiter: Fiber<String, Never> = await awaitAndReport(promise).fork()
     // Long enough that the waiter is parked ON the promise rather than about to
     // read a settled one: the wake is the half under test.
@@ -81,7 +81,9 @@ async function failedPromiseProgram(outcome: Array<String>): Async<Unit, Never> 
     outcome.set(0, await waiter.join())
 
 async function awaitAndReport(promise: Promise<Int32, PromiseTestError>): Async<String, Never> =
-    await promise.awaitPromise().fold<String, Never>(
+    await promise
+        .awaitPromise()
+        .fold<String, Never>(
         (_: PromiseTestError) => Async.succeed("failed"),
         (_: Int32) => Async.succeed("value")
     )

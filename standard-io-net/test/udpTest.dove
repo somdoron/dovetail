@@ -12,7 +12,7 @@ import standard.io.Cause
 
 // Binding with port 0 must pick a free port and report it back.
 @timeout(5000)
-test "Udp.bind on 127.0.0.1:0 reports a concrete local address" =
+ test "Udp.bind on 127.0.0.1:0 reports a concrete local address" =
     let mutable address = ""
     let program: Async<Unit, NetError> = bindAndReadAddress((a: String) => address = a)
     program.run()
@@ -32,21 +32,17 @@ async function bindAndReadAddress(setter: (String) => Unit): Async<Unit, NetErro
 // explicitly. Exercises the async send/receive pair, the option<address>
 // lowering on send, and the datagram lift (payload + peer) on receive.
 @timeout(5000)
-test "Udp send and receive a datagram over loopback" =
+ test "Udp send and receive a datagram over loopback" =
     let mutable received = ""
     let mutable senderSeen = false
-    let program: Async<Unit, NetError> = loopbackEcho(
-        (payload: String) => received = payload,
-        (seen: Bool) => senderSeen = seen
-    )
+    let program: Async<Unit, NetError> =
+        loopbackEcho((payload: String) => received = payload, (seen: Bool) => senderSeen = seen)
     program.run()
     assert received == "ping udp"
     assert senderSeen
 
-async function loopbackEcho(
-    setPayload: (String) => Unit,
-    setSenderSeen: (Bool) => Unit
-): Async<Unit, NetError> =
+async function loopbackEcho(setPayload: (String) => Unit, setSenderSeen: (Bool) => Unit):
+    Async<Unit, NetError> =
     let receiver: UdpEndpoint = use Udp.bind("127.0.0.1:0")
     let receiverAddress = await receiver.localAddress()
     let sender: UdpEndpoint = use Udp.bind("127.0.0.1:0")
@@ -56,9 +52,10 @@ async function loopbackEcho(
     setPayload(String.fromBytes(datagram.data, 0, datagram.data.length))
     // The receiver learns who sent it; that is the sender's own bound address.
     let senderAddress = await sender.localAddress()
-    setSenderSeen(match datagram.remoteAddress with
-        case Some(from) => from == senderAddress
-        case None => false
+    setSenderSeen(
+        match datagram.remoteAddress with
+            case Some(from) => from == senderAddress
+            case None => false
     )
 
 // An EMPTY datagram is a legal one, and it is the case where the host has
@@ -70,35 +67,38 @@ async function loopbackEcho(
 // after it is what would show the second: a corrupted free list hands the next
 // allocation a pointer into someone else's memory.
 @timeout(5000)
-test "Udp send and receive a zero-length datagram" =
+ test "Udp send and receive a zero-length datagram" =
     let mutable emptyLength = -1i32
     let mutable afterwards = ""
-    let program: Async<Unit, NetError> = emptyDatagramThenPayload(
-        (n: Int32) => emptyLength = n,
-        (payload: String) => afterwards = payload
-    )
+    let program: Async<Unit, NetError> =
+        emptyDatagramThenPayload(
+            (n: Int32) => emptyLength = n,
+            (payload: String) => afterwards = payload
+        )
     program.run()
     assert emptyLength == 0
     assert afterwards == "after the empty one"
 
-async function emptyDatagramThenPayload(
-    setLength: (Int32) => Unit,
-    setPayload: (String) => Unit
-): Async<Unit, NetError> =
+async function emptyDatagramThenPayload(setLength: (Int32) => Unit, setPayload: (String) => Unit):
+    Async<Unit, NetError> =
     let receiver: UdpEndpoint = use Udp.bind("127.0.0.1:0")
     let receiverAddress = await receiver.localAddress()
     let sender: UdpEndpoint = use Udp.bind("127.0.0.1:0")
-    await sender.send(Datagram { data = Array<Uint8>.empty(); remoteAddress = Some(receiverAddress) })
+    await sender
+        .send(Datagram { data = Array<Uint8>.empty(); remoteAddress = Some(receiverAddress) })
     let empty = await receiver.receive()
     setLength(empty.data.length)
     // The heap has to still be sane afterwards.
-    await sender.send(Datagram { data = "after the empty one".bytes(); remoteAddress = Some(receiverAddress) })
+    await sender
+        .send(
+        Datagram { data = "after the empty one".bytes(); remoteAddress = Some(receiverAddress) }
+    )
     let second = await receiver.receive()
     setPayload(String.fromBytes(second.data, 0, second.data.length))
 
 // A connected endpoint sends without naming a destination each time.
 @timeout(5000)
-test "Udp.connect sends to the connected peer without an explicit address" =
+ test "Udp.connect sends to the connected peer without an explicit address" =
     let mutable received = ""
     let program: Async<Unit, NetError> = connectedSend((payload: String) => received = payload)
     program.run()
@@ -132,13 +132,11 @@ function udpParsePort(text: String): Uint16 =
 // were wrong (missed, doubled, or through a bad pointer) the pinned free-list
 // would be corrupt and the final exchange would trap or come back wrong.
 @timeout(10000)
-test "Udp: interrupting a blocked receive cancels cleanly and keeps the heap sane" =
+ test "Udp: interrupting a blocked receive cancels cleanly and keeps the heap sane" =
     let mutable roundTripped = ""
     let mutable releases = 0i32
-    interruptReceiveLoop(
-        (payload: String) => roundTripped = payload,
-        () => releases = releases + 1
-    ).run()
+    interruptReceiveLoop((payload: String) => roundTripped = payload, () => releases = releases + 1)
+        .run()
     assert releases == 64i32
     assert roundTripped == "still works"
 
@@ -153,30 +151,26 @@ async function blockedReceive(
     let _datagram = await endpoint.receive()
     ()
 
-async function interruptReceiveLoop(
-    setPayload: (String) => Unit,
-    onRelease: () => Unit
-): Async<Unit, NetError> =
+async function interruptReceiveLoop(setPayload: (String) => Unit, onRelease: () => Unit):
+    Async<Unit, NetError> =
     let receiver: UdpEndpoint = use Udp.bind("127.0.0.1:0")
-    let marker: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(1),
-        (_: Int32) => Async.thunk(() => onRelease())
-    )
+    let marker: Resource<Int32, Never> =
+        Resource.make(() => Async.succeed(1), (_: Int32) => Async.thunk(() => onRelease()))
     let mutable i = 0i32
     while i < 64i32 do
         let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
         let fiber: Fiber<Unit, NetError> = await blockedReceive(receiver, ready, marker).fork()
         await ready.awaitPromise()
         await fiber.interrupt()
-        await fiber.join().foldCause(
-            (_: Cause<NetError>) => Async.succeed(()),
-            (_: Unit) => Async.succeed(())
-        )
+        await fiber
+            .join()
+            .foldCause((_: Cause<NetError>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
         i = i + 1
     // The endpoint and the pinned heap must still be usable afterwards.
     let sender: UdpEndpoint = use Udp.bind("127.0.0.1:0")
     let receiverAddress = await receiver.localAddress()
-    await sender.send(Datagram { data = "still works".bytes(); remoteAddress = Some(receiverAddress) })
+    await sender
+        .send(Datagram { data = "still works".bytes(); remoteAddress = Some(receiverAddress) })
     let datagram = await receiver.receive()
     setPayload(String.fromBytes(datagram.data, 0, datagram.data.length))
 
@@ -191,27 +185,24 @@ async function interruptReceiveLoop(
 // runs often enough to cover both. A wrong free corrupts the pinned free list,
 // so the working round-trip at the end is the check.
 @timeout(20000)
-test "Udp: interrupting a receive that already completed frees the payload too" =
+ test "Udp: interrupting a receive that already completed frees the payload too" =
     let mutable interrupted = 0i32
     let mutable roundTripped = ""
     interruptRacedReceive(
         () => interrupted = interrupted + 1,
         (payload: String) => roundTripped = payload
-    ).run()
+    )
+        .run()
     assert interrupted == 48i32
     assert roundTripped == "race survivor"
 
-async function interruptRacedReceive(
-    onRelease: () => Unit,
-    setPayload: (String) => Unit
-): Async<Unit, NetError> =
+async function interruptRacedReceive(onRelease: () => Unit, setPayload: (String) => Unit):
+    Async<Unit, NetError> =
     let receiver: UdpEndpoint = use Udp.bind("127.0.0.1:0")
     let receiverAddress = await receiver.localAddress()
     let sender: UdpEndpoint = use Udp.bind("127.0.0.1:0")
-    let marker: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(1),
-        (_: Int32) => Async.thunk(() => onRelease())
-    )
+    let marker: Resource<Int32, Never> =
+        Resource.make(() => Async.succeed(1), (_: Int32) => Async.thunk(() => onRelease()))
     let mutable i = 0i32
     while i < 48i32 do
         let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
@@ -222,14 +213,14 @@ async function interruptRacedReceive(
         // no event can be delivered while this fiber is runnable.
         await sender.send(Datagram { data = "racy".bytes(); remoteAddress = Some(receiverAddress) })
         await fiber.interrupt()
-        await fiber.join().foldCause(
-            (_: Cause<NetError>) => Async.succeed(()),
-            (_: Unit) => Async.succeed(())
-        )
+        await fiber
+            .join()
+            .foldCause((_: Cause<NetError>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
         i = i + 1
     // Drain anything the interrupted receives left queued, then prove a real
     // exchange still works on both the socket and the pinned heap.
-    await sender.send(Datagram { data = "race survivor".bytes(); remoteAddress = Some(receiverAddress) })
+    await sender
+        .send(Datagram { data = "race survivor".bytes(); remoteAddress = Some(receiverAddress) })
     let mutable payload = ""
     let mutable found = false
     while !found do
@@ -246,9 +237,8 @@ async function interruptRacedReceive(
 // assertion is that asking never traps or hangs. The hop limit matters most: it
 // is a `u8` payload, so it is read from a different retptr offset than the u64
 // buffer sizes, and a zero would mean that offset is wrong.
-
 @timeout(5000)
-test "UdpEndpoint: hop-limit and buffer-size options round-trip" =
+ test "UdpEndpoint: hop-limit and buffer-size options round-trip" =
     let mutable hop = 0i32
     let mutable receiveBuffer = 0i64
     let mutable sendBuffer = 0i64
@@ -256,7 +246,8 @@ test "UdpEndpoint: hop-limit and buffer-size options round-trip" =
         (n: Int32) => hop = n,
         (n: Int64) => receiveBuffer = n,
         (n: Int64) => sendBuffer = n
-    ).run()
+    )
+        .run()
     // -1 = the host does not implement it; anything else must be a real TTL.
     assert hop != 0i32
     // Kernel buffers are always positive on a bound socket.
@@ -275,13 +266,15 @@ async function udpOptionsProgram(
     await endpoint.setSendBufferSize(32768i64)
     setReceive(await endpoint.receiveBufferSize())
     setSend(await endpoint.sendBufferSize())
-    let hop = await endpoint.unicastHopLimit().fold<Int32, Never>(
-        (_: NetError) => Async.succeed(0 - 1i32),
-        (n: Int32) => Async.succeed(n)
-    )
+    let hop =
+        await endpoint
+            .unicastHopLimit()
+            .fold<Int32, Never>(
+            (_: NetError) => Async.succeed(0 - 1i32),
+            (n: Int32) => Async.succeed(n)
+        )
     setHop(hop)
     // A set that a supporting host must accept; ignored where unsupported.
-    await endpoint.setUnicastHopLimit(64i32).fold<Unit, Never>(
-        (_: NetError) => Async.succeed(()),
-        (_: Unit) => Async.succeed(())
-    )
+    await endpoint
+        .setUnicastHopLimit(64i32)
+        .fold<Unit, Never>((_: NetError) => Async.succeed(()), (_: Unit) => Async.succeed(()))

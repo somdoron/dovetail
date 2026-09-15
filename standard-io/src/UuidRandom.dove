@@ -40,23 +40,35 @@ private function setVersionVariant(bytes: Array<Uint8>, version: Int32): Unit =
 
 test "generateV4 sets version 4 and produces distinct values" =
     let program: Async<Unit, Never> =
-        Uuid.generateV4().andThen((a: Uuid) =>
-            Uuid.generateV4().map((b: Uuid) =>
-                assert a.version == 4
-                assert b.version == 4
-                assert (a == b) == false
-            )
+        Uuid
+            .generateV4()
+            .andThen(
+            (a: Uuid) =>
+                Uuid
+                    .generateV4()
+                    .map(
+                    (b: Uuid) =>
+                        assert a.version == 4
+                        assert b.version == 4
+                        assert (a == b) == false
+                )
         )
     program.run()
 
 test "generateV7 sets version 7 and a monotonic timestamp prefix" =
     let program: Async<Unit, Never> =
-        Uuid.generateV7().andThen((a: Uuid) =>
-            Uuid.generateV7().map((b: Uuid) =>
-                assert a.version == 7
-                assert b.version == 7
-                // The high 48 bits are the millisecond timestamp; the later one is >=.
-                assert (a.high / 65536i64) <= (b.high / 65536i64)
-            )
+        Uuid
+            .generateV7()
+            .andThen(
+            (a: Uuid) =>
+                Uuid
+                    .generateV7()
+                    .map(
+                    (b: Uuid) =>
+                        assert a.version == 7
+                        assert b.version == 7
+                        // The high 48 bits are the millisecond timestamp; the later one is >=.
+                        assert (a.high / 65536i64) <= (b.high / 65536i64)
+                )
         )
     program.run()

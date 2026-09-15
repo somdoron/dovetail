@@ -14,8 +14,11 @@ module Curve25519 =
     /// out = a + b (limbwise; limbs grow by ~1 bit, reduced by the next mul).
     function fadd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
         [|
-            a.get(0) + b.get(0), a.get(1) + b.get(1), a.get(2) + b.get(2),
-            a.get(3) + b.get(3), a.get(4) + b.get(4),
+            a.get(0) + b.get(0),
+            a.get(1) + b.get(1),
+            a.get(2) + b.get(2),
+            a.get(3) + b.get(3),
+            a.get(4) + b.get(4),
         |]
 
     /// out = a - b (mod p), biased by 2p to stay non-negative.
@@ -47,11 +50,41 @@ module Curve25519 =
         let r2_19 = r2 * 19u64
         let r3_19 = r3 * 19u64
         let r4_19 = r4 * 19u64
-        let t0 = Uint128.multiply(r0, s0) + Uint128.multiply(r4_19, s1) + Uint128.multiply(r3_19, s2) + Uint128.multiply(r2_19, s3) + Uint128.multiply(r1_19, s4)
-        let t1 = Uint128.multiply(r0, s1) + Uint128.multiply(r1, s0) + Uint128.multiply(r4_19, s2) + Uint128.multiply(r3_19, s3) + Uint128.multiply(r2_19, s4)
-        let t2 = Uint128.multiply(r0, s2) + Uint128.multiply(r1, s1) + Uint128.multiply(r2, s0) + Uint128.multiply(r4_19, s3) + Uint128.multiply(r3_19, s4)
-        let t3 = Uint128.multiply(r0, s3) + Uint128.multiply(r1, s2) + Uint128.multiply(r2, s1) + Uint128.multiply(r3, s0) + Uint128.multiply(r4_19, s4)
-        let t4 = Uint128.multiply(r0, s4) + Uint128.multiply(r1, s3) + Uint128.multiply(r2, s2) + Uint128.multiply(r3, s1) + Uint128.multiply(r4, s0)
+        let t0 =
+            Uint128
+                .multiply(r0, s0)
+                + Uint128.multiply(r4_19, s1)
+                + Uint128.multiply(r3_19, s2)
+                + Uint128.multiply(r2_19, s3)
+                + Uint128.multiply(r1_19, s4)
+        let t1 =
+            Uint128
+                .multiply(r0, s1)
+                + Uint128.multiply(r1, s0)
+                + Uint128.multiply(r4_19, s2)
+                + Uint128.multiply(r3_19, s3)
+                + Uint128.multiply(r2_19, s4)
+        let t2 =
+            Uint128
+                .multiply(r0, s2)
+                + Uint128.multiply(r1, s1)
+                + Uint128.multiply(r2, s0)
+                + Uint128.multiply(r4_19, s3)
+                + Uint128.multiply(r3_19, s4)
+        let t3 =
+            Uint128
+                .multiply(r0, s3)
+                + Uint128.multiply(r1, s2)
+                + Uint128.multiply(r2, s1)
+                + Uint128.multiply(r3, s0)
+                + Uint128.multiply(r4_19, s4)
+        let t4 =
+            Uint128
+                .multiply(r0, s4)
+                + Uint128.multiply(r1, s3)
+                + Uint128.multiply(r2, s2)
+                + Uint128.multiply(r3, s1)
+                + Uint128.multiply(r4, s0)
         let c0 = t0 >> 51u128
         let v0 = t0.low & m
         let t1b = t1 + c0
@@ -71,7 +104,7 @@ module Curve25519 =
         let o1 = v1 + d0
         let d1 = o1 >> 51u64
         let o2 = v2 + d1
-        [|o0 & m, o1 & m, o2, v3, v4|]
+        [| o0 & m, o1 & m, o2, v3, v4 |]
 
     function fsquare(a: Array<Uint64>): Array<Uint64> = fmul(a, a)
 
@@ -208,11 +241,11 @@ module Curve25519 =
         res
 
     // --- Field helpers shared with Ed25519 (twisted Edwards over the same field) ---
-
     /// The field element [c, 0, 0, 0, 0].
-    function feConst(c: Uint64): Array<Uint64> = [|c, 0u64, 0u64, 0u64, 0u64|]
+    function feConst(c: Uint64): Array<Uint64> = [| c, 0u64, 0u64, 0u64, 0u64 |]
 
     function feZero(): Array<Uint64> = feConst(0u64)
+
     function feOne(): Array<Uint64> = feConst(1u64)
 
     /// Reduce a field element to loosely-canonical form (limbs < 2^51). `fmul`
@@ -298,11 +331,11 @@ module Curve25519 =
         k.set(0, k.get(0) & 248u8)
         k.set(31, (k.get(31) & 127u8) | 64u8)
         let x1 = frombytes(uBytes)
-        let a24 = [|121665u64, 0u64, 0u64, 0u64, 0u64|]
-        let mutable x2: Array<Uint64> = [|1u64, 0u64, 0u64, 0u64, 0u64|]
-        let mutable z2: Array<Uint64> = [|0u64, 0u64, 0u64, 0u64, 0u64|]
+        let a24 = [| 121665u64, 0u64, 0u64, 0u64, 0u64 |]
+        let mutable x2: Array<Uint64> = [| 1u64, 0u64, 0u64, 0u64, 0u64 |]
+        let mutable z2: Array<Uint64> = [| 0u64, 0u64, 0u64, 0u64, 0u64 |]
         let mutable x3 = x1.clone()
-        let mutable z3: Array<Uint64> = [|1u64, 0u64, 0u64, 0u64, 0u64|]
+        let mutable z3: Array<Uint64> = [| 1u64, 0u64, 0u64, 0u64, 0u64 |]
         let mutable swap = 0u64
         let mutable t = 254
         while t >= 0 do

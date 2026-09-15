@@ -13,6 +13,7 @@ enum ByteStreamError =
     Broken
 
 implement IoError for ByteStreamError
+
 implement Display for ByteStreamError =
     public function format(self): String = "byte stream error"
 
@@ -23,15 +24,20 @@ class ByteInput(
     public mutable closes: Int32
 ) extends AsyncInputStream<ByteStreamError>() =
     protected override function checkAlive(self): Async<Unit, ByteStreamError> = Async.succeed(())
-    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, ByteStreamError> =
+
+    protected override async function readAvailable(self, bytesLength: Int64):
+        Async<Array<Uint8>, ByteStreamError> =
         self.reads = self.reads + 1
         match self.chunks with
             case List.Cons(chunk, rest) =>
                 self.chunks = rest
                 chunk
             case List.Nil =>
-                if self.failAtEnd then await Async<Array<Uint8>, ByteStreamError>.fail(ByteStreamError.Broken)
-                else Array<Uint8>.empty()
+                if self.failAtEnd then
+                    await Async<Array<Uint8>, ByteStreamError>.fail(ByteStreamError.Broken)
+                else
+                    Array<Uint8>.empty()
+
     public override async function close(self): Async<Unit, ByteStreamError> =
         self.closes = self.closes + 1
 
@@ -42,105 +48,144 @@ class ByteOutput(
     public mutable closes: Int32
 ) extends AsyncOutputStream<ByteStreamError>() =
     protected override function checkAlive(self): Async<Unit, ByteStreamError> = Async.succeed(())
+
     protected override function recordedFailure(self): Result<Unit, ByteStreamError> = Ok(())
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, ByteStreamError> =
+
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, ByteStreamError> =
         if self.failWrite then await Async<Unit, ByteStreamError>.fail(ByteStreamError.Broken)
         self.chunks = List.Cons(bytes, self.chunks)
+
     protected override async function flushPending(self): Async<Unit, ByteStreamError> =
         self.flushes = self.flushes + 1
+
     public override async function close(self): Async<Unit, ByteStreamError> =
         self.closes = self.closes + 1
 
 test "Stream bytes: reads are lazy, short reads continue, and handles are borrowed" =
-    let input = ByteInput([[|1u8|], [|2u8|]], false, 0, 0)
+    let input = ByteInput([[| 1u8 |], [| 2u8 |]], false, 0, 0)
     let source = Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64)
-    let program: Async<Unit, ByteStreamError> = async do
-        assert input.reads == 0
-        assert (await source.take(0).runCollect()).isEmpty
-        assert input.reads == 0
-        assert (await source.take(1).runCollect()) == [1u8]
-        assert input.reads == 1
-        assert (await source.runCollect()) == [2u8]
-        assert input.reads == 3
-        assert input.closes == 0
+    let program: Async<Unit, ByteStreamError> =
+        async do
+            assert input.reads == 0
+            assert (await source.take(0).runCollect()).isEmpty
+            assert input.reads == 0
+            assert (await source.take(1).runCollect()) == [1u8]
+            assert input.reads == 1
+            assert (await source.runCollect()) == [2u8]
+            assert input.reads == 3
+            assert input.closes == 0
     program.run()
 
 test "Stream bytes: transferred chunks precede a read failure" =
-    let input = ByteInput([[|7u8|]], true, 0, 0)
+    let input = ByteInput([[| 7u8 |]], true, 0, 0)
     let source = Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64)
     let recovered = source.catchAll((_: ByteStreamError) => Stream<Uint8, Never>.succeed(9u8))
-    let program: Async<Unit, Never> = async do
-        assert (await recovered.runCollect()) == [7u8, 9u8]
-        assert input.reads == 2 && input.closes == 0
+    let program: Async<Unit, Never> =
+        async do
+            assert (await recovered.runCollect()) == [7u8, 9u8]
+            assert input.reads == 2 && input.closes == 0
     program.run()
 
 @panics
-test "Stream bytes: zero chunk size is rejected at construction" =
+ test "Stream bytes: zero chunk size is rejected at construction" =
     Stream<Uint8, ByteStreamError>.fromInputStream(ByteInput(List.empty, false, 0, 0), 0i64)
     ()
 
 @panics
-test "Stream bytes: negative chunk size is rejected at construction" =
+ test "Stream bytes: negative chunk size is rejected at construction" =
     Stream<Uint8, ByteStreamError>.fromInputStream(ByteInput(List.empty, false, 0, 0), -1i64)
     ()
 
 test "Stream bytes: resource composition acquires fresh handles and cleans up" =
     let mutable acquired = 0
     let mutable released = 0
-    let resource: Resource<AsyncInputStream<ByteStreamError>, ByteStreamError> = Resource.make(
-        async () =>
-            acquired = acquired + 1
-            ByteInput([[|3u8|], [|4u8|]], false, 0, 0)
-        ,
-        async (input: AsyncInputStream<ByteStreamError>) =>
-            await input.close().orPanic()
-            released = released + 1
-    )
-    let source = Stream<AsyncInputStream<ByteStreamError>, ByteStreamError>.fromResource(resource)
-        .flatMap((input: AsyncInputStream<ByteStreamError>) => Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64))
-    let program: Async<Unit, ByteStreamError> = async do
-        assert acquired == 0
-        assert (await source.take(1).runCollect()) == [3u8]
-        assert acquired == 1 && released == 1
-        assert (await source.runCollect()) == [3u8, 4u8]
-        assert acquired == 2 && released == 2
-        let failed = await source.mapAsync((_: Uint8) => Async<Uint8, ByteStreamError>.fail(ByteStreamError.Broken))
-            .drain().fold<Bool, Never>((_: ByteStreamError) => Async.succeed(true), (_: Unit) => Async.succeed(false))
-        assert failed && acquired == 3 && released == 3
+    let resource: Resource<AsyncInputStream<ByteStreamError>, ByteStreamError> =
+        Resource
+            .make(
+            (
+                async () =>
+                    acquired = acquired + 1
+                    ByteInput([[| 3u8 |], [| 4u8 |]], false, 0, 0)
+            ),
+            async (input: AsyncInputStream<ByteStreamError>) =>
+                await input.close().orPanic()
+                released = released + 1
+        )
+    let source =
+        Stream<AsyncInputStream<ByteStreamError>, ByteStreamError>
+            .fromResource(resource)
+            .flatMap(
+            (input: AsyncInputStream<ByteStreamError>) =>
+                Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64)
+        )
+    let program: Async<Unit, ByteStreamError> =
+        async do
+            assert acquired == 0
+            assert (await source.take(1).runCollect()) == [3u8]
+            assert acquired == 1 && released == 1
+            assert (await source.runCollect()) == [3u8, 4u8]
+            assert acquired == 2 && released == 2
+            let failed =
+                await source
+                    .mapAsync(
+                    (_: Uint8) => Async<Uint8, ByteStreamError>.fail(ByteStreamError.Broken)
+                )
+                    .drain()
+                    .fold<Bool, Never>(
+                    (_: ByteStreamError) => Async.succeed(true),
+                    (_: Unit) => Async.succeed(false)
+                )
+            assert failed && acquired == 3 && released == 3
     program.run()
 
 test "Stream bytes: writes preserve view offsets and leave flushing and closing to the owner" =
-    let storage = [|99u8, 1u8, 2u8, 88u8|]
+    let storage = [| 99u8, 1u8, 2u8, 88u8 |]
     let output = ByteOutput(List.empty, false, 0, 0)
-    let source = Stream<Uint8, ByteStreamError>.fromChunk(storage.readonly[|1..3|])
-        .concat(Stream<Uint8, ByteStreamError>.succeed(3u8))
-    let program: Async<Unit, ByteStreamError> = async do
-        await source.writeToOutputStream(output)
-        let written = output.chunks.reverse()
-        assert written.head == [|1u8, 2u8|].readonly
-        assert written.tail.head == [|3u8|].readonly
-        storage[1] = 7u8
-        assert written.head[0] == 7u8
-        assert output.flushes == 0 && output.closes == 0
-        let emptyOutput = ByteOutput(List.empty, true, 0, 0)
-        await Stream<Uint8, ByteStreamError>.empty.writeToOutputStream(emptyOutput)
-        assert emptyOutput.chunks.isEmpty
+    let source =
+        Stream<Uint8, ByteStreamError>
+            .fromChunk(storage.readonly [| 1..3 |])
+            .concat(Stream<Uint8, ByteStreamError>.succeed(3u8))
+    let program: Async<Unit, ByteStreamError> =
+        async do
+            await source.writeToOutputStream(output)
+            let written = output.chunks.reverse()
+            assert written.head == [| 1u8, 2u8 |].readonly
+            assert written.tail.head == [| 3u8 |].readonly
+            storage[1] = 7u8
+            assert written.head[0] == 7u8
+            assert output.flushes == 0 && output.closes == 0
+            let emptyOutput = ByteOutput(List.empty, true, 0, 0)
+            await Stream<Uint8, ByteStreamError>.empty.writeToOutputStream(emptyOutput)
+            assert emptyOutput.chunks.isEmpty
     program.run()
 
 test "Stream bytes: write failures stop reading and source failures propagate" =
-    let input = ByteInput([[|1u8|], [|2u8|]], false, 0, 0)
+    let input = ByteInput([[| 1u8 |], [| 2u8 |]], false, 0, 0)
     let output = ByteOutput(List.empty, true, 0, 0)
-    let program: Async<Unit, Never> = async do
-        let failed = await Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64).writeToOutputStream(output)
-            .fold<Bool, Never>((_: ByteStreamError) => Async.succeed(true), (_: Unit) => Async.succeed(false))
-        assert failed && input.reads == 1
-        assert input.closes == 0 && output.closes == 0 && output.flushes == 0
-        let healthyOutput = ByteOutput(List.empty, false, 0, 0)
-        let sourceFailed = await Stream<Uint8, ByteStreamError>.succeed(4u8)
-            .concat(Stream<Uint8, ByteStreamError>.fail(ByteStreamError.Broken))
-            .writeToOutputStream(healthyOutput)
-            .fold<Bool, Never>((_: ByteStreamError) => Async.succeed(true), (_: Unit) => Async.succeed(false))
-        assert sourceFailed && healthyOutput.chunks.length == 1
+    let program: Async<Unit, Never> =
+        async do
+            let failed =
+                await Stream<Uint8, ByteStreamError>
+                    .fromInputStream(input, 8i64)
+                    .writeToOutputStream(output)
+                    .fold<Bool, Never>(
+                    (_: ByteStreamError) => Async.succeed(true),
+                    (_: Unit) => Async.succeed(false)
+                )
+            assert failed && input.reads == 1
+            assert input.closes == 0 && output.closes == 0 && output.flushes == 0
+            let healthyOutput = ByteOutput(List.empty, false, 0, 0)
+            let sourceFailed =
+                await Stream<Uint8, ByteStreamError>
+                    .succeed(4u8)
+                    .concat(Stream<Uint8, ByteStreamError>.fail(ByteStreamError.Broken))
+                    .writeToOutputStream(healthyOutput)
+                    .fold<Bool, Never>(
+                    (_: ByteStreamError) => Async.succeed(true),
+                    (_: Unit) => Async.succeed(false)
+                )
+            assert sourceFailed && healthyOutput.chunks.length == 1
     program.run()
 
 class PausedOutput(
@@ -148,27 +193,37 @@ class PausedOutput(
     public mutable entered: Bool
 ) extends AsyncOutputStream<ByteStreamError>() =
     protected override function checkAlive(self): Async<Unit, ByteStreamError> = Async.succeed(())
+
     protected override function recordedFailure(self): Result<Unit, ByteStreamError> = Ok(())
-    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, ByteStreamError> =
+
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>):
+        Async<Unit, ByteStreamError> =
         self.entered = true
         await self.gate.awaitPromise()
+
     protected override async function flushPending(self): Async<Unit, ByteStreamError> = ()
+
     public override async function close(self): Async<Unit, ByteStreamError> = ()
 
 @timeout(5000)
-test "Stream bytes: a pending output write prevents the next input read" =
-    let program: Async<Unit, ByteStreamError> = async do
-        use Async.scope()
-        let gate = await Async<Unit, Never>.makePromise()
-        let output = PausedOutput(gate, false)
-        let input = ByteInput([[|1u8|], [|2u8|]], false, 0, 0)
-        let worker = await Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64)
-            .writeToOutputStream(output).forkBackground()
-        while !output.entered do await Async.yieldNow()
-        assert input.reads == 1
-        await gate.complete(())
-        await worker.join()
-        assert input.reads == 3
+ test "Stream bytes: a pending output write prevents the next input read" =
+    let program: Async<Unit, ByteStreamError> =
+        async do
+            use Async.scope()
+            let gate = await Async<Unit, Never>.makePromise()
+            let output = PausedOutput(gate, false)
+            let input = ByteInput([[| 1u8 |], [| 2u8 |]], false, 0, 0)
+            let worker =
+                await Stream<Uint8, ByteStreamError>
+                    .fromInputStream(input, 8i64)
+                    .writeToOutputStream(output)
+                    .forkBackground()
+            while !output.entered do
+                await Async.yieldNow()
+            assert input.reads == 1
+            await gate.complete(())
+            await worker.join()
+            assert input.reads == 3
     program.run()
 
 class PausedInput(
@@ -177,46 +232,72 @@ class PausedInput(
     public mutable closes: Int32
 ) extends AsyncInputStream<ByteStreamError>() =
     protected override function checkAlive(self): Async<Unit, ByteStreamError> = Async.succeed(())
-    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, ByteStreamError> =
+
+    protected override async function readAvailable(self, bytesLength: Int64):
+        Async<Array<Uint8>, ByteStreamError> =
         self.entered = true
         await self.gate.awaitPromise()
+
     public override async function close(self): Async<Unit, ByteStreamError> =
         self.closes = self.closes + 1
 
 @timeout(5000)
-test "Stream bytes: cancellation closes owned resources but leaves borrowed handles alone" =
-    let program: Async<Unit, ByteStreamError> = async do
-        use Async.scope()
-        let gate = await Async<Array<Uint8>, Never>.makePromise()
-        let borrowed = PausedInput(gate, false, 0)
-        let borrowedWorker = await Stream<Uint8, ByteStreamError>.fromInputStream(borrowed, 8i64)
-            .drain().forkBackground()
-        while !borrowed.entered do await Async.yieldNow()
-        await borrowedWorker.interrupt()
-        await borrowedWorker.join().foldCause<Unit, Never>(
-            async (cause: Cause<ByteStreamError>) =>
-                match cause with
-                    case Cause.Interrupted(_) => ()
-                    case _ => panic "expected interruption"
-            ,
-            async (_: Unit) => panic "expected interruption"
-        )
-        assert borrowed.closes == 0
-        let owned = PausedInput(gate, false, 0)
-        let resource: Resource<AsyncInputStream<ByteStreamError>, ByteStreamError> =
-            Resource.make(async () => owned, async (input: AsyncInputStream<ByteStreamError>) => await input.close().orPanic())
-        let worker = await Stream<AsyncInputStream<ByteStreamError>, ByteStreamError>.fromResource(resource)
-            .flatMap((input: AsyncInputStream<ByteStreamError>) => Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64))
-            .drain().forkBackground()
-        while !owned.entered do await Async.yieldNow()
-        await worker.interrupt()
-        await worker.join().foldCause<Unit, Never>(
-            async (cause: Cause<ByteStreamError>) =>
-                match cause with
-                    case Cause.Interrupted(_) => ()
-                    case _ => panic "expected interruption"
-            ,
-            async (_: Unit) => panic "expected interruption"
-        )
-        assert owned.closes == 1
+ test "Stream bytes: cancellation closes owned resources but leaves borrowed handles alone" =
+    let program: Async<Unit, ByteStreamError> =
+        async do
+            use Async.scope()
+            let gate = await Async<Array<Uint8>, Never>.makePromise()
+            let borrowed = PausedInput(gate, false, 0)
+            let borrowedWorker =
+                await Stream<Uint8, ByteStreamError>
+                    .fromInputStream(borrowed, 8i64)
+                    .drain()
+                    .forkBackground()
+            while !borrowed.entered do
+                await Async.yieldNow()
+            await borrowedWorker.interrupt()
+            await borrowedWorker
+                .join()
+                .foldCause<Unit, Never>(
+                (
+                    async (cause: Cause<ByteStreamError>) =>
+                        match cause with
+                            case Cause.Interrupted(_) => ()
+                            case _ => panic "expected interruption"
+                ),
+                async (_: Unit) => panic "expected interruption"
+            )
+            assert borrowed.closes == 0
+            let owned = PausedInput(gate, false, 0)
+            let resource: Resource<AsyncInputStream<ByteStreamError>, ByteStreamError> =
+                Resource
+                    .make(
+                    async () => owned,
+                    async (input: AsyncInputStream<ByteStreamError>) =>
+                        await input.close().orPanic()
+                )
+            let worker =
+                await Stream<AsyncInputStream<ByteStreamError>, ByteStreamError>
+                    .fromResource(resource)
+                    .flatMap(
+                    (input: AsyncInputStream<ByteStreamError>) =>
+                        Stream<Uint8, ByteStreamError>.fromInputStream(input, 8i64)
+                )
+                    .drain()
+                    .forkBackground()
+            while !owned.entered do
+                await Async.yieldNow()
+            await worker.interrupt()
+            await worker
+                .join()
+                .foldCause<Unit, Never>(
+                (
+                    async (cause: Cause<ByteStreamError>) =>
+                        match cause with
+                            case Cause.Interrupted(_) => ()
+                            case _ => panic "expected interruption"
+                ),
+                async (_: Unit) => panic "expected interruption"
+            )
+            assert owned.closes == 1
     program.run()

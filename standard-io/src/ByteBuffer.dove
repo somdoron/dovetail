@@ -12,10 +12,7 @@ package standard.io
 /// with a zero fill and so needs nothing of its element type. That is also why it
 /// is here rather than in `standard.collection`, where `ArrayList<T>` requires
 /// `T : Default`.
-public class ByteBuffer(
-    mutable data: Array<Uint8>,
-    mutable used: Int32
-) =
+public class ByteBuffer(mutable data: Array<Uint8>, mutable used: Int32) =
     /// Append `chunk`. Panics if the buffer would grow past the 2^31-1 bytes an
     /// `Int32` can index: growth past the representable maximum fails loudly,
     /// naming the size — never silently and never by hanging.
@@ -26,8 +23,11 @@ public class ByteBuffer(
         // forever — inside a single interpreter step, where no other fiber and
         // no interrupt can ever run.
         if chunk.length > 2147483647i32 - self.used then
-            panic "ByteBuffer cannot grow to " ++ self.used.format() ++ " + " ++
-                chunk.length.format() ++ " bytes: past the 2^31-1 maximum"
+            panic "ByteBuffer cannot grow to "
+                ++ self.used.format()
+                ++ " + "
+                ++ chunk.length.format()
+                ++ " bytes: past the 2^31-1 maximum"
         let required = self.used + chunk.length
         if required > self.data.length then
             // Double until it fits rather than growing to exactly `required`:

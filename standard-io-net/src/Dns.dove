@@ -12,14 +12,15 @@ import standard.io.Async
 /// IP-literal `hostname` is parsed and returned as-is with no network traffic,
 /// though it still needs the host's name-lookup permission.
 module Dns =
-
     /// Resolve `hostname` to all matching IP addresses, as canonical strings.
     /// Fails with `NetError.HostnameNotResolvable` on resolver failure.
     public async function resolve(hostname: String): Async<List<String>, NetError> =
         let addresses = await resolveWasi(hostname)
         // `resolveWasi` is the WASI intrinsic and stays array-shaped; the
         // conversion happens above it, not at the boundary.
-        addresses.toList().map<String>((ip: IpAddress) => formatWasiIp(ip))
+        addresses
+            .toList()
+            .map<String>((ip: IpAddress) => formatWasiIp(ip))
 
     /// Convenience: the first resolved address, or `None` when the host has no
     /// records for `hostname`. Used by `Tcp.connect` when given a hostname.

@@ -10,7 +10,6 @@ import standard.io.Async
 /// Records are captured newest-first and put back in order by `snapshot`, so
 /// `emit` is constant-time rather than copying the whole buffer each time.
 public class MemorySink(internal mutable buffer: List<LogRecord>) implements LogSink =
-
     /// Append `event` to the buffer.
     public function emit(self, event: LogRecord): Async<Unit, Never> =
         self.buffer = self.buffer.prepend(event)
@@ -21,9 +20,7 @@ public class MemorySink(internal mutable buffer: List<LogRecord>) implements Log
     public function snapshot(self): List<LogRecord> = self.buffer.reverse()
 
     /// Drop all captured records.
-    public function clear(self): Unit =
-        self.buffer = List<LogRecord>.empty
+    public function clear(self): Unit = self.buffer = List<LogRecord>.empty
 
     /// Build a fresh, empty `MemorySink`.
-    public function make(): MemorySink =
-        MemorySink(List<LogRecord>.empty)
+    public function make(): MemorySink = MemorySink(List<LogRecord>.empty)

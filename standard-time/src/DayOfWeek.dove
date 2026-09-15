@@ -2,7 +2,7 @@ package standard.time
 
 /// Represents a day of the week from Monday to Sunday.
 @derive(Equatable)
-public enum DayOfWeek =
+ public enum DayOfWeek =
     Monday
     Tuesday
     Wednesday
@@ -73,12 +73,10 @@ module DayOfWeek =
             case Sunday => "S"
 
     /// Returns the day that is the given number of days after this one, wrapping around the week.
-    public function plus(self, days: Int32): DayOfWeek =
-        dayOfWeekFromValue(self.value + days)
+    public function plus(self, days: Int32): DayOfWeek = dayOfWeekFromValue(self.value + days)
 
     /// Returns the day that is the given number of days before this one, wrapping around the week.
-    public function minus(self, days: Int32): DayOfWeek =
-        dayOfWeekFromValue(self.value - days)
+    public function minus(self, days: Int32): DayOfWeek = dayOfWeekFromValue(self.value - days)
 
     /// Look up by full English name (case-sensitive). Returns `None` for
     /// any other string.
@@ -105,13 +103,11 @@ module DayOfWeek =
 
     /// Look up by ISO numeric value (1=Monday through 7=Sunday).
     public function fromValue(value: Int32): Option<DayOfWeek> =
-        if value < 1 || value > 7 then None
-        else Some(dayOfWeekFromValue(value))
+        if value < 1 || value > 7 then None else Some(dayOfWeekFromValue(value))
 
 implement Display for DayOfWeek =
     /// Formats this day as its English name.
-    public function format(self: DayOfWeek): String =
-        self.name
+    public function format(self: DayOfWeek): String = self.name
 
 test "DayOfWeek value" =
     assert DayOfWeek.Monday.value == 1

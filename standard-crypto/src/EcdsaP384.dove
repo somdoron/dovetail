@@ -10,24 +10,34 @@ import standard.prelude.Option
 module P384 =
     /// Field prime p = 2^384 - 2^128 - 2^96 + 2^32 - 1.
     function p(): Array<Uint64> =
-        [|0x00000000ffffffffu64, 0xffffffff00000000u64, 0xfffffffffffffffeu64,
-         0xffffffffffffffffu64, 0xffffffffffffffffu64, 0xffffffffffffffffu64|]
+        [|
+            0x00000000ffffffffu64,
+            0xffffffff00000000u64,
+            0xfffffffffffffffeu64,
+            0xffffffffffffffffu64,
+            0xffffffffffffffffu64,
+            0xffffffffffffffffu64
+        |]
 
     /// Group order n.
     function nOrder(): Array<Uint64> =
-        [|0xecec196accc52973u64, 0x581a0db248b0a77au64, 0xc7634d81f4372ddfu64,
-         0xffffffffffffffffu64, 0xffffffffffffffffu64, 0xffffffffffffffffu64|]
+        [|
+            0xecec196accc52973u64,
+            0x581a0db248b0a77au64,
+            0xc7634d81f4372ddfu64,
+            0xffffffffffffffffu64,
+            0xffffffffffffffffu64,
+            0xffffffffffffffffu64
+        |]
 
     private function niP(): Uint64 = Bignum.n0inv(p())
 
     private function fmul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
         Bignum.montMul(a, b, p(), niP())
 
-    private function fadd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
-        Bignum.add(a, b, p())
+    private function fadd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> = Bignum.add(a, b, p())
 
-    private function fsub(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
-        Bignum.sub(a, b, p())
+    private function fsub(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> = Bignum.sub(a, b, p())
 
     private function fone(): Array<Uint64> = Bignum.montOne(p(), niP())
 
@@ -35,20 +45,44 @@ module P384 =
 
     /// Curve constant b in Montgomery form.
     function bMont(): Array<Uint64> =
-        let b = [|0x2a85c8edd3ec2aefu64, 0xc656398d8a2ed19du64, 0x0314088f5013875au64,
-                 0x181d9c6efe814112u64, 0x988e056be3f82d19u64, 0xb3312fa7e23ee7e4u64|]
+        let b =
+            [|
+                0x2a85c8edd3ec2aefu64,
+                0xc656398d8a2ed19du64,
+                0x0314088f5013875au64,
+                0x181d9c6efe814112u64,
+                0x988e056be3f82d19u64,
+                0xb3312fa7e23ee7e4u64
+            |]
         Bignum.toMont(b, p(), niP())
 
     /// Base point G in projective Montgomery form.
     function basePoint(): P384Point =
-        let gx = [|0x3a545e3872760ab7u64, 0x5502f25dbf55296cu64, 0x59f741e082542a38u64,
-                  0x6e1d3b628ba79b98u64, 0x8eb1c71ef320ad74u64, 0xaa87ca22be8b0537u64|]
-        let gy = [|0x7a431d7c90ea0e5fu64, 0x0a60b1ce1d7e819du64, 0xe9da3113b5f0b8c0u64,
-                  0xf8f41dbd289a147cu64, 0x5d9e98bf9292dc29u64, 0x3617de4a96262c6fu64|]
-        P384Point { x = Bignum.toMont(gx, p(), niP()); y = Bignum.toMont(gy, p(), niP()); z = fone() }
+        let gx =
+            [|
+                0x3a545e3872760ab7u64,
+                0x5502f25dbf55296cu64,
+                0x59f741e082542a38u64,
+                0x6e1d3b628ba79b98u64,
+                0x8eb1c71ef320ad74u64,
+                0xaa87ca22be8b0537u64
+            |]
+        let gy =
+            [|
+                0x7a431d7c90ea0e5fu64,
+                0x0a60b1ce1d7e819du64,
+                0xe9da3113b5f0b8c0u64,
+                0xf8f41dbd289a147cu64,
+                0x5d9e98bf9292dc29u64,
+                0x3617de4a96262c6fu64
+            |]
+        P384Point {
+            x = Bignum.toMont(gx, p(), niP())
+            y = Bignum.toMont(gy, p(), niP())
+            z = fone()
+        }
 
-    private function identity(): P384Point =
-        P384Point { x = fzero(); y = fone(); z = fzero() }
+    private function identity(): P384Point = P384Point { x = fzero(); y = fone(); z = fzero() }
 
     /// Complete addition (Renes-Costello-Batina Algorithm 4, a = -3).
     function pointAdd(p1: P384Point, p2: P384Point, b: Array<Uint64>): P384Point =
@@ -190,7 +224,12 @@ module EcdsaP384Impl =
 
     private function nMul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
         let n = P384.nOrder()
-        Bignum.fromMont(Bignum.montMul(Bignum.toMont(a, n, niN()), Bignum.toMont(b, n, niN()), n, niN()), n, niN())
+        Bignum
+            .fromMont(
+            Bignum.montMul(Bignum.toMont(a, n, niN()), Bignum.toMont(b, n, niN()), n, niN()),
+            n,
+            niN()
+        )
 
     private function nAdd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
         Bignum.add(a, b, P384.nOrder())
@@ -207,9 +246,9 @@ module EcdsaP384Impl =
         let h1oct = P384.limbsToBe(zMod)
         let mutable v = Array<Uint8>.fill(48, 0x01u8)
         let mutable k = Array<Uint8>.fill(48, 0x00u8)
-        k = hmac(k, v.concat([|0x00u8|]).concat(privKey).concat(h1oct))
+        k = hmac(k, v.concat([| 0x00u8 |]).concat(privKey).concat(h1oct))
         v = hmac(k, v)
-        k = hmac(k, v.concat([|0x01u8|]).concat(privKey).concat(h1oct))
+        k = hmac(k, v.concat([| 0x01u8 |]).concat(privKey).concat(h1oct))
         v = hmac(k, v)
         let mutable result = Array<Uint64>.fill(6, 0u64)
         let mutable found = false
@@ -220,7 +259,7 @@ module EcdsaP384Impl =
                 result = cand
                 found = true
             else
-                k = hmac(k, v.concat([|0x00u8|]))
+                k = hmac(k, v.concat([| 0x00u8 |]))
                 v = hmac(k, v)
         result
 
@@ -244,8 +283,11 @@ module EcdsaP384Impl =
             let n = P384.nOrder()
             let r = P384.beToLimbs(signature, 0)
             let s = P384.beToLimbs(signature, 48)
-            if Bignum.isZero(r) || Bignum.isZero(s)
-                || (Bignum.lessThan(r, n) == false) || (Bignum.lessThan(s, n) == false) then
+            if Bignum
+                .isZero(r)
+                || Bignum.isZero(s)
+                || (Bignum.lessThan(r, n) == false)
+                || (Bignum.lessThan(s, n) == false) then
                 false
             else
                 let zMod = Bignum.reduceOnce(P384.beToLimbs(Sha384.hash(message), 0), n)
@@ -262,7 +304,9 @@ module EcdsaP384Impl =
 /// public key, 96-byte signature.
 class EcdsaP384Algorithm() implements SignatureAlgorithm =
     public property signatureSize(self): Int32 = 96
+
     public property secretKeySize(self): Int32 = 48
+
     public property publicKeySize(self): Int32 = 97
 
     public function derivePublicKey(self, secret: SecretKey): PublicKey =
@@ -272,8 +316,8 @@ class EcdsaP384Algorithm() implements SignatureAlgorithm =
     public function sign(self, key: SecretKey, message: Array<Uint8>): Array<Uint8> =
         EcdsaP384Impl.sign(key.value, message)
 
-    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>): Bool =
-        EcdsaP384Impl.verify(key.value, message, signature)
+    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>):
+        Bool = EcdsaP384Impl.verify(key.value, message, signature)
 
     // The P-384 private key must be a scalar in [1, n-1]; reject otherwise.
     public function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey> =
@@ -287,32 +331,162 @@ class EcdsaP384Algorithm() implements SignatureAlgorithm =
 public let EcdsaP384: SignatureAlgorithm = EcdsaP384Algorithm()
 
 test "ECDSA-P384 RFC 6979 A.2.6 sign+verify (sample)" =
-    let privKey = SecretKey([|
-        0x6bu8, 0x9du8, 0x3du8, 0xadu8, 0x2eu8, 0x1bu8, 0x8cu8, 0x1cu8,
-        0x05u8, 0xb1u8, 0x98u8, 0x75u8, 0xb6u8, 0x65u8, 0x9fu8, 0x4du8,
-        0xe2u8, 0x3cu8, 0x3bu8, 0x66u8, 0x7bu8, 0xf2u8, 0x97u8, 0xbau8,
-        0x9au8, 0xa4u8, 0x77u8, 0x40u8, 0x78u8, 0x71u8, 0x37u8, 0xd8u8,
-        0x96u8, 0xd5u8, 0x72u8, 0x4eu8, 0x4cu8, 0x70u8, 0xa8u8, 0x25u8,
-        0xf8u8, 0x72u8, 0xc9u8, 0xeau8, 0x60u8, 0xd2u8, 0xedu8, 0xf5u8,
-    |])
+    let privKey =
+        SecretKey(
+            [|
+                0x6bu8,
+                0x9du8,
+                0x3du8,
+                0xadu8,
+                0x2eu8,
+                0x1bu8,
+                0x8cu8,
+                0x1cu8,
+                0x05u8,
+                0xb1u8,
+                0x98u8,
+                0x75u8,
+                0xb6u8,
+                0x65u8,
+                0x9fu8,
+                0x4du8,
+                0xe2u8,
+                0x3cu8,
+                0x3bu8,
+                0x66u8,
+                0x7bu8,
+                0xf2u8,
+                0x97u8,
+                0xbau8,
+                0x9au8,
+                0xa4u8,
+                0x77u8,
+                0x40u8,
+                0x78u8,
+                0x71u8,
+                0x37u8,
+                0xd8u8,
+                0x96u8,
+                0xd5u8,
+                0x72u8,
+                0x4eu8,
+                0x4cu8,
+                0x70u8,
+                0xa8u8,
+                0x25u8,
+                0xf8u8,
+                0x72u8,
+                0xc9u8,
+                0xeau8,
+                0x60u8,
+                0xd2u8,
+                0xedu8,
+                0xf5u8,
+            |]
+        )
     let message = "sample".bytes()
     let sig = EcdsaP384.sign(privKey, message)
-    let expected = [|
-        // r
-        0x94u8, 0xedu8, 0xbbu8, 0x92u8, 0xa5u8, 0xecu8, 0xb8u8, 0xaau8,
-        0xd4u8, 0x73u8, 0x6eu8, 0x56u8, 0xc6u8, 0x91u8, 0x91u8, 0x6bu8,
-        0x3fu8, 0x88u8, 0x14u8, 0x06u8, 0x66u8, 0xceu8, 0x9fu8, 0xa7u8,
-        0x3du8, 0x64u8, 0xc4u8, 0xeau8, 0x95u8, 0xadu8, 0x13u8, 0x3cu8,
-        0x81u8, 0xa6u8, 0x48u8, 0x15u8, 0x2eu8, 0x44u8, 0xacu8, 0xf9u8,
-        0x6eu8, 0x36u8, 0xddu8, 0x1eu8, 0x80u8, 0xfau8, 0xbeu8, 0x46u8,
-        // s
-        0x99u8, 0xefu8, 0x4au8, 0xebu8, 0x15u8, 0xf1u8, 0x78u8, 0xceu8,
-        0xa1u8, 0xfeu8, 0x40u8, 0xdbu8, 0x26u8, 0x03u8, 0x13u8, 0x8fu8,
-        0x13u8, 0x0eu8, 0x74u8, 0x0au8, 0x19u8, 0x62u8, 0x45u8, 0x26u8,
-        0x20u8, 0x3bu8, 0x63u8, 0x51u8, 0xd0u8, 0xa3u8, 0xa9u8, 0x4fu8,
-        0xa3u8, 0x29u8, 0xc1u8, 0x45u8, 0x78u8, 0x6eu8, 0x67u8, 0x9eu8,
-        0x7bu8, 0x82u8, 0xc7u8, 0x1au8, 0x38u8, 0x62u8, 0x8au8, 0xc8u8,
-    |]
+    let expected =
+        [|
+            // r
+            0x94u8,
+            0xedu8,
+            0xbbu8,
+            0x92u8,
+            0xa5u8,
+            0xecu8,
+            0xb8u8,
+            0xaau8,
+            0xd4u8,
+            0x73u8,
+            0x6eu8,
+            0x56u8,
+            0xc6u8,
+            0x91u8,
+            0x91u8,
+            0x6bu8,
+            0x3fu8,
+            0x88u8,
+            0x14u8,
+            0x06u8,
+            0x66u8,
+            0xceu8,
+            0x9fu8,
+            0xa7u8,
+            0x3du8,
+            0x64u8,
+            0xc4u8,
+            0xeau8,
+            0x95u8,
+            0xadu8,
+            0x13u8,
+            0x3cu8,
+            0x81u8,
+            0xa6u8,
+            0x48u8,
+            0x15u8,
+            0x2eu8,
+            0x44u8,
+            0xacu8,
+            0xf9u8,
+            0x6eu8,
+            0x36u8,
+            0xddu8,
+            0x1eu8,
+            0x80u8,
+            0xfau8,
+            0xbeu8,
+            0x46u8,
+            // s
+            0x99u8,
+            0xefu8,
+            0x4au8,
+            0xebu8,
+            0x15u8,
+            0xf1u8,
+            0x78u8,
+            0xceu8,
+            0xa1u8,
+            0xfeu8,
+            0x40u8,
+            0xdbu8,
+            0x26u8,
+            0x03u8,
+            0x13u8,
+            0x8fu8,
+            0x13u8,
+            0x0eu8,
+            0x74u8,
+            0x0au8,
+            0x19u8,
+            0x62u8,
+            0x45u8,
+            0x26u8,
+            0x20u8,
+            0x3bu8,
+            0x63u8,
+            0x51u8,
+            0xd0u8,
+            0xa3u8,
+            0xa9u8,
+            0x4fu8,
+            0xa3u8,
+            0x29u8,
+            0xc1u8,
+            0x45u8,
+            0x78u8,
+            0x6eu8,
+            0x67u8,
+            0x9eu8,
+            0x7bu8,
+            0x82u8,
+            0xc7u8,
+            0x1au8,
+            0x38u8,
+            0x62u8,
+            0x8au8,
+            0xc8u8,
+        |]
     assert sig.length == 96
     let mutable i = 0
     let mutable ok = true

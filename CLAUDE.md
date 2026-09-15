@@ -21,6 +21,7 @@ cargo fmt                # Format code
 cargo run -- check       # Typecheck the workspace (Dovetail.toml)
 cargo run -- build       # Build the workspace to WASM
 cargo run -- test        # Run Dovetail test declarations
+cargo run -- fmt --check # Check canonical Dovetail source formatting
 ```
 
 **Important:** Always use `cargo run --` instead of the `dovetail` CLI. The installed `dovetail` binary may be outdated; `cargo run` ensures you test against the locally-built compiler.
@@ -112,6 +113,7 @@ Source Files → Lexer → Layout Filter → Parser → Typechecker → Codegen 
 ## CLI and Entry Point
 
 - **`dovetail build`** — Full pipeline through codegen; produces WASM component.
+- **`dovetail fmt`** — Format local workspace sources and tests; `--check` checks without writing. See [docs/formatting.md](docs/formatting.md).
 - **`dovetail check`** — Same pipeline but stops after typechecker (no codegen). Use for validation (e.g. editors, CI).
 - **Entry point** — A `function main(): Unit` (no arguments, returns Unit) is the component entry. `dovetail test` runs test declarations.
 

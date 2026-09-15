@@ -117,5 +117,6 @@ implement IoError for DnsError
 module NameLookup =
     /// Start resolving `name`. Await the returned call, then `resolveFinish`.
     public function resolveStart(name: String): AsyncCall = intrinsic
+
     /// Lift the resolved address list and free the call's pinned buffers.
     public function resolveFinish(call: AsyncCall): Result<Array<IpAddress>, DnsError> = intrinsic

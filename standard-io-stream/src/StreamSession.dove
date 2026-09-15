@@ -4,65 +4,98 @@ import standard.io.Async
 import standard.io.Producer
 import standard.io.Cause
 
-internal function make(stream: Stream<Any, Any>): Async<StreamSession, Any> = async do
-    let state = StreamSessionState(StreamExecution.makeState(stream), StreamBudget(0), StreamRequest.Advance, List.empty)
-    let acquire: Async<StreamSessionState, Any> = Async.succeed(state)
-    let producer = await Producer<StreamReply, Any>.make(acquire,
-        (current: StreamSessionState) => StreamSession.pull(current),
-        (current: StreamSessionState) => StreamSession.close(current))
-    StreamSession(producer, Some(state))
+internal function make(stream: Stream<Any, Any>): Async<StreamSession, Any> =
+    async do
+        let state =
+            StreamSessionState(
+                StreamExecution.makeState(stream),
+                StreamBudget(0),
+                StreamRequest.Advance,
+                List.empty
+            )
+        let acquire: Async<StreamSessionState, Any> = Async.succeed(state)
+        let producer =
+            await Producer<StreamReply, Any>
+                .make(
+                acquire,
+                (current: StreamSessionState) => StreamSession.pull(current),
+                (current: StreamSessionState) => StreamSession.close(current)
+            )
+        StreamSession(producer, Some(state))
 
-internal function next(self): Async<Option<ReadonlySlice<Any>>, Any> = self.request(StreamRequest.Advance)
-internal function bind(self, stream: Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> = self.request(StreamRequest.Bind(stream))
-internal function advanceBinding(self): Async<Option<ReadonlySlice<Any>>, Any> = self.request(StreamRequest.AdvanceBinding)
+internal function next(self): Async<Option<ReadonlySlice<Any>>, Any> =
+    self.request(StreamRequest.Advance)
+
+internal function bind(self, stream: Stream<Any, Any>): Async<Option<ReadonlySlice<Any>>, Any> =
+    self.request(StreamRequest.Bind(stream))
+
+internal function advanceBinding(self): Async<Option<ReadonlySlice<Any>>, Any> =
+    self.request(StreamRequest.AdvanceBinding)
+
 internal function interrupt(self): Async<Unit, Never> = self.producer.interrupt()
 
-function request(self, request: StreamRequest): Async<Option<ReadonlySlice<Any>>, Any> = async do
-    match self.state with
-        case Some(state) => state.request = request
-        case None => ()
-    await self.producer.next().fold<Option<ReadonlySlice<Any>>, Any>(
-        (error: Option<Any>) => match error with
-            case None => Async.succeed(None)
-            case Some(value) => Async.fail(value)
-        ,
-        (reply: StreamReply) => Async.succeed(match reply with
-            case StreamReply.Chunk(chunk) => Some(chunk)
-            case StreamReply.BindingEnd => None
-        ))
+function request(self, request: StreamRequest): Async<Option<ReadonlySlice<Any>>, Any> =
+    async do
+        match self.state with
+            case Some(state) => state.request = request
+            case None => ()
+        await self
+            .producer
+            .next()
+            .fold<Option<ReadonlySlice<Any>>, Any>(
+            (
+                (error: Option<Any>) =>
+                    match error with
+                        case None => Async.succeed(None)
+                        case Some(value) => Async.fail(value)
+            ),
+            (reply: StreamReply) =>
+                Async
+                    .succeed(
+                    match reply with
+                        case StreamReply.Chunk(chunk) => Some(chunk)
+                        case StreamReply.BindingEnd => None
+                )
+        )
 
 // EOF and failure leave teardown to the producer's scope and release callback.
 // Closing children inside the pull would misclassify cleanup panics as body
 // failures, allowing cancellation to hide them.
-function pull(state: StreamSessionState): Async<StreamReply, Option<Any>> = async do
-    let result = await StreamSession.advance(state).mapError((error: Any) => Some(error))
-    match result with
-        case Some(reply) => reply
-        case None => await Async<StreamReply, Option<Any>>.fail(None)
+function pull(state: StreamSessionState): Async<StreamReply, Option<Any>> =
+    async do
+        let result = await StreamSession.advance(state).mapError((error: Any) => Some(error))
+        match result with
+            case Some(reply) => reply
+            case None => await Async<StreamReply, Option<Any>>.fail(None)
 
-function advance(state: StreamSessionState): Async<Option<StreamReply>, Any> = async do
-    match state.request with
-        case StreamRequest.Advance =>
-            let chunk = await StreamExecution.next(state.execution, state.budget)
-            chunk.map((value: ReadonlySlice<Any>) => StreamReply.Chunk(value))
-        case StreamRequest.Bind(stream) =>
-            let owner = match state.bindings with
-                case List.Cons(binding, _) => Some(StreamSession.bindingOwner(binding))
-                case List.Nil => await StreamSession.outputOwner(state.execution)
-            let result = match owner with
-                case Some(session) =>
-                    state.bindings = List.Cons(StreamBinding.Forwarded(session), state.bindings)
-                    await session.bind(stream)
-                case None =>
-                    let session = await StreamSession.make(stream)
-                    state.bindings = List.Cons(StreamBinding.Owned(session), state.bindings)
-                    await session.next()
-            Some(StreamSession.bindingReply(state, result))
-        case StreamRequest.AdvanceBinding =>
-            let result = match state.bindings.head with
-                case StreamBinding.Owned(session) => await session.next()
-                case StreamBinding.Forwarded(session) => await session.advanceBinding()
-            Some(StreamSession.bindingReply(state, result))
+function advance(state: StreamSessionState): Async<Option<StreamReply>, Any> =
+    async do
+        match state.request with
+            case StreamRequest.Advance =>
+                let chunk = await StreamExecution.next(state.execution, state.budget)
+                chunk.map((value: ReadonlySlice<Any>) => StreamReply.Chunk(value))
+            case StreamRequest.Bind(stream) =>
+                let owner =
+                    match state.bindings with
+                        case List.Cons(binding, _) => Some(StreamSession.bindingOwner(binding))
+                        case List.Nil => await StreamSession.outputOwner(state.execution)
+                let result =
+                    match owner with
+                        case Some(session) =>
+                            state.bindings =
+                                List.Cons(StreamBinding.Forwarded(session), state.bindings)
+                            await session.bind(stream)
+                        case None =>
+                            let session = await StreamSession.make(stream)
+                            state.bindings = List.Cons(StreamBinding.Owned(session), state.bindings)
+                            await session.next()
+                Some(StreamSession.bindingReply(state, result))
+            case StreamRequest.AdvanceBinding =>
+                let result =
+                    match state.bindings.head with
+                        case StreamBinding.Owned(session) => await session.next()
+                        case StreamBinding.Forwarded(session) => await session.advanceBinding()
+                Some(StreamSession.bindingReply(state, result))
 
 function bindingReply(state: StreamSessionState, result: Option<ReadonlySlice<Any>>): StreamReply =
     match result with
@@ -78,39 +111,49 @@ function bindingOwner(binding: StreamBinding): StreamSession =
 
 // Follow the active output path, including an existing flatMap binding. Merge
 // deliberately ends source lifetime forwarding at its asynchronous handoff.
-function outputOwner(execution: StreamExecutionState): Async<Option<StreamSession>, Never> = async do
-    let mutable current = execution
-    let mutable owner: Option<StreamSession> = None
-    let mutable searching = true
-    let mutable steps = 0
-    while searching do
-        steps = steps + 1
-        if steps == 256 then
-            steps = 0
-            await Async.yieldNow()
-        if current.stream is StreamMerge<Any, Any> then searching = false
-        else
-            match current.branch with
-                case Some(session) =>
-                    owner = Some(session)
-                    searching = false
-                case None =>
-                    match current.upstream with
-                        case Some(source) => current = source
-                        case None => searching = false
-    owner
+function outputOwner(execution: StreamExecutionState): Async<Option<StreamSession>, Never> =
+    async do
+        let mutable current = execution
+        let mutable owner: Option<StreamSession> = None
+        let mutable searching = true
+        let mutable steps = 0
+        while searching do
+            steps = steps + 1
+            if steps == 256 then
+                steps = 0
+                await Async.yieldNow()
+            if current.stream is StreamMerge<Any, Any> then
+                searching = false
+            else
+                match current.branch with
+                    case Some(session) =>
+                        owner = Some(session)
+                        searching = false
+                    case None =>
+                        match current.upstream with
+                            case Some(source) => current = source
+                            case None => searching = false
+        owner
 
-function close(state: StreamSessionState): Async<Unit, Never> = async do
-    let mutable failure: Option<Cause<Never>> = None
-    let bindings = state.bindings
-    state.bindings = List.empty
-    for binding in bindings do
-        await StreamSession.bindingOwner(binding).interrupt().foldCause<Unit, Never>(
+function close(state: StreamSessionState): Async<Unit, Never> =
+    async do
+        let mutable failure: Option<Cause<Never>> = None
+        let bindings = state.bindings
+        state.bindings = List.empty
+        for binding in bindings do
+            await StreamSession
+                .bindingOwner(binding)
+                .interrupt()
+                .foldCause<Unit, Never>(
+                (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
+                (_: Unit) => Async.succeed(())
+            )
+        await StreamExecution
+            .close(state.execution)
+            .foldCause<Unit, Never>(
             (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
-            (_: Unit) => Async.succeed(()))
-    await StreamExecution.close(state.execution).foldCause<Unit, Never>(
-        (cause: Cause<Never>) => Async.thunk(() => failure = Some(cause)),
-        (_: Unit) => Async.succeed(()))
-    match failure with
-        case None => ()
-        case Some(cause) => await Async<Unit, Never>.fromCause(cause)
+            (_: Unit) => Async.succeed(())
+        )
+        match failure with
+            case None => ()
+            case Some(cause) => await Async<Unit, Never>.fromCause(cause)

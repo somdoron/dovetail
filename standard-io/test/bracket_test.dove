@@ -8,56 +8,62 @@ import standard.io.Resource
 
 // Tests for `Async.bracket`. Each test runs a program through `.run()` and
 // observes side effects via a mutable counter / sentinel.
-
 test "bracket runs release on success" =
     let mutable released = 0
     let mutable used = 0
-    let program: Async<Unit, Never> = Async.bracket<Int32>(
-        Async.succeed(42),
-        (_: Int32) => Async.thunk(() => released = released + 1),
-        (r: Int32) => Async.thunk(() => used = r)
-    )
+    let program: Async<Unit, Never> =
+        Async
+            .bracket<Int32>(
+            Async.succeed(42),
+            (_: Int32) => Async.thunk(() => released = released + 1),
+            (r: Int32) => Async.thunk(() => used = r)
+        )
     program.run()
     assert used == 42
     assert released == 1
 
 test "bracket passes resource value to useFn" =
     let mutable seen = -1
-    let program: Async<Unit, Never> = Async.bracket<Int32>(
-        Async.succeed(7),
-        (_: Int32) => Async.succeed(()),
-        (r: Int32) => Async.thunk(() => seen = r * 10)
-    )
+    let program: Async<Unit, Never> =
+        Async
+            .bracket<Int32>(
+            Async.succeed(7),
+            (_: Int32) => Async.succeed(()),
+            (r: Int32) => Async.thunk(() => seen = r * 10)
+        )
     program.run()
     assert seen == 70
 
 test "nested brackets release LIFO" =
     let mutable order = 0
     // Encode order as base-10 digits: useFn first (1), inner release (2), outer release (3).
-    let program: Async<Unit, Never> = Async.bracket<Int32>(
-        Async.succeed(1),
-        (_: Int32) => Async.thunk(() => order = order * 10 + 3),
-        (_: Int32) =>
-            Async.bracket<Int32>(
-                Async.succeed(2),
-                (_: Int32) => Async.thunk(() => order = order * 10 + 2),
-                (_: Int32) => Async.thunk(() => order = order * 10 + 1)
-            )
-    )
+    let program: Async<Unit, Never> =
+        Async
+            .bracket<Int32>(
+            Async.succeed(1),
+            (_: Int32) => Async.thunk(() => order = order * 10 + 3),
+            (_: Int32) =>
+                Async
+                    .bracket<Int32>(
+                    Async.succeed(2),
+                    (_: Int32) => Async.thunk(() => order = order * 10 + 2),
+                    (_: Int32) => Async.thunk(() => order = order * 10 + 1)
+                )
+        )
     program.run()
     assert order == 123
 
 test "bracket chains with andThen after release" =
     let mutable released = 0
     let mutable after = 0
-    let bracketed: Async<Int32, Never> = Async.bracket<Int32>(
-        Async.succeed(10),
-        (_: Int32) => Async.thunk(() => released = released + 1),
-        (r: Int32) => Async.succeed(r + 5)
-    )
-    let program: Async<Unit, Never> = bracketed.andThen((v: Int32) =>
-        Async.thunk(() => after = v)
-    )
+    let bracketed: Async<Int32, Never> =
+        Async
+            .bracket<Int32>(
+            Async.succeed(10),
+            (_: Int32) => Async.thunk(() => released = released + 1),
+            (r: Int32) => Async.succeed(r + 5)
+        )
+    let program: Async<Unit, Never> = bracketed.andThen((v: Int32) => Async.thunk(() => after = v))
     program.run()
     assert released == 1
     assert after == 15
@@ -79,7 +85,6 @@ test "bracket chains with andThen after release" =
 // what proves the mask holds across it: `burnExactly` pads the acquire with
 // `n / 2` `map`s (two steps each) over a `thunk` (one step) or a `succeed`
 // (none), which reaches any step count.
-
 async function burnSteps(count: Int32): Async<Unit, Never> =
     let mutable i = 0i32
     while i < count do
@@ -99,19 +104,28 @@ function burnExactly(steps: Int32): Async<Unit, Never> =
 /// An acquire whose LAST step is the one that both records the acquisition and
 /// leaves the resource pending on the bracket's acquire frame.
 function acquireAfter(steps: Int32, onAcquire: () => Unit): Async<Int32, Never> =
-    burnExactly(steps).map<Int32>((_: Unit) =>
-        onAcquire()
-        1i32
+    burnExactly(steps)
+        .map<Int32>(
+        (_: Unit) =>
+            onAcquire()
+            1i32
     )
 
-function leakProbe(steps: Int32, gate: Promise<Unit, Never>,
-                   onAcquire: () => Unit, onRelease: () => Unit): Async<Unit, Never> =
-    Async<Unit, Never>.bracket<Int32>(
+function leakProbe(
+    steps: Int32,
+    gate: Promise<Unit, Never>,
+    onAcquire: () => Unit,
+    onRelease: () => Unit
+): Async<Unit, Never> =
+    Async<Unit, Never>
+        .bracket<Int32>(
         acquireAfter(steps, onAcquire),
         (_: Int32) => Async.thunk(() => onRelease()),
         // Parks forever: nothing ever completes the gate, so the fiber is still
         // holding the resource when the interrupt arrives.
-        (_: Int32) => gate.awaitPromise()
+        (
+            _: Int32
+        ) => gate.awaitPromise()
     )
 
 async function acquireInterruptProgram(setter: (Int32, Int32) => Unit): Async<Unit, Never> =
@@ -133,7 +147,9 @@ async function acquireInterruptProgram(setter: (Int32, Int32) => Unit): Async<Un
         await burnSteps(300i32)
         await child.interrupt()
         // `join` re-raises the cause, and this one was interrupted on purpose.
-        await child.join().foldCause<Unit, Never>(
+        await child
+            .join()
+            .foldCause<Unit, Never>(
             (_: Cause<Never>) => Async.succeed(()),
             (_: Unit) => Async.succeed(())
         )
@@ -142,13 +158,15 @@ async function acquireInterruptProgram(setter: (Int32, Int32) => Unit): Async<Un
     setter(acquired, released)
 
 @timeout(120000)
-test "bracket: an interrupt between acquire succeeding and its release being armed still releases" =
+ test "bracket: an interrupt between acquire succeeding and its release being armed still releases" =
     let mutable acquired = -1i32
     let mutable released = -1i32
-    acquireInterruptProgram((a: Int32, r: Int32) =>
-        acquired = a
-        released = r
-    ).run()
+    acquireInterruptProgram(
+        (a: Int32, r: Int32) =>
+            acquired = a
+            released = r
+    )
+        .run()
     // Every round acquires. Before the acquire was masked, the rounds whose
     // budget expired part-way through it were cut off and never acquired at all
     // — the sweep had to straddle that boundary to prove anything. An acquire
@@ -165,16 +183,21 @@ test "bracket: an interrupt between acquire succeeding and its release being arm
 // do the registration itself, on the scope the `Attach` node captured. Without
 // that arm the pending success is clobbered, nothing is ever registered, and the
 // resource leaks with no frame and no scope entry that could close it.
-
 /// The attach twin of `leakProbe`: acquires on step `steps`, registers on the
 /// enclosing `use Async.scope()`, then parks forever still holding it.
-async function attachLeakProbe(steps: Int32, gate: Promise<Unit, Never>,
-                               onAcquire: () => Unit, onRelease: () => Unit): Async<Unit, Never> =
+async function attachLeakProbe(
+    steps: Int32,
+    gate: Promise<Unit, Never>,
+    onAcquire: () => Unit,
+    onRelease: () => Unit
+): Async<Unit, Never> =
     use Async.scope()
-    let res: Resource<Int32, Never> = Resource.make(
-        () => acquireAfter(steps, onAcquire),
-        (_: Int32) => Async.thunk(() => onRelease())
-    )
+    let res: Resource<Int32, Never> =
+        Resource
+            .make(
+            () => acquireAfter(steps, onAcquire),
+            (_: Int32) => Async.thunk(() => onRelease())
+        )
     let _value: Int32 = await res.attachToScope()
     await gate.awaitPromise()
 
@@ -191,7 +214,9 @@ async function attachInterruptProgram(setter: (Int32, Int32) => Unit): Async<Uni
             await attachLeakProbe(steps, gate, onAcquire, onRelease).forkBackground()
         await burnSteps(300i32)
         await child.interrupt()
-        await child.join().foldCause<Unit, Never>(
+        await child
+            .join()
+            .foldCause<Unit, Never>(
             (_: Cause<Never>) => Async.succeed(()),
             (_: Unit) => Async.succeed(())
         )
@@ -206,13 +231,15 @@ async function attachInterruptProgram(setter: (Int32, Int32) => Unit): Async<Uni
 // to the acquire frame rather than discarding them, which is what keeps the
 // finalizer for a resource that already exists.
 @timeout(120000)
-test "attachToScope: an interrupt between acquire succeeding and its registration still releases" =
+ test "attachToScope: an interrupt between acquire succeeding and its registration still releases" =
     let mutable acquired = -1i32
     let mutable released = -1i32
-    attachInterruptProgram((a: Int32, r: Int32) =>
-        acquired = a
-        released = r
-    ).run()
+    attachInterruptProgram(
+        (a: Int32, r: Int32) =>
+            acquired = a
+            released = r
+    )
+        .run()
     // Every acquisition the sweep made was released. A single unreleased one is
     // a resource with nothing left that could close it.
     assert acquired == released

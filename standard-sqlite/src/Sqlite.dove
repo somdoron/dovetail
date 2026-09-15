@@ -17,7 +17,6 @@ import standard.io.Resource
 // `Uint64` values (raw pointers) from the shim.
 // See docs/component-model-design.md.
 // =============================================================================
-
 /// An error reported by SQLite: the raw result code plus the connection's
 /// human-readable error message at the time of failure.
 public record SqliteError =
@@ -79,15 +78,21 @@ module Connection =
     /// Closed on scope exit.
     public function open(path: String): Resource<Connection, SqliteError> =
         // SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
-        Connection.openWith(path, 0x6u32)
+        Connection
+            .openWith(path, 0x6u32)
 
     /// Like `open`, with an explicit SQLITE_OPEN_* flag mask.
     public function openWith(path: String, flags: Uint32): Resource<Connection, SqliteError> =
-        let acquire: () => Async<Connection, SqliteError> = async () =>
-            let opened = await Raw.open(path, flags).mapError<SqliteError>(
-                (code: Int32) => SqliteError { code = code; message = "cannot open database" }
-            )
-            Connection { db = opened }
+        let acquire: () => Async<Connection, SqliteError> =
+            async () =>
+                let opened =
+                    await Raw
+                        .open(path, flags)
+                        .mapError<SqliteError>(
+                        (code: Int32) =>
+                            SqliteError { code = code; message = "cannot open database" }
+                    )
+                Connection { db = opened }
         Resource.make(acquire, (conn: Connection) => Raw.dbClose(conn.db))
 
     /// Rowid of the most recent successful INSERT on this connection.
@@ -95,8 +100,7 @@ module Connection =
         await Raw.lastInsertRowid(self.db)
 
     /// Rows changed by the most recent statement.
-    public async function changes(self): Async<Int64, SqliteError> =
-        await Raw.changes(self.db)
+    public async function changes(self): Async<Int64, SqliteError> = await Raw.changes(self.db)
 
     /// Build the connection's current error as a typed `SqliteError`.
     async function errorFrom(self, code: Int32): Async<SqliteError, Never> =
@@ -107,16 +111,15 @@ module Connection =
     /// scope exit.
     public function statement(self, sql: String): Resource<PreparedStatement, SqliteError> =
         let db = self.db
-        let acquire: () => Async<PreparedStatement, SqliteError> = async () =>
-            let handler: (Int32) => Async<Uint64, SqliteError> = async (code: Int32) =>
-                let e = await self.errorFrom(code)
-                await Async.fail(e)
-            let stmt = await Raw.prepare(db, sql).catchAll<SqliteError>(handler)
-            PreparedStatement { db = db; stmt = stmt }
-        Resource.make(
-            acquire,
-            (statement: PreparedStatement) => Raw.stmtFinalize(statement.stmt)
-        )
+        let acquire: () => Async<PreparedStatement, SqliteError> =
+            async () =>
+                let handler: (Int32) => Async<Uint64, SqliteError> =
+                    async (code: Int32) =>
+                        let e = await self.errorFrom(code)
+                        await Async.fail(e)
+                let stmt = await Raw.prepare(db, sql).catchAll<SqliteError>(handler)
+                PreparedStatement { db = db; stmt = stmt }
+        Resource.make(acquire, (statement: PreparedStatement) => Raw.stmtFinalize(statement.stmt))
 
     /// Run a statement that yields no rows. Returns the affected row count.
     public async function execute(self, sql: String): Async<Int64, SqliteError> =
@@ -124,7 +127,8 @@ module Connection =
         await self.executeWith(sql, noParams)
 
     /// Run a parameterized statement that yields no rows.
-    public async function executeWith(self, sql: String, params: Array<SqlValue>): Async<Int64, SqliteError> =
+    public async function executeWith(self, sql: String, params: Array<SqlValue>):
+        Async<Int64, SqliteError> =
         let statement = use self.statement(sql)
         await statement.bindAll(params)
         await statement.drain()
@@ -137,20 +141,23 @@ module Connection =
         await self.queryWith(sql, noParams)
 
     /// Run a parameterized query, returning every row as a `List`.
-    public async function queryWith(self, sql: String, params: Array<SqlValue>): Async<List<Array<SqlValue>>, SqliteError> =
+    public async function queryWith(self, sql: String, params: Array<SqlValue>):
+        Async<List<Array<SqlValue>>, SqliteError> =
         let statement = use self.statement(sql)
         await statement.bindAll(params)
         await statement.collectRows()
 
     /// Run a parameterized query expected to yield at most one row.
-    public async function queryOne(self, sql: String, params: Array<SqlValue>): Async<Option<Array<SqlValue>>, SqliteError> =
+    public async function queryOne(self, sql: String, params: Array<SqlValue>):
+        Async<Option<Array<SqlValue>>, SqliteError> =
         let rows = await self.queryWith(sql, params)
         rows.headOption
 
     /// Like `queryWith`, but each row carries the result set's column names so
     /// it can be decoded through `FromRow`. This is what `Query.fetchAll` and
     /// friends use; `queryWith` is unchanged for positional callers.
-    public async function queryRows(self, sql: String, params: Array<SqlValue>): Async<List<Row>, SqliteError> =
+    public async function queryRows(self, sql: String, params: Array<SqlValue>):
+        Async<List<Row>, SqliteError> =
         let statement = use self.statement(sql)
         await statement.bindAll(params)
         await statement.collectNamedRows()
@@ -175,18 +182,22 @@ module Connection =
     /// Not re-entrant: SQLite rejects `BEGIN` inside an active transaction, so a
     /// nested `transaction` fails at its inner `BEGIN`. Savepoint-based nesting
     /// would be a separate feature.
-    public function transaction<T, E>(self, body: (Connection) => Async<T, E>): Async<T, E> where E: From<SqliteError> =
+    public function transaction<T, E>(self, body: (Connection) => Async<T, E>): Async<T, E>
+        where E: From < SqliteError > =
         let toE: (SqliteError) => E = (e: SqliteError) => E.from(e)
-        let commitThen: (T) => Async<T, E> = (value: T) =>
-            self.execute("COMMIT").mapError<E>(toE).map<T>((_: Int64) => value)
-        let runBody: (Unit) => Async<T, E> = (_: Unit) =>
-            body(self).andThen<T>(commitThen)
+        let commitThen: (T) => Async<T, E> =
+            (value: T) => self.execute("COMMIT").mapError<E>(toE).map<T>((_: Int64) => value)
+        let runBody: (Unit) => Async<T, E> = (_: Unit) => body(self).andThen<T>(commitThen)
         let rollbackQuietly: Async<Unit, Never> =
-            self.execute("ROLLBACK").catchAll<Never>((_: SqliteError) => Async.succeed(0i64)).asUnit()
-        let release: (Unit, Result<T, Cause<E>>) => Async<Unit, Never> = (_: Unit, outcome: Result<T, Cause<E>>) =>
-            match outcome with
-                case Ok(_) => Async.succeed(())
-                case Error(_) => rollbackQuietly
+            self
+                .execute("ROLLBACK")
+                .catchAll<Never>((_: SqliteError) => Async.succeed(0i64))
+                .asUnit()
+        let release: (Unit, Result<T, Cause<E>>) => Async<Unit, Never> =
+            (_: Unit, outcome: Result<T, Cause<E>>) =>
+                match outcome with
+                    case Ok(_) => Async.succeed(())
+                    case Error(_) => rollbackQuietly
         let begin: Async<Unit, E> = self.execute("BEGIN").mapError<E>(toE).asUnit()
         Async<T, E>.bracketWithResult<Unit>(begin, release, runBody)
 
@@ -204,7 +215,8 @@ module PreparedStatement =
                 case SqlValue.Real(v) => await Raw.bindDouble(self.stmt, index, v)
                 case SqlValue.Text(v) => await Raw.bindText(self.stmt, index, v)
                 case SqlValue.Blob(v) => await Raw.bindBlob(self.stmt, index, v)
-        if code == 0 then ()
+        if code == 0 then
+            ()
         else
             let e = await self.errorFrom(code)
             await Async.fail(e)
@@ -222,8 +234,10 @@ module PreparedStatement =
     /// finished.
     public async function step(self): Async<Bool, SqliteError> =
         let code = await Raw.step(self.stmt)
-        if code == 100 then true
-        else if code == 101 then false
+        if code == 100 then
+            true
+        else if code == 101 then
+            false
         else
             let e = await self.errorFrom(code)
             await Async.fail(e)
@@ -238,7 +252,8 @@ module PreparedStatement =
     /// Reset the statement so it can run again (bindings are kept).
     public async function reset(self): Async<Unit, SqliteError> =
         let code = await Raw.reset(self.stmt)
-        if code == 0 then ()
+        if code == 0 then
+            ()
         else
             let e = await self.errorFrom(code)
             await Async.fail(e)
@@ -263,7 +278,8 @@ module PreparedStatement =
 
     /// Read the first `count` columns of the current row.
     async function valuesOf(self, count: Int32): Async<Array<SqlValue>, Never> =
-        if count == 0 then Array.empty()
+        if count == 0 then
+            Array.empty()
         else
             let values = Array.fill(count, SqlValue.Null)
             let mutable i = 0
@@ -277,7 +293,8 @@ module PreparedStatement =
     /// read them once per statement rather than once per row.
     public async function columnNames(self): Async<Array<String>, Never> =
         let count = await Raw.columnCount(self.stmt)
-        if count == 0 then Array.empty()
+        if count == 0 then
+            Array.empty()
         else
             let names = Array.fill(count, "")
             let mutable i = 0

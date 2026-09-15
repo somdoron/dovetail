@@ -10,7 +10,7 @@ import standard.wasi.net.NetworkError
 // Minimal mirror of the HTTP flow: a forked server fiber accepts one
 // connection and echoes; the main fiber connects, writes, reads, closes.
 @timeout(5000)
-test "fork: server accepts+echoes, client round-trips" =
+ test "fork: server accepts+echoes, client round-trips" =
     let mutable got = 0i32
     let program: Async<Unit, NetError> = forkEchoProgram((n: Int32) => got = n)
     program.run()
@@ -21,9 +21,10 @@ async function forkEchoProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
     let addr = await listener.localAddress()
     // fork the server accept+echo loop
     let serverFiber = await serverEcho(listener).forkBackground()
-    let port = match addr.split(":") with
-        case [_, portText] => parsePort(portText)
-        case _ => panic "expected a host:port local address"
+    let port =
+        match addr.split(":") with
+            case [_, portText] => parsePort(portText)
+            case _ => panic "expected a host:port local address"
     let client: TcpStream = use Tcp.connect("127.0.0.1", port)
     await client.output.write("hello".bytes().readonly).mapError(netFromNetwork)
     let response = await client.input.read(64i64).mapError(netFromNetwork)
@@ -40,7 +41,7 @@ async function serverEcho(listener: TcpListener): Async<Unit, NetError> =
 // sequential writes on the *same* output stream, which the single-write echo
 // above does not.
 @timeout(5000)
-test "fork: multi-write on same stream both directions" =
+ test "fork: multi-write on same stream both directions" =
     let mutable got = 0i32
     let program: Async<Unit, NetError> = forkMultiWriteProgram((n: Int32) => got = n)
     program.run()
@@ -50,9 +51,10 @@ async function forkMultiWriteProgram(setter: (Int32) => Unit): Async<Unit, NetEr
     let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
     let addr = await listener.localAddress()
     let serverFiber = await serverMultiWrite(listener).forkBackground()
-    let port = match addr.split(":") with
-        case [_, portText] => parsePort(portText)
-        case _ => panic "expected a host:port local address"
+    let port =
+        match addr.split(":") with
+            case [_, portText] => parsePort(portText)
+            case _ => panic "expected a host:port local address"
     let client: TcpStream = use Tcp.connect("127.0.0.1", port)
     // two sequential writes on the same output stream
     await client.output.write("hello".bytes().readonly).mapError(netFromNetwork)
@@ -62,7 +64,8 @@ async function forkMultiWriteProgram(setter: (Int32) => Unit): Async<Unit, NetEr
     let mutable done = false
     while !done do
         let chunk = await client.input.read(64i64).mapError(netFromNetwork)
-        if chunk.length == 0 then done = true
+        if chunk.length == 0 then
+            done = true
         else
             total = total + chunk.length
             if total >= 10 then done = true
@@ -75,7 +78,8 @@ async function serverMultiWrite(listener: TcpListener): Async<Unit, NetError> =
     let mutable done = false
     while !done do
         let chunk = await stream.input.read(64i64).mapError(netFromNetwork)
-        if chunk.length == 0 then done = true
+        if chunk.length == 0 then
+            done = true
         else
             buf = buf.concat(chunk)
             if buf.length >= 10 then done = true
@@ -100,7 +104,7 @@ function parsePort(text: String): Uint16 =
 // forever reporting zero progress. The @timeout catches the old infinite loop;
 // the assert catches a write that wrongly reports success.
 @timeout(5000)
-test "fork: write to a closed peer fails, does not hang" =
+ test "fork: write to a closed peer fails, does not hang" =
     let mutable outcome = 0i32
     let program: Async<Unit, NetError> = writeClosedPeerProgram((n: Int32) => outcome = n)
     program.run()
@@ -115,18 +119,20 @@ async function writeClosedPeerProgram(setter: (Int32) => Unit): Async<Unit, NetE
     let addr = await listener.localAddress()
     // server accepts one connection then drops it (scope exit closes the socket)
     let serverFiber = await acceptThenClose(listener).forkBackground()
-    let port = match addr.split(":") with
-        case [_, portText] => parsePort(portText)
-        case _ => panic "expected a host:port local address"
+    let port =
+        match addr.split(":") with
+            case [_, portText] => parsePort(portText)
+            case _ => panic "expected a host:port local address"
     let client: TcpStream = use Tcp.connect("127.0.0.1", port)
     let big = Array<Uint8>.fill(65536, 65u8)
     let mutable i = 0i32
     let mutable failed = false
     while i < 1000 && !failed do
-        let didFail = await client.output.write(big.readonly).fold(
-            (_: NetworkError) => Async.succeed(true),
-            (_: Unit) => Async.succeed(false)
-        )
+        let didFail =
+            await client
+                .output
+                .write(big.readonly)
+                .fold((_: NetworkError) => Async.succeed(true), (_: Unit) => Async.succeed(false))
         failed = didFail
         i = i + 1
     setter(if failed then 1i32 else 2i32)

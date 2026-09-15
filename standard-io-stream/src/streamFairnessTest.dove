@@ -4,19 +4,24 @@ import standard.io.Async
 
 // Keep a runnable sibling waiting for the work to begin. It must make progress
 // inside the list operation, before that operation returns to its caller.
-function checkStreamListFairness(effect: Async<Unit, Never>): Async<Unit, Never> = async do
-    let mutable started = false
-    let mutable finished = false
-    let mutable progressed = false
-    let observer = await (async do
-        while !started do await Async.yieldNow()
-        progressed = !finished
-    ).forkBackground()
-    started = true
-    await effect
-    finished = true
-    await observer.join()
-    assert progressed
+function checkStreamListFairness(effect: Async<Unit, Never>): Async<Unit, Never> =
+    async do
+        let mutable started = false
+        let mutable finished = false
+        let mutable progressed = false
+        let observer =
+            await (
+                async do
+                    while !started do
+                        await Async.yieldNow()
+                    progressed = !finished
+            )
+                .forkBackground()
+        started = true
+        await effect
+        finished = true
+        await observer.join()
+        assert progressed
 
 function streamFairnessValues(): List<Int32> =
     let mutable values: List<Int32> = List.empty
@@ -27,54 +32,72 @@ function streamFairnessValues(): List<Int32> =
     values
 
 @timeout(5000)
-test "Stream fairness: list materialization yields and preserves one chunk" =
+ test "Stream fairness: list materialization yields and preserves one chunk" =
     let values = streamFairnessValues()
-    let program: Async<Unit, Never> = async do
-        await checkStreamListFairness(async do
-            let chunk = await Stream<Int32, Never>.listChunk(values)
-            assert chunk.length == 1025
-            let mutable index = 0
-            while index < chunk.length do
-                assert chunk[index] == index
-                index = index + 1
-        )
-        let mutable chunks = 0
-        await Stream<Int32, Never>.fromList(values).foreachChunk((chunk: ReadonlySlice<Int32>) => Async.thunk(() =>
-            chunks = chunks + 1
-            assert chunk.length == 1025
-        ))
-        assert chunks == 1
+    let program: Async<Unit, Never> =
+        async do
+            await checkStreamListFairness(
+                async do
+                    let chunk = await Stream<Int32, Never>.listChunk(values)
+                    assert chunk.length == 1025
+                    let mutable index = 0
+                    while index < chunk.length do
+                        assert chunk[index] == index
+                        index = index + 1
+            )
+            let mutable chunks = 0
+            await Stream<Int32, Never>
+                .fromList(values)
+                .foreachChunk(
+                (chunk: ReadonlySlice<Int32>) =>
+                    Async
+                        .thunk(
+                        () =>
+                            chunks = chunks + 1
+                            assert chunk.length == 1025
+                    )
+            )
+            assert chunks == 1
     program.run()
 
 @timeout(5000)
-test "Stream fairness: rechunk assembly yields and preserves nondefault values" =
+ test "Stream fairness: rechunk assembly yields and preserves nondefault values" =
     let mutable reversed: List<Any> = List.empty
     let mutable index = 0
     while index < 1025 do
         let value: Any = StreamTestValue(index)
         reversed = List.Cons(value, reversed)
         index = index + 1
-    let program: Async<Unit, Never> = async do
-        await checkStreamListFairness(async do
-            let chunk = await StreamExecution.assembleChunk<StreamTestValue>(reversed, 1025)
-            let values = chunk
-            let mutable index = 0
-            while index < values.length do
-                assert values[index].value == index
-                index = index + 1
-        )
-        let mutable lengths: List<Int32> = List.empty
-        await Stream<Int32, Never>.fromList(streamFairnessValues()).rechunk(512)
-            .foreachChunk((chunk: ReadonlySlice<Int32>) => Async.thunk(() => lengths = List.Cons(chunk.length, lengths)))
-        assert lengths == [1, 512, 512]
+    let program: Async<Unit, Never> =
+        async do
+            await checkStreamListFairness(
+                async do
+                    let chunk = await StreamExecution.assembleChunk<StreamTestValue>(reversed, 1025)
+                    let values = chunk
+                    let mutable index = 0
+                    while index < values.length do
+                        assert values[index].value == index
+                        index = index + 1
+            )
+            let mutable lengths: List<Int32> = List.empty
+            await Stream<Int32, Never>
+                .fromList(streamFairnessValues())
+                .rechunk(512)
+                .foreachChunk(
+                (chunk: ReadonlySlice<Int32>) =>
+                    Async.thunk(() => lengths = List.Cons(chunk.length, lengths))
+            )
+            assert lengths == [1, 512, 512]
     program.run()
 
 @timeout(5000)
-test "Stream fairness: collection yields and preserves order" =
+ test "Stream fairness: collection yields and preserves order" =
     let values = streamFairnessValues()
-    let program: Async<Unit, Never> = async do
-        await checkStreamListFairness(async do
+    let program: Async<Unit, Never> =
+        async do
+            await checkStreamListFairness(
+                async do
+                    assert (await Stream<Int32, Never>.fromList(values).runCollect()) == values
+            )
             assert (await Stream<Int32, Never>.fromList(values).runCollect()) == values
-        )
-        assert (await Stream<Int32, Never>.fromList(values).runCollect()) == values
     program.run()

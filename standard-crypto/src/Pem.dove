@@ -105,14 +105,11 @@ module Pem =
             else
                 let dataStart = dashAfter + 5
                 let ei = find(pem, endMark, dataStart)
-                if ei < 0 then
-                    Error(X509Error.MalformedCertificate("no PEM END marker"))
-                else
-                    Ok(decodeRegion(pem, dataStart, ei))
+                if ei < 0 then Error(X509Error.MalformedCertificate("no PEM END marker"))
+                else Ok(decodeRegion(pem, dataStart, ei))
 
     /// Decode the first PEM block of a PEM-text string to DER.
-    public function decode(pem: String): Result<Array<Uint8>, X509Error> =
-        decode(pem.bytes())
+    public function decode(pem: String): Result<Array<Uint8>, X509Error> = decode(pem.bytes())
 
     /// Decode every PEM block (e.g. a certificate bundle), in order.
     ///
@@ -140,8 +137,7 @@ module Pem =
         blocks.reverse()
 
     /// Decode every PEM block of a PEM-text string, in order.
-    public function decodeAll(pem: String): List<Array<Uint8>> =
-        decodeAll(pem.bytes())
+    public function decodeAll(pem: String): List<Array<Uint8>> = decodeAll(pem.bytes())
 
     /// Encode `der` as a PEM block with the given label, wrapping Base64 at 64
     /// characters per line.
@@ -180,8 +176,8 @@ test "Pem encode/decode roundtrip" =
     assert ConstantTime.equal(back.require, data)
 
 test "Pem decodeAll on a two-cert bundle" =
-    let one = Pem.encode([|0x01u8, 0x02u8, 0x03u8|], "CERTIFICATE")
-    let two = Pem.encode([|0xaau8, 0xbbu8|], "CERTIFICATE")
+    let one = Pem.encode([| 0x01u8, 0x02u8, 0x03u8 |], "CERTIFICATE")
+    let two = Pem.encode([| 0xaau8, 0xbbu8 |], "CERTIFICATE")
     let bundle = one.concat(two)
     match Pem.decodeAll(bundle) with
         case [first, second] =>

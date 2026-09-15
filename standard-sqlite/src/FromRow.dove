@@ -31,7 +31,6 @@ import standard.time.Instant
 // with every derived record implementation — so the scalars are enumerated,
 // each delegating to `Row.scalar`, which owns the single-column check.
 // =============================================================================
-
 /// A value decodable from a whole result row.
 public trait FromRow =
     /// Decode `row`, or report why it doesn't fit.
@@ -90,7 +89,8 @@ implement FromRow for Instant =
         Instant.fromSqlValue(try row.scalar())
 
 /// A nullable single-column row, for `SELECT nullableColumn` queries.
-implement <T> FromRow for Option<T> where T: FromSqlValue =
+implement<T> FromRow for Option<T>
+    where T: FromSqlValue =
     public function fromRow(row: Row): Result<Option<T>, SqliteError> =
         Option<T>.fromSqlValue(try row.scalar())
 
@@ -99,15 +99,16 @@ implement <T> FromRow for Option<T> where T: FromSqlValue =
 // One column per element, left to right. Use these for computed columns and for
 // joins whose column names collide; use a record when the query names its
 // columns and you want the safety of matching on those names.
-
-implement <A, B> FromRow for (A, B) where A: FromSqlValue, B: FromSqlValue =
+implement<A, B> FromRow for (A, B)
+    where A: FromSqlValue,
+          B: FromSqlValue =
     public function fromRow(row: Row): Result<(A, B), SqliteError> =
         try row.expectWidth(2)
         let a = try A.fromSqlValue(try row.at(0))
         let b = try B.fromSqlValue(try row.at(1))
         Ok((a, b))
 
-implement <A, B, C> FromRow for (A, B, C) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue =
+implement<A, B, C> FromRow for (A, B, C) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue =
     public function fromRow(row: Row): Result<(A, B, C), SqliteError> =
         try row.expectWidth(3)
         let a = try A.fromSqlValue(try row.at(0))
@@ -115,7 +116,11 @@ implement <A, B, C> FromRow for (A, B, C) where A: FromSqlValue, B: FromSqlValue
         let c = try C.fromSqlValue(try row.at(2))
         Ok((a, b, c))
 
-implement <A, B, C, D> FromRow for (A, B, C, D) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue, D: FromSqlValue =
+implement<A, B, C, D> FromRow for (A, B, C, D)
+    where A: FromSqlValue,
+          B: FromSqlValue,
+          C: FromSqlValue,
+          D: FromSqlValue =
     public function fromRow(row: Row): Result<(A, B, C, D), SqliteError> =
         try row.expectWidth(4)
         let a = try A.fromSqlValue(try row.at(0))
@@ -124,7 +129,12 @@ implement <A, B, C, D> FromRow for (A, B, C, D) where A: FromSqlValue, B: FromSq
         let d = try D.fromSqlValue(try row.at(3))
         Ok((a, b, c, d))
 
-implement <A, B, C, D, E> FromRow for (A, B, C, D, E) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue, D: FromSqlValue, E: FromSqlValue =
+implement<A, B, C, D, E> FromRow for (A, B, C, D, E)
+    where A: FromSqlValue,
+          B: FromSqlValue,
+          C: FromSqlValue,
+          D: FromSqlValue,
+          E: FromSqlValue =
     public function fromRow(row: Row): Result<(A, B, C, D, E), SqliteError> =
         try row.expectWidth(5)
         let a = try A.fromSqlValue(try row.at(0))
@@ -134,7 +144,13 @@ implement <A, B, C, D, E> FromRow for (A, B, C, D, E) where A: FromSqlValue, B: 
         let e = try E.fromSqlValue(try row.at(4))
         Ok((a, b, c, d, e))
 
-implement <A, B, C, D, E, F> FromRow for (A, B, C, D, E, F) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue, D: FromSqlValue, E: FromSqlValue, F: FromSqlValue =
+implement<A, B, C, D, E, F> FromRow for (A, B, C, D, E, F)
+    where A: FromSqlValue,
+          B: FromSqlValue,
+          C: FromSqlValue,
+          D: FromSqlValue,
+          E: FromSqlValue,
+          F: FromSqlValue =
     public function fromRow(row: Row): Result<(A, B, C, D, E, F), SqliteError> =
         try row.expectWidth(6)
         let a = try A.fromSqlValue(try row.at(0))

@@ -5,15 +5,18 @@ import standard.io.Resource
 
 function expressionArgument<T>(program: Async<T, Never>): Async<T, Never> = program
 
-function expressionResult(): Async<Int32, Never> = async do 42
+function expressionResult(): Async<Int32, Never> =
+    async do
+        42
 
 test "async do: construction is inert and execution repeats" =
     let mutable executions = 0
-    let program: Async<Unit, Never> = async do
-        executions = executions + 1
-        let mutable local = 0
-        local = local + 1
-        assert local == 1
+    let program: Async<Unit, Never> =
+        async do
+            executions = executions + 1
+            let mutable local = 0
+            local = local + 1
+            assert local == 1
     assert executions == 0
     program.run()
     assert executions == 1
@@ -22,83 +25,99 @@ test "async do: construction is inert and execution repeats" =
 
 test "async do: infer context and defer the synchronous prefix" =
     let mutable executions = 0
-    let program = async do
-        executions = executions + 1
-        let value = await Async.succeed(42)
-        assert value == 42
+    let program =
+        async do
+            executions = executions + 1
+            let value = await Async.succeed(42)
+            assert value == 42
     assert executions == 0
     program.run()
     program.run()
     assert executions == 2
 
 test "async do: contextual generic arguments and returned expressions" =
-    let program: Async<Unit, Never> = async do
-        let value = await expressionArgument(async do 21)
-        assert value == 21
-        assert (await expressionResult()) == 42
+    let program: Async<Unit, Never> =
+        async do
+            let value =
+                await expressionArgument(
+                    async do
+                        21
+                )
+            assert value == 21
+            assert (await expressionResult()) == 42
     program.run()
 
 test "async do: nested computation remains a value" =
     let mutable executions = 0
-    let outer: Async<Async<Unit, Never>, Never> = async do
+    let outer: Async<Async<Unit, Never>, Never> =
         async do
-            executions = executions + 1
-    let program: Async<Unit, Never> = async do
-        let inner = await outer
-        assert executions == 0
-        await inner
-        assert executions == 1
+            async do
+                executions = executions + 1
+    let program: Async<Unit, Never> =
+        async do
+            let inner = await outer
+            assert executions == 0
+            await inner
+            assert executions == 1
     program.run()
 
 test "async do: captures are shared and body locals are fresh" =
     let mutable value = 1
     let captured = 3
-    let program: Async<Unit, Never> = async do
-        assert value == 2
-        assert captured == 3
+    let program: Async<Unit, Never> =
+        async do
+            assert value == 2
+            assert captured == 3
     value = 2
     program.run()
 
 test "async do: resource inference defers construction and releases" =
     let mutable constructions = 0
     let mutable releases = 0
-    let resource: Resource<Int32, Never> = Resource.make(
-        () => Async.succeed(42),
-        (_: Int32) => Async.thunk(() => releases = releases + 1)
-    )
-    let deferred = async do
-        constructions = constructions + 1
-        let value = await resource
-        value + 1
+    let resource: Resource<Int32, Never> =
+        Resource
+            .make(() => Async.succeed(42), (_: Int32) => Async.thunk(() => releases = releases + 1))
+    let deferred =
+        async do
+            constructions = constructions + 1
+            let value = await resource
+            value + 1
     assert constructions == 0
-    let program: Async<Unit, Never> = async do
-        let value = use deferred
-        assert value == 43
+    let program: Async<Unit, Never> =
+        async do
+            let value = use deferred
+            assert value == 43
     program.run()
     program.run()
     assert constructions == 2
     assert releases == 2
 
 test "async do: awaits in loops and independent nested contexts" =
-    let program = async do
-        let nested = async do await Resource.succeed(5)
-        let mutable total = 0
-        while total < 3 do
-            total = total + (await Async.succeed(1))
-        assert total == 3
-        let value = use nested
-        assert value == 5
+    let program =
+        async do
+            let nested =
+                async do
+                    await Resource.succeed(5)
+            let mutable total = 0
+            while total < 3 do
+                total = total + (await Async.succeed(1))
+            assert total == 3
+            let value = use nested
+            assert value == 5
     program.run()
 
 test "async do: early failure stays inside the computation" =
-    let program: Async<Unit, String> = async do
-        let result: Result<Int32, String> = Error("failure")
-        result.orReturn
-        panic "unreachable"
-    let recovered: Async<Unit, Never> = program.fold(
-        (message: String) => Async.thunk(() => assert message == "failure"),
-        (_: Unit) => Async.thunk(() => panic "expected failure")
-    )
+    let program: Async<Unit, String> =
+        async do
+            let result: Result<Int32, String> = Error("failure")
+            result.orReturn
+            panic "unreachable"
+    let recovered: Async<Unit, Never> =
+        program
+            .fold(
+            (message: String) => Async.thunk(() => assert message == "failure"),
+            (_: Unit) => Async.thunk(() => panic "expected failure")
+        )
     recovered.run()
 
 // The success type is the SECOND parameter. The compiler must use Rebind.
@@ -108,32 +127,48 @@ enum ExpressionValue<out Marker, out T> =
 module ExpressionValue<Marker, T> =
     public function evaluate(self): T =
         match self with
-        case Deferred(body) => body()
+            case Deferred(body) => body()
 
-implement <T, Marker> Awaitable<T> for ExpressionValue<Marker, T> =
+implement<T, Marker> Awaitable<T> for ExpressionValue<Marker, T> =
     type Rebind<U> = ExpressionValue<Marker, U>
-    public function succeed(value: T): ExpressionValue<Marker, T> = ExpressionValue.Deferred(() => value)
-    public function defer(body: ByName<ExpressionValue<Marker, T>>, trace: SourceLocation): ExpressionValue<Marker, T> =
-        ExpressionValue.Deferred(() => body.get.evaluate())
-    public function map<U>(self: ExpressionValue<Marker, T>, f: (T) => U, trace: SourceLocation): ExpressionValue<Marker, U> =
-        ExpressionValue.Deferred(() => f(self.evaluate()))
-    public function andThen<U>(self: ExpressionValue<Marker, T>, f: (T) => ExpressionValue<Marker, U>, trace: SourceLocation): ExpressionValue<Marker, U> =
-        ExpressionValue.Deferred(() => f(self.evaluate()).evaluate())
-    public function whileLoop(condition: () => Bool, body: () => ExpressionValue<Marker, Unit>, trace: SourceLocation): ExpressionValue<Marker, Unit> =
-        ExpressionValue.Deferred(() =>
-            while condition() do
-                body().evaluate()
+
+    public function succeed(value: T): ExpressionValue<Marker, T> =
+        ExpressionValue.Deferred(() => value)
+
+    public function defer(body: ByName<ExpressionValue<Marker, T>>, trace: SourceLocation):
+        ExpressionValue<Marker, T> = ExpressionValue.Deferred(() => body.get.evaluate())
+
+    public function map<U>(self: ExpressionValue<Marker, T>, f: (T) => U, trace: SourceLocation):
+        ExpressionValue<Marker, U> = ExpressionValue.Deferred(() => f(self.evaluate()))
+
+    public function andThen<U>(
+        self: ExpressionValue<Marker, T>,
+        f: (T) => ExpressionValue<Marker, U>,
+        trace: SourceLocation
+    ): ExpressionValue<Marker, U> = ExpressionValue.Deferred(() => f(self.evaluate()).evaluate())
+
+    public function whileLoop(
+        condition: () => Bool,
+        body: () => ExpressionValue<Marker, Unit>,
+        trace: SourceLocation
+    ): ExpressionValue<Marker, Unit> =
+        ExpressionValue
+            .Deferred(
+            () =>
+                while condition() do
+                    body().evaluate()
         )
 
 test "async do: custom Awaitable infers through Rebind and variance" =
     let mutable executions = 0
     let first: ExpressionValue<Never, Int32> = ExpressionValue.Deferred(() => 20)
     let second: ExpressionValue<String, Int32> = ExpressionValue.Deferred(() => 22)
-    let program = async do
-        executions = executions + 1
-        let left = await first
-        let right = await second
-        left + right
+    let program =
+        async do
+            executions = executions + 1
+            let left = await first
+            let right = await second
+            left + right
     assert executions == 0
     let typed: ExpressionValue<String, Int32> = program
     assert typed.evaluate() == 42
@@ -141,77 +176,114 @@ test "async do: custom Awaitable infers through Rebind and variance" =
     assert executions == 2
 
 test "async do: type context selects custom Awaitable without awaits" =
-    let value: ExpressionValue<Never, Int32> = async do 42
+    let value: ExpressionValue<Never, Int32> =
+        async do
+            42
     assert value.evaluate() == 42
 
 test "async do: a final failure computation is a nested value" =
-    let outer: Async<Async<Int32, String>, String> = async do
-        Async.fail("inner failure")
-    let program: Async<Unit, Never> = outer.fold(
-        (_: String) => Async.thunk(() => assert false),
-        (inner: Async<Int32, String>) => inner.fold(
-            (message: String) => Async.thunk(() => assert message == "inner failure"),
-            (_: Int32) => Async.thunk(() => assert false)
+    let outer: Async<Async<Int32, String>, String> =
+        async do
+            Async.fail("inner failure")
+    let program: Async<Unit, Never> =
+        outer
+            .fold(
+            (_: String) => Async.thunk(() => assert false),
+            (inner: Async<Int32, String>) =>
+                inner
+                    .fold(
+                    (message: String) => Async.thunk(() => assert message == "inner failure"),
+                    (_: Int32) => Async.thunk(() => assert false)
+                )
         )
-    )
     program.run()
 
 test "async do: continuation preserves a final failure computation" =
-    let outer: Async<Async<Int32, String>, String> = async do
-        await Async.succeed(())
-        Async.fail("inner failure")
-    let program: Async<Unit, Never> = outer.fold(
-        (_: String) => Async.thunk(() => assert false),
-        (inner: Async<Int32, String>) => inner.fold(
-            (message: String) => Async.thunk(() => assert message == "inner failure"),
-            (_: Int32) => Async.thunk(() => assert false)
+    let outer: Async<Async<Int32, String>, String> =
+        async do
+            await Async.succeed(())
+            Async.fail("inner failure")
+    let program: Async<Unit, Never> =
+        outer
+            .fold(
+            (_: String) => Async.thunk(() => assert false),
+            (inner: Async<Int32, String>) =>
+                inner
+                    .fold(
+                    (message: String) => Async.thunk(() => assert message == "inner failure"),
+                    (_: Int32) => Async.thunk(() => assert false)
+                )
         )
-    )
     program.run()
 
-function genericExpressionResult<T>(value: T): Async<T, Never> = async do value
+function genericExpressionResult<T>(value: T): Async<T, Never> =
+    async do
+        value
 
 test "async do: generic function body and branching expressions" =
-    let program: Async<Unit, Never> = async do
-        assert (await genericExpressionResult(42)) == 42
-        let selected = if true then async do await Async.succeed(7) else async do await Async.succeed(8)
-        assert (await selected) == 7
+    let program: Async<Unit, Never> =
+        async do
+            assert (await genericExpressionResult(42)) == 42
+            let selected =
+                if true then
+                    async do
+                        await Async.succeed(7)
+                else
+                    async do
+                        await Async.succeed(8)
+            assert (await selected) == 7
     program.run()
 
 test "async do: custom Awaitable supports intermediate values and loops" =
     let value: ExpressionValue<Never, Int32> = ExpressionValue.Deferred(() => 1)
-    let program = async do
-        let mutable total = 0
-        while total < 2 do
-            total = total + (await value)
-        let sum = (await value) + (await value)
-        total == sum
+    let program =
+        async do
+            let mutable total = 0
+            while total < 2 do
+                total = total + (await value)
+            let sum = (await value) + (await value)
+            total == sum
     assert program.evaluate()
 
 function genericExpressionArgument<T, E>(value: Async<T, E>): Async<T, E> = value
 
-let globalExpression: Async<Int32, Never> = async do 42
+let globalExpression: Async<Int32, Never> =
+    async do
+        42
 
 test "async do: generic arguments infer all context parameters" =
-    let program: Async<Unit, Never> = async do
-        let result = await genericExpressionArgument(async do await Async.succeed(42))
-        assert result == 42
-        assert (await globalExpression) == 42
+    let program: Async<Unit, Never> =
+        async do
+            let result =
+                await genericExpressionArgument(
+                    async do
+                        await Async.succeed(42)
+                )
+            assert result == 42
+            assert (await globalExpression) == 42
     program.run()
 
 test "async do: an Awaitable success value can be boxed as Any" =
     let inner: Async<Any, Never> = Async.succeed(42)
-    let outer: Async<Any, Never> = async do inner
-    let program: Async<Unit, Never> = async do
-        let value = await outer
-        assert value is Async<Any, Never>
+    let outer: Async<Any, Never> =
+        async do
+            inner
+    let program: Async<Unit, Never> =
+        async do
+            let value = await outer
+            assert value is Async<Any, Never>
     program.run()
 
-function expressionClosureArgument<T>(program: Async<Int32 => T, Never>): Async<Int32 => T, Never> = program
+function expressionClosureArgument<T>(program: Async<Int32 => T, Never>): Async<Int32 => T, Never> =
+    program
 
 test "async do: partial success context supplies closure parameter types" =
-    let program: Async<Unit, Never> = async do
-        let increment = await expressionClosureArgument(async do x => x + 1)
-        assert increment(41) == 42
+    let program: Async<Unit, Never> =
+        async do
+            let increment =
+                await expressionClosureArgument(
+                    async do
+                        x => x + 1
+                )
+            assert increment(41) == 42
     program.run()
-

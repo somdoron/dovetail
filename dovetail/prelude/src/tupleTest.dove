@@ -55,8 +55,8 @@ test "tuple comparison stops before later elements" =
     assert left != right
     assert left.compare(right) == Ordering.Less
 
-
-function formatExtendedTuple<T, U>(value: T ~ U): String where T: Tuple, T: Display, U: Display = value.format()
+function formatExtendedTuple<T, U>(value: T ~U): String where T: Tuple, T: Display, U: Display =
+    value.format()
 
 test "tuple display forwards ordinary element Display bounds" =
     assert formatExtendedTuple((1, true, "x")) == "(1, true, x)"

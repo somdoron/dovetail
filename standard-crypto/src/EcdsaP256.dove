@@ -10,12 +10,15 @@ import standard.prelude.Option
 /// needs no randomness — keeping the crypto package pure.
 module Ecdsa =
     // --- scalar arithmetic mod n ---
-
     private function nMul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
         let nn = P256Field.n()
         let ni = P256Field.n0inv(nn)
-        P256Field.fromMont(
-            P256Field.montMul(P256Field.toMont(a, nn, ni), P256Field.toMont(b, nn, ni), nn, ni), nn, ni)
+        P256Field
+            .fromMont(
+            P256Field.montMul(P256Field.toMont(a, nn, ni), P256Field.toMont(b, nn, ni), nn, ni),
+            nn,
+            ni
+        )
 
     private function nAdd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
         P256Field.add(a, b, P256Field.n())
@@ -35,11 +38,11 @@ module Ecdsa =
         let h1oct = P256.limbsToBe(zMod)
         let mutable v = Array<Uint8>.fill(32, 0x01u8)
         let mutable k = Array<Uint8>.fill(32, 0x00u8)
-        k = hmac(k, v.concat([|0x00u8|]).concat(xoct).concat(h1oct))
+        k = hmac(k, v.concat([| 0x00u8 |]).concat(xoct).concat(h1oct))
         v = hmac(k, v)
-        k = hmac(k, v.concat([|0x01u8|]).concat(xoct).concat(h1oct))
+        k = hmac(k, v.concat([| 0x01u8 |]).concat(xoct).concat(h1oct))
         v = hmac(k, v)
-        let mutable result = [|0u64, 0u64, 0u64, 0u64|]
+        let mutable result = [| 0u64, 0u64, 0u64, 0u64 |]
         let mutable found = false
         while found == false do
             v = hmac(k, v)
@@ -48,7 +51,7 @@ module Ecdsa =
                 result = cand
                 found = true
             else
-                k = hmac(k, v.concat([|0x00u8|]))
+                k = hmac(k, v.concat([| 0x00u8 |]))
                 v = hmac(k, v)
         result
 
@@ -74,8 +77,11 @@ module Ecdsa =
             let nn = P256Field.n()
             let r = P256.beToLimbs(signature, 0)
             let s = P256.beToLimbs(signature, 32)
-            if P256Field.isZero(r) || P256Field.isZero(s)
-                || (P256Field.lessThan(r, nn) == false) || (P256Field.lessThan(s, nn) == false) then
+            if P256Field
+                .isZero(r)
+                || P256Field.isZero(s)
+                || (P256Field.lessThan(r, nn) == false)
+                || (P256Field.lessThan(s, nn) == false) then
                 false
             else
                 let zMod = P256Field.reduceOnce(P256.beToLimbs(Sha256.hash(message), 0), nn)
@@ -93,7 +99,9 @@ module Ecdsa =
 /// public key, 64-byte signature.
 class EcdsaP256Algorithm() implements SignatureAlgorithm =
     public property signatureSize(self): Int32 = 64
+
     public property secretKeySize(self): Int32 = 32
+
     public property publicKeySize(self): Int32 = 65
 
     public function derivePublicKey(self, secret: SecretKey): PublicKey =
@@ -103,8 +111,8 @@ class EcdsaP256Algorithm() implements SignatureAlgorithm =
     public function sign(self, key: SecretKey, message: Array<Uint8>): Array<Uint8> =
         Ecdsa.sign(key.value, message)
 
-    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>): Bool =
-        Ecdsa.verify(key.value, message, signature)
+    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>):
+        Bool = Ecdsa.verify(key.value, message, signature)
 
     // The P-256 private key must be a scalar in [1, n-1]; reject otherwise.
     public function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey> =
@@ -118,26 +126,114 @@ class EcdsaP256Algorithm() implements SignatureAlgorithm =
 public let EcdsaP256: SignatureAlgorithm = EcdsaP256Algorithm()
 
 test "ECDSA-P256 RFC 6979 A.2.5 sign+verify (sample)" =
-    let privKey = SecretKey([|
-        0xc9u8, 0xafu8, 0xa9u8, 0xd8u8, 0x45u8, 0xbau8, 0x75u8, 0x16u8,
-        0x6bu8, 0x5cu8, 0x21u8, 0x57u8, 0x67u8, 0xb1u8, 0xd6u8, 0x93u8,
-        0x4eu8, 0x50u8, 0xc3u8, 0xdbu8, 0x36u8, 0xe8u8, 0x9bu8, 0x12u8,
-        0x7bu8, 0x8au8, 0x62u8, 0x2bu8, 0x12u8, 0x0fu8, 0x67u8, 0x21u8,
-    |])
+    let privKey =
+        SecretKey(
+            [|
+                0xc9u8,
+                0xafu8,
+                0xa9u8,
+                0xd8u8,
+                0x45u8,
+                0xbau8,
+                0x75u8,
+                0x16u8,
+                0x6bu8,
+                0x5cu8,
+                0x21u8,
+                0x57u8,
+                0x67u8,
+                0xb1u8,
+                0xd6u8,
+                0x93u8,
+                0x4eu8,
+                0x50u8,
+                0xc3u8,
+                0xdbu8,
+                0x36u8,
+                0xe8u8,
+                0x9bu8,
+                0x12u8,
+                0x7bu8,
+                0x8au8,
+                0x62u8,
+                0x2bu8,
+                0x12u8,
+                0x0fu8,
+                0x67u8,
+                0x21u8,
+            |]
+        )
     let message = "sample".bytes()
     let sig = EcdsaP256.sign(privKey, message)
-    let expected = [|
-        // r
-        0xefu8, 0xd4u8, 0x8bu8, 0x2au8, 0xacu8, 0xb6u8, 0xa8u8, 0xfdu8,
-        0x11u8, 0x40u8, 0xddu8, 0x9cu8, 0xd4u8, 0x5eu8, 0x81u8, 0xd6u8,
-        0x9du8, 0x2cu8, 0x87u8, 0x7bu8, 0x56u8, 0xaau8, 0xf9u8, 0x91u8,
-        0xc3u8, 0x4du8, 0x0eu8, 0xa8u8, 0x4eu8, 0xafu8, 0x37u8, 0x16u8,
-        // s
-        0xf7u8, 0xcbu8, 0x1cu8, 0x94u8, 0x2du8, 0x65u8, 0x7cu8, 0x41u8,
-        0xd4u8, 0x36u8, 0xc7u8, 0xa1u8, 0xb6u8, 0xe2u8, 0x9fu8, 0x65u8,
-        0xf3u8, 0xe9u8, 0x00u8, 0xdbu8, 0xb9u8, 0xafu8, 0xf4u8, 0x06u8,
-        0x4du8, 0xc4u8, 0xabu8, 0x2fu8, 0x84u8, 0x3au8, 0xcdu8, 0xa8u8,
-    |]
+    let expected =
+        [|
+            // r
+            0xefu8,
+            0xd4u8,
+            0x8bu8,
+            0x2au8,
+            0xacu8,
+            0xb6u8,
+            0xa8u8,
+            0xfdu8,
+            0x11u8,
+            0x40u8,
+            0xddu8,
+            0x9cu8,
+            0xd4u8,
+            0x5eu8,
+            0x81u8,
+            0xd6u8,
+            0x9du8,
+            0x2cu8,
+            0x87u8,
+            0x7bu8,
+            0x56u8,
+            0xaau8,
+            0xf9u8,
+            0x91u8,
+            0xc3u8,
+            0x4du8,
+            0x0eu8,
+            0xa8u8,
+            0x4eu8,
+            0xafu8,
+            0x37u8,
+            0x16u8,
+            // s
+            0xf7u8,
+            0xcbu8,
+            0x1cu8,
+            0x94u8,
+            0x2du8,
+            0x65u8,
+            0x7cu8,
+            0x41u8,
+            0xd4u8,
+            0x36u8,
+            0xc7u8,
+            0xa1u8,
+            0xb6u8,
+            0xe2u8,
+            0x9fu8,
+            0x65u8,
+            0xf3u8,
+            0xe9u8,
+            0x00u8,
+            0xdbu8,
+            0xb9u8,
+            0xafu8,
+            0xf4u8,
+            0x06u8,
+            0x4du8,
+            0xc4u8,
+            0xabu8,
+            0x2fu8,
+            0x84u8,
+            0x3au8,
+            0xcdu8,
+            0xa8u8,
+        |]
     assert sig.length == 64
     let mutable i = 0
     let mutable ok = true
@@ -152,18 +248,78 @@ test "ECDSA-P256 RFC 6979 A.2.5 sign+verify (sample)" =
     assert EcdsaP256.verify(pub, "Sample".bytes(), sig) == false
 
 test "ECDSA-P256 public key (RFC 6979 A.2.5)" =
-    let privKey = SecretKey([|
-        0xc9u8, 0xafu8, 0xa9u8, 0xd8u8, 0x45u8, 0xbau8, 0x75u8, 0x16u8,
-        0x6bu8, 0x5cu8, 0x21u8, 0x57u8, 0x67u8, 0xb1u8, 0xd6u8, 0x93u8,
-        0x4eu8, 0x50u8, 0xc3u8, 0xdbu8, 0x36u8, 0xe8u8, 0x9bu8, 0x12u8,
-        0x7bu8, 0x8au8, 0x62u8, 0x2bu8, 0x12u8, 0x0fu8, 0x67u8, 0x21u8,
-    |])
-    let ux = [|
-        0x60u8, 0xfeu8, 0xd4u8, 0xbau8, 0x25u8, 0x5au8, 0x9du8, 0x31u8,
-        0xc9u8, 0x61u8, 0xebu8, 0x74u8, 0xc6u8, 0x35u8, 0x6du8, 0x68u8,
-        0xc0u8, 0x49u8, 0xb8u8, 0x92u8, 0x3bu8, 0x61u8, 0xfau8, 0x6cu8,
-        0xe6u8, 0x69u8, 0x62u8, 0x2eu8, 0x60u8, 0xf2u8, 0x9fu8, 0xb6u8,
-    |]
+    let privKey =
+        SecretKey(
+            [|
+                0xc9u8,
+                0xafu8,
+                0xa9u8,
+                0xd8u8,
+                0x45u8,
+                0xbau8,
+                0x75u8,
+                0x16u8,
+                0x6bu8,
+                0x5cu8,
+                0x21u8,
+                0x57u8,
+                0x67u8,
+                0xb1u8,
+                0xd6u8,
+                0x93u8,
+                0x4eu8,
+                0x50u8,
+                0xc3u8,
+                0xdbu8,
+                0x36u8,
+                0xe8u8,
+                0x9bu8,
+                0x12u8,
+                0x7bu8,
+                0x8au8,
+                0x62u8,
+                0x2bu8,
+                0x12u8,
+                0x0fu8,
+                0x67u8,
+                0x21u8,
+            |]
+        )
+    let ux =
+        [|
+            0x60u8,
+            0xfeu8,
+            0xd4u8,
+            0xbau8,
+            0x25u8,
+            0x5au8,
+            0x9du8,
+            0x31u8,
+            0xc9u8,
+            0x61u8,
+            0xebu8,
+            0x74u8,
+            0xc6u8,
+            0x35u8,
+            0x6du8,
+            0x68u8,
+            0xc0u8,
+            0x49u8,
+            0xb8u8,
+            0x92u8,
+            0x3bu8,
+            0x61u8,
+            0xfau8,
+            0x6cu8,
+            0xe6u8,
+            0x69u8,
+            0x62u8,
+            0x2eu8,
+            0x60u8,
+            0xf2u8,
+            0x9fu8,
+            0xb6u8,
+        |]
     let pub = EcdsaP256.derivePublicKey(privKey)
     assert pub.value.get(0) == 0x04u8
     let mutable i = 0

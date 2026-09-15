@@ -29,7 +29,6 @@ import standard.collection.MutableQueue
 // forked while holding a mutex are finalized BEFORE it is released, for the same
 // reason a resource is never released under a fiber still using it.
 // =============================================================================
-
 public enum MutexError =
     /// This fiber already holds this `Mutex`. Waiting would deadlock against
     /// itself, so it is reported instead. Use `ReentrantMutex` if nesting is
@@ -84,11 +83,9 @@ function freshState(): MutexState =
 // no process-wide constructor at all, deliberately: every reentrant hold in the
 // library turned out not to nest outside a fiber, and a twin kept only for
 // symmetry is a door nobody reviews — it can exist the day it has a caller.
-
 module Mutex =
     /// A fresh, unheld mutex, allocated when this `Async` runs.
-    public function make(): Async<Mutex, Never> =
-        Async.thunk(() => Mutex { state = freshState() })
+    public function make(): Async<Mutex, Never> = Async.thunk(() => Mutex { state = freshState() })
 
     /// For a process-wide singleton built outside any fiber. See the note above;
     /// use `make` for everything else.
@@ -106,7 +103,8 @@ module Mutex =
         // Masked, a fiber queued behind a holder could not be cancelled, so the
         // scope tearing that holder down would wait on it forever. The grant
         // itself is a single interpreter step and needs no mask.
-        let acquire: () => Async<Unit, MutexError> = () => Interruptible<Unit, MutexError>(AcquireMutex(self.state))
+        let acquire: () => Async<Unit, MutexError> =
+            () => Interruptible<Unit, MutexError>(AcquireMutex(self.state))
         let release: (Unit) => Async<Unit, Never> = (_: Unit) => ReleaseMutex(self.state)
         Resource<Unit, MutexError>.make(acquire, release)
 
@@ -120,15 +118,17 @@ module ReentrantMutex =
     /// outermost `use` exits.
     public function acquire(self): Resource<Unit, Never> =
         // Interruptible for the same reason as `Mutex.acquire` above.
-        let acquire: () => Async<Unit, Never> = () => Interruptible<Unit, Never>(AcquireReentrantMutex(self.state))
+        let acquire: () => Async<Unit, Never> =
+            () => Interruptible<Unit, Never>(AcquireReentrantMutex(self.state))
         let release: (Unit) => Async<Unit, Never> = (_: Unit) => ReleaseMutex(self.state)
         Resource<Unit, Never>.make(acquire, release)
 
 // --- Mutex unit tests ---------------------------------------------------------
-
 /// Take a mutex and give it straight back, inside a run of its own.
 async function takeAndRelease(mutex: Mutex): Async<Unit, Never> =
-    let _held = use mutex.acquire().orPanicWith((_: MutexError) => "takeAndRelease re-entered its own mutex")
+    let _held = use mutex
+        .acquire()
+        .orPanicWith((_: MutexError) => "takeAndRelease re-entered its own mutex")
     ()
 
 test "Mutex: two mutexes never share an identity, across runs as well as within one" =
@@ -136,7 +136,8 @@ test "Mutex: two mutexes never share an identity, across runs as well as within 
     let second = freshState()
     // Two separate programs, so two separate runtimes. The retained mutexes
     // remain distinct across both executions.
-    takeAndRelease(Mutex { state = first }).run()
+    takeAndRelease(Mutex { state = first })
+        .run()
     takeAndRelease(Mutex { state = second }).run()
     assert !ClassIdentity.equals(first, second)
 

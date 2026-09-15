@@ -58,45 +58,46 @@ function rbFlipColors<K, V>(node: RBNode<K, V>): RBNode<K, V> =
     match node with
         case RBNode.Node(color, left, k, v, right) =>
             let newColor = rbFlipColor(color)
-            let newLeft: RBNode<K, V> = match left with
-                case RBNode.Node(lc, ll, lk, lv, lr) =>
-                    RBNode.Node(rbFlipColor(lc), ll, lk, lv, lr)
-                case _ => left
-            let newRight: RBNode<K, V> = match right with
-                case RBNode.Node(rc, rl, rk, rv, rr) =>
-                    RBNode.Node(rbFlipColor(rc), rl, rk, rv, rr)
-                case _ => right
+            let newLeft: RBNode<K, V> =
+                match left with
+                    case RBNode.Node(lc, ll, lk, lv, lr) =>
+                        RBNode.Node(rbFlipColor(lc), ll, lk, lv, lr)
+                    case _ => left
+            let newRight: RBNode<K, V> =
+                match right with
+                    case RBNode.Node(rc, rl, rk, rv, rr) =>
+                        RBNode.Node(rbFlipColor(rc), rl, rk, rv, rr)
+                    case _ => right
             RBNode.Node(newColor, newLeft, k, v, newRight)
         case _ => node
 
 function rbFixUp<K, V>(node: RBNode<K, V>): RBNode<K, V> =
-    let n1: RBNode<K, V> = match node with
-        case RBNode.Node(_, left, _, _, right) =>
-            if rbIsRed(right) && !rbIsRed(left) then rbRotateLeft(node)
-            else node
-        case _ => node
-    let n2: RBNode<K, V> = match n1 with
-        case RBNode.Node(_, left, _, _, _) =>
-            if rbIsRed(left) && rbLeftIsRed(left) then rbRotateRight(n1)
-            else n1
-        case _ => n1
+    let n1: RBNode<K, V> =
+        match node with
+            case RBNode.Node(_, left, _, _, right) =>
+                if rbIsRed(right) && !rbIsRed(left) then rbRotateLeft(node) else node
+            case _ => node
+    let n2: RBNode<K, V> =
+        match n1 with
+            case RBNode.Node(_, left, _, _, _) =>
+                if rbIsRed(left) && rbLeftIsRed(left) then rbRotateRight(n1) else n1
+            case _ => n1
     match n2 with
         case RBNode.Node(_, left, _, _, right) =>
-            if rbIsRed(left) && rbIsRed(right) then rbFlipColors(n2)
-            else n2
+            if rbIsRed(left) && rbIsRed(right) then rbFlipColors(n2) else n2
         case _ => n2
 
 function rbInsert<K, V>(node: RBNode<K, V>, key: K, value: V): RBNode<K, V> where K: Comparable =
     match node with
         case RBNode.Leaf => RBNode.Node(RBColor.Red, node, key, value, node)
         case RBNode.Node(color, left, k, v, right) =>
-            let inserted: RBNode<K, V> = match key.compare(k) with
-                case Ordering.Less =>
-                    RBNode.Node(color, rbInsert(left, key, value), k, v, right)
-                case Ordering.Greater =>
-                    RBNode.Node(color, left, k, v, rbInsert(right, key, value))
-                case _ =>
-                    RBNode.Node(color, left, key, value, right)
+            let inserted: RBNode<K, V> =
+                match key.compare(k) with
+                    case Ordering.Less =>
+                        RBNode.Node(color, rbInsert(left, key, value), k, v, right)
+                    case Ordering.Greater =>
+                        RBNode.Node(color, left, k, v, rbInsert(right, key, value))
+                    case _ => RBNode.Node(color, left, key, value, right)
             rbFixUp(inserted)
 
 function rbGet<K, V>(node: RBNode<K, V>, key: K): Option<V> where K: Comparable =
@@ -145,8 +146,7 @@ function rbMaxKey<K, V>(node: RBNode<K, V>): Option<K> =
 
 function rbMakeBlack<K, V>(node: RBNode<K, V>): RBNode<K, V> =
     match node with
-        case RBNode.Node(_, left, k, v, right) =>
-            RBNode.Node(RBColor.Black, left, k, v, right)
+        case RBNode.Node(_, left, k, v, right) => RBNode.Node(RBColor.Black, left, k, v, right)
         case _ => node
 
 function rbMoveRedLeft<K, V>(node: RBNode<K, V>): RBNode<K, V> =
@@ -156,9 +156,11 @@ function rbMoveRedLeft<K, V>(node: RBNode<K, V>): RBNode<K, V> =
             match right with
                 case RBNode.Node(_, rl, _, _, _) =>
                     if rbIsRed(rl) then
-                        let rotated: RBNode<K, V> = RBNode.Node(color, left, k, v, rbRotateRight(right))
+                        let rotated: RBNode<K, V> =
+                            RBNode.Node(color, left, k, v, rbRotateRight(right))
                         rbFlipColors(rbRotateLeft(rotated))
-                    else h
+                    else
+                        h
                 case _ => h
         case _ => h
 
@@ -166,8 +168,7 @@ function rbMoveRedRight<K, V>(node: RBNode<K, V>): RBNode<K, V> =
     let h = rbFlipColors(node)
     match h with
         case RBNode.Node(_, left, _, _, _) =>
-            if rbLeftIsRed(left) then rbFlipColors(rbRotateRight(h))
-            else h
+            if rbLeftIsRed(left) then rbFlipColors(rbRotateRight(h)) else h
         case _ => h
 
 function rbDeleteMin<K, V>(node: RBNode<K, V>): RBNode<K, V> =
@@ -176,8 +177,8 @@ function rbDeleteMin<K, V>(node: RBNode<K, V>): RBNode<K, V> =
             match left with
                 case RBNode.Leaf => left
                 case _ =>
-                    let h: RBNode<K, V> = if !rbIsRed(left) && !rbLeftIsRed(left) then rbMoveRedLeft(node)
-                            else node
+                    let h: RBNode<K, V> =
+                        if !rbIsRed(left) && !rbLeftIsRed(left) then rbMoveRedLeft(node) else node
                     match h with
                         case RBNode.Node(hc, hl, hk, hv, hr) =>
                             let deleted: RBNode<K, V> = RBNode.Node(hc, rbDeleteMin(hl), hk, hv, hr)
@@ -190,35 +191,49 @@ function rbDelete<K, V>(node: RBNode<K, V>, key: K): RBNode<K, V> where K: Compa
         case RBNode.Node(color, left, k, v, right) =>
             match key.compare(k) with
                 case Ordering.Less =>
-                    let h: RBNode<K, V> = if !rbIsRed(left) && !rbLeftIsRed(left) then rbMoveRedLeft(node)
-                            else node
+                    let h: RBNode<K, V> =
+                        if !rbIsRed(left) && !rbLeftIsRed(left) then rbMoveRedLeft(node) else node
                     match h with
                         case RBNode.Node(hc, hl, hk, hv, hr) =>
-                            let deleted: RBNode<K, V> = RBNode.Node(hc, rbDelete(hl, key), hk, hv, hr)
+                            let deleted: RBNode<K, V> =
+                                RBNode.Node(hc, rbDelete(hl, key), hk, hv, hr)
                             rbFixUp(deleted)
                         case _ => h
                 case _ =>
                     let h1: RBNode<K, V> = if rbIsRed(left) then rbRotateRight(node) else node
                     match h1 with
                         case RBNode.Node(c1, l1, k1, v1, r1) =>
-                            let isEqual = match key.compare(k1) with
-                                case Ordering.Equal => true
-                                case _ => false
-                            if isEqual && rbIsLeaf(r1) then r1
+                            let isEqual =
+                                match key.compare(k1) with
+                                    case Ordering.Equal => true
+                                    case _ => false
+                            if isEqual && rbIsLeaf(r1) then
+                                r1
                             else
-                                let h2: RBNode<K, V> = if !rbIsRed(r1) && !rbLeftIsRed(r1) then rbMoveRedRight(h1)
-                                         else h1
+                                let h2: RBNode<K, V> =
+                                    if !rbIsRed(r1) && !rbLeftIsRed(r1) then rbMoveRedRight(h1)
+                                    else h1
                                 match h2 with
                                     case RBNode.Node(c2, l2, k2, v2, r2) =>
-                                        let isEqual2 = match key.compare(k2) with
-                                            case Ordering.Equal => true
-                                            case _ => false
+                                        let isEqual2 =
+                                            match key.compare(k2) with
+                                                case Ordering.Equal => true
+                                                case _ => false
                                         if isEqual2 then
                                             let minPair = rbMin(r2).require
-                                            let replaced: RBNode<K, V> = RBNode.Node(c2, l2, minPair._0, minPair._1, rbDeleteMin(r2))
+                                            let replaced: RBNode<K, V> =
+                                                RBNode
+                                                    .Node(
+                                                    c2,
+                                                    l2,
+                                                    minPair._0,
+                                                    minPair._1,
+                                                    rbDeleteMin(r2)
+                                                )
                                             rbFixUp(replaced)
                                         else
-                                            let descended: RBNode<K, V> = RBNode.Node(c2, l2, k2, v2, rbDelete(r2, key))
+                                            let descended: RBNode<K, V> =
+                                                RBNode.Node(c2, l2, k2, v2, rbDelete(r2, key))
                                             rbFixUp(descended)
                                     case _ => h2
                         case _ => h1
@@ -232,8 +247,7 @@ function rbCount<K, V>(node: RBNode<K, V>): Int32 =
 function rbPushLeftSpine<K, V>(node: RBNode<K, V>, stack: List<RBNode<K, V>>): List<RBNode<K, V>> =
     match node with
         case RBNode.Leaf => stack
-        case RBNode.Node(_, left, _, _, _) =>
-            rbPushLeftSpine(left, List.Cons(node, stack))
+        case RBNode.Node(_, left, _, _, _) => rbPushLeftSpine(left, List.Cons(node, stack))
 
 class RBTreeIterator<K, V>(mutable stack: List<RBNode<K, V>>) implements Iterator<(K, V)> =
     public function next(self): Option<(K, V)> =
@@ -264,28 +278,26 @@ module TreeMap<K, V> =
         let newCount = if rbContains(self.root, key) then self.count else self.count + 1
         TreeMap { root = newRoot; count = newCount }
 
-    public function get(self, key: K): Option<V> where K: Comparable =
-        rbGet(self.root, key)
+    public function get(self, key: K): Option<V> where K: Comparable = rbGet(self.root, key)
 
-    public function contains(self, key: K): Bool where K: Comparable =
-        rbGet(self.root, key).isSome
+    public function contains(self, key: K): Bool where K: Comparable = rbGet(self.root, key).isSome
 
     public function remove(self, key: K): TreeMap<K, V> where K: Comparable =
-        if !self.contains(key) then self
+        if !self.contains(key) then
+            self
         else
             let newRoot = rbMakeBlack(rbDelete(self.root, key))
             TreeMap { root = newRoot; count = self.count - 1 }
 
-    public function min(self): Option<(K, V)> where K: Comparable =
-        rbMin(self.root)
+    public function min(self): Option<(K, V)> where K: Comparable = rbMin(self.root)
 
-    public function max(self): Option<(K, V)> where K: Comparable =
-        rbMax(self.root)
+    public function max(self): Option<(K, V)> where K: Comparable = rbMax(self.root)
 
     public property length(self): Int32 = self.count
+
     public property isEmpty(self): Bool = self.count == 0
 
-implement <K, V> Iterable<(K, V)> for TreeMap<K, V> where K: Comparable =
+implement<K, V> Iterable<(K, V)> for TreeMap<K, V> where K: Comparable =
     public function iterator(self): Iterator<(K, V)> =
         let stack: List<RBNode<K, V>> = List.empty
         RBTreeIterator(rbPushLeftSpine(self.root, stack))
@@ -380,7 +392,11 @@ test "TreeMap sorted order" =
 
 /// A mutable sorted map from keys to values, backed by a red-black tree.
 /// Keys must implement Comparable.
-public class MutableTreeMap<K, V>(mutable root: RBNode<K, V>, mutable count: Int32) implements Iterable<(K, V)> where K: Comparable =
+public class MutableTreeMap<K, V>(
+    mutable root: RBNode<K, V>,
+    mutable count: Int32
+) implements Iterable<(K, V)>
+    where K: Comparable =
     /// Creates a new empty MutableTreeMap.
     public function new(): MutableTreeMap<K, V> =
         let leaf: RBNode<K, V> = RBNode.Leaf
@@ -393,12 +409,10 @@ public class MutableTreeMap<K, V>(mutable root: RBNode<K, V>, mutable count: Int
         if !existed then self.count = self.count + 1
 
     /// Returns the value for the given key, or None if not found.
-    public function get(self, key: K): Option<V> =
-        rbGet(self.root, key)
+    public function get(self, key: K): Option<V> = rbGet(self.root, key)
 
     /// Returns true if the map contains the given key.
-    public function contains(self, key: K): Bool =
-        rbContains(self.root, key)
+    public function contains(self, key: K): Bool = rbContains(self.root, key)
 
     /// Removes a key from the map. Does nothing if the key is not present.
     public function remove(self, key: K): Unit =
@@ -407,20 +421,16 @@ public class MutableTreeMap<K, V>(mutable root: RBNode<K, V>, mutable count: Int
             self.count = self.count - 1
 
     /// Returns the smallest key-value pair, or None if empty.
-    public function min(self): Option<(K, V)> =
-        rbMin(self.root)
+    public function min(self): Option<(K, V)> = rbMin(self.root)
 
     /// Returns the largest key-value pair, or None if empty.
-    public function max(self): Option<(K, V)> =
-        rbMax(self.root)
+    public function max(self): Option<(K, V)> = rbMax(self.root)
 
     /// Returns the smallest key, or None if empty.
-    public function minKey(self): Option<K> =
-        rbMinKey(self.root)
+    public function minKey(self): Option<K> = rbMinKey(self.root)
 
     /// Returns the largest key, or None if empty.
-    public function maxKey(self): Option<K> =
-        rbMaxKey(self.root)
+    public function maxKey(self): Option<K> = rbMaxKey(self.root)
 
     /// Removes all entries from the map.
     public function clear(self): Unit =

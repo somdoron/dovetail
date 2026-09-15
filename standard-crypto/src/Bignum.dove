@@ -38,7 +38,8 @@ module Bignum =
             i = i + 1
 
     /// Montgomery multiply: a*b*R^{-1} mod m, R = 2^(64k). `ni = n0inv(m)`.
-    function montMul(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>, ni: Uint64): Array<Uint64> =
+    function montMul(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>, ni: Uint64):
+        Array<Uint64> =
         let k = m.length
         let t = Array<Uint64>.fill(k + 2, 0u64)
         let mutable i = 0
@@ -46,7 +47,8 @@ module Bignum =
             let mutable c = 0u64
             let mutable j = 0
             while j < k do
-                let prod = Uint128.multiply(a.get(j), b.get(i)) + t.get(j).toUint128() + c.toUint128()
+                let prod =
+                    Uint128.multiply(a.get(j), b.get(i)) + t.get(j).toUint128() + c.toUint128()
                 t.set(j, prod.low)
                 c = prod.high
                 j = j + 1
@@ -130,8 +132,7 @@ module Bignum =
         while i >= 0 do
             result = montMul(result, result, m, ni)
             let bit = (exp.get(i / 64) >> (i % 64).toUint64()) & 1u64
-            if bit == 1u64 then
-                result = montMul(result, baseM, m, ni)
+            if bit == 1u64 then result = montMul(result, baseM, m, ni)
             i = i - 1
         fromMont(result, m, ni)
 
@@ -154,7 +155,9 @@ module Bignum =
         let mutable bi = 0
         while bi < len do
             let limb = bi / 8
-            let byteVal = if limb < a.length then (a.get(limb) >> ((bi % 8) * 8).toUint64()).toUint8() else 0u8
+            let byteVal =
+                if limb < a.length then (a.get(limb) >> ((bi % 8) * 8).toUint64()).toUint8()
+                else 0u8
             r.set(len - 1 - bi, byteVal)
             bi = bi + 1
         r
@@ -168,7 +171,11 @@ module Bignum =
             let mutable j = 0
             while j < b.length do
                 let idx = i + j
-                let prod = Uint128.multiply(a.get(i), b.get(j)) + r.get(idx).toUint128() + carry.toUint128()
+                let prod =
+                    Uint128
+                        .multiply(a.get(i), b.get(j))
+                        + r.get(idx).toUint128()
+                        + carry.toUint128()
                 r.set(idx, prod.low)
                 carry = prod.high
                 j = j + 1
@@ -258,8 +265,7 @@ module Bignum =
             let tmp2 = r - q * newr
             r = newr
             newr = tmp2
-        if t < 0i64 then
-            t = t + m.toInt64()
+        if t < 0i64 then t = t + m.toInt64()
         t.toUint64()
 
     /// a + b mod m (a, b, m all k limbs).
@@ -361,19 +367,34 @@ module Bignum =
 
 test "Bignum modExp small" =
     // 2^10 mod 1009 = 1024 mod 1009 = 15
-    let r = Bignum.modExp([|2u64|], [|10u64|], [|1009u64|])
-    assert Bignum.equal(r, [|15u64|])
+    let r = Bignum.modExp([| 2u64 |], [| 10u64 |], [| 1009u64 |])
+    assert Bignum.equal(r, [| 15u64 |])
 
 test "Bignum Fermat little theorem" =
     // 1009 is prime, so 3^1008 mod 1009 == 1
-    let r = Bignum.modExp([|3u64|], [|1008u64|], [|1009u64|])
-    assert Bignum.equal(r, [|1u64|])
+    let r = Bignum.modExp([| 3u64 |], [| 1008u64 |], [| 1009u64 |])
+    assert Bignum.equal(r, [| 1u64 |])
 
 test "Bignum byte roundtrip" =
-    let bytes = [|
-        0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8,
-        0xfeu8, 0xdcu8, 0xbau8, 0x98u8, 0x76u8, 0x54u8, 0x32u8, 0x10u8,
-    |]
+    let bytes =
+        [|
+            0x01u8,
+            0x23u8,
+            0x45u8,
+            0x67u8,
+            0x89u8,
+            0xabu8,
+            0xcdu8,
+            0xefu8,
+            0xfeu8,
+            0xdcu8,
+            0xbau8,
+            0x98u8,
+            0x76u8,
+            0x54u8,
+            0x32u8,
+            0x10u8,
+        |]
     let limbs = Bignum.fromBytes(bytes, 0, 16)
     let back = Bignum.toBytes(limbs, 16)
     let mutable i = 0
@@ -387,7 +408,7 @@ test "Bignum modExp two-limb modulus" =
     // small numbers but a 2-limb (128-bit) modulus, exercising k=2 CIOS.
     // 7^5 = 16807 mod (2^64+0x...) — use a 2-limb odd modulus and check
     // a^0 == 1 and a^1 == a mod m.
-    let m = [|0xffffffffffffffffu64, 0x0000000000000001u64|]
-    let a = [|0x123456789abcdef0u64, 0x0u64|]
-    assert Bignum.equal(Bignum.modExp(a, [|0u64|], m), [|1u64, 0u64|])
-    assert Bignum.equal(Bignum.modExp(a, [|1u64|], m), a)
+    let m = [| 0xffffffffffffffffu64, 0x0000000000000001u64 |]
+    let a = [| 0x123456789abcdef0u64, 0x0u64 |]
+    assert Bignum.equal(Bignum.modExp(a, [| 0u64 |], m), [| 1u64, 0u64 |])
+    assert Bignum.equal(Bignum.modExp(a, [| 1u64 |], m), a)

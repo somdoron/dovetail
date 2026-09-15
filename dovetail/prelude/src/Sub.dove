@@ -3,48 +3,60 @@ package standard.prelude
 /// Defines the result of the sub operator for a right-hand operand R.
 public trait Sub<R> =
     type Output
+
     function sub(self: Self, rhs: R): Output
 
 implement Sub<Int8> for Int8 =
     type Output = Int8
+
     public function sub(self: Int8, rhs: Int8): Int8 = intrinsic
 
 implement Sub<Int16> for Int16 =
     type Output = Int16
+
     public function sub(self: Int16, rhs: Int16): Int16 = intrinsic
 
 implement Sub<Int32> for Int32 =
     type Output = Int32
+
     public function sub(self: Int32, rhs: Int32): Int32 = intrinsic
 
 implement Sub<Int64> for Int64 =
     type Output = Int64
+
     public function sub(self: Int64, rhs: Int64): Int64 = intrinsic
 
 implement Sub<Uint8> for Uint8 =
     type Output = Uint8
+
     public function sub(self: Uint8, rhs: Uint8): Uint8 = intrinsic
 
 implement Sub<Uint16> for Uint16 =
     type Output = Uint16
+
     public function sub(self: Uint16, rhs: Uint16): Uint16 = intrinsic
 
 implement Sub<Uint32> for Uint32 =
     type Output = Uint32
+
     public function sub(self: Uint32, rhs: Uint32): Uint32 = intrinsic
 
 implement Sub<Uint64> for Uint64 =
     type Output = Uint64
+
     public function sub(self: Uint64, rhs: Uint64): Uint64 = intrinsic
 
 implement Sub<Uint128> for Uint128 =
     type Output = Uint128
+
     public function sub(self: Uint128, rhs: Uint128): Uint128 = intrinsic
 
 implement Sub<Float32> for Float32 =
     type Output = Float32
+
     public function sub(self: Float32, rhs: Float32): Float32 = intrinsic
 
 implement Sub<Float64> for Float64 =
     type Output = Float64
+
     public function sub(self: Float64, rhs: Float64): Float64 = intrinsic

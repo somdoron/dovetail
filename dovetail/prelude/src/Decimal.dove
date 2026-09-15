@@ -13,8 +13,11 @@ module Decimal =
         decimalNormalize(unscaled, scale)
 
     public function fromInt32(n: Int32): Decimal = Decimal.of(BigInt.fromInt32(n), 0)
+
     public function fromInt64(n: Int64): Decimal = Decimal.of(BigInt.fromInt64(n), 0)
+
     public function zero(): Decimal = Decimal.of(BigInt.zero(), 0)
+
     public function one(): Decimal = Decimal.of(BigInt.one(), 0)
 
     public function add(self, other: Decimal): Decimal =
@@ -33,8 +36,11 @@ module Decimal =
         Decimal.of(self.unscaled.multiply(other.unscaled), scale.toInt32())
 
     public property isZero(self): Bool = self.unscaled.isZero
+
     public property isNegative(self): Bool = self.unscaled.isNegative
+
     public function negate(self): Decimal = Decimal.of(self.unscaled.negate(), self.scale)
+
     public function abs(self): Decimal = Decimal.of(self.unscaled.abs(), self.scale)
 
 implement Equatable for Decimal =
@@ -57,7 +63,9 @@ implement Display for Decimal =
         let normalized = Decimal.of(self.unscaled, self.scale)
         let digits = normalized.unscaled.abs().format()
         let scale = normalized.scale
-        let text = if scale == 0 then digits
+        let text =
+            if scale == 0 then
+                digits
             else if scale >= digits.length then
                 let mutable result = "0."
                 let mutable i = digits.length
@@ -65,26 +73,31 @@ implement Display for Decimal =
                     result = result ++ "0"
                     i = i + 1
                 result ++ digits
-            else digits.take(digits.length - scale) ++ "." ++ digits.skip(digits.length - scale)
+            else
+                digits.take(digits.length - scale) ++ "." ++ digits.skip(digits.length - scale)
         if normalized.isNegative then "-" ++ text else text
 
 implement Add<Decimal> for Decimal =
     type Output = Decimal
+
     public function add(self: Decimal, rhs: Decimal): Decimal = self.add(rhs)
 
 implement Sub<Decimal> for Decimal =
     type Output = Decimal
+
     public function sub(self: Decimal, rhs: Decimal): Decimal = self.subtract(rhs)
 
 implement Mul<Decimal> for Decimal =
     type Output = Decimal
+
     public function mul(self: Decimal, rhs: Decimal): Decimal = self.multiply(rhs)
 
 implement Neg for Decimal =
     public function negate(self: Decimal): Decimal = self.negate()
 
 function decimalNormalize(unscaled: BigInt, scale: Int32): Decimal =
-    if unscaled.isZero then Decimal { unscaled = BigInt.zero(); scale = 0 }
+    if unscaled.isZero then
+        Decimal { unscaled = BigInt.zero(); scale = 0 }
     else
         let mutable magnitude = unscaled.magnitude
         let mutable remaining = scale
@@ -99,11 +112,15 @@ function decimalNormalize(unscaled: BigInt, scale: Int32): Decimal =
                 i = i - 1
             magnitude = bigintNormalize(divided)
             remaining = remaining - 1
-        Decimal { unscaled = BigInt { sign = unscaled.sign; magnitude = magnitude }; scale = remaining }
+        Decimal {
+            unscaled = BigInt { sign = unscaled.sign; magnitude = magnitude }
+            scale = remaining
+        }
 
 function decimalAlignScales(a: Decimal, b: Decimal): (BigInt, BigInt, Int32) =
     if a.scale < 0 || b.scale < 0 then panic "Decimal scale must be nonnegative"
-    if a.scale == b.scale then (a.unscaled, b.unscaled, a.scale)
+    if a.scale == b.scale then
+        (a.unscaled, b.unscaled, a.scale)
     else if a.scale > b.scale then
         (a.unscaled, b.unscaled.multiply(decimalScaleFactor(a.scale - b.scale)), a.scale)
     else

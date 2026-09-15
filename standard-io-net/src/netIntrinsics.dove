@@ -7,7 +7,6 @@ package standard.io.net
 //   3. Map `NetworkError` → `NetError`.
 // Everything wasi-typed stays inside this file. The rest of the library
 // touches addresses only as strings.
-
 import standard.io.Async
 import standard.wasi.net.IpAddress
 import standard.wasi.net.Ipv4Address
@@ -19,7 +18,6 @@ import standard.wasi.net.DnsError
 import standard.wasi.net.IpAddressFamily
 
 // --- Error mapping ---------------------------------------------------------
-
 /// `wasi:sockets/ip-name-lookup` has its own error-code variant list, so name
 /// resolution maps separately from the socket errors below.
 function mapWasiDnsError(error: DnsError): NetError =
@@ -60,7 +58,6 @@ implement From<NetworkError> for NetError =
     public function from(value: NetworkError): NetError = mapWasiNetError(value)
 
 // --- Address formatting (wasi → String) ------------------------------------
-
 /// Format a wasi `IpAddress` as canonical text. v1 emits IPv6 without `::`
 /// zero-compression; tighten later if needed.
 function formatWasiIp(ip: IpAddress): String =
@@ -68,8 +65,22 @@ function formatWasiIp(ip: IpAddress): String =
         case IpAddress.V4(v4) =>
             v4.a.format() ++ "." ++ v4.b.format() ++ "." ++ v4.c.format() ++ "." ++ v4.d.format()
         case IpAddress.V6(v6) =>
-            let high = formatHex16(v6.a) ++ ":" ++ formatHex16(v6.b) ++ ":" ++ formatHex16(v6.c) ++ ":" ++ formatHex16(v6.d)
-            let low = formatHex16(v6.e) ++ ":" ++ formatHex16(v6.f) ++ ":" ++ formatHex16(v6.g) ++ ":" ++ formatHex16(v6.h)
+            let high =
+                formatHex16(v6.a)
+                    ++ ":"
+                    ++ formatHex16(v6.b)
+                    ++ ":"
+                    ++ formatHex16(v6.c)
+                    ++ ":"
+                    ++ formatHex16(v6.d)
+            let low =
+                formatHex16(v6.e)
+                    ++ ":"
+                    ++ formatHex16(v6.f)
+                    ++ ":"
+                    ++ formatHex16(v6.g)
+                    ++ ":"
+                    ++ formatHex16(v6.h)
             high ++ ":" ++ low
         case _ => ""
 
@@ -83,7 +94,6 @@ function formatWasiSocketAddress(socket: SocketAddress): String =
         case _ => ""
 
 // --- Address parsing (String → wasi) ---------------------------------------
-
 /// Parse a host literal as an IPv4 address. Returns `None` if not a valid
 /// IPv4 form. IPv6 host parsing is a follow-up; users wanting IPv6 should
 /// not rely on this for v1.
@@ -113,42 +123,36 @@ function parseSocketAddressString(text: String): Option<SocketAddress> =
 
 /// Family detection for socket-address strings (best-effort, IPv4-only for v1).
 function familyOfAddressString(text: String): IpAddressFamily =
-    if text.contains("[") then
-        IpAddressFamily.Ipv6
-    else
-        IpAddressFamily.Ipv4
+    if text.contains("[") then IpAddressFamily.Ipv6 else IpAddressFamily.Ipv4
 
 // --- Build wasi SocketAddress from IpAddress + port -----------------------
-
 function buildSocketAddressFromIp(ip: IpAddress, port: Uint16): SocketAddress =
     match ip with
-        case IpAddress.V4(v4) =>
-            SocketAddress.V4(Ipv4SocketAddress { port = port; address = v4 })
+        case IpAddress.V4(v4) => SocketAddress.V4(Ipv4SocketAddress { port = port; address = v4 })
         case IpAddress.V6(v6) =>
-            SocketAddress.V6(Ipv6SocketAddress {
-                port = port; flowInfo = 0u32; address = v6; scopeId = 0u32
-            })
+            SocketAddress
+                .V6(
+                Ipv6SocketAddress { port = port; flowInfo = 0u32; address = v6; scopeId = 0u32 }
+            )
         case _ =>
-            SocketAddress.V4(Ipv4SocketAddress { port = port; address = Ipv4Address { a = 0u8; b = 0u8; c = 0u8; d = 0u8 } })
+            SocketAddress
+                .V4(
+                Ipv4SocketAddress {
+                    port = port
+                    address = Ipv4Address { a = 0u8; b = 0u8; c = 0u8; d = 0u8 }
+                }
+            )
 
 // --- Decimal helpers (file-local) ------------------------------------------
-
 function parseUint8Decimal(text: String): Option<Uint8> =
     match parseDecimal(text) with
-        case Some(value) =>
-            if value >= 0i32 && value <= 255i32 then
-                Some(value.toUint8())
-            else
-                None
+        case Some(value) => if value >= 0i32 && value <= 255i32 then Some(value.toUint8()) else None
         case None => None
 
 function parsePortDecimal(text: String): Option<Uint16> =
     match parseDecimal(text) with
         case Some(value) =>
-            if value >= 0i32 && value <= 65535i32 then
-                Some(value.toUint16())
-            else
-                None
+            if value >= 0i32 && value <= 65535i32 then Some(value.toUint16()) else None
         case None => None
 
 function parseDecimal(text: String): Option<Int32> =
@@ -165,15 +169,10 @@ function parseDecimal(text: String): Option<Int32> =
                 failed = true
             else
                 let digit = (byte - 48u8).toInt32()
-                if accumulator > 214748364i32 then
-                    failed = true
-                else
-                    accumulator = accumulator * 10i32 + digit
+                if accumulator > 214748364i32 then failed = true
+                else accumulator = accumulator * 10i32 + digit
             index = index + 1
-        if failed then
-            None
-        else
-            Some(accumulator)
+        if failed then None else Some(accumulator)
 
 function formatHex16(value: Uint16): String =
     let n = value.toInt32()
@@ -184,10 +183,9 @@ function formatHex16(value: Uint16): String =
         let mutable remaining = n
         while remaining > 0i32 do
             let nibble = remaining % 16i32
-            let byte = if nibble < 10i32 then
-                (nibble + 48i32).toUint8()
-            else
-                (nibble - 10i32 + 97i32).toUint8()
+            let byte =
+                if nibble < 10i32 then (nibble + 48i32).toUint8()
+                else (nibble - 10i32 + 97i32).toUint8()
             digits = Array<Uint8>.fill(1, byte).concat(digits)
             remaining = remaining / 16i32
         String.fromBytes(digits, 0, digits.length)

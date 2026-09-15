@@ -10,8 +10,7 @@ import standard.prelude.Result
 /// first short read with a `DecodeError`.
 class ByteReader(buf: Array<Uint8>, mutable pos: Int32) =
     /// Start a reader at the front of `buf`.
-    public function make(buf: Array<Uint8>): ByteReader =
-        ByteReader(buf, 0)
+    public function make(buf: Array<Uint8>): ByteReader = ByteReader(buf, 0)
 
     /// Bytes not yet consumed.
     public property remaining(self): Int32 = self.buf.length - self.pos
@@ -81,14 +80,14 @@ class ByteReader(buf: Array<Uint8>, mutable pos: Int32) =
         slice
 
 test "tls ByteReader reads fixed-width integers" =
-    let r = ByteReader.make([|0x12u8, 0x34u8, 0x56u8, 0x78u8, 0x9au8|])
+    let r = ByteReader.make([| 0x12u8, 0x34u8, 0x56u8, 0x78u8, 0x9au8 |])
     assert r.u8().require == 0x12
     assert r.u16().require == 0x3456
     assert r.u8().require == 0x78
     assert r.remaining == 1
 
 test "tls ByteReader reads u24 and length-prefixed vectors" =
-    let r = ByteReader.make([|0x01u8, 0x02u8, 0x03u8, 0x02u8, 0xaau8, 0xbbu8|])
+    let r = ByteReader.make([| 0x01u8, 0x02u8, 0x03u8, 0x02u8, 0xaau8, 0xbbu8 |])
     assert r.u24().require == 0x010203
     let v = r.vec8().require
     assert v.length == 2
@@ -97,5 +96,5 @@ test "tls ByteReader reads u24 and length-prefixed vectors" =
     assert r.atEnd
 
 test "tls ByteReader short read is a DecodeError" =
-    let r = ByteReader.make([|0x00u8|])
+    let r = ByteReader.make([| 0x00u8 |])
     assert r.u16().isError

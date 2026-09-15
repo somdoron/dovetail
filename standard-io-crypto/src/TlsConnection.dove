@@ -126,7 +126,9 @@ public class TlsConnection(
     /// failure would make `close` report an error it caused itself.
     public async function startHandshake(self): Async<Unit, Never> =
         let latching: Async<NegotiatedParams, TlsIoError> =
-            self.driveHandshake().catchAll<TlsIoError>((failure: TlsIoError) => self.latchAndFail(failure))
+            self
+                .driveHandshake()
+                .catchAll<TlsIoError>((failure: TlsIoError) => self.latchAndFail(failure))
         let f = await latching.forkBackground()
         self.handshakeFiber = Some(f)
 
@@ -185,7 +187,12 @@ public class TlsConnection(
                     if self.closed then
                         done = true
                     else
-                        let _held = use self.readLock.acquire().orPanicWith((_: MutexError) => "TLS handshake re-entered the read lock")
+                        let _held = use self
+                            .readLock
+                            .acquire()
+                            .orPanicWith(
+                            (_: MutexError) => "TLS handshake re-entered the read lock"
+                        )
                         await self.pumpStep()
         match self.negotiated with
             case Some(p) => p
@@ -197,6 +204,7 @@ public class TlsConnection(
                 match self.failure with
                     case Some(e) => await Async.fail(e)
                     case None => await Async.fail(TlsIoError.Closed)
+
     // --- engine delegation (plain match over client/server) ---------------
     function engineDataToSend(self): Array<Uint8> =
         match self.engine with
@@ -326,15 +334,17 @@ public class TlsConnection(
             self.plaintextEnd = self.plaintext.length
 
     /// Encrypt and queue application data on the engine (drained by `flushSend`).
-    public function sendApp(self, data: ReadonlySlice<Uint8>): Unit =
-        self.engineSendApp(data)
+    public function sendApp(self, data: ReadonlySlice<Uint8>): Unit = self.engineSendApp(data)
 
     /// Drain the engine's outbound queue to the socket and flush. Held under
     /// `writeLock`: the drain and the write it produces are one unit, or two
     /// writers can hand the socket their records in the reverse of the order the
     /// engine gave them sequence numbers in.
     public async function flushSend(self): Async<Unit, TlsIoError> =
-        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "TlsConnection.flushSend re-entered the write lock")
+        let _held = use self
+            .writeLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "TlsConnection.flushSend re-entered the write lock")
         let bytes = self.engineDataToSend()
         if bytes.length > 0 then
             await self.underlyingOutput.write(bytes.readonly).mapError(TlsIoError.from)
@@ -382,7 +392,8 @@ public class TlsConnection(
                 case None => draining = false
                 case Some(event) =>
                     match event with
-                        case ApplicationData(bytes, contentLength) => self.bufferPlaintext(bytes, contentLength)
+                        case ApplicationData(bytes, contentLength) =>
+                            self.bufferPlaintext(bytes, contentLength)
                         case ConnectionClosed =>
                             self.peerCloseNotified = true
                             self.closed = true
@@ -449,7 +460,10 @@ public class TlsConnection(
             self.engineInitiateClose()
             let bytes = self.engineDataToSend()
             if bytes.length > 0 then
-                await self.underlyingOutput.write(bytes.readonly).catchAll((_: NetworkError) => Async.succeed(()))
+                await self
+                    .underlyingOutput
+                    .write(bytes.readonly)
+                    .catchAll((_: NetworkError) => Async.succeed(()))
             true
 
     /// Send a TLS close_notify (best-effort) on the engine and drain it to the
@@ -457,7 +471,10 @@ public class TlsConnection(
     /// write half, because a finalizer has nowhere to report what ending it
     /// revealed — `closeSend` is the path that can.
     public async function initiateClose(self): Async<Unit, Never> =
-        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "TlsConnection.initiateClose re-entered the write lock")
+        let _held = use self
+            .writeLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "TlsConnection.initiateClose re-entered the write lock")
         let emitted = await self.emitCloseNotify()
         // The flush belongs to this path alone, and stays: `write` resolves when
         // the host accepts the bytes, and a finalizer that returns without
@@ -491,7 +508,10 @@ public class TlsConnection(
     /// gives up by calling this is the ability to send, which is exactly what
     /// they asked for.
     public async function closeSend(self): Async<Unit, TlsIoError> =
-        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "TlsConnection.closeSend re-entered the write lock")
+        let _held = use self
+            .writeLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "TlsConnection.closeSend re-entered the write lock")
         await self.emitCloseNotify()
         await self.underlyingOutput.close().mapError(TlsIoError.from)
 
@@ -516,8 +536,24 @@ async function openTlsConnection(
 ): Async<TlsConnection, Never> =
     let readLock = await Mutex.make()
     let writeLock = await Mutex.make()
-    let conn = TlsConnection(engine, underlyingInput, underlyingOutput,
-        Array<Uint8>.empty(), 0i32, 0i32, false, false, false, false, None, None, None, readLock, writeLock)
+    let conn =
+        TlsConnection(
+            engine,
+            underlyingInput,
+            underlyingOutput,
+            Array<Uint8>.empty(),
+            0i32,
+            0i32,
+            false,
+            false,
+            false,
+            false,
+            None,
+            None,
+            None,
+            readLock,
+            writeLock
+        )
     await conn.startHandshake()
     conn
 

@@ -17,7 +17,6 @@ import standard.time.Duration
 // protocol through the per-handle stream lock on a synthetic handle. The runtime
 // now takes that lock itself, so the behaviours moved here rather than going
 // away: the queue, the stale-entry guard and the teardown reclaim are shared.
-
 async function markAfterDelay(mark: () => Unit): Async<Unit, Never> =
     await Async<Unit, Never>.sleep(Duration.ofMillis(150i64))
     mark()
@@ -45,7 +44,6 @@ async function takeMutexBriefly(mutex: ReentrantMutex): Async<Unit, Never> =
     ()
 
 // ── the handoff skips a waiter that was interrupted and recovered ────────────
-
 async function queueThenRecover(
     mutex: ReentrantMutex,
     queued: Promise<Unit, Never>,
@@ -54,10 +52,8 @@ async function queueThenRecover(
     await queued.complete(())
     // Blocks in the acquire because the holder has the mutex; the interrupt
     // lands while this fiber sits in that queue.
-    await takeMutexBriefly(mutex).foldCause(
-        (_: Cause<Never>) => sleepThenFinish(finished),
-        (_: Unit) => Async.succeed(())
-    )
+    await takeMutexBriefly(mutex)
+        .foldCause((_: Cause<Never>) => sleepThenFinish(finished), (_: Unit) => Async.succeed(()))
 
 async function staleQueueEntryProgram(mark: () => Unit, note: () => Unit): Async<Unit, Never> =
     let mutex: ReentrantMutex = await ReentrantMutex.make()
@@ -67,8 +63,7 @@ async function staleQueueEntryProgram(mark: () => Unit, note: () => Unit): Async
     let finished: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     let holder: Fiber<Unit, Never> = await holdMutex(mutex, ready, release).fork()
     await ready.awaitPromise()
-    let waiter: Fiber<Unit, Never> =
-        await queueThenRecover(mutex, queued, finished).fork()
+    let waiter: Fiber<Unit, Never> = await queueThenRecover(mutex, queued, finished).fork()
     // The waiter signals `queued` and runs straight on to the acquire without
     // parking in between, so by the time this fiber is scheduled again the
     // waiter is sitting in the mutex queue.
@@ -84,20 +79,17 @@ async function staleQueueEntryProgram(mark: () => Unit, note: () => Unit): Async
     await marker.join()
 
 @timeout(20000)
-test "Runtime: a mutex handoff skips a waiter that was interrupted and recovered" =
+ test "Runtime: a mutex handoff skips a waiter that was interrupted and recovered" =
     let mutable marked = false
     let mutable finishedAfterMark = false
-    let mark: () => Unit = () =>
-        marked = true
-    let note: () => Unit = () =>
-        finishedAfterMark = marked
+    let mark: () => Unit = () => marked = true
+    let note: () => Unit = () => finishedAfterMark = marked
     staleQueueEntryProgram(mark, note).run()
     // Without the `awaitingMutex` check the handoff resumes the recovered waiter
     // immediately, so it finishes long before the 150ms marker.
     assert finishedAfterMark
 
 // ── the ordinary path still works ───────────────────────────────────────────
-
 async function takeMutexAndFinish(
     mutex: ReentrantMutex,
     queued: Promise<Unit, Never>,
@@ -116,8 +108,7 @@ async function handOffProgram(): Async<Unit, Never> =
     let finished: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     let holder: Fiber<Unit, Never> = await holdMutex(mutex, ready, release).fork()
     await ready.awaitPromise()
-    let waiter: Fiber<Unit, Never> =
-        await takeMutexAndFinish(mutex, queued, finished).fork()
+    let waiter: Fiber<Unit, Never> = await takeMutexAndFinish(mutex, queued, finished).fork()
     await queued.awaitPromise()
     await release.complete(())
     await finished.awaitPromise()
@@ -125,11 +116,9 @@ async function handOffProgram(): Async<Unit, Never> =
     await waiter.join()
 
 @timeout(20000)
-test "Runtime: a mutex handoff still resumes a waiter that is genuinely queued" =
+ test "Runtime: a mutex handoff still resumes a waiter that is genuinely queued" =
     let mutable ran = false
-    handOffProgram().map((_: Unit) =>
-        ran = true
-    ).run()
+    handOffProgram().map((_: Unit) => ran = true).run()
     assert ran
 
 // ── a mutex granted to a fiber that then dies is not stranded ───────────────
@@ -146,7 +135,6 @@ test "Runtime: a mutex handoff still resumes a waiter that is genuinely queued" 
 // holder and the interrupter in that order, so the holder's release grants the
 // mutex to the waiter (appending it to the queue) while the interrupter is still
 // ahead of it — and the interrupt lands before the waiter takes a step.
-
 async function grantedThenInterrupted(
     mutex: ReentrantMutex,
     queued: Promise<Unit, Never>,
@@ -166,10 +154,8 @@ async function interruptOnWake(
     await wake.awaitPromise()
     await target.interrupt()
 
-async function laterUserOfMutex(
-    mutex: ReentrantMutex,
-    finished: Promise<Unit, Never>
-): Async<Unit, Never> =
+async function laterUserOfMutex(mutex: ReentrantMutex, finished: Promise<Unit, Never>):
+    Async<Unit, Never> =
     let _held = use mutex.acquire()
     await finished.complete(())
     ()
@@ -185,11 +171,9 @@ async function interruptedGranteeProgram(): Async<Unit, Never> =
     let finished: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     let holder: Fiber<Unit, Never> = await holdMutex(mutex, ready, release).fork()
     await ready.awaitPromise()
-    let grantee: Fiber<Unit, Never> =
-        await grantedThenInterrupted(mutex, queued, tookMutex).fork()
+    let grantee: Fiber<Unit, Never> = await grantedThenInterrupted(mutex, queued, tookMutex).fork()
     await queued.awaitPromise()
-    let interrupter: Fiber<Unit, Never> =
-        await interruptOnWake(parked, wake, grantee).fork()
+    let interrupter: Fiber<Unit, Never> = await interruptOnWake(parked, wake, grantee).fork()
     // Let the interrupter reach its `wake` park before anything is woken, so
     // waking it puts it straight on the run queue in a known position.
     await parked.awaitPromise()
@@ -206,15 +190,12 @@ async function interruptedGranteeProgram(): Async<Unit, Never> =
     await later.join()
 
 @timeout(20000)
-test "Runtime: a mutex granted to a fiber interrupted before its next step is not stranded" =
+ test "Runtime: a mutex granted to a fiber interrupted before its next step is not stranded" =
     let mutable ran = false
-    interruptedGranteeProgram().map((_: Unit) =>
-        ran = true
-    ).run()
+    interruptedGranteeProgram().map((_: Unit) => ran = true).run()
     assert ran
 
 // ── the difference between the two mutex types ──────────────────────────────
-
 function isAlreadyHeld(cause: Cause<MutexError>): Bool =
     match cause with
         case Cause.Failed(error, _) =>
@@ -233,34 +214,40 @@ async function acquireTwice(mutex: Mutex): Async<Unit, MutexError> =
 
 async function selfAcquireProgram(): Async<(Bool, Bool), Never> =
     let mutex: Mutex = await Mutex.make()
-    let reported: Bool = await acquireTwice(mutex).foldCause(
-        (cause: Cause<MutexError>) => Async.succeed(isAlreadyHeld(cause)),
-        (_: Unit) => Async.succeed(false)
-    )
+    let reported: Bool =
+        await acquireTwice(mutex)
+            .foldCause(
+            (cause: Cause<MutexError>) => Async.succeed(isAlreadyHeld(cause)),
+            (_: Unit) => Async.succeed(false)
+        )
     // The outer hold's release still ran on the way out, so the mutex is usable.
     // A `Mutex` that reported the deadlock and then leaked itself would be no
     // better than the deadlock.
-    let reusable: Bool = await acquireOnce(mutex).foldCause(
-        (_: Cause<MutexError>) => Async.succeed(false),
-        (_: Unit) => Async.succeed(true)
-    )
+    let reusable: Bool =
+        await acquireOnce(mutex)
+            .foldCause(
+            (_: Cause<MutexError>) => Async.succeed(false),
+            (_: Unit) => Async.succeed(true)
+        )
     (reported, reusable)
 
 @timeout(20000)
-test "Mutex: acquiring one this fiber already holds reports AlreadyHeld instead of hanging" =
+ test "Mutex: acquiring one this fiber already holds reports AlreadyHeld instead of hanging" =
     let mutable reported = false
     let mutable reusable = false
-    selfAcquireProgram().map((outcome: (Bool, Bool)) =>
-        reported = outcome._0
-        reusable = outcome._1
-    ).run()
+    selfAcquireProgram()
+        .map(
+        (outcome: (Bool, Bool)) =>
+            reported = outcome._0
+            reusable = outcome._1
+    )
+        .run()
     assert reported
     assert reusable
 
 // A `ReentrantMutex` nests, and hands off only when the OUTERMOST hold exits.
 // The inner `use` block ending must not release it — that is the whole property,
 // and it is invisible unless somebody is waiting.
-
 async function nestAndExitInner(
     mutex: ReentrantMutex,
     innerExited: Promise<Unit, Never>,
@@ -277,11 +264,9 @@ async function nestedHoldProgram(mark: () => Unit, note: () => Unit): Async<Unit
     let release: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     let queued: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
     let took: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
-    let holder: Fiber<Unit, Never> =
-        await nestAndExitInner(mutex, innerExited, release).fork()
+    let holder: Fiber<Unit, Never> = await nestAndExitInner(mutex, innerExited, release).fork()
     await innerExited.awaitPromise()
-    let waiter: Fiber<Unit, Never> =
-        await takeMutexAndFinish(mutex, queued, took).fork()
+    let waiter: Fiber<Unit, Never> = await takeMutexAndFinish(mutex, queued, took).fork()
     await queued.awaitPromise()
     // The inner hold is long gone. If exiting it had handed the mutex on, the
     // waiter would take it now and beat the 150ms marker.
@@ -294,13 +279,11 @@ async function nestedHoldProgram(mark: () => Unit, note: () => Unit): Async<Unit
     await waiter.join()
 
 @timeout(20000)
-test "ReentrantMutex: a nested hold releases only when the outermost one exits" =
+ test "ReentrantMutex: a nested hold releases only when the outermost one exits" =
     let mutable marked = false
     let mutable tookAfterMark = false
-    let mark: () => Unit = () =>
-        marked = true
-    let note: () => Unit = () =>
-        tookAfterMark = marked
+    let mark: () => Unit = () => marked = true
+    let note: () => Unit = () => tookAfterMark = marked
     nestedHoldProgram(mark, note).run()
     assert tookAfterMark
 
@@ -308,7 +291,6 @@ test "ReentrantMutex: a nested hold releases only when the outermost one exits" 
 // fiber scope. Fibers forked while holding a mutex are therefore finalized before
 // it is released, for the same reason a resource is never released under a fiber
 // still using it.
-
 async function forkInsideHold(mutex: ReentrantMutex, mark: () => Unit): Async<Unit, Never> =
     let _held = use mutex.acquire()
     let child: Fiber<Unit, Never> = await markAfterDelay(mark).fork()
@@ -321,12 +303,10 @@ async function forkInsideHoldProgram(mark: () => Unit, note: () => Unit): Async<
     ()
 
 @timeout(20000)
-test "Mutex: a fiber forked while holding a mutex is awaited before it is released" =
+ test "Mutex: a fiber forked while holding a mutex is awaited before it is released" =
     let mutable marked = false
     let mutable markedBeforeRelease = false
-    let mark: () => Unit = () =>
-        marked = true
-    let note: () => Unit = () =>
-        markedBeforeRelease = marked
+    let mark: () => Unit = () => marked = true
+    let note: () => Unit = () => markedBeforeRelease = marked
     forkInsideHoldProgram(mark, note).run()
     assert markedBeforeRelease

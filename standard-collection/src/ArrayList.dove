@@ -5,10 +5,8 @@ import standard.prelude.Iterator
 import standard.prelude.Option
 
 /// A mutable, dynamically-resizing list backed by an array. Implements Iterable.
-public class ArrayList<T>(
-    mutable data: Array<T>,
-    mutable size: Int32
-) implements Iterable<T> where T: Default =
+public class ArrayList<T>(mutable data: Array<T>, mutable size: Int32) implements Iterable<T>
+    where T: Default =
     /// Appends a value to the end of the list, growing capacity if needed.
     public function add(self, value: T): Unit =
         if self.size >= self.data.length then
@@ -20,8 +18,7 @@ public class ArrayList<T>(
     public function get(self, index: Int32): T = self.data.get(index)
 
     /// Replaces the element at the given index with the provided value.
-    public function set(self, index: Int32, value: T): Unit =
-        self.data.set(index, value)
+    public function set(self, index: Int32, value: T): Unit = self.data.set(index, value)
 
     /// Removes and returns the element at the given index, shifting subsequent elements left.
     public function removeAt(self, index: Int32): T =
@@ -34,8 +31,7 @@ public class ArrayList<T>(
         value
 
     /// Removes all elements from the list by resetting the size to zero.
-    public function clear(self): Unit =
-        self.size = 0
+    public function clear(self): Unit = self.size = 0
 
     /// The number of elements in the list.
     public property length(self): Int32 = self.size
@@ -53,18 +49,19 @@ public class ArrayList<T>(
         result
 
     /// Creates a new empty ArrayList.
-    public function new(): ArrayList<T> =
-        ArrayList(Array.fill(4, T.default), 0)
+    public function new(): ArrayList<T> = ArrayList(Array.fill(4, T.default), 0)
 
     /// Returns an iterator over the elements of this list.
     public function iterator(self): Iterator<T> = ArrayListIterator(self, 0)
 
-implement <T> Default for ArrayList<T> where T: Default =
+implement<T> Default for ArrayList<T> where T: Default =
     public property default: ArrayList<T> = ArrayList.new()
 
-class ArrayListIterator<T>(list: ArrayList<T>, mutable index: Int32) implements Iterator<T> where T: Default =
+class ArrayListIterator<T>(list: ArrayList<T>, mutable index: Int32) implements Iterator<T>
+    where T: Default =
     public function next(self): Option<T> =
-        if self.index >= self.list.length then None
+        if self.index >= self.list.length then
+            None
         else
             let value = self.list.get(self.index)
             self.index = self.index + 1
@@ -163,4 +160,3 @@ test "ArrayList removeAt last" =
     assert removed == 20
     assert list.length == 1
     assert list.get(0) == 10
-

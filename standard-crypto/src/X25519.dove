@@ -6,12 +6,13 @@ import standard.prelude.Result
 
 /// X25519 (RFC 7748): Diffie-Hellman over Curve25519. The field arithmetic and
 /// the constant-time Montgomery ladder live in `Curve25519`.
-
 /// X25519 as a `KeyExchange`. 32-byte keys and shared secret. The base point is
 /// u = 9.
 class X25519Algorithm() implements KeyExchange =
     public property publicKeySize(self): Int32 = 32
+
     public property secretKeySize(self): Int32 = 32
+
     public property sharedSecretSize(self): Int32 = 32
 
     public function derivePublicKey(self, secret: SecretKey): PublicKey =
@@ -19,11 +20,8 @@ class X25519Algorithm() implements KeyExchange =
         basepoint.set(0, 9u8)
         PublicKey(Curve25519.scalarMult(secret.value, basepoint))
 
-    public function computeSharedSecret(
-        self,
-        mySecret: SecretKey,
-        theirPublic: PublicKey
-    ): Result<SymmetricKey, CryptoError> =
+    public function computeSharedSecret(self, mySecret: SecretKey, theirPublic: PublicKey):
+        Result<SymmetricKey, CryptoError> =
         // The peer's key_share is attacker-controlled. A body shorter than 32 bytes makes
         // Curve25519.frombytes read out of bounds and TRAP — a remote, pre-auth DoS on the
         // server (and on the client against a malicious server). Reject a wrong length
@@ -35,7 +33,9 @@ class X25519Algorithm() implements KeyExchange =
             // RFC 8446 §7.4.2: a low-order peer point forces the shared secret to all-zero;
             // the implementation MUST abort rather than proceed with a known constant secret.
             if isAllZero(shared) then
-                Error(CryptoError.InvalidInput("X25519 shared secret is all-zero (low-order point)"))
+                Error(
+                    CryptoError.InvalidInput("X25519 shared secret is all-zero (low-order point)")
+                )
             else
                 Ok(SymmetricKey(shared))
 
@@ -70,24 +70,111 @@ test "X25519 computeSharedSecret rejects a low-order point (all-zero shared secr
     assert X25519.computeSharedSecret(secret, PublicKey(Array<Uint8>.fill(32, 0u8))).isError
 
 test "X25519 RFC 7748 section 5.2 vector 1" =
-    let scalar = [|
-        0xa5u8, 0x46u8, 0xe3u8, 0x6bu8, 0xf0u8, 0x52u8, 0x7cu8, 0x9du8,
-        0x3bu8, 0x16u8, 0x15u8, 0x4bu8, 0x82u8, 0x46u8, 0x5eu8, 0xddu8,
-        0x62u8, 0x14u8, 0x4cu8, 0x0au8, 0xc1u8, 0xfcu8, 0x5au8, 0x18u8,
-        0x50u8, 0x6au8, 0x22u8, 0x44u8, 0xbau8, 0x44u8, 0x9au8, 0xc4u8,
-    |]
-    let u = [|
-        0xe6u8, 0xdbu8, 0x68u8, 0x67u8, 0x58u8, 0x30u8, 0x30u8, 0xdbu8,
-        0x35u8, 0x94u8, 0xc1u8, 0xa4u8, 0x24u8, 0xb1u8, 0x5fu8, 0x7cu8,
-        0x72u8, 0x66u8, 0x24u8, 0xecu8, 0x26u8, 0xb3u8, 0x35u8, 0x3bu8,
-        0x10u8, 0xa9u8, 0x03u8, 0xa6u8, 0xd0u8, 0xabu8, 0x1cu8, 0x4cu8,
-    |]
-    let expected = [|
-        0xc3u8, 0xdau8, 0x55u8, 0x37u8, 0x9du8, 0xe9u8, 0xc6u8, 0x90u8,
-        0x8eu8, 0x94u8, 0xeau8, 0x4du8, 0xf2u8, 0x8du8, 0x08u8, 0x4fu8,
-        0x32u8, 0xecu8, 0xcfu8, 0x03u8, 0x49u8, 0x1cu8, 0x71u8, 0xf7u8,
-        0x54u8, 0xb4u8, 0x07u8, 0x55u8, 0x77u8, 0xa2u8, 0x85u8, 0x52u8,
-    |]
+    let scalar =
+        [|
+            0xa5u8,
+            0x46u8,
+            0xe3u8,
+            0x6bu8,
+            0xf0u8,
+            0x52u8,
+            0x7cu8,
+            0x9du8,
+            0x3bu8,
+            0x16u8,
+            0x15u8,
+            0x4bu8,
+            0x82u8,
+            0x46u8,
+            0x5eu8,
+            0xddu8,
+            0x62u8,
+            0x14u8,
+            0x4cu8,
+            0x0au8,
+            0xc1u8,
+            0xfcu8,
+            0x5au8,
+            0x18u8,
+            0x50u8,
+            0x6au8,
+            0x22u8,
+            0x44u8,
+            0xbau8,
+            0x44u8,
+            0x9au8,
+            0xc4u8,
+        |]
+    let u =
+        [|
+            0xe6u8,
+            0xdbu8,
+            0x68u8,
+            0x67u8,
+            0x58u8,
+            0x30u8,
+            0x30u8,
+            0xdbu8,
+            0x35u8,
+            0x94u8,
+            0xc1u8,
+            0xa4u8,
+            0x24u8,
+            0xb1u8,
+            0x5fu8,
+            0x7cu8,
+            0x72u8,
+            0x66u8,
+            0x24u8,
+            0xecu8,
+            0x26u8,
+            0xb3u8,
+            0x35u8,
+            0x3bu8,
+            0x10u8,
+            0xa9u8,
+            0x03u8,
+            0xa6u8,
+            0xd0u8,
+            0xabu8,
+            0x1cu8,
+            0x4cu8,
+        |]
+    let expected =
+        [|
+            0xc3u8,
+            0xdau8,
+            0x55u8,
+            0x37u8,
+            0x9du8,
+            0xe9u8,
+            0xc6u8,
+            0x90u8,
+            0x8eu8,
+            0x94u8,
+            0xeau8,
+            0x4du8,
+            0xf2u8,
+            0x8du8,
+            0x08u8,
+            0x4fu8,
+            0x32u8,
+            0xecu8,
+            0xcfu8,
+            0x03u8,
+            0x49u8,
+            0x1cu8,
+            0x71u8,
+            0xf7u8,
+            0x54u8,
+            0xb4u8,
+            0x07u8,
+            0x55u8,
+            0x77u8,
+            0xa2u8,
+            0x85u8,
+            0x52u8,
+        |]
     let result = Curve25519.scalarMult(scalar, u)
     let mutable i = 0
     let mutable ok = true
@@ -98,18 +185,80 @@ test "X25519 RFC 7748 section 5.2 vector 1" =
 
 test "X25519 Diffie-Hellman agreement (RFC 7748 section 6.1)" =
     // Alice's and Bob's secret keys.
-    let aliceSecret = SecretKey([|
-        0x77u8, 0x07u8, 0x6du8, 0x0au8, 0x73u8, 0x18u8, 0xa5u8, 0x7du8,
-        0x3cu8, 0x16u8, 0xc1u8, 0x72u8, 0x51u8, 0xb2u8, 0x66u8, 0x45u8,
-        0xdfu8, 0x4cu8, 0x2fu8, 0x87u8, 0xebu8, 0xc0u8, 0x99u8, 0x2au8,
-        0xb1u8, 0x77u8, 0xfbu8, 0xa5u8, 0x1du8, 0xb9u8, 0x2cu8, 0x2au8,
-    |])
-    let bobSecret = SecretKey([|
-        0x5du8, 0xabu8, 0x08u8, 0x7eu8, 0x62u8, 0x4au8, 0x8au8, 0x4bu8,
-        0x79u8, 0xe1u8, 0x7fu8, 0x8bu8, 0x83u8, 0x80u8, 0x0eu8, 0xe6u8,
-        0x6fu8, 0x3bu8, 0xb1u8, 0x29u8, 0x26u8, 0x18u8, 0xb6u8, 0xfdu8,
-        0x1cu8, 0x2fu8, 0x8bu8, 0x27u8, 0xffu8, 0x88u8, 0xe0u8, 0xebu8,
-    |])
+    let aliceSecret =
+        SecretKey(
+            [|
+                0x77u8,
+                0x07u8,
+                0x6du8,
+                0x0au8,
+                0x73u8,
+                0x18u8,
+                0xa5u8,
+                0x7du8,
+                0x3cu8,
+                0x16u8,
+                0xc1u8,
+                0x72u8,
+                0x51u8,
+                0xb2u8,
+                0x66u8,
+                0x45u8,
+                0xdfu8,
+                0x4cu8,
+                0x2fu8,
+                0x87u8,
+                0xebu8,
+                0xc0u8,
+                0x99u8,
+                0x2au8,
+                0xb1u8,
+                0x77u8,
+                0xfbu8,
+                0xa5u8,
+                0x1du8,
+                0xb9u8,
+                0x2cu8,
+                0x2au8,
+            |]
+        )
+    let bobSecret =
+        SecretKey(
+            [|
+                0x5du8,
+                0xabu8,
+                0x08u8,
+                0x7eu8,
+                0x62u8,
+                0x4au8,
+                0x8au8,
+                0x4bu8,
+                0x79u8,
+                0xe1u8,
+                0x7fu8,
+                0x8bu8,
+                0x83u8,
+                0x80u8,
+                0x0eu8,
+                0xe6u8,
+                0x6fu8,
+                0x3bu8,
+                0xb1u8,
+                0x29u8,
+                0x26u8,
+                0x18u8,
+                0xb6u8,
+                0xfdu8,
+                0x1cu8,
+                0x2fu8,
+                0x8bu8,
+                0x27u8,
+                0xffu8,
+                0x88u8,
+                0xe0u8,
+                0xebu8,
+            |]
+        )
     let alicePublic = X25519.derivePublicKey(aliceSecret)
     let bobPublic = X25519.derivePublicKey(bobSecret)
     let aliceShared = X25519.computeSharedSecret(aliceSecret, bobPublic)
@@ -118,10 +267,39 @@ test "X25519 Diffie-Hellman agreement (RFC 7748 section 6.1)" =
     assert bobShared.isOk
     assert ConstantTime.equal(aliceShared.require.value, bobShared.require.value)
     // known shared secret from RFC 7748 §6.1
-    let expected = [|
-        0x4au8, 0x5du8, 0x9du8, 0x5bu8, 0xa4u8, 0xceu8, 0x2du8, 0xe1u8,
-        0x72u8, 0x8eu8, 0x3bu8, 0xf4u8, 0x80u8, 0x35u8, 0x0fu8, 0x25u8,
-        0xe0u8, 0x7eu8, 0x21u8, 0xc9u8, 0x47u8, 0xd1u8, 0x9eu8, 0x33u8,
-        0x76u8, 0xf0u8, 0x9bu8, 0x3cu8, 0x1eu8, 0x16u8, 0x17u8, 0x42u8,
-    |]
+    let expected =
+        [|
+            0x4au8,
+            0x5du8,
+            0x9du8,
+            0x5bu8,
+            0xa4u8,
+            0xceu8,
+            0x2du8,
+            0xe1u8,
+            0x72u8,
+            0x8eu8,
+            0x3bu8,
+            0xf4u8,
+            0x80u8,
+            0x35u8,
+            0x0fu8,
+            0x25u8,
+            0xe0u8,
+            0x7eu8,
+            0x21u8,
+            0xc9u8,
+            0x47u8,
+            0xd1u8,
+            0x9eu8,
+            0x33u8,
+            0x76u8,
+            0xf0u8,
+            0x9bu8,
+            0x3cu8,
+            0x1eu8,
+            0x16u8,
+            0x17u8,
+            0x42u8,
+        |]
     assert ConstantTime.equal(aliceShared.require.value, expected)

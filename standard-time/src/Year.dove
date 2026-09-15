@@ -3,27 +3,22 @@ package standard.time
 /// Represents a year in the ISO-8601 calendar system.
 public newtype Year = Int32
 
-function yearLengthImpl(year: Int32): Int32 =
-    if isLeapYearImpl(year) then 366 else 365
+function yearLengthImpl(year: Int32): Int32 = if isLeapYearImpl(year) then 366 else 365
 
 /// Factory methods and operations for Year.
 module Year =
     /// Creates a Year from the given integer value.
-    public function of(value: Int32): Year =
-        Year(value)
+    public function of(value: Int32): Year = Year(value)
 
     /// Returns true if this year is a leap year.
-    public function isLeap(self): Bool =
-        isLeapYearImpl(self.value)
+    public function isLeap(self): Bool = isLeapYearImpl(self.value)
 
     /// Returns the number of days in this year (365 or 366).
-    public function length(self): Int32 =
-        yearLengthImpl(self.value)
+    public function length(self): Int32 = yearLengthImpl(self.value)
 
 implement Equatable for Year =
     /// Returns true if both Years have the same value.
-    public function equals(self: Year, other: Year): Bool =
-        self.value == other.value
+    public function equals(self: Year, other: Year): Bool = self.value == other.value
 
 implement Comparable for Year =
     /// Compares two Years numerically.
@@ -34,8 +29,7 @@ implement Comparable for Year =
 
 implement Display for Year =
     /// Formats this Year as its numeric string representation.
-    public function format(self: Year): String =
-        self.value.format()
+    public function format(self: Year): String = self.value.format()
 
 test "Year of" =
     let y = Year.of(2024)
@@ -48,11 +42,9 @@ test "Year isLeap" =
     assert Year.of(1900).isLeap() == false
     assert Year.of(2100).isLeap() == false
 
-test "Year length leap" =
-    assert Year.of(2024).length() == 366
+test "Year length leap" = assert Year.of(2024).length() == 366
 
-test "Year length non-leap" =
-    assert Year.of(2023).length() == 365
+test "Year length non-leap" = assert Year.of(2023).length() == 365
 
 test "Year equals" =
     let a = Year.of(2024)

@@ -72,8 +72,7 @@ test "String replace" =
     assert "hello world".replace("world", "there") == "hello there"
     assert "hello".replace("xyz", "abc") == "hello"
 
-test "String replaceAll" =
-    assert "aabaa".replaceAll("aa", "x") == "xbx"
+test "String replaceAll" = assert "aabaa".replaceAll("aa", "x") == "xbx"
 
 test "String split" =
     assert "a,b,c".split(",") == ["a", "b", "c"]
@@ -90,11 +89,9 @@ test "String trim" =
     assert "  hello  ".trim() == "hello"
     assert "hello".trim() == "hello"
 
-test "String trimStart" =
-    assert "  hello".trimStart() == "hello"
+test "String trimStart" = assert "  hello".trimStart() == "hello"
 
-test "String trimEnd" =
-    assert "hello  ".trimEnd() == "hello"
+test "String trimEnd" = assert "hello  ".trimEnd() == "hello"
 
 test "String toUpperCase" =
     assert "hello".toUpperCase() == "HELLO"
@@ -122,8 +119,7 @@ test "String padStart" =
     assert "42".padStart(5, '0') == "00042"
     assert "hello".padStart(3, '0') == "hello"
 
-test "String padEnd" =
-    assert "42".padEnd(5, '0') == "42000"
+test "String padEnd" = assert "42".padEnd(5, '0') == "42000"
 
 test "String take and skip" =
     assert "hello".take(3) == "hel"

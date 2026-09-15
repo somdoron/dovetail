@@ -1,6 +1,5 @@
 package standard.io
 
-
 import standard.wasi.cli.StdinStream
 import standard.wasi.cli.StdoutStream
 import standard.wasi.cli.StderrStream
@@ -50,12 +49,10 @@ class StdinLines(
 /// `readLine`) — stream construction is an internal detail. All operations
 /// use UTF-8.
 module Console =
-
     // --- Cached streams ---
     // Initialized once per process. Writes go through the compiler-owned
     // runtime stdio streams (see the intrinsics above), so only stdin needs a
     // wrapper here.
-
     // Opened once at startup (a plain record — no closures in the global).
     let stdinOpened: StdinStream = StdinStream.open()
 
@@ -77,8 +74,11 @@ module Console =
         // ever exist) would leave the runtime posting on its handle.
         let openFlag = OpenFlag(true)
         WasiInputStream<CliIoError>(
-            stdinOpened.componentRead().withStillOpen(() => openFlag.open), openFlag,
-            StreamState.Open, None, Mutex.makeProcessWide()
+            stdinOpened.componentRead().withStillOpen(() => openFlag.open),
+            openFlag,
+            StreamState.Open,
+            None,
+            Mutex.makeProcessWide()
         )
 
     /// The error a stream reports when the host dropped it without recording a
@@ -94,14 +94,10 @@ module Console =
     /// `ConsoleError`.
     function mapStreamError(error: CliIoError): ConsoleError =
         let code = error.value
-        if code == CliIoError.canceled.value then
-            ConsoleError.Canceled
-        else if code == -1i32 || code == 2i32 then
-            ConsoleError.PipeBroken
-        else if code == 1i32 then
-            ConsoleError.InvalidEncoding
-        else
-            ConsoleError.Other(code)
+        if code == CliIoError.canceled.value then ConsoleError.Canceled
+        else if code == -1i32 || code == 2i32 then ConsoleError.PipeBroken
+        else if code == 1i32 then ConsoleError.InvalidEncoding
+        else ConsoleError.Other(code)
 
     // --- stdout / stderr ---
     //
@@ -117,7 +113,6 @@ module Console =
     // than sharing these: one stream end permits one outstanding operation, so a
     // `debug` fired under a parked `Console` write would otherwise trap or take
     // over its completion.
-
     /// The single stdout wrapper for the process, cached for the same reasons
     /// as `stdinStream`: it holds the failure latch and the stream's one-shot
     /// result future, and it is what serializes concurrent writers onto the one
@@ -143,16 +138,30 @@ module Console =
         // Probe wiring as in `WasiOutputStream.resource`; see `stdinStream`.
         let openFlag = OpenFlag(true)
         WasiOutputStream<CliIoError>(
-            opened.componentWrite().withStillOpen(() => openFlag.open), openFlag, streamDropped(),
-            StreamState.Open, None, TornWrite.Reframe(10u8), false, 0i32, Mutex.makeProcessWide()
+            opened.componentWrite().withStillOpen(() => openFlag.open),
+            openFlag,
+            streamDropped(),
+            StreamState.Open,
+            None,
+            TornWrite.Reframe(10u8),
+            false,
+            0i32,
+            Mutex.makeProcessWide()
         )
 
     let stderrStream: AsyncOutputStream<CliIoError> =
         let opened: StderrStream = StderrStream.open()
         let openFlag = OpenFlag(true)
         WasiOutputStream<CliIoError>(
-            opened.componentWrite().withStillOpen(() => openFlag.open), openFlag, streamDropped(),
-            StreamState.Open, None, TornWrite.Reframe(10u8), false, 0i32, Mutex.makeProcessWide()
+            opened.componentWrite().withStillOpen(() => openFlag.open),
+            openFlag,
+            streamDropped(),
+            StreamState.Open,
+            None,
+            TornWrite.Reframe(10u8),
+            false,
+            0i32,
+            Mutex.makeProcessWide()
         )
 
     /// Write `text` to stdout.
@@ -172,7 +181,6 @@ module Console =
         stderrStream.write((line ++ "\n").bytes().readonly).mapError(mapStreamError)
 
     // --- stdin ---
-
     /// Bytes pulled from stdin that `readLine` has not handed out yet, plus the
     /// end-of-input latch.
     ///
@@ -202,7 +210,6 @@ module Console =
     /// `orPanicWith` on the acquire in `readLine`.
     let stdinLinesLock: Mutex = Mutex.makeProcessWide()
 
-
     /// Index of the next LF at or after `start`, or -1 if there is none yet.
     /// Resumes from `scanned` and leaves it where it stopped, so the bytes of a
     /// line that arrives over many chunks are examined once in total rather
@@ -211,19 +218,14 @@ module Console =
         let mutable index = buffer.scanned
         let mutable found = -1i32
         while found < 0i32 && index < buffer.used do
-            if buffer.data.get(index) == 10u8 then
-                found = index
-            else
-                index = index + 1i32
+            if buffer.data.get(index) == 10u8 then found = index else index = index + 1i32
         buffer.scanned = index
         found
 
     /// Decode `[start, end)` as a line, dropping one trailing CR.
     function decodeLine(buffer: StdinLines, end: Int32): String =
-        let stop = if end > buffer.start && buffer.data.get(end - 1i32) == 13u8 then
-            end - 1i32
-        else
-            end
+        let stop =
+            if end > buffer.start && buffer.data.get(end - 1i32) == 13u8 then end - 1i32 else end
         String.fromBytes(buffer.data, buffer.start, stop - buffer.start)
 
     /// Take the next complete line, or `None` while the buffer holds no newline.
@@ -265,9 +267,11 @@ module Console =
             // single interpreter step where no interrupt can ever run. A stdin
             // line past 2^31-1 bytes cannot be indexed at all; say so loudly.
             if chunk.length > 2147483647i32 - pending then
-                panic "Console.readLine: stdin line buffer cannot grow to " ++
-                    pending.format() ++ " + " ++ chunk.length.format() ++
-                    " bytes: past the 2^31-1 maximum"
+                panic "Console.readLine: stdin line buffer cannot grow to "
+                    ++ pending.format()
+                    ++ " + "
+                    ++ chunk.length.format()
+                    ++ " bytes: past the 2^31-1 maximum"
             let required = pending + chunk.length
             // Twice the live bytes for headroom, but never past what an `Int32`
             // can hold: one doubling beyond 2^30 would wrap, and `required` is
@@ -296,7 +300,9 @@ module Console =
     /// inspects the buffer the first one refilled rather than posting a read of
     /// its own for input that has already arrived.
     public async function readLine(): Async<Option<String>, ConsoleError> =
-        let _held = use stdinLinesLock.acquire().orPanicWith((_: MutexError) => "Console.readLine re-entered the stdin line lock")
+        let _held = use stdinLinesLock
+            .acquire()
+            .orPanicWith((_: MutexError) => "Console.readLine re-entered the stdin line lock")
         // Hoisted out of the loop: one closure for the whole line, not one per chunk.
         let toConsoleError: (CliIoError) => ConsoleError = mapStreamError
         let mutable line: Option<String> = takeLine(pendingLines)
@@ -306,10 +312,8 @@ module Console =
                 done = true
             else
                 let chunk = await stdinStream.read(readChunkBytes).mapError(toConsoleError)
-                if chunk.length == 0i32 then
-                    pendingLines.atEof = true
-                else
-                    appendChunk(pendingLines, chunk)
+                if chunk.length == 0i32 then pendingLines.atEof = true
+                else appendChunk(pendingLines, chunk)
                 line = takeLine(pendingLines)
                 done = line.isSome
         match line with
@@ -317,7 +321,6 @@ module Console =
             case None => takeRest(pendingLines)
 
     // --- Console unit tests -------------------------------------------------------
-
     test "Console: a dropped stdout stream reports a broken pipe" =
         // The sentinel the stream latches when the host drops it without a reason.
         // It used to be `CliIoError(0)`, which is wasi:cli's `io` code, so a closed

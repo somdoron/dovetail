@@ -1,44 +1,57 @@
 package standard.io
 
 // --- Awaitable impl (lazy — constructs Map/AndThen variants for the runtime) ---
-
-implement <T, E> Awaitable<T> for Async<T, E> =
+implement<T, E> Awaitable<T> for Async<T, E> =
     type Rebind<U> = Async<U, E>
+
     public function succeed(x: T): Async<T, E> = Succeed(x)
+
     public function defer(body: ByName<Async<T, E>>, trace: SourceLocation): Async<T, E> =
         let suspended: Async<Async<T, E>, E> = Async.thunk(() => body.get)
         suspended.andThen<T>((program: Async<T, E>) => program, trace)
+
     public function map<U>(self: Async<T, E>, f: (T) => U, trace: SourceLocation): Async<U, E> =
         Map<U, E>(self, (x: Any) => f(x as T), trace)
-    public function andThen<U>(self: Async<T, E>, f: (T) => Async<U, E>, trace: SourceLocation): Async<U, E> =
-        AndThen<U, E>(self, (x: Any) => f(x as T), trace)
-    public function whileLoop(cond: () => Bool, body: () => Async<Unit, E>, trace: SourceLocation): Async<Unit, E> =
-        Async<T, E>.whileLoop(cond, body, trace)
+
+    public function andThen<U>(self: Async<T, E>, f: (T) => Async<U, E>, trace: SourceLocation):
+        Async<U, E> = AndThen<U, E>(self, (x: Any) => f(x as T), trace)
+
+    public function whileLoop(cond: () => Bool, body: () => Async<Unit, E>, trace: SourceLocation):
+        Async<Unit, E> = Async<T, E>.whileLoop(cond, body, trace)
 
 // --- Awaitable impl for Resource ---
 // Lets `await resource` and `for x in resource` work inside functions that
 // return a `Resource<_, E>`. Each combinator is just the corresponding
 // `Resource` module function — the trait wires them into the await-desugar
 // and for-loop machinery.
-
-implement <T, E> Awaitable<T> for Resource<T, E> =
+implement<T, E> Awaitable<T> for Resource<T, E> =
     type Rebind<U> = Resource<U, E>
+
     public function succeed(x: T): Resource<T, E> = Resource.succeed(x)
+
     public function defer(body: ByName<Resource<T, E>>, trace: SourceLocation): Resource<T, E> =
         Resource<T, E>.defer(body, trace)
-    public function map<U>(self: Resource<T, E>, f: (T) => U, trace: SourceLocation): Resource<U, E> =
-        self.map(f)
-    public function andThen<U>(self: Resource<T, E>, f: (T) => Resource<U, E>, trace: SourceLocation): Resource<U, E> =
-        self.andThen(f)
-    public function whileLoop(cond: () => Bool, body: () => Resource<Unit, E>, trace: SourceLocation): Resource<Unit, E> =
-        Resource<Unit, E>.whileLoop(cond, body)
+
+    public function map<U>(self: Resource<T, E>, f: (T) => U, trace: SourceLocation):
+        Resource<U, E> = self.map(f)
+
+    public function andThen<U>(
+        self: Resource<T, E>,
+        f: (T) => Resource<U, E>,
+        trace: SourceLocation
+    ): Resource<U, E> = self.andThen(f)
+
+    public function whileLoop(
+        cond: () => Bool,
+        body: () => Resource<Unit, E>,
+        trace: SourceLocation
+    ): Resource<Unit, E> = Resource<Unit, E>.whileLoop(cond, body)
 
 // --- From impl ---
-
-implement <V, E> From<Result<Never, E>> for Async<V, E> =
+implement<V, E> From<Result<Never, E>> for Async<V, E> =
     public function from(value: Result<Never, E>): Async<V, E> =
         match value with
-        case Error(e) =>
-            let cause: Cause<E> = Cause.Failed(e, emptyTrace())
-            FailCause(cause)
-        case Ok(_) => panic "unreachable"
+            case Error(e) =>
+                let cause: Cause<E> = Cause.Failed(e, emptyTrace())
+                FailCause(cause)
+            case Ok(_) => panic "unreachable"

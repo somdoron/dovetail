@@ -3,7 +3,6 @@ package standard.tls
 import standard.prelude.Array
 
 /// Small shared helpers for the TLS engine.
-
 /// A copy of `arr[start..end)` (clamped to the array bounds).
 function subArray(arr: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
     let lo = if start < 0 then 0 else start
@@ -26,8 +25,7 @@ let maxKeyUpdatesWithoutProgress: Int32 = 8
 
 /// Whether a running count of KeyUpdates received since the last application-data
 /// delivery is still within the allowed bound (see `maxKeyUpdatesWithoutProgress`).
-function keyUpdateWithinLimit(count: Int32): Bool =
-    count <= maxKeyUpdatesWithoutProgress
+function keyUpdateWithinLimit(count: Int32): Bool = count <= maxKeyUpdatesWithoutProgress
 
 test "tls keyUpdateWithinLimit caps back-to-back KeyUpdates (C4)" =
     assert keyUpdateWithinLimit(1)
@@ -35,7 +33,7 @@ test "tls keyUpdateWithinLimit caps back-to-back KeyUpdates (C4)" =
     assert keyUpdateWithinLimit(maxKeyUpdatesWithoutProgress + 1) == false
 
 test "tls subArray copies a slice" =
-    let a = [|0u8, 1u8, 2u8, 3u8, 4u8|]
+    let a = [| 0u8, 1u8, 2u8, 3u8, 4u8 |]
     let s = subArray(a, 1, 4)
     assert s.length == 3
     assert s.get(0) == 1u8

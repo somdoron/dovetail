@@ -8,14 +8,11 @@ import standard.io.Async
 // observe side effects via captured mutable state since `program.run()`
 // returns Unit.
 // =============================================================================
-
-
 // --- Group A: Plain (no await) sanity ---
-
 test "plain while loop (no await) — Phase 3 must not apply" =
     let mutable acc: Int32 = 0
     plainWhileSync((n: Int32) => acc = acc + n)
-    assert acc == 10  // 1+2+3+4
+    assert acc == 10 // 1+2+3+4
 
 function plainWhileSync(cb: (Int32) => Unit): Unit =
     let mutable i: Int32 = 1
@@ -34,9 +31,7 @@ test "plain if/else (no await) inside async function" =
 async function plainIfElseProgram(cond: Bool, setter: (Int32) => Unit): Async<Unit, Never> =
     if cond then setter(1) else setter(2)
 
-
 // --- Group B: if/else with await ---
-
 test "B1: tail if/else with await in then-branch only" =
     let mutable seen: Int32 = 0
     ifAwaitThen(true, (n: Int32) => seen = n).run()
@@ -72,7 +67,7 @@ test "B3: if without else, await in then-branch" =
     assert seen == 42
     let mutable seen2: Int32 = -1
     ifAwaitNoElse(false, (n: Int32) => seen2 = n).run()
-    assert seen2 == -1  // closure not invoked
+    assert seen2 == -1 // closure not invoked
 
 async function ifAwaitNoElse(cond: Bool, setter: (Int32) => Unit): Async<Unit, Never> =
     if cond then
@@ -120,9 +115,7 @@ async function letIfAwaitBoth(cond: Bool, setter: (Int32) => Unit): Async<Unit, 
     let x: Int32 = if cond then await Async.succeed(77) else await Async.succeed(88)
     setter(x)
 
-
 // --- Group C: match with await ---
-
 test "C1: tail match with await in one arm" =
     let mutable seen: Int32 = 0
     matchAwaitOneArm(true, (n: Int32) => seen = n).run()
@@ -132,10 +125,10 @@ test "C1: tail match with await in one arm" =
 
 async function matchAwaitOneArm(flag: Bool, setter: (Int32) => Unit): Async<Unit, Never> =
     match flag with
-    case true =>
-        let v: Int32 = await Async.succeed(100)
-        setter(v)
-    case false => setter(200)
+        case true =>
+            let v: Int32 = await Async.succeed(100)
+            setter(v)
+        case false => setter(200)
 
 test "C2: tail match on enum with await in arm" =
     let mutable seen: Int32 = 0
@@ -146,12 +139,13 @@ test "C2: tail match on enum with await in arm" =
     matchResultAwait(errResult, (n: Int32) => seen = n).run()
     assert seen == -1
 
-async function matchResultAwait(r: Result<Int32, String>, setter: (Int32) => Unit): Async<Unit, Never> =
+async function matchResultAwait(r: Result<Int32, String>, setter: (Int32) => Unit):
+    Async<Unit, Never> =
     match r with
-    case Ok(v) =>
-        let doubled: Int32 = await Async.succeed(v * 2)
-        setter(doubled)
-    case Error(_) => setter(-1)
+        case Ok(v) =>
+            let doubled: Int32 = await Async.succeed(v * 2)
+            setter(doubled)
+        case Error(_) => setter(-1)
 
 test "C3: let x = match ... case A => await ... (Phase 2 lift)" =
     let mutable result: Int32 = 0
@@ -161,20 +155,20 @@ test "C3: let x = match ... case A => await ... (Phase 2 lift)" =
     assert result == 444
 
 async function letMatchAwait(flag: Bool, setter: (Int32) => Unit): Async<Unit, Never> =
-    let x: Int32 = match flag with
-        case true => await Async.succeed(333)
-        case false => 444
+    let x: Int32 =
+        match flag with
+            case true => await Async.succeed(333)
+            case false => 444
     setter(x)
 
-
 // --- Group D: while with await ---
-
 test "D1: while with await, mutable counter" =
     let mutable counter: Int32 = 0
     whileAwaitCounter(5, () => counter, (n: Int32) => counter = n).run()
     assert counter == 5
 
-async function whileAwaitCounter(target: Int32, getCount: () => Int32, setCount: (Int32) => Unit): Async<Unit, Never> =
+async function whileAwaitCounter(target: Int32, getCount: () => Int32, setCount: (Int32) => Unit):
+    Async<Unit, Never> =
     while getCount() < target do
         let _ = await Async.succeed(0)
         setCount(getCount() + 1)
@@ -204,7 +198,8 @@ test "D3: while with multiple awaits per iteration" =
     // i=2: a=3, b=4 → sum=15
     assert sum == 15
 
-async function multipleAwaitsInWhile(getSum: () => Int32, setSum: (Int32) => Unit): Async<Unit, Never> =
+async function multipleAwaitsInWhile(getSum: () => Int32, setSum: (Int32) => Unit):
+    Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < 3 do
         let a: Int32 = await Async.succeed(i + 1)
@@ -212,16 +207,12 @@ async function multipleAwaitsInWhile(getSum: () => Int32, setSum: (Int32) => Uni
         setSum(getSum() + a + b)
         i = i + 1
 
-
 // --- Group E: composition (most stress-prone) ---
-
 test "E1: if/else inside while body, await in branches" =
     let mutable evenSum: Int32 = 0
     let mutable oddSum: Int32 = 0
-    ifInsideWhile(
-        () => evenSum, (n: Int32) => evenSum = n,
-        () => oddSum, (n: Int32) => oddSum = n
-    ).run()
+    ifInsideWhile(() => evenSum, (n: Int32) => evenSum = n, () => oddSum, (n: Int32) => oddSum = n)
+        .run()
     // i=0 (even) → evenSum += 0
     // i=1 (odd) → oddSum += 1
     // i=2 (even) → evenSum += 2
@@ -231,8 +222,10 @@ test "E1: if/else inside while body, await in branches" =
     assert oddSum == 4
 
 async function ifInsideWhile(
-    getEven: () => Int32, setEven: (Int32) => Unit,
-    getOdd: () => Int32, setOdd: (Int32) => Unit
+    getEven: () => Int32,
+    setEven: (Int32) => Unit,
+    getOdd: () => Int32,
+    setOdd: (Int32) => Unit
 ): Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < 5 do
@@ -252,7 +245,8 @@ test "E2: nested while loops, inner has await, outer does not" =
     // outer i=2: same +3 = 9
     assert total == 9
 
-async function nestedWhileInnerAwait(getTotal: () => Int32, setTotal: (Int32) => Unit): Async<Unit, Never> =
+async function nestedWhileInnerAwait(getTotal: () => Int32, setTotal: (Int32) => Unit):
+    Async<Unit, Never> =
     let mutable outerI: Int32 = 0
     while outerI < 3 do
         let mutable innerJ: Int32 = 0
@@ -272,9 +266,7 @@ test "E3: match inside while body, await in arm" =
     // i=4: Ok(4) → accumulator += 40 = 58
     assert accumulator == 58
 
-async function matchInsideWhile(
-    getAcc: () => Int32, setAcc: (Int32) => Unit
-): Async<Unit, Never> =
+async function matchInsideWhile(getAcc: () => Int32, setAcc: (Int32) => Unit): Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < 5 do
         let r: Result<Int32, Unit> = if i % 2 == 0 then Ok(i) else Error(())
@@ -288,15 +280,13 @@ async function matchInsideWhile(
 test "E4: while followed by tail await" =
     let mutable counter: Int32 = 0
     let mutable tailResult: Int32 = 0
-    whileThenTailAwait(
-        () => counter, (n: Int32) => counter = n,
-        (n: Int32) => tailResult = n
-    ).run()
+    whileThenTailAwait(() => counter, (n: Int32) => counter = n, (n: Int32) => tailResult = n).run()
     assert counter == 3
     assert tailResult == 999
 
 async function whileThenTailAwait(
-    getCount: () => Int32, setCount: (Int32) => Unit,
+    getCount: () => Int32,
+    setCount: (Int32) => Unit,
     setTail: (Int32) => Unit
 ): Async<Unit, Never> =
     while getCount() < 3 do
@@ -308,16 +298,14 @@ async function whileThenTailAwait(
 test "E5: await before while" =
     let mutable initial: Int32 = 0
     let mutable counter: Int32 = 0
-    awaitBeforeWhile(
-        (n: Int32) => initial = n,
-        () => counter, (n: Int32) => counter = n
-    ).run()
+    awaitBeforeWhile((n: Int32) => initial = n, () => counter, (n: Int32) => counter = n).run()
     assert initial == 7
     assert counter == 3
 
 async function awaitBeforeWhile(
     setInit: (Int32) => Unit,
-    getCount: () => Int32, setCount: (Int32) => Unit
+    getCount: () => Int32,
+    setCount: (Int32) => Unit
 ): Async<Unit, Never> =
     let init: Int32 = await Async.succeed(7)
     setInit(init)
@@ -329,9 +317,12 @@ test "E6: while with let-binding-of-await result used in if inside body" =
     let mutable bigCount: Int32 = 0
     let mutable smallCount: Int32 = 0
     whileLetIfAwait(
-        () => bigCount, (n: Int32) => bigCount = n,
-        () => smallCount, (n: Int32) => smallCount = n
-    ).run()
+        () => bigCount,
+        (n: Int32) => bigCount = n,
+        () => smallCount,
+        (n: Int32) => smallCount = n
+    )
+        .run()
     // i=0..4: chunk = i, big if chunk>=2 else small
     // big: i=2,3,4 → 3 times
     // small: i=0,1 → 2 times
@@ -339,21 +330,18 @@ test "E6: while with let-binding-of-await result used in if inside body" =
     assert smallCount == 2
 
 async function whileLetIfAwait(
-    getBig: () => Int32, setBig: (Int32) => Unit,
-    getSmall: () => Int32, setSmall: (Int32) => Unit
+    getBig: () => Int32,
+    setBig: (Int32) => Unit,
+    getSmall: () => Int32,
+    setSmall: (Int32) => Unit
 ): Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < 5 do
         let chunk: Int32 = await Async.succeed(i)
-        if chunk >= 2 then
-            setBig(getBig() + 1)
-        else
-            setSmall(getSmall() + 1)
+        if chunk >= 2 then setBig(getBig() + 1) else setSmall(getSmall() + 1)
         i = i + 1
 
-
 // --- Group F: await positions (Phase 1 stress) ---
-
 test "F1: await as function-call argument" =
     let mutable result: Int32 = 0
     awaitAsArg((n: Int32) => result = n).run()
@@ -367,7 +355,7 @@ async function awaitAsArg(setter: (Int32) => Unit): Async<Unit, Never> =
 test "F2: await inside chained method calls" =
     let mutable result: Int32 = 0
     awaitChained((n: Int32) => result = n).run()
-    assert result == 100  // (await 10) * 10
+    assert result == 100 // (await 10) * 10
 
 async function awaitChained(setter: (Int32) => Unit): Async<Unit, Never> =
     let v: Int32 = (await Async.succeed(10)) * 10
@@ -382,16 +370,17 @@ async function awaitBinaryOp(setter: (Int32) => Unit): Async<Unit, Never> =
     let s: Int32 = (await Async.succeed(5)) + (await Async.succeed(7))
     setter(s)
 
-
 // --- Group G: tricky compositions ---
-
 test "G1: while with all paths including await and non-await branches" =
     let mutable total: Int32 = 0
     let mutable skipped: Int32 = 0
     mixedBranchesWhile(
-        () => total, (n: Int32) => total = n,
-        () => skipped, (n: Int32) => skipped = n
-    ).run()
+        () => total,
+        (n: Int32) => total = n,
+        () => skipped,
+        (n: Int32) => skipped = n
+    )
+        .run()
     // i=0 (even): await path → total += 0
     // i=1 (odd): skip path → skipped += 1
     // i=2 (even): await → total += 2
@@ -401,8 +390,10 @@ test "G1: while with all paths including await and non-await branches" =
     assert skipped == 2
 
 async function mixedBranchesWhile(
-    getTotal: () => Int32, setTotal: (Int32) => Unit,
-    getSkip: () => Int32, setSkip: (Int32) => Unit
+    getTotal: () => Int32,
+    setTotal: (Int32) => Unit,
+    getSkip: () => Int32,
+    setSkip: (Int32) => Unit
 ): Async<Unit, Never> =
     let mutable i: Int32 = 0
     while i < 5 do
@@ -429,10 +420,8 @@ test "G2: sequence: await, while-with-await, match-with-await, tail await" =
     assert log.get(4) == 99
     assert log.get(5) == 7
 
-async function bigSequence(
-    getLog: () => Array<Int32>,
-    setLog: (Array<Int32>) => Unit
-): Async<Unit, Never> =
+async function bigSequence(getLog: () => Array<Int32>, setLog: (Array<Int32>) => Unit):
+    Async<Unit, Never> =
     let first: Int32 = await Async.succeed(1)
     setLog(getLog().concat(Array<Int32>.fill(1, first)))
     let mutable i: Int32 = 0
@@ -452,14 +441,12 @@ async function bigSequence(
 test "G3: deeply nested — match arm contains if which contains while-with-await" =
     let mutable result: Int32 = 0
     deepNesting(true, () => result, (n: Int32) => result = n).run()
-    assert result == 6  // 1+2+3
+    assert result == 6 // 1+2+3
     deepNesting(false, () => result, (n: Int32) => result = n).run()
-    assert result == -1  // unchanged in the false path? Actually overwritten to -1
+    assert result == -1 // unchanged in the false path? Actually overwritten to -1
 
-async function deepNesting(
-    flag: Bool,
-    getR: () => Int32, setR: (Int32) => Unit
-): Async<Unit, Never> =
+async function deepNesting(flag: Bool, getR: () => Int32, setR: (Int32) => Unit):
+    Async<Unit, Never> =
     let opt: Option<Bool> = Some(flag)
     match opt with
         case Some(b) =>

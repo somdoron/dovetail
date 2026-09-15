@@ -28,7 +28,8 @@ implement Display for TlsIoError =
             case TlsIoError.Protocol(e) => "TLS protocol error: " ++ e.format()
             case TlsIoError.Closed => "TLS connection closed"
             case TlsIoError.Canceled => "TLS operation canceled by close"
-            case TlsIoError.Truncated => "TLS connection truncated (socket EOF without close_notify)"
+            case TlsIoError.Truncated =>
+                "TLS connection truncated (socket EOF without close_notify)"
 
 /// Lift a transport error from the underlying socket via `.mapError(TlsIoError.from)`.
 ///
