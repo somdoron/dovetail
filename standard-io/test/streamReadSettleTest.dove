@@ -1,0 +1,206 @@
+package test
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.WasiInputStream
+import standard.wasi.ComponentStreamRead
+import standard.wasi.CopyOperation
+import standard.wasi.CopyResult
+import standard.wasi.EventPayload
+import standard.wasi.IoError
+import standard.wasi.Waitable
+
+// What the RUNTIME does with a copy that both moved elements and ended the
+// stream with a reason. Invariant (3) on `AsyncInputStream` — a payload
+// transferred is a payload delivered — is a rule about this layer first: by the
+// time the result future is consulted, the elements have already been lifted out
+// of the pinned buffer, so a settle that reports the failure INSTEAD of them is
+// not deferring those bytes, it is destroying them. Nothing above can put them
+// back.
+//
+// Driven through a synthetic stream end rather than a socket, because the two
+// halves of the case have to happen together and no transport in this tree can
+// be asked to produce that on demand: a copy that reports `Dropped` with a
+// non-zero count AND a paired result future that resolves to an error. A
+// `ComponentStreamRead` is a record of closures, so here they are closures. The
+// copy reports NOT BLOCKED, which is the whole trick — the runtime then settles
+// it in the same step, with no host event, no waitable set and no parking.
+
+enum SettleError =
+    Broken
+
+implement IoError for SettleError
+
+implement Display for SettleError =
+    public function format(self: SettleError): String = "settle error"
+
+/// A copy status word as the canonical ABI packs one: the result code in the low
+/// four bits, the element count above it, in the HIGH half of the operation
+/// value. `blocked` is that high half being -1, which this never is.
+function syntheticCopy(result: CopyResult, count: Int32): CopyOperation =
+    CopyOperation((((count << 4) | result.code).toInt64()) << 32i64)
+
+/// A stream end that hands back `payload` and then reports `ending` — both from
+/// one copy, which is the case under test.
+///
+/// `start` ignores the capacity and `lift` ignores the operation: there is no
+/// pinned buffer behind any of this, and inventing one would only test the
+/// intrinsics. What is under test is which of the two answers the runtime keeps.
+function syntheticSource(
+    result: CopyResult,
+    payload: Array<Uint8>,
+    ending: Result<Unit, SettleError>
+): ComponentStreamRead<Array<Uint8>, SettleError> =
+    ComponentStreamRead<Array<Uint8>, SettleError> {
+        readable = Waitable(1000002i32)
+        ending = () => ending
+        start = (capacity: Int32) => syntheticCopy(result, payload.length)
+        cancel = () => EventPayload(0i32)
+        canceledError = SettleError.Broken
+        stillOpen = () => true
+        dropEnd = () => ()
+        // Synthetic: no pinned buffer to free, nothing owned to close.
+        discardElements = (copy: CopyOperation, count: Int32) => ()
+        lift = (copy: CopyOperation, count: Int32) => payload
+    }
+
+test "a copy that ends the stream with a reason still hands over what it moved" =
+    let outcome = Array<String>.fill(2, "")
+    endingWithPayload(outcome).run()
+    // The bytes, which are the ones that used to be thrown away.
+    assert outcome.get(0) == "4 bytes"
+    // AND the reason, in the same answer rather than instead of it. Delivering
+    // the payload is only half of (3): a caller that never learns why the stream
+    // stopped reads the next empty answer as a clean end of stream, which is the
+    // truncation this whole invariant exists to stop.
+    assert outcome.get(1) == "reason"
+
+async function endingWithPayload(outcome: Array<String>): Async<Unit, Never> =
+    let source = syntheticSource(CopyResult.Dropped, [|1u8, 2u8, 3u8, 4u8|], Error(SettleError.Broken))
+    let copied = await Async<Array<Uint8>, SettleError>
+        .streamRead(source, 64i32)
+        .catchAll<Never>((_: SettleError) => Async.succeed((CopyResult.Completed, Array<Uint8>.empty(), None)))
+    outcome.set(0, copied._1.length.format() ++ " bytes")
+    outcome.set(1, match copied._2 with
+        case Some(_) => "reason"
+        case None => "no reason"
+    )
+
+test "a copy that ends the stream cleanly reports no reason" =
+    let outcome = Array<String>.fill(2, "")
+    endingWithoutReason(outcome).run()
+    assert outcome.get(0) == "4 bytes"
+    // The control for the test above, and the reason the third component is an
+    // Option rather than a flag: an ending with nothing behind it is what an
+    // ordinary end of stream looks like, and `Some` must mean the host said
+    // something.
+    assert outcome.get(1) == "no reason"
+
+async function endingWithoutReason(outcome: Array<String>): Async<Unit, Never> =
+    let source = syntheticSource(CopyResult.Dropped, [|1u8, 2u8, 3u8, 4u8|], Ok(()))
+    let copied = await Async<Array<Uint8>, SettleError>
+        .streamRead(source, 64i32)
+        .catchAll<Never>((_: SettleError) => Async.succeed((CopyResult.Completed, Array<Uint8>.empty(), None)))
+    outcome.set(0, copied._1.length.format() ++ " bytes")
+    outcome.set(1, match copied._2 with
+        case Some(_) => "reason"
+        case None => "no reason"
+    )
+
+test "the result future is not consulted for a copy that did not end the stream" =
+    let outcome = Array<String>.fill(2, "")
+    completedIsNotAnEnding(outcome).run()
+    assert outcome.get(0) == "4 bytes"
+    // A `Completed` copy has not ended anything, so the one-shot future must not
+    // be spent on it — reading it early cannot tell "not resolved yet" from
+    // "resolved cleanly", and the read a real ending needs is then gone. The
+    // fake below would report a failure if it were asked; it is not asked.
+    assert outcome.get(1) == "no reason"
+
+async function completedIsNotAnEnding(outcome: Array<String>): Async<Unit, Never> =
+    let source = syntheticSource(CopyResult.Completed, [|1u8, 2u8, 3u8, 4u8|], Error(SettleError.Broken))
+    let copied = await Async<Array<Uint8>, SettleError>
+        .streamRead(source, 64i32)
+        .catchAll<Never>((_: SettleError) => Async.succeed((CopyResult.Completed, Array<Uint8>.empty(), None)))
+    outcome.set(0, copied._1.length.format() ++ " bytes")
+    outcome.set(1, match copied._2 with
+        case Some(_) => "reason"
+        case None => "no reason"
+    )
+
+// --- and the same thing one layer up ------------------------------------------
+//
+// The runtime handing the ending back alongside the elements is only half of
+// (3); the other half is the wrapper actually preferring the elements, latching
+// the reason, and answering the NEXT read from the latch. Driven through the
+// real `WasiInputStream` over the same synthetic end, because the point is that
+// these two layers agree — a runtime that delivers into a wrapper that raises
+// loses the bytes just as thoroughly.
+
+async function readInto(stream: AsyncInputStream<SettleError>, outcome: Array<String>, slot: Int32): Async<Unit, Never> =
+    let onFailure: (SettleError) => Async<String, Never> = (_: SettleError) => Async.succeed("failed")
+    let onSuccess: (Array<Uint8>) => Async<String, Never> = (bytes: Array<Uint8>) =>
+        if bytes.length == 0 then Async.succeed("eof") else Async.succeed(bytes.length.format() ++ " bytes")
+    outcome.set(slot, await stream.read(64i64).fold<String, Never>(onFailure, onSuccess))
+
+test "the last chunk of a stream that broke is delivered, and the break is reported next" =
+    let outcome = Array<String>.fill(3, "")
+    wrapperDeliversThenReports(outcome).run()
+    // The bytes the failing copy carried.
+    assert outcome.get(0) == "4 bytes"
+    // The reason, on the read after — not lost with them, and NOT reported as
+    // the empty array that every reader in this library takes for a clean close.
+    assert outcome.get(1) == "failed"
+    // Still the failure, from the latch, however many times it is asked: the
+    // result future is one-shot and has been spent.
+    assert outcome.get(2) == "failed"
+
+async function wrapperDeliversThenReports(outcome: Array<String>): Async<Unit, Never> =
+    let source = syntheticSource(CopyResult.Dropped, [|1u8, 2u8, 3u8, 4u8|], Error(SettleError.Broken))
+    let stream: AsyncInputStream<SettleError> = use WasiInputStream<SettleError>.resource<Never>(() => Async.succeed(source))
+    await readInto(stream, outcome, 0i32)
+    await readInto(stream, outcome, 1i32)
+    await readInto(stream, outcome, 2i32)
+
+test "a stream that ended cleanly reports the end of stream, not a failure" =
+    let outcome = Array<String>.fill(3, "")
+    wrapperDeliversThenEnds(outcome).run()
+    assert outcome.get(0) == "4 bytes"
+    // The control for the test above, and the distinction the whole latch turns
+    // on: an ending with no reason behind it IS the end of the stream, and must
+    // keep answering as one.
+    assert outcome.get(1) == "eof"
+    assert outcome.get(2) == "eof"
+
+async function wrapperDeliversThenEnds(outcome: Array<String>): Async<Unit, Never> =
+    let source = syntheticSource(CopyResult.Dropped, [|1u8, 2u8, 3u8, 4u8|], Ok(()))
+    let stream: AsyncInputStream<SettleError> = use WasiInputStream<SettleError>.resource<Never>(() => Async.succeed(source))
+    await readInto(stream, outcome, 0i32)
+    await readInto(stream, outcome, 1i32)
+    await readInto(stream, outcome, 2i32)
+
+// --- a stream closed under a reader -------------------------------------------
+//
+// Invariant (9). `close` detaches whoever is on the handle and fails them with
+// `canceledError`; a reader that arrives an instant later used to get the empty
+// array instead, so which of the two answers a fiber got was decided by the
+// scheduler — and the empty one is a clean end of stream to every caller in this
+// library. Deterministic here, where a socket test can only make it likely: the
+// close and the read are consecutive statements in one fiber.
+
+test "a read after a close reports the close, not an end of stream" =
+    let outcome = Array<String>.fill(2, "")
+    readAfterClose(outcome).run()
+    // Not "eof": the peer did not finish, the stream was taken away.
+    assert outcome.get(0) == "failed"
+    // And a zero-length read agrees with it, because they consult the same rule.
+    assert outcome.get(1) == "failed"
+
+async function readAfterClose(outcome: Array<String>): Async<Unit, Never> =
+    let source = syntheticSource(CopyResult.Completed, [|1u8, 2u8, 3u8, 4u8|], Ok(()))
+    let stream: AsyncInputStream<SettleError> = use WasiInputStream<SettleError>.resource<Never>(() => Async.succeed(source))
+    await stream.close().catchAll((_: SettleError) => Async.succeed(()))
+    await readInto(stream, outcome, 0i32)
+    let zero: (Array<Uint8>) => Async<String, Never> = (bytes: Array<Uint8>) =>
+        if bytes.length == 0 then Async.succeed("eof") else Async.succeed("bytes")
+    outcome.set(1, await stream.read(0i64).fold<String, Never>((_: SettleError) => Async.succeed("failed"), zero))

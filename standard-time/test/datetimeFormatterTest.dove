@@ -1,0 +1,204 @@
+package test
+
+import standard.time.DateTimeFormatter
+import standard.time.Instant
+import standard.time.LocalDate
+import standard.time.LocalDateTime
+import standard.time.LocalTime
+import standard.time.MonthDay
+import standard.time.TimeZone
+import standard.time.YearMonth
+import standard.time.ZonedDateTime
+
+// ── Preset formatters ─────────────────────────────────────────────────────
+
+test "preset: isoLocalDate" =
+    let d = LocalDate.of(2024, 7, 15)
+    assert DateTimeFormatter.isoLocalDate.format(d) == "2024-07-15"
+
+test "preset: isoLocalTime" =
+    let t = LocalTime.of(8, 30, 45)
+    assert DateTimeFormatter.isoLocalTime.format(t) == "08:30:45"
+
+test "preset: isoLocalDateTime" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 8, 30, 45)
+    assert DateTimeFormatter.isoLocalDateTime.format(dt) == "2024-07-15T08:30:45"
+
+test "preset: isoOffsetDateTime in NY summer" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    assert DateTimeFormatter.isoOffsetDateTime.format(i, ny) == "2024-07-15T08:00:00-04:00"
+
+test "preset: isoOffsetDateTime UTC emits Z" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    assert DateTimeFormatter.isoOffsetDateTime.format(i, TimeZone.utc) == "2024-07-15T12:00:00Z"
+
+test "preset: isoZonedDateTime in NY summer" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    assert DateTimeFormatter.isoZonedDateTime.format(i, ny) == "2024-07-15T08:00:00-04:00[America/New_York]"
+
+test "preset: isoInstant" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    assert DateTimeFormatter.isoInstant.format(i, TimeZone.utc) == "2024-07-15T12:00:00Z"
+
+test "preset: rfc1123 UTC" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    assert DateTimeFormatter.rfc1123.format(i, TimeZone.utc) == "Mon, 15 Jul 2024 12:00:00 UTC"
+
+test "preset: rfc1123 in NY summer" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    assert DateTimeFormatter.rfc1123.format(i, ny) == "Mon, 15 Jul 2024 08:00:00 EDT"
+
+test "preset: basicIsoDate" =
+    let d = LocalDate.of(2024, 7, 15)
+    assert DateTimeFormatter.basicIsoDate.format(d) == "20240715"
+
+// ── DST boundary handling ─────────────────────────────────────────────────
+
+test "DST: format NY just before spring-forward (1:59 EST)" =
+    // 2024-03-10 06:59:00Z = 1710053940 — last second of EST
+    let i = Instant.ofEpochSecond(1710053940i64)
+    let ny = TimeZone.named("America/New_York").require
+    let f = DateTimeFormatter.ofPattern("HH:mm zzz")
+    assert f.format(i, ny) == "01:59 EST"
+
+test "DST: format NY just after spring-forward (3:00 EDT)" =
+    // 2024-03-10 07:00:00Z = 1710054000 — first second of EDT
+    let i = Instant.ofEpochSecond(1710054000i64)
+    let ny = TimeZone.named("America/New_York").require
+    let f = DateTimeFormatter.ofPattern("HH:mm zzz")
+    assert f.format(i, ny) == "03:00 EDT"
+
+test "DST: parse instant in NY summer matches direct construction" =
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss VV")
+    match f.parseInstant("2024-07-15T08:00:00 America/New_York") with
+        case Ok(i) => assert i.epochSecond == 1721044800i64
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "DST: parse instant in NY winter" =
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss VV")
+    // 2024-12-15T07:00:00 EST = 2024-12-15T12:00:00Z
+    match f.parseInstant("2024-12-15T07:00:00 America/New_York") with
+        case Ok(i) => assert i.epochSecond == 1734264000i64
+        case Error(e) => panic "parse failed: " ++ e.message
+
+// ── Calendar edge cases ───────────────────────────────────────────────────
+
+test "edge: leap day Feb 29 2024" =
+    let d = LocalDate.of(2024, 2, 29)
+    assert DateTimeFormatter.isoLocalDate.format(d) == "2024-02-29"
+    match DateTimeFormatter.isoLocalDate.parseLocalDate("2024-02-29") with
+        case Ok(d2) =>
+            assert d2.year.value == 2024
+            assert d2.month.value == 2
+            assert d2.day.value == 29
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "edge: parse rejects Feb 29 in non-leap year" =
+    match DateTimeFormatter.isoLocalDate.parseLocalDate("2023-02-29") with
+        case Ok(_) => panic "should have rejected"
+        case Error(e) => assert e.message.contains("day")
+
+test "edge: year boundary Dec 31 / Jan 1" =
+    let dec31 = LocalDateTime.ofParts(2024, 12, 31, 23, 59, 59)
+    assert DateTimeFormatter.isoLocalDateTime.format(dec31) == "2024-12-31T23:59:59"
+    let jan1 = LocalDateTime.ofParts(2025, 1, 1, 0, 0, 0)
+    assert DateTimeFormatter.isoLocalDateTime.format(jan1) == "2025-01-01T00:00:00"
+
+test "edge: era BC (negative year)" =
+    let d = LocalDate.of(-44, 3, 15)  // Ides of March, 44 BC
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd G")
+    // Negative year emits with leading minus.
+    let s = f.format(d)
+    assert s.contains("BC")
+
+// ── Pattern feature coverage ──────────────────────────────────────────────
+
+test "feature: day-of-year padding" =
+    let d = LocalDate.of(2024, 1, 5)
+    let f = DateTimeFormatter.ofPattern("DDD")
+    assert f.format(d) == "005"
+
+test "feature: quarter at every quarter" =
+    let f = DateTimeFormatter.ofPattern("q")
+    assert f.format(LocalDate.of(2024, 1, 15)) == "1"
+    assert f.format(LocalDate.of(2024, 4, 15)) == "2"
+    assert f.format(LocalDate.of(2024, 7, 15)) == "3"
+    assert f.format(LocalDate.of(2024, 10, 15)) == "4"
+
+test "feature: ISO week-of-year" =
+    // 2024-01-01 = Monday = ISO week 1
+    let f = DateTimeFormatter.ofPattern("w")
+    assert f.format(LocalDate.of(2024, 1, 1)) == "1"
+    // 2024-07-15 = ISO week 29
+    assert f.format(LocalDate.of(2024, 7, 15)) == "29"
+
+test "feature: era at AD/BC boundary" =
+    let f = DateTimeFormatter.ofPattern("G")
+    assert f.format(LocalDate.of(1, 1, 1)) == "AD"
+    assert f.format(LocalDate.of(-1, 1, 1)) == "BC"
+
+test "feature: era full name" =
+    let f = DateTimeFormatter.ofPattern("GGGG")
+    assert f.format(LocalDate.of(2024, 1, 1)) == "Anno Domini"
+    assert f.format(LocalDate.of(-44, 1, 1)) == "Before Christ"
+
+test "feature: offset Z width 4 (GMT prefix)" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 8, 0, 0)
+    let tz = TimeZone.of("EDT", -14400)
+    let zdt = ZonedDateTime.of(dt, tz)
+    let f = DateTimeFormatter.ofPattern("ZZZZ")
+    assert f.format(zdt) == "GMT-04:00"
+
+test "feature: offset X width 1 hour-only" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 8, 0, 0)
+    let tz = TimeZone.of("EDT", -14400)
+    let zdt = ZonedDateTime.of(dt, tz)
+    let f = DateTimeFormatter.ofPattern("X")
+    assert f.format(zdt) == "-04"
+
+// ── Round-trip integrity ──────────────────────────────────────────────────
+
+test "round-trip: every preset produces parseable output" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let utc = TimeZone.utc
+    // isoLocalDate
+    let s1 = DateTimeFormatter.isoLocalDate.format(LocalDate.of(2024, 7, 15))
+    match DateTimeFormatter.isoLocalDate.parseLocalDate(s1) with
+        case Ok(_) => ()
+        case Error(e) => panic e.message
+    // isoLocalDateTime
+    let s2 = DateTimeFormatter.isoLocalDateTime.format(LocalDateTime.ofParts(2024, 7, 15, 8, 0, 0))
+    match DateTimeFormatter.isoLocalDateTime.parseLocalDateTime(s2) with
+        case Ok(_) => ()
+        case Error(e) => panic e.message
+    // isoInstant
+    let s3 = DateTimeFormatter.isoInstant.format(i, utc)
+    match DateTimeFormatter.isoInstant.parseInstant(s3) with
+        case Ok(i2) => assert i2.epochSecond == i.epochSecond
+        case Error(e) => panic e.message
+    // basicIsoDate
+    let s4 = DateTimeFormatter.basicIsoDate.format(LocalDate.of(2024, 7, 15))
+    match DateTimeFormatter.basicIsoDate.parseLocalDate(s4) with
+        case Ok(_) => ()
+        case Error(e) => panic e.message
+
+// ── Error reporting ───────────────────────────────────────────────────────
+
+test "error: missing required field" =
+    // Pattern has no day; parseLocalDate needs day.
+    match DateTimeFormatter.ofPattern("yyyy-MM").parseLocalDate("2024-07") with
+        case Ok(_) => panic "should have errored"
+        case Error(e) => assert e.message.contains("missing")
+
+test "error: literal mismatch" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd").parseLocalDate("2024/07/15") with
+        case Ok(_) => panic "should have errored"
+        case Error(e) => assert e.message.contains("expected literal")
+
+test "error: unknown month name" =
+    match DateTimeFormatter.ofPattern("MMM d, yyyy").parseLocalDate("Smarch 15, 2024") with
+        case Ok(_) => panic "should have errored"
+        case Error(e) => assert e.message.contains("month")

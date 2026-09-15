@@ -1,0 +1,41 @@
+package standard.time
+
+/// Represents a day of the month (1-31).
+public newtype Day = Int32
+
+module Day =
+    /// Creates a Day from the given integer value. Panics if value is not in 1..31.
+    public function of(value: Int32): Day =
+        if value < 1 || value > 31 then panic("Day.of: value must be between 1 and 31")
+        Day(value)
+
+implement Equatable for Day =
+    public function equals(self: Day, other: Day): Bool =
+        self.value == other.value
+
+implement Comparable for Day =
+    public function compare(self: Day, other: Day): Ordering =
+        if self.value < other.value then Ordering.Less
+        else if self.value > other.value then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for Day =
+    public function format(self: Day): String =
+        padZero(self.value, 2)
+
+test "Day of" =
+    let d = Day.of(15)
+    assert d.value == 15
+
+test "Day equals" =
+    assert Day.of(1).equals(Day.of(1))
+    assert Day.of(1).equals(Day.of(2)) == false
+
+test "Day compare" =
+    assert Day.of(1).compare(Day.of(2)) == Ordering.Less
+    assert Day.of(2).compare(Day.of(1)) == Ordering.Greater
+    assert Day.of(1).compare(Day.of(1)) == Ordering.Equal
+
+test "Day display" =
+    assert Day.of(5).format() == "05"
+    assert Day.of(15).format() == "15"

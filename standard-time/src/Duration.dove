@@ -1,0 +1,190 @@
+package standard.time
+
+/// Represents a time-based duration with second and nanosecond precision.
+@derive(Equatable)
+public record Duration =
+    /// The number of seconds in this duration.
+    seconds: Int64
+    /// The nanosecond adjustment within the second (0 to 999,999,999).
+    nanos: Int32
+
+function durationNormalize(seconds: Int64, nanos: Int32): Duration =
+    let mutable s = seconds
+    let mutable n = nanos
+    if n >= 1000000000 then
+        s = s + (n / 1000000000).toInt64()
+        n = n % 1000000000
+    if n < 0 then
+        let borrow = (-n + 999999999) / 1000000000
+        s = s - borrow.toInt64()
+        n = n + borrow * 1000000000
+    Duration { seconds = s; nanos = n }
+
+/// Factory methods and operations for Duration.
+module Duration =
+    /// Creates a Duration representing the given number of seconds.
+    public function ofSeconds(s: Int64): Duration =
+        Duration { seconds = s; nanos = 0 }
+
+    /// Creates a Duration from a millisecond value, normalizing into seconds and nanos.
+    public function ofMillis(ms: Int64): Duration =
+        let s = ms / 1000i64
+        let n = ((ms % 1000i64) * 1000000i64).toInt32()
+        durationNormalize(s, n)
+
+    /// Creates a Duration representing the given number of minutes.
+    public function ofMinutes(m: Int64): Duration =
+        Duration { seconds = m * 60i64; nanos = 0 }
+
+    /// Creates a Duration representing the given number of hours.
+    public function ofHours(h: Int64): Duration =
+        Duration { seconds = h * 3600i64; nanos = 0 }
+
+    /// Creates a Duration from a nanosecond value, normalizing into seconds and nanos.
+    public function ofNanos(n: Int64): Duration =
+        let s = n / 1000000000i64
+        let ns = (n % 1000000000i64).toInt32()
+        durationNormalize(s, ns)
+
+    /// Returns a zero-length Duration.
+    public function zero(): Duration =
+        Duration { seconds = 0i64; nanos = 0 }
+
+    /// Returns a new Duration that is the sum of this and the other Duration.
+    public function plus(self, other: Duration): Duration =
+        durationNormalize(self.seconds + other.seconds, self.nanos + other.nanos)
+
+    /// Returns a new Duration that is this Duration minus the other Duration.
+    public function minus(self, other: Duration): Duration =
+        durationNormalize(self.seconds - other.seconds, self.nanos - other.nanos)
+
+    /// Returns the absolute value of this Duration.
+    public function abs(self): Duration =
+        if self.isNegative() then
+            Duration.zero().minus(self)
+        else
+            self
+
+    /// Returns true if this Duration is negative.
+    public function isNegative(self): Bool =
+        self.seconds < 0i64
+
+    /// Returns true if this Duration has zero length.
+    public function isZero(self): Bool =
+        self.seconds == 0i64 && self.nanos == 0
+
+    /// Converts this Duration to total milliseconds.
+    public function toMillis(self): Int64 =
+        self.seconds * 1000i64 + (self.nanos / 1000000).toInt64()
+
+    /// Returns the seconds component of this Duration.
+    public function toSeconds(self): Int64 =
+        self.seconds
+
+implement Comparable for Duration =
+    /// Compares two Durations by seconds, then by nanoseconds.
+    public function compare(self: Duration, other: Duration): Ordering =
+        if self.seconds < other.seconds then Ordering.Less
+        else if self.seconds > other.seconds then Ordering.Greater
+        else if self.nanos < other.nanos then Ordering.Less
+        else if self.nanos > other.nanos then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for Duration =
+    /// Formats this Duration as a human-readable string (e.g. "42s" or "1.500000000s").
+    public function format(self: Duration): String =
+        let s = self.seconds
+        let n = self.nanos
+        if n == 0 then s.format() ++ "s"
+        else s.format() ++ "." ++ padZero(n, 9) ++ "s"
+
+function padZero(n: Int32, width: Int32): String =
+    let s = n.format()
+    let len = s.length
+    if len >= width then s
+    else
+        let pad = width - len
+        let mutable result = ""
+        let mutable i = 0
+        while i < pad do
+            result = result ++ "0"
+            i = i + 1
+        result ++ s
+
+test "Duration ofSeconds" =
+    let d = Duration.ofSeconds(60i64)
+    assert d.seconds == 60i64
+    assert d.nanos == 0
+
+test "Duration ofMillis" =
+    let d = Duration.ofMillis(1500i64)
+    assert d.seconds == 1i64
+    assert d.nanos == 500000000
+
+test "Duration ofMinutes" =
+    let d = Duration.ofMinutes(2i64)
+    assert d.seconds == 120i64
+
+test "Duration ofHours" =
+    let d = Duration.ofHours(1i64)
+    assert d.seconds == 3600i64
+
+test "Duration ofNanos" =
+    let d = Duration.ofNanos(2000000000i64)
+    assert d.seconds == 2i64
+    assert d.nanos == 0
+
+test "Duration zero" =
+    let d = Duration.zero()
+    assert d.isZero()
+    assert d.seconds == 0i64
+    assert d.nanos == 0
+
+test "Duration plus" =
+    let a = Duration.ofSeconds(10i64)
+    let b = Duration.ofSeconds(20i64)
+    let c = a.plus(b)
+    assert c.seconds == 30i64
+
+test "Duration minus" =
+    let a = Duration.ofSeconds(30i64)
+    let b = Duration.ofSeconds(10i64)
+    let c = a.minus(b)
+    assert c.seconds == 20i64
+
+test "Duration isNegative" =
+    let pos = Duration.ofSeconds(5i64)
+    let neg = Duration.zero().minus(Duration.ofSeconds(5i64))
+    assert pos.isNegative() == false
+    assert neg.isNegative()
+
+test "Duration abs" =
+    let neg = Duration.zero().minus(Duration.ofSeconds(5i64))
+    let a = neg.abs()
+    assert a.seconds == 5i64
+
+test "Duration toMillis" =
+    let d = Duration.ofMillis(2500i64)
+    assert d.toMillis() == 2500i64
+
+test "Duration toSeconds" =
+    let d = Duration.ofSeconds(42i64)
+    assert d.toSeconds() == 42i64
+
+test "Duration equals" =
+    let a = Duration.ofSeconds(10i64)
+    let b = Duration.ofSeconds(10i64)
+    let c = Duration.ofSeconds(20i64)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "Duration compare" =
+    let a = Duration.ofSeconds(10i64)
+    let b = Duration.ofSeconds(20i64)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "Duration display" =
+    let d = Duration.ofSeconds(42i64)
+    assert d.format() == "42s"

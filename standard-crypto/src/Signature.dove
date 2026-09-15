@@ -1,0 +1,21 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+
+/// A digital signature algorithm (e.g. `Ed25519`).
+///
+/// `verify` returns a boolean — an invalid signature is an expected outcome,
+/// not an error.
+public interface SignatureAlgorithm =
+    property signatureSize(self): Int32
+    property secretKeySize(self): Int32
+    property publicKeySize(self): Int32
+    function derivePublicKey(self, secret: SecretKey): PublicKey
+    function sign(self, key: SecretKey, message: Array<Uint8>): Array<Uint8>
+    function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>): Bool
+    /// Interpret `secretKeySize` candidate bytes as a secret key. Returns `None`
+    /// when the bytes don't form a valid secret (e.g. an out-of-range curve
+    /// scalar), so a random generator can resample. Curve25519-family algorithms
+    /// always accept (any byte string is a valid secret).
+    function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey>

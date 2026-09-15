@@ -1,0 +1,73 @@
+module standard.io.stream.StreamMergeExecution
+
+import standard.io.Async
+import standard.io.Producer
+import standard.io.Rendezvous
+import standard.io.Cause
+
+internal function open(sources: List<Stream<Any, Any>>): Async<StreamSession, Any> = async do
+    let rendezvous = await Rendezvous<MergeEvent>.make()
+    let state = MergeState(rendezvous, List.empty, sources.length, false)
+    // The lifecycle producer and workers are siblings. Its release can therefore
+    // cancel blocked terminal offers before the enclosing scope joins workers.
+    let acquire: Async<MergeState, Any> = Async.succeed(state)
+    let lifecycle = await Producer<StreamReply, Any>.make(acquire,
+        (value: MergeState) => next(value).map((chunk: ReadonlySlice<Any>) => StreamReply.Chunk(chunk)),
+        (value: MergeState) => stop(value))
+    for source in sources do
+        let start: Async<Unit, Never> = async do
+            let worker = await work(source, state).forkBackground()
+            state.workers = List.Cons(worker, state.workers)
+        await start.uninterruptible()
+    StreamSession(lifecycle, None)
+
+function work(source: Stream<Any, Any>, state: MergeState): Async<Unit, Never> = async do
+    // Catch source failure and cleanup only. Publication is outside the handler:
+    // canceling an offer must never cause a second, uncancelable failure offer.
+    let terminal = await StreamExecution.consume(source,
+        (chunk: ReadonlySlice<Any>) => state.rendezvous.offer(MergeEvent.Chunk(chunk)))
+        .foldCause<MergeEvent, Never>(
+            (cause: Cause<Any>) => sourceFailure(state, cause),
+            (_: Unit) => Async.succeed(MergeEvent.End))
+    if !state.stopping then await state.rendezvous.offer(terminal)
+
+// A failure already queued for publication stays ordered and may be discarded
+// by early termination. Defects observed while stopping instead belong to worker
+// shutdown and must reach the lifecycle's join after all workers are signaled.
+function sourceFailure(state: MergeState, cause: Cause<Any>): Async<MergeEvent, Never> =
+    match cause with
+        case Cause.Panicked(message, trace) =>
+            if state.stopping then Async.fromCause(Cause.Panicked(message, trace))
+            else Async.succeed(MergeEvent.Failed(cause))
+        case _ => Async.succeed(MergeEvent.Failed(cause))
+
+function next(state: MergeState): Async<ReadonlySlice<Any>, Option<Any>> = async do
+    let mutable result: Option<ReadonlySlice<Any>> = None
+    while result.isNone && state.remaining > 0 do
+        match (await state.rendezvous.take()) with
+            case MergeEvent.Chunk(chunk) => result = Some(chunk)
+            case MergeEvent.End => state.remaining = state.remaining - 1
+            case MergeEvent.Failed(cause) =>
+                await Async<Unit, Any>.fromCause(cause).mapError((error: Any) => Some(error))
+    match result with
+        case Some(chunk) => chunk
+        case None => await Async<ReadonlySlice<Any>, Option<Any>>.fail(None)
+
+function stop(state: MergeState): Async<Unit, Never> = async do
+    state.stopping = true
+    // Interrupt signals; it does not join. Signal everyone before awaiting anyone.
+    for worker in state.workers do
+        await worker.interrupt()
+    let mutable failure: Option<Cause<Never>> = None
+    for worker in state.workers do
+        await worker.join().foldCause<Unit, Never>(
+            (cause: Cause<Never>) => Async.thunk(() =>
+                match cause with
+                    case Cause.Interrupted(_) => ()
+                    case _ => failure = Some(cause)
+            ),
+            (_: Unit) => Async.succeed(()))
+    state.workers = List.empty
+    match failure with
+        case None => ()
+        case Some(cause) => await Async<Unit, Never>.fromCause(cause)

@@ -1,0 +1,176 @@
+package standard.time
+
+/// Represents a date without a time-zone, such as 2024-03-15.
+@derive(Equatable)
+public record LocalDate =
+    year: Year
+    month: Month
+    day: Day
+
+function isLeapYearImpl(year: Int32): Bool =
+    if year % 4 != 0 then false
+    else if year % 100 != 0 then true
+    else if year % 400 != 0 then false
+    else true
+
+function lengthOfMonthImpl(year: Int32, month: Int32): Int32 =
+    if month == 1 then 31
+    else if month == 2 then
+        if isLeapYearImpl(year) then 29 else 28
+    else if month == 3 then 31
+    else if month == 4 then 30
+    else if month == 5 then 31
+    else if month == 6 then 30
+    else if month == 7 then 31
+    else if month == 8 then 31
+    else if month == 9 then 30
+    else if month == 10 then 31
+    else if month == 11 then 30
+    else 31
+
+function normalizeDate(year: Int32, month: Int32, day: Int32): LocalDate =
+    let mutable y = year
+    let mutable m = month
+    let mutable d = day
+    while m > 12 do
+        m = m - 12
+        y = y + 1
+    while m < 1 do
+        m = m + 12
+        y = y - 1
+    let maxDay = lengthOfMonthImpl(y, m)
+    if d > maxDay then d = maxDay
+    if d < 1 then d = 1
+    LocalDate { year = Year(y); month = monthFromValue(m); day = Day(d) }
+
+/// Factory methods and operations for LocalDate.
+module LocalDate =
+    /// Creates a LocalDate from year, month, and day, clamping to valid ranges.
+    public function of(year: Int32, month: Int32, day: Int32): LocalDate =
+        normalizeDate(year, month, day)
+
+    /// Returns a new LocalDate with the given number of days added.
+    public function plusDays(self, days: Int32): LocalDate =
+        let d = self.day.value + days
+        let m = self.month.value
+        let y = self.year.value
+        let maxDay = lengthOfMonthImpl(y, m)
+        if d > maxDay then
+            let nextMonth = if m == 12 then 1 else m + 1
+            let nextYear = if m == 12 then y + 1 else y
+            LocalDate.of(nextYear, nextMonth, 1).plusDays(d - maxDay - 1)
+        else if d < 1 then
+            let prevMonth = if m == 1 then 12 else m - 1
+            let prevYear = if m == 1 then y - 1 else y
+            let prevMax = lengthOfMonthImpl(prevYear, prevMonth)
+            LocalDate.of(prevYear, prevMonth, prevMax).plusDays(d)
+        else
+            LocalDate { year = self.year; month = self.month; day = Day(d) }
+
+    /// Returns a new LocalDate with the given number of months added, clamping the day if needed.
+    public function plusMonths(self, months: Int32): LocalDate =
+        let newMonth = self.month.value + months
+        let y = self.year.value + (newMonth - 1) / 12
+        let m = ((newMonth - 1) % 12 + 12) % 12 + 1
+        let maxDay = lengthOfMonthImpl(y, m)
+        let d = if self.day.value > maxDay then maxDay else self.day.value
+        LocalDate { year = Year(y); month = monthFromValue(m); day = Day(d) }
+
+    /// Returns a new LocalDate with the given number of years added, clamping the day if needed.
+    public function plusYears(self, years: Int32): LocalDate =
+        let y = self.year.value + years
+        let maxDay = lengthOfMonthImpl(y, self.month.value)
+        let d = if self.day.value > maxDay then maxDay else self.day.value
+        LocalDate { year = Year(y); month = self.month; day = Day(d) }
+
+    /// Returns true if this date falls in a leap year.
+    public function isLeapYear(self): Bool =
+        isLeapYearImpl(self.year.value)
+
+    /// Returns the number of days in this date's month.
+    public function lengthOfMonth(self): Int32 =
+        lengthOfMonthImpl(self.year.value, self.month.value)
+
+implement Comparable for LocalDate =
+    /// Compares two dates chronologically by year, month, then day.
+    public function compare(self: LocalDate, other: LocalDate): Ordering =
+        if self.year.value < other.year.value then Ordering.Less
+        else if self.year.value > other.year.value then Ordering.Greater
+        else if self.month.value < other.month.value then Ordering.Less
+        else if self.month.value > other.month.value then Ordering.Greater
+        else if self.day.value < other.day.value then Ordering.Less
+        else if self.day.value > other.day.value then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for LocalDate =
+    /// Formats this date in ISO-8601 format (yyyy-MM-dd).
+    public function format(self: LocalDate): String =
+        padZero(self.year.value, 4) ++ "-" ++ padZero(self.month.value, 2) ++ "-" ++ padZero(self.day.value, 2)
+
+test "LocalDate of" =
+    let d = LocalDate.of(2024, 3, 15)
+    assert d.year.value == 2024
+    assert d.month.value == 3
+    assert d.day.value == 15
+
+test "LocalDate plusDays" =
+    let d = LocalDate.of(2024, 1, 30)
+    let d2 = d.plusDays(5)
+    assert d2.month.value == 2
+    assert d2.day.value == 4
+
+test "LocalDate plusDays across year" =
+    let d = LocalDate.of(2024, 12, 30)
+    let d2 = d.plusDays(5)
+    assert d2.year.value == 2025
+    assert d2.month.value == 1
+
+test "LocalDate plusMonths" =
+    let d = LocalDate.of(2024, 1, 31)
+    let d2 = d.plusMonths(1)
+    assert d2.month.value == 2
+    assert d2.day.value == 29
+
+test "LocalDate plusYears" =
+    let d = LocalDate.of(2024, 2, 29)
+    let d2 = d.plusYears(1)
+    assert d2.year.value == 2025
+    assert d2.day.value == 28
+
+test "LocalDate isLeapYear" =
+    assert LocalDate.of(2024, 1, 1).isLeapYear()
+    assert LocalDate.of(2023, 1, 1).isLeapYear() == false
+    assert LocalDate.of(2000, 1, 1).isLeapYear()
+    assert LocalDate.of(1900, 1, 1).isLeapYear() == false
+
+test "LocalDate lengthOfMonth" =
+    assert LocalDate.of(2024, 2, 1).lengthOfMonth() == 29
+    assert LocalDate.of(2023, 2, 1).lengthOfMonth() == 28
+    assert LocalDate.of(2024, 1, 1).lengthOfMonth() == 31
+    assert LocalDate.of(2024, 4, 1).lengthOfMonth() == 30
+
+test "LocalDate equals" =
+    let a = LocalDate.of(2024, 6, 15)
+    let b = LocalDate.of(2024, 6, 15)
+    let c = LocalDate.of(2024, 6, 16)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "LocalDate compare" =
+    let a = LocalDate.of(2024, 1, 1)
+    let b = LocalDate.of(2024, 12, 31)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "LocalDate display" =
+    let d = LocalDate.of(2024, 3, 5)
+    assert d.format() == "2024-03-05"
+
+test "LocalDate display padding" =
+    let d = LocalDate.of(2024, 11, 25)
+    assert d.format() == "2024-11-25"
+
+test "LocalDate normalize clamps day" =
+    let d = LocalDate.of(2024, 2, 30)
+    assert d.day.value == 29

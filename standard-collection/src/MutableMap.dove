@@ -1,0 +1,295 @@
+package standard.collection
+
+import standard.prelude.Hashable
+import standard.prelude.Equatable
+import standard.prelude.Option
+
+/// A mutable hash map using open addressing with linear probing.
+/// Stores key-value pairs with O(1) amortized lookup, insertion, and deletion.
+/// Uses tombstone-based deletion and rehashes at 75% load factor.
+public class MutableMap<K, V>(
+    internal mutable keys: Array<K>,
+    internal mutable values: Array<V>,
+    internal mutable occupied: Array<Bool>,
+    internal mutable deleted: Array<Bool>,
+    mutable count: Int32,
+    internal mutable capacity: Int32
+) implements Iterable<(K, V)> where K: Hashable, K: Equatable, K: Default, V: Default =
+    /// Creates a new empty MutableMap.
+    public function new(): MutableMap<K, V> =
+        let cap = 16
+        MutableMap(
+            Array.fill(cap, K.default),
+            Array.fill(cap, V.default),
+            Array.fill(cap, false),
+            Array.fill(cap, false),
+            0,
+            cap
+        )
+
+    function indexFor(self, hash: Int64): Int32 =
+        let h = if hash < 0i64 then -hash else hash
+        (h % self.capacity.toInt64()).toInt32()
+
+    function findSlot(self, key: K): Int32 =
+        let startIdx = self.indexFor(key.hash())
+        let mutable idx = startIdx
+        let mutable firstDeleted = -1
+        let mutable done = false
+        while !done do
+            if !self.occupied.get(idx) && !self.deleted.get(idx) then
+                done = true
+            else if self.deleted.get(idx) && !self.occupied.get(idx) then
+                if firstDeleted == -1 then firstDeleted = idx
+                idx = (idx + 1) % self.capacity
+                if idx == startIdx then done = true
+            else if self.occupied.get(idx) && self.keys.get(idx).equals(key) then
+                done = true
+            else
+                idx = (idx + 1) % self.capacity
+                if idx == startIdx then done = true
+        if firstDeleted >= 0 && !(self.occupied.get(idx) && self.keys.get(idx).equals(key)) then firstDeleted
+        else idx
+
+    function grow(self): Unit =
+        let oldKeys = self.keys
+        let oldValues = self.values
+        let oldOccupied = self.occupied
+        let oldCap = self.capacity
+        let newCap = oldCap * 2
+        self.keys = Array.fill(newCap, K.default)
+        self.values = Array.fill(newCap, V.default)
+        self.occupied = Array.fill(newCap, false)
+        self.deleted = Array.fill(newCap, false)
+        self.capacity = newCap
+        self.count = 0
+        let mutable i = 0
+        while i < oldCap do
+            if oldOccupied.get(i) then
+                self.put(oldKeys.get(i), oldValues.get(i))
+            i = i + 1
+
+    /// Inserts or updates a key-value pair.
+    public function put(self, key: K, value: V): Unit =
+        if (self.count + 1).toInt64() * 4i64 > self.capacity.toInt64() * 3i64 then self.grow()
+        let idx = self.findSlot(key)
+        if self.occupied.get(idx) && self.keys.get(idx).equals(key) then
+            self.values.set(idx, value)
+        else
+            self.keys.set(idx, key)
+            self.values.set(idx, value)
+            self.occupied.set(idx, true)
+            self.deleted.set(idx, false)
+            self.count = self.count + 1
+
+    /// Returns the value for the given key, or None.
+    public function get(self, key: K): Option<V> =
+        let startIdx = self.indexFor(key.hash())
+        let mutable idx = startIdx
+        let mutable result: Option<V> = None
+        let mutable done = false
+        while !done do
+            if !self.occupied.get(idx) && !self.deleted.get(idx) then
+                done = true
+            else if self.occupied.get(idx) && self.keys.get(idx).equals(key) then
+                result = Some(self.values.get(idx))
+                done = true
+            else
+                idx = (idx + 1) % self.capacity
+                if idx == startIdx then done = true
+        result
+
+    /// Returns true if the map contains the given key.
+    public function contains(self, key: K): Bool =
+        self.get(key).isSome
+
+    /// Removes a key from the map. Does nothing if not present.
+    public function remove(self, key: K): Unit =
+        let startIdx = self.indexFor(key.hash())
+        let mutable idx = startIdx
+        let mutable done = false
+        while !done do
+            if !self.occupied.get(idx) && !self.deleted.get(idx) then
+                done = true
+            else if self.occupied.get(idx) && self.keys.get(idx).equals(key) then
+                self.occupied.set(idx, false)
+                self.deleted.set(idx, true)
+                // Tombstones preserve the probe chain, not the removed objects.
+                self.keys.set(idx, K.default)
+                self.values.set(idx, V.default)
+                self.count = self.count - 1
+                done = true
+            else
+                idx = (idx + 1) % self.capacity
+                if idx == startIdx then done = true
+
+    /// Removes all entries.
+    public function clear(self): Unit =
+        let defaultKey = K.default
+        let defaultValue = V.default
+        let mutable i = 0
+        while i < self.capacity do
+            self.occupied.set(i, false)
+            self.deleted.set(i, false)
+            self.keys.set(i, defaultKey)
+            self.values.set(i, defaultValue)
+            i = i + 1
+        self.count = 0
+
+    /// The number of key-value pairs.
+    public property length(self): Int32 = self.count
+
+    /// True if empty.
+    public property isEmpty(self): Bool = self.count == 0
+
+    /// Returns an iterator over the key-value pairs in the map.
+    public function iterator(self): Iterator<(K, V)> = MutableMapIterator(self, 0)
+
+implement <K, V> Default for MutableMap<K, V> where K: Hashable, K: Equatable, K: Default, V: Default =
+    public property default: MutableMap<K, V> = MutableMap.new()
+
+class MutableMapIterator<K, V>(map: MutableMap<K, V>, mutable index: Int32) implements Iterator<(K, V)> where K: Hashable, K: Equatable, K: Default, V: Default =
+    public function next(self): Option<(K, V)> =
+        let mutable result: Option<(K, V)> = None
+        while true do
+            if self.index >= self.map.capacity then
+                result = None
+                break
+            else if self.map.occupied.get(self.index) && !self.map.deleted.get(self.index) then
+                let key = self.map.keys.get(self.index)
+                let value = self.map.values.get(self.index)
+                self.index = self.index + 1
+                result = Some((key, value))
+                break
+            else
+                self.index = self.index + 1
+        result
+
+test "MutableMap remove releases stored keys and values" =
+    let map = MutableMap<Int32, String>.new()
+    map.put(7, "removed")
+    map.remove(7)
+    assert map.isEmpty
+    let mutable i = 0
+    while i < map.capacity do
+        assert map.keys.get(i) == 0
+        assert map.values.get(i) == ""
+        i = i + 1
+    map.put(7, "replacement")
+    assert map.get(7).require == "replacement"
+
+test "MutableMap clear releases stored keys and values" =
+    let map = MutableMap<Int32, String>.new()
+    map.put(7, "first")
+    map.put(8, "second")
+    map.clear()
+    assert map.isEmpty
+    let mutable i = 0
+    while i < map.capacity do
+        assert map.keys.get(i) == 0
+        assert map.values.get(i) == ""
+        i = i + 1
+
+test "MutableMap new is empty" =
+    let m = MutableMap<String, Int32>.new()
+    assert m.isEmpty == true
+    assert m.length == 0
+
+test "MutableMap put and get" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    let ra = m.get("a")
+    assert ra.isSome
+    assert ra.require == 1
+    let rb = m.get("b")
+    assert rb.isSome
+    assert rb.require == 2
+    assert m.length == 2
+
+test "MutableMap put overwrites" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.put("a", 99)
+    let ra = m.get("a")
+    assert ra.isSome
+    assert ra.require == 99
+    assert m.length == 1
+
+test "MutableMap get missing returns None" =
+    let m = MutableMap<String, Int32>.new()
+    assert m.get("x").isNone
+
+test "MutableMap contains" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("x", 10)
+    assert m.contains("x") == true
+    assert m.contains("y") == false
+
+test "MutableMap remove" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.remove("a")
+    assert m.contains("a") == false
+    assert m.contains("b") == true
+    assert m.length == 1
+
+test "MutableMap remove missing" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.remove("z")
+    assert m.length == 1
+    assert m.contains("a") == true
+
+test "MutableMap clear" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.put("c", 3)
+    m.clear()
+    assert m.isEmpty == true
+    assert m.length == 0
+    assert m.contains("a") == false
+
+test "MutableMap many entries" =
+    let m = MutableMap<Int32, Int32>.new()
+    let mutable i = 0
+    while i < 100 do
+        m.put(i, i * 10)
+        i = i + 1
+    assert m.length == 100
+    assert m.get(0).require == 0
+    assert m.get(50).require == 500
+    assert m.get(99).require == 990
+
+test "MutableMap remove then re-insert" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.remove("a")
+    assert m.contains("a") == false
+    m.put("a", 42)
+    assert m.contains("a") == true
+    assert m.get("a").require == 42
+    assert m.length == 2
+
+test "MutableMap iterator" =
+    let m = MutableMap<String, Int32>.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.put("c", 3)
+    let mutable sum = 0
+    let mutable count = 0
+    for entry in m do
+        sum = sum + entry._1
+        count = count + 1
+    assert count == 3
+    assert sum == 6
+
+test "MutableMap iterator empty" =
+    let m = MutableMap<String, Int32>.new()
+    let mutable count = 0
+    for entry in m do
+        count = count + 1
+    assert count == 0

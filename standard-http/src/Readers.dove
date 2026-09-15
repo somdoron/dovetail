@@ -1,0 +1,786 @@
+package standard.http
+
+import standard.collection.ArrayList
+
+/// Body framing type determined by RFC 7230 §3.3.3.
+public enum BodyFraming =
+    ContentLength(Int64)
+    Chunked
+    Http10
+
+/// Determine body framing for a request or response entering SEND_BODY.
+/// For responses: checks special status codes and HEAD/CONNECT.
+/// For requests: defaults to Content-Length: 0 if no headers set.
+public function bodyFraming(
+    requestMethod: String,
+    isResponse: Bool,
+    statusCode: Int32,
+    headers: Headers
+): BodyFraming =
+    // Step 1: some responses always have an empty body
+    if isResponse then
+        if statusCode == 204 || statusCode == 304 then
+            BodyFraming.ContentLength(0i64)
+        else if requestMethod == "HEAD" then
+            BodyFraming.ContentLength(0i64)
+        else if requestMethod == "CONNECT" then
+            if statusCode >= 200 then
+                if statusCode < 300 then
+                    BodyFraming.ContentLength(0i64)
+                else bodyFramingByHeaders(headers, false)
+            else bodyFramingByHeaders(headers, false)
+        else bodyFramingByHeaders(headers, false)
+    else bodyFramingByHeaders(headers, true)
+
+/// Determine body framing from headers alone (Transfer-Encoding > Content-Length > fallback).
+function bodyFramingByHeaders(headers: Headers, isRequest: Bool): BodyFraming =
+    // Step 2: Transfer-Encoding beats Content-Length
+    if hasChunkedTransferEncoding(headers) then
+        BodyFraming.Chunked
+    else
+        // Step 3: Content-Length
+        let cl = contentLength(headers)
+        match cl with
+            case Some(len) => BodyFraming.ContentLength(len)
+            case None =>
+                // Step 4: fallback
+                if isRequest then BodyFraming.ContentLength(0i64)
+                else BodyFraming.Http10
+
+/// Decode header lines: split each line on first ":" into (name, value).
+/// Value is trimmed of leading/trailing whitespace.
+/// The outer sequence is a list; each line stays `Array<Uint8>` — the bytes
+/// are sliced by offset.
+public function decodeHeaderLines(lines: List<Array<Uint8>>): Result<List<(String, String)>, HttpError> =
+    let mutable result: List<(String, String)> = List.empty
+    let mutable error: Option<HttpError> = None
+    for line in lines do
+        if error.isNone then
+            let colonIdx = findByte(line, 58) // ':'
+            if colonIdx < 0 then
+                error = Some(HttpError.remote("illegal header line"))
+            else
+                let name = bytesToString(sliceBytes(line, 0, colonIdx))
+                let rawValue = bytesToString(sliceBytes(line, colonIdx + 1, line.length))
+                result = result.prepend((name, rawValue.trim()))
+    match error with
+        case Some(e) => Error(e)
+        case None => Ok(result.reverse())
+
+/// Parse a request line from the buffer.
+/// Returns None if not enough data, Error on invalid input.
+public function readRequest(buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
+    let lines = buf.extractLines()
+    match lines with
+        case None =>
+            if buf.isNextLineObviouslyInvalid() then
+                Error(HttpError.remote("illegal request line"))
+            else Ok(None)
+        case Some([]) =>
+            Error(HttpError.remote("no request line received"))
+        case Some(requestLine :: headerLines) =>
+                let parsed = parseRequestLine(requestLine)
+                match parsed with
+                    case Error(e) => Error(e)
+                    case Ok(triple) =>
+                        let method = triple._0
+                        let target = triple._1
+                        let httpVersion = triple._2
+                        let headersResult = decodeHeaderLines(headerLines)
+                        match headersResult with
+                            case Error(e) => Error(e)
+                            case Ok(pairs) =>
+                                let normalized = normalizeAndValidateParsed(pairs)
+                                match normalized with
+                                    case Error(e) => Error(e)
+                                    case Ok(headers) =>
+                                        // RFC 7230 §5.4: Host header validation
+                                        let hostValidation = validateHostHeader(headers, httpVersion)
+                                        match hostValidation with
+                                            case Error(e) => Error(e)
+                                            case Ok(_) =>
+                                                let req = HttpRequest { method = method; target = target; headers = headers; httpVersion = httpVersion }
+                                                Ok(Some(HttpEvent.Request(req)))
+
+/// Parse a response/informational response from the buffer.
+public function readResponse(buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
+    let lines = buf.extractLines()
+    match lines with
+        case None =>
+            if buf.isNextLineObviouslyInvalid() then
+                Error(HttpError.remote("illegal status line"))
+            else Ok(None)
+        case Some([]) =>
+            Error(HttpError.remote("no response line received"))
+        case Some(statusLine :: headerLines) =>
+                let parsed = parseStatusLine(statusLine)
+                match parsed with
+                    case Error(e) => Error(e)
+                    case Ok(triple) =>
+                        let httpVersion = triple._0
+                        let statusCode = triple._1
+                        let reason = triple._2
+                        let headersResult = decodeHeaderLines(headerLines)
+                        match headersResult with
+                            case Error(e) => Error(e)
+                            case Ok(pairs) =>
+                                let normalized = normalizeAndValidateParsed(pairs)
+                                match normalized with
+                                    case Error(e) => Error(e)
+                                    case Ok(headers) =>
+                                        let response = HttpResponse { statusCode = statusCode; headers = headers; httpVersion = httpVersion; reason = reason }
+                                        if statusCode < 100 then
+                                            Error(HttpError.remote("status code must be >= 100, got " ++ intToString(statusCode)))
+                                        else if statusCode >= 1000 then
+                                            Error(HttpError.remote("status code must be < 1000, got " ++ intToString(statusCode)))
+                                        else if statusCode < 200 then
+                                            Ok(Some(HttpEvent.InformationalResponse(response)))
+                                        else
+                                            Ok(Some(HttpEvent.Response(response)))
+
+/// Parse "METHOD target HTTP/x.y" request line.
+function parseRequestLine(line: Array<Uint8>): Result<(String, String, String), HttpError> =
+    // Find first space
+    let sp1 = findByte(line, 32)
+    if sp1 < 0 then Error(HttpError.remote("illegal request line"))
+    else
+        // Find second space
+        let sp2 = findByteFrom(line, 32, sp1 + 1)
+        if sp2 < 0 then Error(HttpError.remote("illegal request line"))
+        else
+            let method = bytesToString(sliceBytes(line, 0, sp1))
+            let target = bytesToString(sliceBytes(line, sp1 + 1, sp2))
+            let versionPart = bytesToString(sliceBytes(line, sp2 + 1, line.length))
+            // Reject a non-token method or a target carrying control/space characters,
+            // the same discipline the write path enforces (validateMethod/validateTarget).
+            // An unvalidated method/target is handed to routing and echoed in logs/responses.
+            if validateMethod(method).isError then Error(HttpError.remote("illegal request method"))
+            else if validateTarget(target).isError then Error(HttpError.remote("illegal request target"))
+            else
+                match parseHttpVersion(versionPart) with
+                    case None => Error(HttpError.remote("illegal request line"))
+                    case Some(ver) => Ok((method, target, ver))
+
+/// Parse "HTTP/x.y status reason" status line.
+function parseStatusLine(line: Array<Uint8>): Result<(String, Int32, String), HttpError> =
+    // Expect "HTTP/x.y SP status SP reason" or "HTTP/x.y SP status"
+    let str = bytesToString(line)
+    if str.length < 12 then Error(HttpError.remote("illegal status line"))
+    else
+        let versionPart = str.substring(0, 8)
+        let httpVersion = parseHttpVersion(versionPart)
+        match httpVersion with
+            case None => Error(HttpError.remote("illegal status line"))
+            case Some(ver) =>
+                // After "HTTP/x.y" expect space
+                let rest = str.substring(8, str.length)
+                if rest.length < 1 then Error(HttpError.remote("illegal status line"))
+                else
+                    let firstChar = rest.substring(0, 1)
+                    if firstChar != " " then Error(HttpError.remote("illegal status line"))
+                    else
+                        let afterSpace = rest.substring(1, rest.length)
+                        if afterSpace.length < 3 then Error(HttpError.remote("illegal status line"))
+                        else
+                            let statusStr = afterSpace.substring(0, 3)
+                            let statusCode = parseIntFromString(statusStr)
+                            match statusCode with
+                                case None => Error(HttpError.remote("illegal status line"))
+                                case Some(code) =>
+                                    let reason = if afterSpace.length > 4 then
+                                            afterSpace.substring(4, afterSpace.length)
+                                        else ""
+                                    Ok((ver, code.toInt32(), reason))
+
+/// Parse "HTTP/x.y" -> "x.y", returns None if invalid.
+function parseHttpVersion(s: String): Option<String> =
+    if s.length < 8 then None
+    else
+        let prefix = s.substring(0, 5)
+        if prefix != "HTTP/" then None
+        else
+            let ver = s.substring(5, 8)
+            // Validate x.y format
+            let bytes = ver.bytes()
+            if bytes.length != 3 then None
+            else
+                let d1 = bytes.get(0).toInt32()
+                let dot = bytes.get(1).toInt32()
+                let d2 = bytes.get(2).toInt32()
+                if d1 < 48 || d1 > 57 then None
+                else if dot != 46 then None
+                else if d2 < 48 || d2 > 57 then None
+                else Some(ver)
+
+/// RFC 7230 §5.4: Validate Host header.
+/// HTTP/1.1 requests MUST have exactly one Host header.
+/// Any request with more than one Host header is invalid.
+function validateHostHeader(headers: Headers, httpVersion: String): Result<Unit, HttpError> =
+    let hostCount = headers.items.count(item => item.name == "host")
+    if httpVersion == "1.1" then
+        if hostCount == 0 then
+            Error(HttpError.localWithHint("Missing mandatory Host: header", 400))
+        else if hostCount > 1 then
+            Error(HttpError.localWithHint("Found multiple Host: headers", 400))
+        else Ok(())
+    else if hostCount > 1 then
+        Error(HttpError.localWithHint("Found multiple Host: headers", 400))
+    else Ok(())
+
+/// Content-Length body reader state.
+/// Reads exactly the declared number of body bytes.
+public class ContentLengthReader(
+    public mutable remaining: Int64,
+    mutable totalLength: Int64
+) =
+    /// Create a new reader expecting exactly `length` bytes.
+    public function new(length: Int64): ContentLengthReader =
+        ContentLengthReader(length, length)
+
+    /// Read body data. Returns None if need more data.
+    public function read(self, buf: ReceiveBuffer): Option<HttpEvent> =
+        if self.remaining == 0i64 then
+            Some(HttpEvent.EndOfMessage(Headers.empty()))
+        else
+            let maxRead = if self.remaining > 999999999i64 then 999999999
+                else self.remaining.toInt32()
+            let data = buf.extractAtMost(maxRead)
+            match data with
+                case None => None
+                case Some(bytes) =>
+                    self.remaining = self.remaining - bytes.length.toInt64()
+                    Some(HttpEvent.Data(bytes))
+
+    /// Called on EOF. Raises error since we expected more data.
+    public function readEof(self): Result<HttpEvent, HttpError> =
+        let received = self.totalLength - self.remaining
+        Error(HttpError.remote(
+            "peer closed connection without sending complete message body (received " ++
+            intToString(received.toInt32()) ++ " bytes, expected " ++
+            intToString(self.totalLength.toInt32()) ++ ")"))
+
+/// Chunked transfer encoding reader state.
+/// Parses HTTP chunked encoding: hex size lines, chunk data, trailers.
+public class ChunkedReader(
+    mutable bytesInChunk: Int32,
+    mutable bytesToDiscard: Int32,
+    mutable readingTrailer: Bool
+) =
+    /// Create a new chunked reader.
+    public function new(): ChunkedReader =
+        ChunkedReader(0, 0, false)
+
+    /// Read chunked body data.
+    public function read(self, buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
+        if self.readingTrailer then
+            let lines = buf.extractLines()
+            match lines with
+                case None => Ok(None)
+                case Some(ls) =>
+                    if ls.length == 0 then
+                        Ok(Some(HttpEvent.EndOfMessage(Headers.empty())))
+                    else
+                        let headersResult = decodeHeaderLines(ls)
+                        match headersResult with
+                            case Error(e) => Error(e)
+                            case Ok(pairs) =>
+                                let normalized = normalizeAndValidateParsed(pairs)
+                                match normalized with
+                                    case Error(e) => Error(e)
+                                    case Ok(headers) =>
+                                        Ok(Some(HttpEvent.EndOfMessage(headers)))
+        else if self.bytesToDiscard > 0 then
+            let data = buf.extractAtMost(self.bytesToDiscard)
+            match data with
+                case None => Ok(None)
+                case Some(bytes) =>
+                    // Validate chunk footer bytes are \r\n
+                    let expectedOffset = 2 - self.bytesToDiscard // 0 means checking \r first
+                    let mutable valid = true
+                    let mutable k = 0
+                    while k < bytes.length do
+                        let pos = expectedOffset + k
+                        let b = bytes.get(k).toInt32()
+                        if pos == 0 then
+                            if b != 13 then valid = false // expect \r
+                        else if pos == 1 then
+                            if b != 10 then valid = false // expect \n
+                        k = k + 1
+                    if !valid then
+                        Error(HttpError.local("malformed chunk footer"))
+                    else
+                        self.bytesToDiscard = self.bytesToDiscard - bytes.length
+                        if self.bytesToDiscard > 0 then Ok(None)
+                        else self.read(buf) // fall through to read more
+        else if self.bytesInChunk == 0 then
+            // Need to read chunk header
+            let chunkHeader = buf.extractNextLine()
+            match chunkHeader with
+                case None => Ok(None)
+                case Some(headerLine) =>
+                    let sizeResult = parseChunkSize(headerLine)
+                    match sizeResult with
+                        case Error(e) => Error(e)
+                        case Ok(size) =>
+                            if size == 0 then
+                                self.readingTrailer = true
+                                self.read(buf)
+                            else
+                                self.bytesInChunk = size
+                                self.readChunkData(buf)
+        else self.readChunkData(buf)
+
+    /// Read data bytes from the current chunk.
+    function readChunkData(self, buf: ReceiveBuffer): Result<Option<HttpEvent>, HttpError> =
+        let data = buf.extractAtMost(self.bytesInChunk)
+        match data with
+            case None => Ok(None)
+            case Some(bytes) =>
+                self.bytesInChunk = self.bytesInChunk - bytes.length
+                if self.bytesInChunk == 0 then
+                    self.bytesToDiscard = 2 // \r\n
+                Ok(Some(HttpEvent.Data(bytes)))
+
+/// Parse chunk size from a chunk header line (hex number, possibly with extensions).
+function parseChunkSize(line: Array<Uint8>): Result<Int32, HttpError> =
+    // Line is "hex-digits[;extensions]\r\n"
+    // Strip trailing \r\n
+    let mutable end = line.length
+    if end > 0 then
+        if line.get(end - 1).toInt32() == 10 then end = end - 1
+    if end > 0 then
+        if line.get(end - 1).toInt32() == 13 then end = end - 1
+    // Find semicolon for extensions
+    let mutable semiIdx = -1
+    let mutable k = 0
+    while k < end do
+        if line.get(k).toInt32() == 59 then // ';'
+            if semiIdx < 0 then semiIdx = k
+            k = end
+        k = k + 1
+    let hexEnd = if semiIdx >= 0 then semiIdx else end
+    // Cap on chunk size to bound the body-reader allocation; matches the max
+    // read size used by ContentLengthReader/EofReader elsewhere in this file.
+    let maxChunkSize = 999999999i64
+    if hexEnd == 0 then Error(HttpError.remote("illegal chunk header"))
+    else
+        // integer-overflow DoS: a digit-count cap does NOT bound the value under
+        // wrapping arithmetic (8 hex digits already overflow Int32). Accumulate
+        // in Int64 and reject once the running value exceeds the cap, before it
+        // can wrap negative and drive a negative-size Array.fill (trap).
+        let mutable result = 0i64
+        let mutable valid = true
+        let mutable tooLarge = false
+        let mutable j = 0
+        while j < hexEnd do
+            let b = line.get(j).toInt32()
+            let digit = hexDigitValue(b)
+            if digit < 0 then
+                valid = false
+                j = hexEnd
+            else
+                result = result * 16i64 + digit.toInt64()
+                if result > maxChunkSize then
+                    tooLarge = true
+                    j = hexEnd
+            j = j + 1
+        if !valid then Error(HttpError.remote("illegal chunk header"))
+        else if tooLarge then Error(HttpError.remote("chunk size too large"))
+        else Ok(result.toInt32())
+
+/// Convert hex digit byte to value, or -1 if not hex.
+function hexDigitValue(b: Int32): Int32 =
+    if b >= 48 then
+        if b <= 57 then b - 48        // '0'-'9'
+        else if b >= 65 then
+            if b <= 70 then b - 55     // 'A'-'F'
+            else if b >= 97 then
+                if b <= 102 then b - 87 // 'a'-'f'
+                else -1
+            else -1
+        else -1
+    else -1
+
+/// HTTP/1.0 EOF-delimited body reader.
+/// Reads all available data until the connection closes.
+public class EofReader(
+    mutable dummy: Bool
+) =
+    /// Create a new EOF reader.
+    public function new(): EofReader =
+        EofReader(false)
+
+    /// Read as much data as available.
+    public function read(self, buf: ReceiveBuffer): Option<HttpEvent> =
+        let data = buf.extractAtMost(999999999)
+        match data with
+            case None => None
+            case Some(bytes) => Some(HttpEvent.Data(bytes))
+
+    /// On EOF, return EndOfMessage.
+    public function readEof(self): HttpEvent =
+        HttpEvent.EndOfMessage(Headers.empty())
+
+/// Check that the buffer is empty (expect nothing more).
+public function expectNothing(buf: ReceiveBuffer): Result<Unit, HttpError> =
+    if buf.hasData then Error(HttpError.remote("Got data when expecting EOF"))
+    else Ok(())
+
+// Helpers
+
+/// Find first occurrence of a byte in an array. Returns -1 if not found.
+function findByte(data: Array<Uint8>, target: Int32): Int32 =
+    findByteFrom(data, target, 0)
+
+/// Find first occurrence of a byte starting from a given index.
+function findByteFrom(data: Array<Uint8>, target: Int32, start: Int32): Int32 =
+    let mutable i = start
+    let mutable result = -1
+    while i < data.length do
+        if data.get(i).toInt32() == target then
+            if result < 0 then
+                result = i
+                i = data.length
+        i = i + 1
+    result
+
+/// Slice a byte array from start (inclusive) to end (exclusive).
+function sliceBytes(data: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
+    let len = end - start
+    if len <= 0 then Array<Uint8>.empty()
+    else
+        let result = Array.fill(len, 0u8)
+        data.copy(start, result, 0, len)
+        result
+
+/// Slice an array of arrays from start to end.
+// Tests
+
+test "parseRequestLine valid" =
+    let line = stringToBytes("GET / HTTP/1.1")
+    let result = parseRequestLine(line)
+    assert result.isOk
+    let triple = result.require
+    assert triple._0 == "GET"
+    assert triple._1 == "/"
+    assert triple._2 == "1.1"
+
+test "parseRequestLine POST" =
+    let line = stringToBytes("POST /submit HTTP/1.0")
+    let result = parseRequestLine(line)
+    assert result.isOk
+    let triple = result.require
+    assert triple._0 == "POST"
+    assert triple._1 == "/submit"
+    assert triple._2 == "1.0"
+
+test "parseRequestLine invalid" =
+    assert parseRequestLine(stringToBytes("GARBAGE")).isError
+    assert parseRequestLine(stringToBytes("GET /")).isError
+
+test "parseRequestLine rejects a non-token method or control-bearing target" =
+    // Inbound method/target must be validated too, matching the write path.
+    // method "GE<TAB>T" — TAB (0x09) is not a token char
+    let badMethod = [|0x47u8, 0x45u8, 0x09u8, 0x54u8|].concat(stringToBytes(" / HTTP/1.1"))
+    assert parseRequestLine(badMethod).isError
+    // target "/a<DEL>b" — DEL (0x7f) is not a visible ASCII char
+    let badTarget = stringToBytes("GET /a").concat([|0x7fu8|]).concat(stringToBytes("b HTTP/1.1"))
+    assert parseRequestLine(badTarget).isError
+    // a normal request line still parses
+    assert parseRequestLine(stringToBytes("GET /path?q=a%20b HTTP/1.1")).isOk
+
+test "parseStatusLine valid" =
+    let line = stringToBytes("HTTP/1.1 200 OK")
+    let result = parseStatusLine(line)
+    assert result.isOk
+    let triple = result.require
+    assert triple._0 == "1.1"
+    assert triple._1 == 200
+    assert triple._2 == "OK"
+
+test "parseStatusLine no reason" =
+    let line = stringToBytes("HTTP/1.1 404")
+    let result = parseStatusLine(line)
+    assert result.isOk
+    let triple = result.require
+    assert triple._0 == "1.1"
+    assert triple._1 == 404
+    assert triple._2 == ""
+
+test "parseStatusLine invalid" =
+    assert parseStatusLine(stringToBytes("GARBAGE")).isError
+    assert parseStatusLine(stringToBytes("HTTP/1.1")).isError
+
+test "decodeHeaderLines" =
+    let lines = [stringToBytes("Host: example.com"), stringToBytes("Content-Type: text/html")]
+    let result = decodeHeaderLines(lines)
+    assert result.isOk
+    assert result.require == [("Host", "example.com"), ("Content-Type", "text/html")]
+
+test "decodeHeaderLines bad line" =
+    let lines = [stringToBytes("no-colon-here")]
+    assert decodeHeaderLines(lines).isError
+
+test "readRequest simple" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"))
+    let result = readRequest(buf)
+    assert result.isOk
+    let event = result.require
+    assert event.isSome
+    match event.require with
+        case Request(req) =>
+            assert req.method == "GET"
+            assert req.target == "/"
+            assert req.httpVersion == "1.1"
+            assert req.headers.length == 1
+        case _ => assert false
+
+test "readRequest need data" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("GET / HTTP/1.1\r\nHost: exam"))
+    let result = readRequest(buf)
+    assert result.isOk
+    assert result.require.isNone
+
+test "readResponse 200" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"))
+    let result = readResponse(buf)
+    assert result.isOk
+    let event = result.require
+    assert event.isSome
+    match event.require with
+        case Response(resp) =>
+            assert resp.statusCode == 200
+            assert resp.httpVersion == "1.1"
+            assert resp.reason == "OK"
+        case _ => assert false
+
+test "readResponse 100 Continue" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 100 Continue\r\n\r\n"))
+    let result = readResponse(buf)
+    assert result.isOk
+    match result.require.require with
+        case InformationalResponse(resp) =>
+            assert resp.statusCode == 100
+        case _ => assert false
+
+test "bodyFraming content-length" =
+    let headers = normalizeAndValidate([("Content-Length", "42")]).require
+    let framing = bodyFraming("GET", true, 200, headers)
+    match framing with
+        case ContentLength(len) => assert len == 42i64
+        case _ => assert false
+
+test "bodyFraming chunked" =
+    let headers = normalizeAndValidate([("Transfer-Encoding", "chunked")]).require
+    let framing = bodyFraming("GET", true, 200, headers)
+    match framing with
+        case Chunked => assert true
+        case _ => assert false
+
+test "bodyFraming HEAD response" =
+    let headers = normalizeAndValidate([("Content-Length", "100")]).require
+    let framing = bodyFraming("HEAD", true, 200, headers)
+    match framing with
+        case ContentLength(len) => assert len == 0i64
+        case _ => assert false
+
+test "bodyFraming 204 response" =
+    let headers = Headers.empty()
+    let framing = bodyFraming("GET", true, 204, headers)
+    match framing with
+        case ContentLength(len) => assert len == 0i64
+        case _ => assert false
+
+test "bodyFraming request no headers" =
+    let headers = Headers.empty()
+    let framing = bodyFraming("POST", false, 0, headers)
+    match framing with
+        case ContentLength(len) => assert len == 0i64
+        case _ => assert false
+
+test "bodyFraming response no headers" =
+    let headers = Headers.empty()
+    let framing = bodyFraming("GET", true, 200, headers)
+    match framing with
+        case Http10 => assert true
+        case _ => assert false
+
+test "ContentLengthReader empty" =
+    let reader = ContentLengthReader.new(0i64)
+    let buf = ReceiveBuffer.new()
+    let event = reader.read(buf)
+    assert event.isSome
+    match event.require with
+        case EndOfMessage(_) => assert true
+        case _ => assert false
+
+test "ContentLengthReader with data" =
+    let reader = ContentLengthReader.new(5i64)
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("hello"))
+    let event = reader.read(buf)
+    assert event.isSome
+    match event.require with
+        case Data(d) =>
+            assert bytesToString(d) == "hello"
+            assert reader.remaining == 0i64
+        case _ => assert false
+    // Now should return EndOfMessage
+    let event2 = reader.read(buf)
+    assert event2.isSome
+    match event2.require with
+        case EndOfMessage(_) => assert true
+        case _ => assert false
+
+test "ContentLengthReader partial" =
+    let reader = ContentLengthReader.new(10i64)
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("hello"))
+    let event = reader.read(buf)
+    assert event.isSome
+    match event.require with
+        case Data(d) => assert d.length == 5
+        case _ => assert false
+    assert reader.remaining == 5i64
+    // Need more data
+    let event2 = reader.read(buf)
+    assert event2.isNone
+
+test "ChunkedReader simple" =
+    let reader = ChunkedReader.new()
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("5\r\nhello\r\n0\r\n\r\n"))
+    let result = reader.read(buf)
+    assert result.isOk
+    let event = result.require
+    assert event.isSome
+    match event.require with
+        case Data(d) => assert bytesToString(d) == "hello"
+        case _ => assert false
+    // Read terminator
+    let result2 = reader.read(buf)
+    assert result2.isOk
+    let event2 = result2.require
+    assert event2.isSome
+    match event2.require with
+        case EndOfMessage(_) => assert true
+        case _ => assert false
+
+test "ChunkedReader with extension" =
+    let reader = ChunkedReader.new()
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("5;ext=val\r\nhello\r\n0\r\n\r\n"))
+    let result = reader.read(buf)
+    assert result.isOk
+    match result.require.require with
+        case Data(d) => assert bytesToString(d) == "hello"
+        case _ => assert false
+
+test "EofReader" =
+    let reader = EofReader.new()
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("some data"))
+    let event = reader.read(buf)
+    assert event.isSome
+    match event.require with
+        case Data(d) => assert bytesToString(d) == "some data"
+        case _ => assert false
+    // No more data
+    assert reader.read(buf).isNone
+    // EOF
+    match reader.readEof() with
+        case EndOfMessage(_) => assert true
+        case _ => assert false
+
+test "expectNothing empty" =
+    let buf = ReceiveBuffer.new()
+    assert expectNothing(buf).isOk
+
+test "expectNothing with data" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("extra"))
+    assert expectNothing(buf).isError
+
+test "parseChunkSize hex" =
+    assert parseChunkSize(stringToBytes("a\r\n")).require == 10
+    assert parseChunkSize(stringToBytes("ff\r\n")).require == 255
+    assert parseChunkSize(stringToBytes("FF\r\n")).require == 255
+    assert parseChunkSize(stringToBytes("0\r\n")).require == 0
+    assert parseChunkSize(stringToBytes("10\r\n")).require == 16
+
+test "parseChunkSize with extension" =
+    assert parseChunkSize(stringToBytes("a;name=value\r\n")).require == 10
+
+test "parseChunkSize invalid" =
+    assert parseChunkSize(stringToBytes("xyz\r\n")).isError
+
+test "parseChunkSize rejects overflow" =
+    // integer-overflow DoS: 0x80000000 (8 hex digits) wraps Int32 negative,
+    // driving a negative bytesInChunk -> extractAtMost -> Array.fill trap.
+    assert parseChunkSize(stringToBytes("80000000\r\n")).isError
+    // 0x100000000 (9 hex digits) wraps Int32 to 0 -> premature body end / desync.
+    assert parseChunkSize(stringToBytes("100000000\r\n")).isError
+    // A large-but-in-range chunk size is still accepted.
+    assert parseChunkSize(stringToBytes("3b9ac9ff\r\n")).require == 999999999
+
+test "parseHttpVersion" =
+    assert parseHttpVersion("HTTP/1.1").require == "1.1"
+    assert parseHttpVersion("HTTP/1.0").require == "1.0"
+    assert parseHttpVersion("HTTP/2.0").require == "2.0"
+    assert parseHttpVersion("GARBAGE").isNone
+    assert parseHttpVersion("HTTP/").isNone
+
+test "readRequest missing Host header" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("GET / HTTP/1.1\r\nContent-Length: 0\r\n\r\n"))
+    let result = readRequest(buf)
+    assert result.isError
+
+test "readRequest multiple Host headers" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("GET / HTTP/1.1\r\nHost: a.com\r\nHost: b.com\r\n\r\n"))
+    let result = readRequest(buf)
+    assert result.isError
+
+test "readRequest HTTP/1.0 without Host is ok" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("GET / HTTP/1.0\r\nContent-Length: 0\r\n\r\n"))
+    let result = readRequest(buf)
+    assert result.isOk
+    assert result.require.isSome
+
+test "ContentLengthReader readEof returns error" =
+    let reader = ContentLengthReader.new(100i64)
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("partial"))
+    let _ = reader.read(buf)
+    let eofResult = reader.readEof()
+    assert eofResult.isError
+
+test "readResponse invalid status code too low" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 099 Too Low\r\n\r\n"))
+    let result = readResponse(buf)
+    assert result.isError
+
+test "readResponse valid 100 Continue" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 100 Continue\r\n\r\n"))
+    let result = readResponse(buf)
+    assert result.isOk
+    match result.require.require with
+        case InformationalResponse(resp) => assert resp.statusCode == 100
+        case _ => assert false
+
+test "readResponse valid 200 OK" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+    let result = readResponse(buf)
+    assert result.isOk
+    match result.require.require with
+        case Response(resp) => assert resp.statusCode == 200
+        case _ => assert false

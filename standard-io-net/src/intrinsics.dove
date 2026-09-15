@@ -1,0 +1,342 @@
+package standard.io.net
+
+import standard.wasi.net.NetworkError
+import standard.wasi.net.IpAddressFamily
+import standard.wasi.net.SocketAddress
+import standard.wasi.tcp.TcpSocket
+import standard.wasi.net.IpAddress
+import standard.wasi.net.DnsError
+import standard.wasi.net.NameLookup
+import standard.wasi.udp.UdpSocket
+import standard.wasi.udp.ReceivedDatagram
+import standard.wasi.AsyncCall
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.ComponentSubtask
+import standard.wasi.OpenFlag
+import standard.wasi.EventPayload
+import standard.wasi.CopyOperation
+import standard.wasi.Stream
+import standard.wasi.CopyResult
+import standard.wasi.Waitable
+import standard.io.Async
+import standard.io.MutexError
+import standard.wasi.noteCopyProgress
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.WasiInputStream
+import standard.io.WasiOutputStream
+import standard.io.TornWrite
+import standard.io.Resource
+
+// =============================================================================
+// p3 TCP glue shared by Tcp.dove. Sockets, accept streams, and byte streams
+// go through the completion-based wasi:sockets surface (create/bind sync;
+// connect a subtask; accept reads a stream of sockets; send/receive byte
+// streams).
+// =============================================================================
+
+/// Create a fresh TCP socket, closed on release.
+function tcpSocketResource(family: IpAddressFamily): Resource<TcpSocket, NetError> =
+    let acquire: () => Async<TcpSocket, NetError> = async () =>
+        let result = await Async.thunk(() => TcpSocket.create(family))
+        await Async.fromResult(result.mapError(mapWasiNetError))
+    Resource.make(acquire, (s: TcpSocket) => Async.thunk(() => s.close()))
+
+/// An already-accepted socket wrapped in a Resource whose release closes it.
+function ownedTcpSocket(handle: TcpSocket): Resource<TcpSocket, NetError> =
+    Resource.make(() => Async.succeed(handle), (s: TcpSocket) => Async.thunk(() => s.close()))
+
+/// Connect as a `ComponentSubtask` the runtime drives.
+///
+/// INTERRUPTIBLE, punching back through the mask every acquire runs under (see
+/// `Async.bracket`): this park waits on a peer that may never answer, and it is
+/// the wait a `.timeout` around `use Tcp.connect(...)` exists to cut short —
+/// masked, the timeout would sit out the kernel's own connect timeout instead.
+/// An interrupt cancels the subtask and releases its result block; the socket
+/// created a step earlier is closed by `Resource.andThen`'s compensating
+/// release, which catches the interruption cause and runs masked.
+function connectAsync(socket: TcpSocket, address: SocketAddress): Async<Result<Unit, NetworkError>, Never> =
+    Async<Result<Unit, NetworkError>, Never>.subtask(ComponentSubtask<Result<Unit, NetworkError>, Never> {
+        start = () => socket.connectStart(address)
+        finish = (call: AsyncCall) => Ok(TcpSocket.connectFinish(call))
+    }).interruptible()
+
+/// Post an accept on the listening socket's accept stream and block until one
+/// connection arrives, returning the accepted socket.
+///
+/// Serialized on the accept stream by the runtime, like every other p3 copy: an
+/// accept stream permits exactly one outstanding read, and the host op is posted
+/// before the fiber parks, so two fibers accepting on one listener would
+/// otherwise both call `acceptStart` and the second would trap on the busy
+/// stream.
+///
+/// Posting the accept and arming its cleanup happen in one interpreter step, so
+/// an interrupt cannot leave an accept in flight for the next acceptor to collide
+/// with on the same stream end.
+async function acceptAsync(listener: TcpListener): Async<TcpSocket, NetError> =
+    // The listener's own lock, held across the `closed` check and the copy, for
+    // the reason `WasiInputStream` holds one across its state check and its copy:
+    // the runtime's per-handle lock is taken INSIDE the copy node, and a fiber
+    // that finds it held is suspended on that node — so the grant re-runs the
+    // node and posts, with nothing in between to re-ask this loop's question. A
+    // second acceptor queued behind the first is granted the accept stream the
+    // instant a copy ends it, and posts on a stream the host has already told the
+    // guest about. Serializing here is what makes the check above the post mean
+    // something; the runtime's lock is then uncontended and stays the ABI
+    // backstop it is meant to be.
+    //
+    // The runtime's QUEUE DRAIN is a different mechanism for a different case and
+    // does not cover this one: it empties the queue when the listener is being
+    // torn down, and this is a listener that is simply finished.
+    let _held = use listener.acceptLock.acquire().orPanicWith((_: MutexError) => "accept re-entered the listener's accept lock")
+    // Built once per LISTENER (`TcpListener.source`), not once per accept and
+    // not once per copy: six closures over a handle that outlives every accept
+    // posted on it.
+    let source = listener.source
+    let mutable ending = CopyResult.Completed
+    let mutable accepted: Option<TcpSocket> = None
+    let mutable emptyCopies = 0
+    let mutable posting = true
+    while posting do
+        // Mirrors `WasiInputStream.read`'s state check, and for the same reason:
+        // once a handle has been dropped, an operation posted on it does not
+        // fail — the host reuses the index, so it lands on whatever stream was
+        // given that index next. The latch is what turns "too late" into an
+        // error instead of an accept on somebody else's listener. Checked before
+        // every copy, not once on the way in, because the `await` below hands
+        // the scheduler back and a sibling fiber can close the listener while
+        // this one is between copies.
+        if listener.closed then
+            posting = false
+        else
+            // INTERRUPTIBLE, punching back through the mask an acquire runs
+            // under. This whole function IS an acquire (`TcpListener.accept`
+            // wraps it in a `Resource`), and an acquire is masked so a resource
+            // cannot be stranded between existing and being owned. But this park
+            // waits for a connection that may never come: leave it masked and a
+            // background acceptor can never be torn down, so the scope that owns
+            // the listener waits on a fiber that is waiting for the scope.
+            //
+            // Only the park. Everything after it — the socket coming back, and
+            // `Resource`'s pairing of it with its finalizer — runs masked again,
+            // which is the half that must stay atomic.
+            let copied = await Async<Option<TcpSocket>, NetError>
+                .streamRead(source, 1i32)
+                .interruptible()
+            ending = copied._0
+            accepted = copied._1
+            // THE REASON COMPONENT IS ALWAYS `None` HERE, and the arm that
+            // handled it has gone. An accept stream is paired with no result
+            // future — `acceptSource.ending` is a constant `Ok(())`, because a
+            // listener that stops accepting has nothing to report beyond having
+            // stopped — so the only thing that arm could ever do was look live.
+            // A dead arm that reads as a live one is worse than no arm: it says
+            // this path has been thought about and tested when neither is true.
+            // If wasi:sockets ever pairs one, `acceptSource` is where it would be
+            // wired in, and this is where the entry-versus-reason question would
+            // then be answered — the byte streams' way (`readNextDirEntry`), not
+            // by inventing an answer here.
+            // Latch where the ending is OBSERVED, not only where the handle is
+            // released. Between those two moments the check above is the only
+            // thing standing between a caller that retries after
+            // `ListenerClosed` and a second copy posted on an accept stream that
+            // has already ended — the one thing every stream wrapper in the
+            // library exists to prevent.
+            //
+            // `Dropped` only. `Cancelled` says this fiber's own accept was
+            // cancelled out from under it and leaves the listener perfectly
+            // usable; latching on that would retire a live listener because one
+            // acceptor was interrupted.
+            if ending == CopyResult.Dropped then
+                listener.openFlag.open = false
+            match accepted with
+                case Some(_) => posting = false
+                case None =>
+                    // Three ways to carry no connection, and they are three
+                    // different facts about three different things.
+                    //
+                    // `Dropped` is the listener: it is finished, and the caller
+                    // has to be told so or it will post again on an accept
+                    // stream that has ended.
+                    //
+                    // `Cancelled` is this ACCEPT: somebody cancelled the copy
+                    // out from under this fiber, which says nothing at all about
+                    // the listener — it is still open and still accepting.
+                    // Retrying it instead sends a fiber that is being taken down
+                    // back around a loop whose patience runs out in a panic, and
+                    // a panic is the whole component: an interrupted accept
+                    // would kill a live server, which is a worse failure than
+                    // the one this branch was written to prevent.
+                    //
+                    // `Completed` with nothing is the HOST, and it is the only
+                    // one of the three that is not a fact but a non-answer: it
+                    // transferred nothing this time without ending anything.
+                    // Reporting that as `ListenerClosed` shut whole servers down
+                    // — `HttpServer.recoverAccept` treats that one error as
+                    // terminal — and did it without even setting
+                    // `listener.closed`, leaving a live listener nobody accepts
+                    // on. So post again, bounded: a re-post is not necessarily a
+                    // park, so an unbounded retry against a host that answers
+                    // empty forever would hang the event loop.
+                    if ending != CopyResult.Completed then
+                        posting = false
+                    else
+                        // Bounded, on the library's one shared bound rather than
+                        // a third hand-rolled copy of it — see `emptyCopyLimit`.
+                        emptyCopies = noteCopyProgress(emptyCopies, 0i32, "accept: a host copy carried no connection and did not end the listener")
+    // The Option is the whole point: an accept that ended or was cancelled can
+    // STILL have transferred a socket, and there is no way to reach the socket
+    // without deciding what to do with it.
+    match accepted with
+        case Some(socket) =>
+            // A PAYLOAD TRANSFERRED IS A PAYLOAD DELIVERED — invariant (3) on
+            // `AsyncInputStream`, and this arm is where the accept path used to
+            // disagree with its own byte-stream sibling. A `Dropped` copy that
+            // carried a connection is the listener's last accept, not a lost
+            // one: the host completed the handshake and handed the socket over
+            // in the same breath as ending the stream. The byte streams hand
+            // back the chunk a `Dropped` copy carried and report the end on the
+            // read AFTER; this now does the same, and it can, because `closed`
+            // was latched where the ending was observed — so the next accept
+            // posts nothing and reports `ListenerClosed`. Closing it here threw
+            // away an established connection and told the caller the listener
+            // had gone, which is only half true and the wrong half.
+            //
+            // CANCELLED is the exception, and it is about OWNERSHIP rather than
+            // about streams. A cancel means either a sibling force-closed this
+            // handle or this fiber is being interrupted, and this side cannot
+            // tell which; an interrupted fiber may never run its continuation,
+            // so a socket handed back to it is a connection nobody will ever
+            // serve or close. Bytes have no owner and cost nothing to hand to a
+            // fiber that is going away, which is why the byte path has no such
+            // exception.
+            if ending == CopyResult.Cancelled then
+                socket.close()
+                await Async.fail(acceptEndError(ending))
+            else
+                socket
+        case None => await Async.fail(acceptEndError(ending))
+
+/// Why an accept that carried no connection is over.
+///
+/// One definition rather than one per arm, because the distinction is subtle
+/// enough to have been got wrong twice: only the LISTENER ending is
+/// `ListenerClosed`, since that is the single error `HttpServer.recoverAccept`
+/// stops a server on. A cancelled accept says nothing about the listener — it is
+/// still open and still accepting — so reporting it as `ListenerClosed` retires
+/// a live server because one acceptor fiber was interrupted.
+function acceptEndError(ending: CopyResult): NetError =
+    if ending == CopyResult.Cancelled then NetError.Canceled else NetError.ListenerClosed
+
+/// The accept stream as a component-model read.
+///
+/// THE COUNT decides what is in the buffer, not the status code: a `Dropped`
+/// completion can still carry `count == 1` — the host transferred an owned socket
+/// handle and the accept stream ended in the same breath. Lifting with a count of
+/// 0 would turn uninitialized memory into a bogus handle; freeing the buffer with
+/// a count of 1 strands a connection nobody will ever serve or close.
+///
+/// The accept stream carries no result future: a listener that stops accepting has
+/// nothing to report beyond having stopped.
+///
+/// `open` is the listener's own liveness bit, probed by `stillOpen`. The accept
+/// loop's `closed` check has the same one-step gap every wrapper's check has —
+/// checked in one interpreter step, posted in the next — and the listener's
+/// release DROPS this handle, after which the host reuses the index. The probe
+/// is what makes an accept racing that release fail instead of posting an
+/// accept on whatever stream inherited the index. A flag rather than the
+/// listener itself because the listener is built AROUND this record; see
+/// `OpenFlag`.
+function acceptSource(acceptStream: Int32, open: OpenFlag): ComponentStreamRead<Option<TcpSocket>, NetError> =
+    ComponentStreamRead<Option<TcpSocket>, NetError> {
+        readable = Waitable(acceptStream)
+        ending = () => Ok(())
+        start = (_: Int32) => TcpSocket.acceptStart(acceptStream)
+        cancel = () => EventPayload(TcpSocket.cancelAcceptRead(acceptStream))
+        canceledError = NetError.Canceled
+        stillOpen = () => open.open
+        dropEnd = () => TcpSocket.dropAcceptStream(acceptStream)
+        // The element is an OWNED socket handle: a raced cancel that nobody
+        // delivers still transferred a live connection, and the one party left
+        // that knows how to close it is this record. Lift it the way an accept
+        // would have and close it; at a count of zero this is just the
+        // buffer's release (`liftAcceptedSocket` discards it).
+        discardElements = (copy: CopyOperation, count: Int32) =>
+            match liftAcceptedSocket(copy, count) with
+                case Some(socket) => socket.close()
+                case None => ()
+        lift = (copy: CopyOperation, count: Int32) => liftAcceptedSocket(copy, count)
+    }
+
+function liftAcceptedSocket(copy: CopyOperation, count: Int32): Option<TcpSocket> =
+    if count == 1 then
+        Some(TcpSocket.acceptFinish(copy))
+    else
+        Stream.discard(copy)
+        None
+
+/// AsyncInputStream reading from `socket`'s inbound byte stream. Releasing drops
+/// both halves; nothing can be in flight by then, because the scope unwinds every
+/// fiber that could have posted a read before the finalizer runs.
+function inputStreamFromSocket(socket: TcpSocket): Resource<AsyncInputStream<NetworkError>, NetError> =
+    let open: () => Async<ComponentStreamRead<Array<Uint8>, NetworkError>, NetError> = async () =>
+        let tcpStream = await Async.thunk(() => socket.receive())
+        tcpStream.componentReceive()
+    WasiInputStream<NetworkError>.resource<NetError>(open)
+
+/// AsyncOutputStream writing to `socket`'s outbound byte stream.
+function outputStreamFromSocket(socket: TcpSocket): Resource<AsyncOutputStream<NetworkError>, NetError> =
+    let open: () => Async<ComponentStreamWrite<NetworkError>, NetError> = async () =>
+        let tcpStream = await Async.thunk(() => socket.send())
+        tcpStream.componentSend()
+    // `TornWrite.Fence`: every consumer of a socket byte stream frames above it —
+    // HTTP, TLS records, anything length-prefixed — so a hole is invisible to the
+    // peer and the next write splices onto a truncated message. Reconnecting is
+    // what a caller does about that, and a fenced socket is how it finds out.
+    WasiOutputStream<NetworkError>.resource<NetError>(NetworkError.ConnectionReset, TornWrite.Fence, open)
+
+// --- DNS -------------------------------------------------------------------
+
+/// Resolve `hostname` through `wasi:sockets/ip-name-lookup`. Start the async
+/// call, await its subtask, then lift the address list (the finish intrinsic
+/// frees both the element buffer and the call's pinned result block).
+async function resolveWasi(hostname: String): Async<Array<IpAddress>, NetError> =
+    // Interruptible for the same reason as `connectAsync`: DNS runs inside the
+    // same composite connect acquire, and a resolver that never answers must
+    // still be cancellable by a `.timeout` over the `use`.
+    let result = await Async<Result<Array<IpAddress>, DnsError>, Never>.subtask(ComponentSubtask<Result<Array<IpAddress>, DnsError>, Never> {
+        start = () => NameLookup.resolveStart(hostname)
+        finish = (call: AsyncCall) => Ok(NameLookup.resolveFinish(call))
+    }).interruptible()
+    await Async.fromResult(result.mapError(mapWasiDnsError))
+
+// --- UDP -------------------------------------------------------------------
+
+/// Create a fresh UDP socket, closed on release.
+function udpSocketResource(family: IpAddressFamily): Resource<UdpSocket, NetError> =
+    let acquire: () => Async<UdpSocket, NetError> = async () =>
+        let result = await Async.thunk(() => UdpSocket.create(family))
+        await Async.fromResult(result.mapError(mapWasiNetError))
+    Resource.make(acquire, (s: UdpSocket) => Async.thunk(() => s.close()))
+
+/// Send one datagram. `remoteAddress` must be `None` on a connected socket and
+/// `Some` otherwise. `Async.subtask` supplies the interruption-safe cancel path.
+async function udpSendAsync(
+    socket: UdpSocket,
+    data: Array<Uint8>,
+    remoteAddress: Option<SocketAddress>
+): Async<Unit, NetError> =
+    let result = await Async<Result<Unit, NetworkError>, Never>.subtask(ComponentSubtask<Result<Unit, NetworkError>, Never> {
+        start = () => socket.sendStart(data, remoteAddress)
+        finish = (call: AsyncCall) => Ok(UdpSocket.sendFinish(call))
+    })
+    await Async.fromResult(result.mapError(mapWasiNetError))
+
+/// Receive one datagram, blocking until one arrives.
+async function udpReceiveAsync(socket: UdpSocket): Async<ReceivedDatagram, NetError> =
+    let result = await Async<Result<ReceivedDatagram, NetworkError>, Never>.subtask(ComponentSubtask<Result<ReceivedDatagram, NetworkError>, Never> {
+        start = () => socket.receiveStart()
+        finish = (call: AsyncCall) => Ok(UdpSocket.receiveFinish(call))
+    })
+    await Async.fromResult(result.mapError(mapWasiNetError))

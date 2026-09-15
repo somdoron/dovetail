@@ -1,0 +1,195 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.String
+
+import standard.crypto.HashAlgorithm
+import standard.crypto.Hkdf
+import standard.crypto.Hmac
+import standard.crypto.SymmetricKey
+import standard.crypto.Nonce
+import standard.crypto.Sha256
+import standard.crypto.ConstantTime
+
+/// The TLS 1.3 key schedule (RFC 8446 §7.1): a deterministic HKDF pipeline that
+/// turns the (EC)DHE shared secret (and optional PSK) plus the handshake
+/// transcript into all traffic secrets, keys, and IVs.
+///
+/// `expandLabel`/`deriveSecret` are the §7.1 primitives. `KeySchedule`
+/// progresses through Early → Handshake → Master as the handshake advances;
+/// each `init*` call is given the transcript hash at the relevant point.
+
+/// Encode the `HkdfLabel` structure (RFC 8446 §7.1):
+/// `struct { uint16 length; opaque label<7..255> = "tls13 " ‖ label;
+///           opaque context<0..255> = context; }`.
+function hkdfLabelBytes(length: Int32, label: String, context: Array<Uint8>): Array<Uint8> =
+    let w = ByteWriter.make()
+    w.putU16(length)
+    w.putVec8(("tls13 " ++ label).bytes())
+    w.putVec8(context)
+    w.toBytes()
+
+/// HKDF-Expand-Label (RFC 8446 §7.1). `length` is always ≤ 2·HashLen here, so
+/// the underlying `expand` never hits its 255·HashLen ceiling.
+function expandLabel(hkdf: Hkdf, secret: SymmetricKey, label: String, context: Array<Uint8>, length: Int32): SymmetricKey =
+    hkdf.expand(secret, hkdfLabelBytes(length, label, context), length).require
+
+/// Derive-Secret (RFC 8446 §7.1): HKDF-Expand-Label with the transcript hash as
+/// context and an output the size of the hash.
+function deriveSecret(hkdf: Hkdf, hash: HashAlgorithm, secret: SymmetricKey, label: String, transcriptHash: Array<Uint8>): SymmetricKey =
+    expandLabel(hkdf, secret, label, transcriptHash, hash.digestSize)
+
+class KeySchedule(
+    cipherSuite: CipherSuite,
+    hash: HashAlgorithm,
+    hkdf: Hkdf,
+    mutable earlySecret: Option<SymmetricKey>,
+    mutable handshakeSecret: Option<SymmetricKey>,
+    mutable masterSecret: Option<SymmetricKey>,
+    mutable clientHsSecret: Option<SymmetricKey>,
+    mutable serverHsSecret: Option<SymmetricKey>,
+    mutable clientApSecret: Option<SymmetricKey>,
+    mutable serverApSecret: Option<SymmetricKey>
+) =
+    /// A fresh key schedule for the negotiated cipher suite.
+    public function make(cipherSuite: CipherSuite): KeySchedule =
+        let h = hashFor(cipherSuite)
+        KeySchedule(cipherSuite, h, Hkdf(h), None, None, None, None, None, None, None)
+
+    /// The hash of the empty string, used by the "derived" transitions.
+    public function emptyHash(self): Array<Uint8> =
+        self.hash.hash(Array<Uint8>.empty())
+
+    /// Derive-Secret(secret, "derived", "") — the salt for the next Extract.
+    public function derived(self, secret: SymmetricKey): SymmetricKey =
+        deriveSecret(self.hkdf, self.hash, secret, "derived", self.emptyHash())
+
+    /// Stage 1: Early Secret = HKDF-Extract(0, PSK). With no PSK the IKM is
+    /// HashLen zero bytes (RFC 8446 §7.1).
+    public function initEarly(self, psk: Option<SymmetricKey>): Unit =
+        let ikm = match psk with
+            case Some(k) => k.value
+            case None => Array<Uint8>.fill(self.hash.digestSize, 0u8)
+        self.earlySecret = Some(self.hkdf.extract(Array<Uint8>.empty(), ikm))
+
+    /// Stage 2: Handshake Secret = HKDF-Extract(Derive-Secret(early,"derived"),
+    /// (EC)DHE). Derives the client/server handshake traffic secrets from the
+    /// transcript hash through ServerHello.
+    public function initHandshake(self, sharedSecret: SymmetricKey, transcriptHash: Array<Uint8>): Unit =
+        let early = self.earlySecret.require
+        let salt = self.derived(early)
+        let hs = self.hkdf.extract(salt.value, sharedSecret.value)
+        self.handshakeSecret = Some(hs)
+        self.clientHsSecret = Some(deriveSecret(self.hkdf, self.hash, hs, "c hs traffic", transcriptHash))
+        self.serverHsSecret = Some(deriveSecret(self.hkdf, self.hash, hs, "s hs traffic", transcriptHash))
+
+    /// Stage 3: Master Secret = HKDF-Extract(Derive-Secret(hs,"derived"), 0).
+    /// Derives the client/server application traffic secrets from the transcript
+    /// hash through the server Finished.
+    public function initApplication(self, transcriptHash: Array<Uint8>): Unit =
+        let hs = self.handshakeSecret.require
+        let salt = self.derived(hs)
+        let zeros = Array<Uint8>.fill(self.hash.digestSize, 0u8)
+        let master = self.hkdf.extract(salt.value, zeros)
+        self.masterSecret = Some(master)
+        self.clientApSecret = Some(deriveSecret(self.hkdf, self.hash, master, "c ap traffic", transcriptHash))
+        self.serverApSecret = Some(deriveSecret(self.hkdf, self.hash, master, "s ap traffic", transcriptHash))
+
+    /// The resumption master secret (RFC 8446 §7.1), derived from the transcript
+    /// hash through the client Finished.
+    public function resumptionSecret(self, transcriptHash: Array<Uint8>): SymmetricKey =
+        deriveSecret(self.hkdf, self.hash, self.masterSecret.require, "res master", transcriptHash)
+
+    /// Traffic key + IV from a traffic secret (RFC 8446 §7.3).
+    public function deriveTrafficKeys(self, secret: SymmetricKey): TrafficKeys =
+        let aead = aeadFor(self.cipherSuite)
+        let key = expandLabel(self.hkdf, secret, "key", Array<Uint8>.empty(), aead.keySize)
+        let iv = expandLabel(self.hkdf, secret, "iv", Array<Uint8>.empty(), aead.nonceSize)
+        TrafficKeys { key = key; iv = Nonce(iv.value) }
+
+    /// The Finished MAC key for a traffic secret (RFC 8446 §4.4.4).
+    public function finishedKey(self, secret: SymmetricKey): SymmetricKey =
+        expandLabel(self.hkdf, secret, "finished", Array<Uint8>.empty(), self.hash.digestSize)
+
+    /// The Finished `verify_data` = HMAC(finished_key, transcript_hash).
+    public function finishedVerifyData(self, secret: SymmetricKey, transcriptHash: Array<Uint8>): Array<Uint8> =
+        Hmac(self.hash).compute(self.finishedKey(secret).value, transcriptHash)
+
+    /// Next-generation application traffic secret for KeyUpdate (RFC 8446 §7.2).
+    public function updateTrafficSecret(self, secret: SymmetricKey): SymmetricKey =
+        expandLabel(self.hkdf, secret, "traffic upd", Array<Uint8>.empty(), self.hash.digestSize)
+
+    // Accessors (callers must respect the phase the secret was derived in).
+    public function clientHandshakeTrafficSecret(self): SymmetricKey = self.clientHsSecret.require
+    public function serverHandshakeTrafficSecret(self): SymmetricKey = self.serverHsSecret.require
+    public function clientApplicationTrafficSecret(self): SymmetricKey = self.clientApSecret.require
+    public function serverApplicationTrafficSecret(self): SymmetricKey = self.serverApSecret.require
+    public function currentEarlySecret(self): SymmetricKey = self.earlySecret.require
+
+/// Parse a hex string into bytes (test helper for transcribing RFC vectors).
+function fromHex(hex: String): Array<Uint8> =
+    let chars = hex.bytes()
+    let n = chars.length / 2
+    let result = Array<Uint8>.fill(n, 0u8)
+    let mutable i = 0
+    while i < n do
+        let hi = hexNibble(chars.get(i * 2))
+        let lo = hexNibble(chars.get(i * 2 + 1))
+        result.set(i, ((hi << 4) | lo).toUint8())
+        i = i + 1
+    result
+
+function hexNibble(c: Uint8): Int32 =
+    let v = c.toInt32()
+    if v >= 48 && v <= 57 then v - 48
+    else if v >= 97 && v <= 102 then v - 97 + 10
+    else if v >= 65 && v <= 70 then v - 65 + 10
+    else 0
+
+test "tls key schedule early secret matches RFC 8448 (no PSK)" =
+    let ks = KeySchedule.make(CipherSuite.Aes128GcmSha256)
+    ks.initEarly(None)
+    let early = ks.currentEarlySecret().value
+    // RFC 8448 §3: Early Secret for SHA-256 with a zero PSK.
+    let expected = fromHex("33ad0a1c607ec03b09e6cd9893680ce210adf300aa1f2660e1b22e10f170f92a")
+    assert ConstantTime.equal(early, expected)
+
+test "tls key schedule derives RFC 8448 server handshake key and iv" =
+    let ks = KeySchedule.make(CipherSuite.Aes128GcmSha256)
+    // RFC 8448 §3 server_handshake_traffic_secret → write key (16) and iv (12).
+    let secret = SymmetricKey(fromHex("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38"))
+    let keys = ks.deriveTrafficKeys(secret)
+    let expectedKey = fromHex("3fce516009c21727d0f2e4e86ee403bc")
+    let expectedIv = fromHex("5d313eb2671276ee13000b30")
+    assert ConstantTime.equal(keys.key.value, expectedKey)
+    assert ConstantTime.equal(keys.iv.value, expectedIv)
+
+test "tls key schedule full chain yields distinct 32-byte secrets" =
+    let ks = KeySchedule.make(CipherSuite.Aes128GcmSha256)
+    ks.initEarly(None)
+    let shared = SymmetricKey(Array<Uint8>.fill(32, 0x5au8))
+    let thHello = Sha256.hash([|0x01u8, 0x02u8, 0x03u8|])
+    ks.initHandshake(shared, thHello)
+    let cHs = ks.clientHandshakeTrafficSecret().value
+    let sHs = ks.serverHandshakeTrafficSecret().value
+    assert cHs.length == 32
+    assert sHs.length == 32
+    assert ConstantTime.equal(cHs, sHs) == false
+    let thFinished = Sha256.hash([|0x01u8, 0x02u8, 0x03u8, 0x04u8|])
+    ks.initApplication(thFinished)
+    let cAp = ks.clientApplicationTrafficSecret().value
+    assert cAp.length == 32
+    assert ConstantTime.equal(cAp, cHs) == false
+
+test "tls HKDF-Expand-Label encoding is well-formed" =
+    // length=16, label="key" ⇒ "tls13 key" (9 bytes), empty context.
+    let encoded = hkdfLabelBytes(16, "key", Array<Uint8>.empty())
+    // uint16 length
+    assert encoded.get(0) == 0x00u8
+    assert encoded.get(1) == 0x10u8
+    // opaque label<7..255>: length byte 9, then "tls13 key"
+    assert encoded.get(2) == 9u8
+    assert encoded.get(3) == 0x74u8  // 't'
+    // opaque context<0..255>: length byte 0 at the end
+    assert encoded.get(encoded.length - 1) == 0u8

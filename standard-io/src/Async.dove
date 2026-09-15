@@ -1,0 +1,541 @@
+module standard.io.Async<T, E>
+
+import standard.time.Duration
+import standard.wasi.clock.MonotonicClock
+import standard.wasi.AsyncCall
+import standard.wasi.ComponentFuture
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.ComponentSubtask
+import standard.wasi.CopyResult
+import standard.wasi.cli.Console
+import standard.wasi.cli.Process
+
+// --- Static constructors ---
+
+public function succeed(value: T): Async<T, Never> = Succeed(value)
+
+public function fail(error: E): Async<Never, E> =
+    let cause: Cause<E> = Cause.Failed(error, emptyTrace())
+    FailCause(cause)
+
+public function failPanic(message: String): Async<T, E> =
+    FailCause<E>(Cause.Panicked(message, emptyTrace()))
+
+public function fromCause(cause: Cause<E>): Async<T, E> =
+    FailCause(cause)
+
+/// Lift a `Result<A, E>` into `Async<A, E>`. `Ok(value)` becomes
+/// `succeed(value)`, `Error(error)` becomes `fail(error)`. The Result is
+/// taken by-name AND wrapped in a `thunk` + `andThen` so the expression is
+/// only evaluated when the resulting `Async` is actually run, not at
+/// construction time.
+public function fromResult<A>(result: ByName<Result<A, E>>): Async<A, E> =
+    let thunked: Async<Result<A, E>, E> = Async.thunk(() => result.get)
+    thunked.andThen<A>((r: Result<A, E>) =>
+        match r with
+            case Ok(value) => Async.succeed(value)
+            case Error(error) => Async.fail(error)
+    )
+
+/// Run an async component call — start it, park until its subtask returns, lift
+/// its result — as one interruption-safe unit.
+///
+/// Everything the call needs is in the `ComponentSubtask`: which import to post
+/// and how to lift what it wrote. The interruption safety is the runtime's, not
+/// something assembled here — posting and arming the cleanup happen in a single
+/// interpreter step, so there is no window in which a started call has no cancel
+/// path, and delivery consumes the subtask in the same breath as it retires the
+/// suspension.
+public function subtask(call: ComponentSubtask<T, E>): Async<T, E> =
+    RunSubtask<T, E>(call)
+
+/// Park until a `future<T>` resolves and take its value.
+///
+/// For a component that hands back a future instead of blocking: it starts the
+/// work, returns immediately, and resolves the future later. Awaiting one parks
+/// the fiber exactly like a subtask or a stream copy.
+public function futureValue(future: ComponentFuture<T, E>): Async<T, E> =
+    ReadFutureValue<T, E>(future)
+
+/// Copy up to `capacity` elements from a stream's readable end.
+///
+/// Yields three things that a single copy can report together, and they are
+/// never alternatives:
+///
+/// - the `CopyResult` — whether the copy completed, was cancelled, or found the
+///   stream ended;
+/// - the elements it transferred, which a stream that ended mid-copy still
+///   counted and still moved;
+/// - `Some(error)` when the copy reported the stream ended AND the stream's
+///   paired result future gave a reason for it.
+///
+/// The last two arrive together, and that is the whole point of the shape: one
+/// copy can carry the last chunk of a file and the transport failure that
+/// followed it, and a caller that gets the failure INSTEAD of the chunk has lost
+/// bytes the host already handed over. Deliver first, report the reason on the
+/// next read.
+///
+/// What `Dropped` *means* — end of input, or a failure — is still the caller's to
+/// decide; the runtime never invents an `E` the result future did not give it.
+public function streamRead(read: ComponentStreamRead<T, E>, capacity: Int32): Async<(CopyResult, T, Option<E>), E> =
+    ReadStream<(CopyResult, T, Option<E>), E>(read, capacity)
+
+/// Copy the bounded `bytes` view into a stream's writable end, yielding the same three
+/// things `streamRead` does and for the same reasons:
+///
+/// - the `CopyResult`;
+/// - how many elements the host accepted, which may be fewer than offered, so
+///   callers loop;
+/// - `Some(error)` when the copy reported the stream ended AND its paired result
+///   future gave a reason.
+///
+/// The ending travels ALONGSIDE rather than as a failed `Async`, which is the
+/// one change that makes "the future is read iff the outcome is delivered"
+/// checkable from the wrapper. A raised ending reached the wrapper through a
+/// `catchAll` that also catches the `canceledError` of a fiber some `close`
+/// detached — two different facts arriving as one value, and the wrapper
+/// recorded the future as spent on both. Here the ending is `Some` only when
+/// there was one.
+///
+/// A failure out of this operation now means exactly one thing: this fiber was
+/// detached from the handle. Nothing about the stream.
+public function streamWrite(write: ComponentStreamWrite<E>, bytes: ReadonlySlice<Uint8>): Async<(CopyResult, Int32, Option<E>), E> =
+    WriteStream<(CopyResult, Int32, Option<E>), E>(write, bytes)
+
+public function thunk(f: () => T): Async<T, Never> =
+    Thunk(f)
+
+/// Detach every fiber from `read`'s readable end so the handle can be dropped:
+/// cancel the copy in flight on it (via that suspension's own canceller, which
+/// also frees the op's pinned buffer), and empty its lock queue. Each detached
+/// fiber fails with the stream's `canceledError`. A no-op when nothing is pending
+/// and nobody is queued.
+///
+/// Takes the whole `ComponentStreamRead` rather than a handle and an error,
+/// because those two are one thing: the record types the error by the same `E` as
+/// `ending`, and pairing a handle with some other stream's error is not
+/// expressible. `CancelStream` itself is untyped, as every node is.
+///
+/// Detaching only. Dropping the handle is the caller's next step, and the caller
+/// must have shut the door on new operations before getting here.
+///
+/// For an explicit `close`, not for a Resource finalizer.
+public function cancelStreamRead(read: ComponentStreamRead<T, E>): Async<Unit, Never> =
+    CancelStream(read.readable, read.canceledError)
+
+/// The write-side twin of `cancelStreamRead`. Separate for the same reason
+/// `streamWrite` is separate from `streamRead`: the two ends carry different
+/// records, and `stream.cancel-read`/`cancel-write` are different imports that
+/// trap if crossed.
+public function cancelStreamWrite(write: ComponentStreamWrite<E>): Async<Unit, Never> =
+    CancelStream(write.writable, write.canceledError)
+
+public function makePromise(): Async<Promise<T, E>, Never> =
+    Async.thunk(() =>
+        let state: PromiseState<T, E> = PromiseState.Pending
+        Promise<T, E>(Waiter.make(), state)
+    )
+
+public async function sleep(duration: Duration): Async<Unit, Never> =
+    // `MonotonicClock.waitForStart` owns the Duration-to-nanoseconds conversion.
+    // The timer carries no result buffer, so `finish` has nothing to lift.
+    await Async<Unit, Never>.subtask(ComponentSubtask<Unit, Never> {
+        start = () => MonotonicClock.waitForStart(duration)
+        finish = (_: AsyncCall) => Ok(())
+    })
+
+/// Yield control to the event loop once: any other ready fiber runs before
+/// this one resumes. A cooperative fairness point for a long CPU-bound or
+/// synchronously-completing run — one that would otherwise hold the scheduler
+/// until the fairness budget forces a yield — letting it cede sooner so timers,
+/// sockets, and sibling fibers stay responsive. (A call that parks on its own,
+/// like most host I/O, already yields while suspended and needs none of this.)
+/// A pure scheduler operation (the `Yield` node) — no host round-trip.
+///
+/// A no-op inside an `uninterruptible` region: yielding there would let a
+/// sibling interrupt this fiber mid-mask and clobber the critical section's
+/// result at mask-pop, defeating the mask. The runtime honors the yield only
+/// once the region is interruptible again.
+public function yieldNow(): Async<Unit, Never> =
+    Yield()
+
+/// Open a scope that acquires nothing — `use Async.scope()` on a line of its
+/// own, with everything after it living inside the scope.
+///
+/// A scope is what `attachToScope` attaches to and what `fork` anchors to, and
+/// until now the only way to open one was to acquire a resource: every `use`
+/// and every `Async.bracket` IS a scope. That conflated two things. This opens
+/// the scope by itself, so a lifetime can be declared where the code needs one
+/// rather than wherever a resource happened to be acquired:
+///
+///     use Async.scope()
+///     let cert = await X509Certificate.loadPem(path).attachToScope()
+///     let key = await ServerKey.loadPem(keyPath).attachToScope()
+///     await serve(cert, key)      // key released, then cert, at the end here
+///
+/// It is a `Resource<Unit, Never>` with a no-op finalizer, because that is
+/// already exactly a scope: `use` on it desugars to a `Bracket` whose acquire
+/// succeeds immediately and whose release does nothing, and every bracket opens
+/// a scope. Nothing in the interpreter had to learn a new node for this.
+///
+/// The loop case is what it is most needed for. An `attachToScope` inside a
+/// loop with no scope of its own registers on the fiber's root scope, so a
+/// long-lived loop accumulates a finalizer per iteration; opening a scope
+/// inside the loop body bounds each iteration to itself.
+public function scope(): Resource<Unit, Never> =
+    Resource.succeed(())
+
+/// Asynchronous while loop: re-evaluate `cond` before each iteration, run
+/// `body` (yielding `Async<Unit, E>`) while cond returns true. Used as the
+/// lowering target for `await` inside `while` loop bodies — callers route
+/// through the `Awaitable.whileLoop` trait method (which forwards here).
+internal function whileLoop(cond: () => Bool, body: () => Async<Unit, E>, trace: SourceLocation): Async<Unit, E> =
+    if cond() then
+        body().andThen<Unit>((_: Unit) => Async<T, E>.whileLoop(cond, body, trace), trace)
+    else
+        Async.succeed(())
+
+/// Bracket-style scoped resource: run `acquire`, then `useFn(resource)`, and
+/// guarantee `release(resource)` runs whether `useFn` succeeds or fails. If
+/// `acquire` itself fails, `release` is not called (nothing was acquired).
+/// Release errors are not propagated (E = Never on `release`).
+///
+/// `acquire` runs UNINTERRUPTIBLY, the same choice ZIO's `acquireRelease` makes.
+/// A resource becomes real somewhere inside the acquire, invisibly to the
+/// runtime, and the frame that owns its release is only armed once the acquire's
+/// value comes back — so an interrupt landing in between used to strand it with
+/// nothing left that could close it. Masking makes the acquisition atomic: the
+/// resource reaches its owner, or it was never acquired. The interrupt is not
+/// lost, only deferred to the end of the acquire.
+///
+/// The cost is that an acquire which parks indefinitely can no longer be cut
+/// short by an interrupt or a `timeout`. Keep acquisitions bounded; do the
+/// waiting in `useFn`, which stays interruptible.
+///
+/// The bracket is also a **fiber scope**, starting at `acquire`: fibers forked
+/// anywhere inside it belong to it, and `release` does not run until every one
+/// of them has finalized. So a resource is never released under a fiber that is
+/// still using it. See `Async.fork` for what each fork mode does at that point.
+public function bracket<V>(
+    acquire: Async<V, E>,
+    release: (V) => Async<Unit, Never>,
+    useFn: (V) => Async<T, E>
+): Async<T, E> =
+    Bracket<T, E>(
+        acquire,
+        (x: Any, _: Result<Any, Cause<Any>>) => release(x as V),
+        (x: Any) => useFn(x as V)
+    )
+
+/// Like `bracket`, but `release` also receives the body's outcome: `Ok(value)`
+/// when `useFn` succeeded, `Error(cause)` when it failed, panicked, or was
+/// interrupted (the `Cause` says which). Use it when cleanup depends on how the
+/// body ended — commit on success, roll back otherwise; return a pooled
+/// connection on success, discard it on error. Same guarantees as `bracket`:
+/// `release` runs on every non-acquire-failure exit, masked, after the scope's
+/// forked fibers finalize.
+public function bracketWithResult<V>(
+    acquire: Async<V, E>,
+    release: (V, Result<T, Cause<E>>) => Async<Unit, Never>,
+    useFn: (V) => Async<T, E>
+): Async<T, E> =
+    Bracket<T, E>(
+        acquire,
+        (x: Any, outcome: Result<Any, Cause<Any>>) => release(x as V, Async<T, E>.restoreOutcome(outcome)),
+        (x: Any) => useFn(x as V)
+    )
+
+// Reconstruct typed containers at the interpreter boundary. Its erased result
+// containers carry Any IDs; only their payloads retain the original types.
+function restoreCause(cause: Cause<Any>): Cause<E> =
+    match cause with
+    case Cause.Failed(error, trace) => Cause.Failed(error as E, trace)
+    case Cause.Panicked(message, trace) => Cause.Panicked(message, trace)
+    case Cause.Interrupted(trace) => Cause.Interrupted(trace)
+
+function restoreOutcome(outcome: Result<Any, Cause<Any>>): Result<T, Cause<E>> =
+    match outcome with
+    case Ok(value) => Ok(value as T)
+    case Error(cause) => Error(Async<T, E>.restoreCause(cause))
+
+// --- Instance methods (lazy — construct data) ---
+
+public function map<U>(self, f: (T) => U): Async<U, E> =
+    Map<U, E>(self, (x: Any) => f(x as T), SourceLocation { file = ""; line = 0; column = 0; functionName = "" })
+
+/// Discard the success value. Handy for fork-and-forget patterns —
+/// `task.fork().asUnit()` returns `Async<Unit, Never>` instead of
+/// `Async<Fiber<T, E>, Never>`, sparing the caller a throwaway `let _`
+/// to type the surrounding block.
+public function asUnit(self): Async<Unit, E> =
+    self.map<Unit>((_: T) => ())
+
+public function map<U>(self, f: (T) => U, trace: SourceLocation): Async<U, E> =
+    Map<U, E>(self, (x: Any) => f(x as T), trace)
+
+public function andThen<U>(self, f: (T) => Async<U, E>): Async<U, E> =
+    AndThen<U, E>(self, (x: Any) => f(x as T), SourceLocation { file = ""; line = 0; column = 0; functionName = "" })
+
+public function andThen<U>(self, f: (T) => Async<U, E>, trace: SourceLocation): Async<U, E> =
+    AndThen<U, E>(self, (x: Any) => f(x as T), trace)
+
+/// Recover from a typed failure with `onFailure` or transform a success with
+/// `onSuccess`. Panics and interruptions propagate unchanged — see
+/// `foldCause` if you need to handle those.
+public function fold<U, E2>(self, onFailure: (E) => Async<U, E2>, onSuccess: (T) => Async<U, E2>): Async<U, E2> =
+    Fold<U, E2>(self, (e: Any) => onFailure(e as E), (t: Any) => onSuccess(t as T))
+
+/// Handle both outcomes of this Async with full `Cause` visibility. `onCause`
+/// runs when the fiber fails with any cause (a typed error, a panic, or an
+/// interruption), letting you inspect the cause and recover or rethrow.
+/// `onSuccess` runs on the result of a successful computation. The result is
+/// a new Async whose value/error types come from whatever the handlers return.
+public function foldCause<U, E2>(self, onCause: (Cause<E>) => Async<U, E2>, onSuccess: (T) => Async<U, E2>): Async<U, E2> =
+    FoldCause<U, E2>(self, (c: Cause<Any>) => onCause(Async<T, E>.restoreCause(c)), (t: Any) => onSuccess(t as T))
+
+/// Run this async in a new fiber belonging to the **innermost open scope** — the
+/// enclosing `use`/`bracket` block, or the whole fiber body when there is none.
+///
+/// When that scope closes normally it **waits** for the fiber; when it closes
+/// because the body failed or was interrupted, it interrupts the fiber and then
+/// waits for it to unwind. Either way the scope's resource is released only once
+/// the fiber is gone.
+///
+/// So a fiber that never finishes on its own must not be forked this way: a loop
+/// that runs "until the listener closes" would have its scope wait for it while
+/// it waits for the scope. Use `forkBackground` for those.
+public function fork(self): Async<Fiber<T, E>, Never> =
+    Fork<T, E>(self, (id: FiberId) => Fiber<T, E>(id))
+
+/// Like `fork`, but the scope never waits for this fiber to finish on its own —
+/// closing the scope interrupts it, normally or not.
+///
+/// For work that is meaningful only while its scope lives: a poller, a pump, a
+/// loop that ends only when the resource it reads from is closed. Note the scope
+/// still waits for the interrupted fiber to *unwind* — otherwise the release
+/// could still run under a fiber part-way through its own finalizers — so a
+/// background fiber parked in an `uninterruptible` region delays the close.
+public function forkBackground(self): Async<Fiber<T, E>, Never> =
+    ForkBackground<T, E>(self, (id: FiberId) => Fiber<T, E>(id))
+
+/// Run this with interruption suppressed — a HARD mask. An interrupt arriving
+/// inside is deferred to the region's end, and `interruptible()` inside it is a
+/// no-op: nothing punches a hard mask. This is the mask the interpreter wraps
+/// every release and finalizer chain in.
+public function uninterruptible(self): Async<T, E> = Uninterruptible(self)
+
+/// Run this interruptibly inside a region that is not — ZIO's `restore`, the
+/// half of `uninterruptibleMask` that hands interruptibility back.
+///
+/// Narrow on purpose: the only thing that should reach for it is the WAITING
+/// part of a resource acquisition. `use`/`Async.bracket` mask their acquire so a
+/// resource cannot be stranded between existing and being owned, but an acquire
+/// that parks for an unbounded time — an accept waiting for a connection that
+/// may never arrive — has to stay cancellable, or the scope that owns it can
+/// never be torn down: it would wait on a fiber that is waiting for it.
+///
+///     let copied = await Async<Option<TcpSocket>, NetError>
+///         .streamRead(source, 1i32)
+///         .interruptible()
+///
+/// Wrap the park, never the hand-off. Around the part that takes ownership it
+/// puts back exactly the leak the mask is there to prevent.
+///
+/// It punches the ACQUIRE mask only. Inside a HARD mask — an `uninterruptible()`
+/// region, or the mask every release and finalizer chain runs under — this is a
+/// silent no-op: a finalizer that parks must stay uncuttable, or the guarantee
+/// that an interrupt cannot cut a release in half dies the day a release path
+/// waits. A finalizer that must do bounded network I/O has one honest escape
+/// hatch: `.timeout(...)` still works inside a hard mask, because the timer is
+/// a racer forked interruptible in its own fiber.
+public function interruptible(self): Async<T, E> = Interruptible(self)
+
+/// Run `self` and `other` concurrently and yield the outcome of whichever
+/// COMPLETES first — completion is success OR failure, so a racer that fails
+/// first decides the race with its failure, and a panic inside a racer
+/// propagates the same way (the full `Cause` travels). The loser is
+/// interrupted, and the race does not return until it has finished
+/// unwinding: its finalizers run to completion first, so nothing the loser
+/// holds outlives the race.
+///
+/// A runtime node (`Race`), not a fork/Promise composition, so the decision
+/// is STEP-ATOMIC: the interpreter takes it inside the winning fiber's own
+/// finalization step, with no scheduler window between "a racer completed"
+/// and "the race is decided" for a second completion or an interrupt to slip
+/// into. The racers run as children of a dedicated fiber scope — the same
+/// machinery as `bracket`/`use` — which is what makes the teardown
+/// guarantees hold: interrupting the race interrupts both racers and still
+/// waits for their unwind before the interruption propagates, exactly as a
+/// failing `use` body waits for its scope.
+///
+/// FOOTGUN — race is COMPLETION-based, not commit-based. The loser is
+/// interrupted only AFTER the winner has completed, and a loser can complete
+/// its own effect in the same window before that interrupt lands. Racing two
+/// CONSUMING operations therefore drops the loser's result: in
+/// `q1.take().race(q2.take())` both takes can remove an element, and the one
+/// that loses discards the element it already pulled off its queue — a lost
+/// message, not a lost timer. The rule of thumb: only race operations whose
+/// loss is free to abandon. Timers (`Async.sleep`, hence `timeout`),
+/// idempotent waits, and reads that put nothing back are safe; anything that
+/// mutates state or consumes from a queue/stream on completion is not. Guard
+/// those with an explicit `fork` + cancel where you control the commit point,
+/// or race a signal rather than the consume itself.
+public function race(self, other: Async<T, E>): Async<T, E> =
+    Race<T, E>(self, other)
+
+/// Run `self` against a timer: `Some(value)` when self completes first,
+/// `None` when the timer fires first — in which case self was INTERRUPTED
+/// and its finalizers have completed before `timeout` returns. A failure (or
+/// panic) in self before the deadline propagates unchanged, not as `None`:
+/// a timeout is about lateness, and an answer that arrived broken arrived.
+///
+/// Implemented as a `race` against `Async.sleep` rather than by hand,
+/// because the race already owns the hard part — the loser must not outlive
+/// the call and its teardown must finish before the caller proceeds. A
+/// bespoke timer path would re-derive exactly that scope. `sleep` is a
+/// cancellable subtask, so the timer loses cleanly when self wins.
+public async function timeout(self, duration: Duration): Async<Option<T>, E> =
+    let winner: Async<Option<T>, E> = self.map<Option<T>>((value: T) => Some(value))
+    let timer: Async<Option<T>, E> = Async<Unit, Never>.sleep(duration).map<Option<T>>((_: Unit) => None)
+    await winner.race(timer)
+
+/// Replace the typed error with `f(e)` while leaving success values untouched.
+/// Panics and interruptions pass through unchanged — `f` is only invoked when
+/// the fiber fails with `Cause.Failed(e, _)`.
+public function mapError<E2>(self, f: (E) => E2): Async<T, E2> =
+    let onCause: (Cause<E>) => Async<T, E2> = c =>
+        match c with
+        case Cause.Failed(e, tr) => Async.fromCause(Cause.Failed(f(e), tr))
+        case Cause.Panicked(msg, tr) => Async.fromCause(Cause.Panicked(msg, tr))
+        case Cause.Interrupted(tr) => Async.fromCause(Cause.Interrupted(tr))
+    let onSuccess: (T) => Async<T, E2> = t => Succeed(t)
+    self.foldCause(onCause, onSuccess)
+
+/// Recover from a typed failure by running `handler`. Successes pass through
+/// unchanged. Panics and interruptions propagate.
+public function catchAll<E2>(self, handler: (E) => Async<T, E2>): Async<T, E2> =
+    let onSuccess: (T) => Async<T, E2> = t => Async.succeed(t)
+    self.fold(handler, onSuccess)
+
+/// Treat a typed failure as a DEFECT: re-raise it as `Cause.Panicked`, leaving
+/// no error channel for anyone to handle.
+///
+/// For invariants, not for I/O — the same rule as `Resource.orPanic`, which is
+/// this operation lifted to a resource's acquisition. Use it where a failure is
+/// unreachable by construction and the type system has no way to say so; reaching
+/// for it to quieten a real error is how a transport failure becomes a crash.
+///
+/// A defect unwinds past `catchAll` and is caught only by `foldCause`. That is
+/// the point: nobody should write a recovery path for something that cannot
+/// happen, and on the day it does happen it says so instead of proceeding.
+///
+/// The error formats itself into the panic, so a `Display` error type needs
+/// nothing more. Use `orPanicWith` when `E` has no `Display`, or when the call
+/// site can say something more useful than the error can — which invariant broke,
+/// rather than what the failure happens to be called.
+public function orPanic(self): Async<T, Never> where E : Display =
+    self.orPanicWith((e: E) => "unrecoverable error: " ++ e.format())
+
+/// `orPanic` with the message supplied by the caller.
+public function orPanicWith(self, message: (E) => String): Async<T, Never> =
+    self.catchAll<Never>((e: E) => Async.failPanic(message(e)))
+
+/// If this Async fails with a typed error, run `alternative` instead.
+/// The alternative is by-name so it's only evaluated on failure.
+public function orElse(self, alternative: ByName<Async<T, E>>): Async<T, E> =
+    self.catchAll(_ => alternative.get)
+
+internal function wake(signal: Waiter): Async<Unit, Never> =
+    Wake(signal)
+
+internal function awaitCheck(signal: Waiter, check: Async<Option<Any>, Any>): Async<T, E> =
+    Await<T, E>(signal, check)
+
+// --- Entry point ---
+
+public function run(self): Unit where E: Display =
+    let erased: Async<Any, Any> = self
+    let runtime = Runtime.make(erased)
+    runtime.eventLoop()
+    match runtime.mainFiber.completedResult with
+    case Some(FiberResult.Succeeded(_)) => ()
+    case Some(FiberResult.FiberFailed(Cause.Panicked(msg, traces))) =>
+        Console.eprintln("Panic: " ++ msg)
+        printTraces(traces)
+        Process.exit(Error(()))
+    case Some(FiberResult.FiberFailed(Cause.Interrupted(traces))) =>
+        Console.eprintln("Main fiber interrupted")
+        printTraces(traces)
+        Process.exit(Error(()))
+    case Some(FiberResult.FiberFailed(Cause.Failed(error, traces))) =>
+        let e = error as E
+        Console.eprintln("Error: " ++ e.format())
+        printTraces(traces)
+        Process.exit(Error(()))
+    case None => panic "fiber did not complete"
+
+// --- Tests ---
+
+test "Async: Succeed construction" =
+    let p: Async<Int32, String> = Succeed(42)
+    match p with
+    case s: Succeed<Int32> => assert s.value == 42
+    case _ => panic "expected Succeed"
+
+test "Async: Task alias" =
+    let t: Task<Int32> = Succeed(42)
+    match t with
+    case s: Succeed<Int32> => assert s.value == 42
+    case _ => panic "expected Succeed"
+
+test "Async: Succeed value 0" =
+    let p: Async<Int32, Never> = Succeed(0)
+    match p with
+    case s: Succeed<Int32> => assert s.value == 0
+    case _ => panic "expected Succeed"
+
+test "Async: Succeed with String" =
+    let p: Async<String, Never> = Succeed("hello")
+    match p with
+    case s: Succeed<String> => assert s.value == "hello"
+    case _ => panic "expected Succeed"
+
+test "Async: Succeed with Bool" =
+    let p: Async<Bool, Never> = Succeed(true)
+    match p with
+    case s: Succeed<Bool> => assert s.value
+    case _ => panic "expected Succeed"
+
+test "Async: Succeed negative" =
+    let p: Async<Int32, Never> = Succeed(-1)
+    match p with
+    case s: Succeed<Int32> => assert s.value == -1
+    case _ => panic "expected Succeed"
+
+test "Async: FailCause with Failed" =
+    let trace: List<SourceLocation> = List.empty
+    let p: Async<Int32, String> = FailCause(Cause.Failed("err", trace))
+    match p with
+    case f: FailCause<String> =>
+        match f.cause with
+        case Cause.Failed(e, _) => assert e == "err"
+        case _ => panic "expected Failed"
+    case _ => panic "expected FailCause"
+
+test "Async: Succeed is not FailCause" =
+    let p: Async<Int32, String> = Succeed(42)
+    match p with
+    case f: FailCause<String> => panic "should not be FailCause"
+    case s: Succeed<Int32> => ()
+    case _ => panic "expected Succeed"
+
+test "Async: Uninterruptible wraps Succeed" =
+    let inner: Async<Int32, Never> = Succeed(42)
+    let p: Async<Int32, Never> = Uninterruptible(inner)
+    match p with
+    case u: Uninterruptible<Int32, Never> =>
+        match u.inner with
+        case s: Succeed<Int32> => assert s.value == 42
+        case _ => panic "expected Succeed inside Uninterruptible"
+    case _ => panic "expected Uninterruptible"

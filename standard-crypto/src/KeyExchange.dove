@@ -1,0 +1,21 @@
+package standard.crypto
+
+import standard.prelude.Option
+import standard.prelude.Result
+
+/// A Diffie-Hellman key-exchange algorithm (e.g. `X25519`).
+///
+/// There is no `generateKeyPair` here — key generation needs randomness, which
+/// lives in the async/WASI layer. The caller obtains random bytes, builds a
+/// `SecretKey`, and calls `derivePublicKey`.
+public interface KeyExchange =
+    property publicKeySize(self): Int32
+    property secretKeySize(self): Int32
+    property sharedSecretSize(self): Int32
+    function derivePublicKey(self, secret: SecretKey): PublicKey
+    function computeSharedSecret(self, mySecret: SecretKey, theirPublic: PublicKey): Result<SymmetricKey, CryptoError>
+    /// Interpret `secretKeySize` candidate bytes as a secret key. Returns `None`
+    /// when the bytes don't form a valid secret (e.g. an out-of-range curve
+    /// scalar), so a random generator can resample. Curve25519-family algorithms
+    /// always accept (any byte string is a valid secret).
+    function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey>

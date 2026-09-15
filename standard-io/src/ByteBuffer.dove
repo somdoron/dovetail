@@ -1,0 +1,82 @@
+package standard.io
+
+/// A growable byte buffer: append chunks, take the bytes once at the end.
+///
+/// It exists because the obvious loop is quadratic. Reading to the end of a
+/// stream means appending an unknown number of chunks, and
+/// `accumulated = accumulated.concat(chunk)` copies everything read so far on
+/// every one of them — a 16 MiB body read in 64 KiB chunks copies about 2 GiB.
+/// Doubling the capacity instead makes n appends cost O(n) copies in total.
+///
+/// Not a general collection: it holds bytes, because `Array<Uint8>` can be sized
+/// with a zero fill and so needs nothing of its element type. That is also why it
+/// is here rather than in `standard.collection`, where `ArrayList<T>` requires
+/// `T : Default`.
+public class ByteBuffer(
+    mutable data: Array<Uint8>,
+    mutable used: Int32
+) =
+    /// Append `chunk`. Panics if the buffer would grow past the 2^31-1 bytes an
+    /// `Int32` can index: growth past the representable maximum fails loudly,
+    /// naming the size — never silently and never by hanging.
+    public function append(self, chunk: Array<Uint8>): Unit =
+        // Guarded BEFORE it is computed: Int32 arithmetic wraps, so past the
+        // maximum `used + chunk.length` went negative, the doubling below
+        // wrapped through -2^31 to zero, and `while capacity < required` spun
+        // forever — inside a single interpreter step, where no other fiber and
+        // no interrupt can ever run.
+        if chunk.length > 2147483647i32 - self.used then
+            panic "ByteBuffer cannot grow to " ++ self.used.format() ++ " + " ++
+                chunk.length.format() ++ " bytes: past the 2^31-1 maximum"
+        let required = self.used + chunk.length
+        if required > self.data.length then
+            // Double until it fits rather than growing to exactly `required`:
+            // growing to fit would copy on every append and put the quadratic
+            // behaviour straight back.
+            let mutable capacity = if self.data.length == 0 then 1024i32 else self.data.length
+            while capacity < required do
+                // One more doubling past 2^30 would wrap; `required` is known
+                // representable (guarded above), so the last step grows to it
+                // exactly instead.
+                capacity = if capacity > 1073741823i32 then required else capacity * 2i32
+            let grown = Array<Uint8>.fill(capacity, 0u8)
+            self.data.copy(0i32, grown, 0i32, self.used)
+            self.data = grown
+        chunk.copy(0i32, self.data, self.used, chunk.length)
+        self.used = required
+
+    /// How many bytes have been appended.
+    public property length(self): Int32 = self.used
+
+    /// The bytes appended so far, exactly sized. The buffer holds room to grow
+    /// past `used`, so handing `data` out directly would hand out that room too.
+    public function toArray(self): Array<Uint8> =
+        let exact = Array<Uint8>.fill(self.used, 0u8)
+        self.data.copy(0i32, exact, 0i32, self.used)
+        exact
+
+module ByteBuffer =
+    /// An empty buffer. Allocates nothing until the first append.
+    public function make(): ByteBuffer = ByteBuffer(Array<Uint8>.empty(), 0i32)
+
+test "ByteBuffer: appends across a growth boundary keep every byte in order" =
+    let buffer = ByteBuffer.make()
+    let mutable written = 0i32
+    while written < 5000i32 do
+        buffer.append(Array<Uint8>.fill(7i32, (written % 251i32).toUint8()))
+        written = written + 7i32
+    let bytes = buffer.toArray()
+    assert bytes.length == written
+    assert bytes.get(0) == 0u8
+    assert bytes.get(7) == 7u8
+    assert bytes.get(written - 1) == ((written - 7i32) % 251i32).toUint8()
+
+test "ByteBuffer: an empty buffer yields an empty array" =
+    assert ByteBuffer.make().toArray().length == 0
+
+test "ByteBuffer: appending an empty chunk changes nothing" =
+    let buffer = ByteBuffer.make()
+    buffer.append(Array<Uint8>.fill(3i32, 9u8))
+    buffer.append(Array<Uint8>.empty())
+    assert buffer.length == 3
+    assert buffer.toArray().get(2) == 9u8

@@ -1,0 +1,193 @@
+package test
+
+import standard.wasi.tcp.TcpSocket
+import standard.wasi.net.IpAddressFamily
+import standard.wasi.net.SocketAddress
+import standard.wasi.net.Ipv4SocketAddress
+import standard.wasi.net.Ipv4Address
+import standard.wasi.net.NetworkError
+import standard.wasi.AsyncCall
+import standard.wasi.WaitableSet
+import standard.wasi.Waitable
+import standard.wasi.Stream
+
+function awaitTcpCall(call: AsyncCall): Unit =
+    if call.returned then ()
+    else
+        let set = WaitableSet.make()
+        set.join(call.subtask.waitable)
+        let event = set.wait()
+        assert event.isSubtask
+        call.subtask.drop()
+        set.close()
+
+function loopback(port: Uint16): SocketAddress =
+    SocketAddress.V4(Ipv4SocketAddress {
+        port = port
+        address = Ipv4Address { a = 127u8; b = 0u8; c = 0u8; d = 1u8 }
+    })
+
+function localPort(socket: TcpSocket): Uint16 =
+    match socket.localAddress().require with
+        case SocketAddress.V4(v4) => v4.port
+        case SocketAddress.V6(_) => panic "expected v4"
+
+// Wait for a blocked stream op on `handle`; returns the completion payload count.
+function awaitStreamOp(handle: Int32): Int32 =
+    let set = WaitableSet.make()
+    set.join(Waitable(handle))
+    let event = set.wait()
+    WaitableSet.remove(Waitable(handle))
+    set.close()
+    event.copyCount
+
+test "tcp create bind listen and local address" =
+    let listener = TcpSocket.create(IpAddressFamily.Ipv4).require
+    match listener.bind(loopback(0u16)) with
+        case Ok(_) => ()
+        case Error(e) =>
+            match e with
+                case NetworkError.AccessDenied => panic "bind: AccessDenied"
+                case NetworkError.NotSupported => panic "bind: NotSupported"
+                case NetworkError.InvalidArgument => panic "bind: InvalidArgument"
+                case NetworkError.InvalidState => panic "bind: InvalidState"
+                case NetworkError.AddressNotBindable => panic "bind: AddressNotBindable"
+                case NetworkError.AddressInUse => panic "bind: AddressInUse"
+                case NetworkError.Other(_) => panic "bind: Other"
+                case _ => panic "bind: other error"
+    let acceptStream = listener.listen().require
+    assert localPort(listener) != 0u16
+    TcpSocket.dropAcceptStream(acceptStream)
+    listener.close()
+
+test "tcp loopback connect accept exchange" =
+    let listener = TcpSocket.create(IpAddressFamily.Ipv4).require
+    listener.bind(loopback(0u16)).require
+    let acceptStream = listener.listen().require
+    let port = localPort(listener)
+
+    // post accept, then connect a client
+    let acceptOp = TcpSocket.acceptStart(acceptStream)
+
+    let client = TcpSocket.create(IpAddressFamily.Ipv4).require
+    let connectCall = client.connectStart(loopback(port))
+    awaitTcpCall(connectCall)
+    TcpSocket.connectFinish(connectCall).require
+
+    let server =
+        if acceptOp.blocked then
+            let count = awaitStreamOp(acceptStream)
+            assert count == 1
+            TcpSocket.acceptFinish(acceptOp)
+        else
+            TcpSocket.acceptFinish(acceptOp)
+
+    // client -> server
+    let clientSend = client.send()
+    let serverReceive = server.receive()
+    let payload = "!ping p3?".bytes()[|1..8|]
+    let writeOp = TcpSocket.sendWriteStart(clientSend.stream, payload[|..|].readonly)
+    if writeOp.blocked then
+        let n = awaitStreamOp(clientSend.stream)
+        assert n == payload.length
+    else
+        assert writeOp.count == payload.length
+    Stream.discard(writeOp)
+
+    let readOp = TcpSocket.receiveReadStart(serverReceive.stream, 64)
+    let data =
+        if readOp.blocked then
+            let n = awaitStreamOp(serverReceive.stream)
+            Stream.readFinish(readOp, n)
+        else
+            Stream.readFinish(readOp, readOp.count)
+    assert data.length == 7
+    assert String.fromBytes(data, 0, data.length) == "ping p3"
+
+    // cleanup
+    TcpSocket.dropSendWritable(clientSend.stream)
+    TcpSocket.dropSendResult(clientSend.resultFuture)
+    TcpSocket.dropReceiveReadable(serverReceive.stream)
+    TcpSocket.dropReceiveResult(serverReceive.resultFuture)
+    TcpSocket.dropAcceptStream(acceptStream)
+    client.close()
+    server.close()
+    listener.close()
+
+test "tcp large write then drop send writable" =
+    let listener = TcpSocket.create(IpAddressFamily.Ipv4).require
+    listener.bind(loopback(0u16)).require
+    let acceptStream = listener.listen().require
+    let port = localPort(listener)
+    let acceptOp = TcpSocket.acceptStart(acceptStream)
+    let client = TcpSocket.create(IpAddressFamily.Ipv4).require
+    let connectCall = client.connectStart(loopback(port))
+    awaitTcpCall(connectCall)
+    TcpSocket.connectFinish(connectCall).require
+    let server =
+        if acceptOp.blocked then
+            let c = awaitStreamOp(acceptStream)
+            TcpSocket.acceptFinish(acceptOp)
+        else
+            TcpSocket.acceptFinish(acceptOp)
+
+    // Large write to force backpressure/blocking before the server reads.
+    let clientSend = client.send()
+    let payload = Array<Uint8>.fill(200000, 65u8)
+    let writeOp = TcpSocket.sendWriteStart(clientSend.stream, payload[|..|].readonly)
+    let mutable written = 0
+    if writeOp.blocked then
+        // drain via server reads while the write completes
+        let n = awaitStreamOp(clientSend.stream)
+        written = n
+    else
+        written = writeOp.count
+    Stream.discard(writeOp)
+    // now drop — this is the operation that traps under HTTP
+    TcpSocket.dropSendResult(clientSend.resultFuture)
+    TcpSocket.dropSendWritable(clientSend.stream)
+    assert written > 0
+    client.close()
+    server.close()
+    listener.close()
+
+test "tcp send and receive on same socket use distinct stream handles" =
+    let listener = TcpSocket.create(IpAddressFamily.Ipv4).require
+    listener.bind(loopback(0u16)).require
+    let acceptStream = listener.listen().require
+    let port = localPort(listener)
+    let acceptOp = TcpSocket.acceptStart(acceptStream)
+    let client = TcpSocket.create(IpAddressFamily.Ipv4).require
+    let connectCall = client.connectStart(loopback(port))
+    awaitTcpCall(connectCall)
+    TcpSocket.connectFinish(connectCall).require
+    let server =
+        if acceptOp.blocked then
+            let c = awaitStreamOp(acceptStream)
+            TcpSocket.acceptFinish(acceptOp)
+        else
+            TcpSocket.acceptFinish(acceptOp)
+    // Open BOTH send and receive on the SAME socket (as HTTP does).
+    let clientSend = client.send()
+    let clientRecv = client.receive()
+    assert clientSend.stream != clientRecv.stream
+    assert clientSend.resultFuture != clientRecv.resultFuture
+    TcpSocket.dropSendWritable(clientSend.stream)
+    TcpSocket.dropSendResult(clientSend.resultFuture)
+    TcpSocket.dropReceiveReadable(clientRecv.stream)
+    TcpSocket.dropReceiveResult(clientRecv.resultFuture)
+    client.close()
+    server.close()
+    listener.close()
+
+test "tcp address family reports the family the socket was created with" =
+    let socket4 = TcpSocket.create(IpAddressFamily.Ipv4).require
+    match socket4.addressFamily() with
+        case IpAddressFamily.Ipv4 => ()
+        case _ => panic "expected Ipv4"
+    socket4.close()
+    let socket6 = TcpSocket.create(IpAddressFamily.Ipv6).require
+    match socket6.addressFamily() with
+        case IpAddressFamily.Ipv6 => ()
+        case _ => panic "expected Ipv6"
+    socket6.close()

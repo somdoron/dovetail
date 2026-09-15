@@ -1,0 +1,108 @@
+package standard.io.http
+
+import standard.collection.Map
+
+/// Captured path parameters extracted by `PathPattern.tryMatch`. Backed by
+/// an immutable `Map<String, String>` — each name is unique per pattern
+/// by construction, so a map is semantically the right shape (and one
+/// fewer linear-scan loop than the array-of-pairs alternative).
+///
+/// Stringly-typed in v1; typed extraction via `getInt32` / `getInt64`
+/// returns `Result<_, ParamDecodeError>` so handlers can surface a 400
+/// on bad input. A future `url"..."` literal would let us derive a
+/// fully-typed params record from the pattern; not in scope here.
+public class PathParams(items: Map<String, String>) =
+    /// Empty params — used for routes with no `{name}` segments.
+    public function empty(): PathParams =
+        PathParams(Map<String, String>.empty())
+
+    /// Direct lookup. `None` when the name wasn't in the pattern.
+    public function get(self, name: String): Option<String> =
+        self.items.get(name)
+
+    /// Like `get` but panics on missing — for required params the
+    /// pattern declared. Use sparingly; prefer `get` + match in handlers.
+    public function require(self, name: String): String =
+        match self.items.get(name) with
+            case Some(v) => v
+            case None => panic "PathParams.require: missing parameter '" ++ name ++ "'"
+
+    /// Parse the named param as `Int32`. Missing → `Missing(name)`;
+    /// present but unparseable → `InvalidFormat(name, "Int32")`.
+    public function getInt32(self, name: String): Result<Int32, ParamDecodeError> =
+        match self.items.get(name) with
+            case None => Error(ParamDecodeError.Missing(name))
+            case Some(v) =>
+                match parseInt32(v) with
+                    case Some(n) => Ok(n)
+                    case None => Error(ParamDecodeError.InvalidFormat(name, "Int32"))
+
+    /// Parse the named param as `Int64`.
+    public function getInt64(self, name: String): Result<Int64, ParamDecodeError> =
+        match self.items.get(name) with
+            case None => Error(ParamDecodeError.Missing(name))
+            case Some(v) =>
+                match parseInt64(v) with
+                    case Some(n) => Ok(n)
+                    case None => Error(ParamDecodeError.InvalidFormat(name, "Int64"))
+
+    /// Add a captured param, returning a new `PathParams`. Used by
+    /// `PathPattern.tryMatch` to accumulate captures one segment at a time.
+    public function put(self, name: String, value: String): PathParams =
+        PathParams(self.items.put(name, value))
+
+module PathParams =
+    /// Parse a base-10 `Int32`. Optional leading `-`. Returns `None` on any
+    /// non-digit, overflow, or empty input.
+    function parseInt32(s: String): Option<Int32> =
+        if s.length == 0 then None
+        else
+            let bytes = s.bytes()
+            let (negative, start) = if bytes.get(0) == 45u8 then (true, 1) else (false, 0)
+            if start >= bytes.length then None
+            else
+                let mutable acc = 0i32
+                let mutable i = start
+                let mutable failed = false
+                while i < bytes.length do
+                    if !failed then
+                        let b = bytes.get(i).toInt32()
+                        if b < 48 || b > 57 then
+                            failed = true
+                        else
+                            let digit = b - 48
+                            if acc > 214748364i32 then
+                                failed = true
+                            else
+                                acc = acc * 10 + digit
+                    i = i + 1
+                if failed then None
+                else if negative then Some(0 - acc)
+                else Some(acc)
+
+    /// Parse a base-10 `Int64`. Same shape as `parseInt32`.
+    function parseInt64(s: String): Option<Int64> =
+        if s.length == 0 then None
+        else
+            let bytes = s.bytes()
+            let (negative, start) = if bytes.get(0) == 45u8 then (true, 1) else (false, 0)
+            if start >= bytes.length then None
+            else
+                let mutable acc = 0i64
+                let mutable i = start
+                let mutable failed = false
+                while i < bytes.length do
+                    if !failed then
+                        let b = bytes.get(i).toInt32()
+                        if b < 48 || b > 57 then
+                            failed = true
+                        else
+                            let digit = (b - 48).toInt64()
+                            if acc > 922337203685477580i64 then
+                                failed = true
+                            else
+                                acc = acc * 10i64 + digit
+                    i = i + 1
+                if failed then None
+                else if negative then Some(0i64 - acc)
+                else Some(acc)

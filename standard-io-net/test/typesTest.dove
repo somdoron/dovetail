@@ -1,0 +1,40 @@
+package test
+
+import standard.io.net.NetError
+import standard.wasi.net.NetworkError
+
+test "NetError.AccessDenied Display" =
+    let error: NetError = NetError.AccessDenied
+    assert error.format() == "access denied"
+
+test "NetError.ConnectionRefused Display" =
+    let error: NetError = NetError.ConnectionRefused
+    assert error.format() == "connection refused"
+
+test "NetError.HostnameNotResolvable Display" =
+    let error: NetError = NetError.HostnameNotResolvable
+    assert error.format() == "hostname could not be resolved"
+
+test "NetError.InvalidAddress Display" =
+    let error: NetError = NetError.InvalidAddress
+    assert error.format() == "invalid address"
+
+test "NetError.Other Display includes the host message" =
+    let error: NetError = NetError.Other(Some("connection reset by peer"))
+    assert error.format() == "network error: connection reset by peer"
+
+test "NetError.Other Display without a host message" =
+    let error: NetError = NetError.Other(None)
+    assert error.format() == "unspecified network error"
+
+// The message itself is host-produced, so end-to-end coverage would need a
+// host that answers `other(some(...))` (wasmtime 45 only sends `other(none)`).
+// This covers the guest-side plumbing: a `NetworkError.Other` detail survives
+// the mapping into `NetError` and reaches Display intact.
+test "NetworkError.Other detail survives mapping to NetError" =
+    let mapped = NetError.from(NetworkError.Other(Some("host detail")))
+    assert mapped.format() == "network error: host detail"
+
+test "NetworkError.Other without detail maps to unspecified" =
+    let mapped = NetError.from(NetworkError.Other(None))
+    assert mapped.format() == "unspecified network error"

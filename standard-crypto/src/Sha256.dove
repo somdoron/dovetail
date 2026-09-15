@@ -1,0 +1,228 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.String
+
+/// SHA-256 (FIPS 180-4). Pure, synchronous, no allocation beyond the working
+/// buffers. Operates on 32-bit words with wrapping arithmetic, big-endian I/O.
+///
+/// `Sha256Core` is the low-level one-shot primitive; the public surface is the
+/// `Sha256` singleton (a `HashAlgorithm`) defined at the bottom of this file.
+module Sha256Core =
+    /// Rotate a 32-bit word right by `n` bits (1 <= n <= 31).
+    private function rotr(x: Uint32, n: Uint32): Uint32 =
+        (x >> n) | (x << (32u32 - n))
+
+    /// Round constants K[0..63] — first 32 bits of the fractional parts of the
+    /// cube roots of the first 64 primes.
+    private function roundConstants(): Array<Uint32> =
+        [|
+            0x428a2f98u32, 0x71374491u32, 0xb5c0fbcfu32, 0xe9b5dba5u32,
+            0x3956c25bu32, 0x59f111f1u32, 0x923f82a4u32, 0xab1c5ed5u32,
+            0xd807aa98u32, 0x12835b01u32, 0x243185beu32, 0x550c7dc3u32,
+            0x72be5d74u32, 0x80deb1feu32, 0x9bdc06a7u32, 0xc19bf174u32,
+            0xe49b69c1u32, 0xefbe4786u32, 0x0fc19dc6u32, 0x240ca1ccu32,
+            0x2de92c6fu32, 0x4a7484aau32, 0x5cb0a9dcu32, 0x76f988dau32,
+            0x983e5152u32, 0xa831c66du32, 0xb00327c8u32, 0xbf597fc7u32,
+            0xc6e00bf3u32, 0xd5a79147u32, 0x06ca6351u32, 0x14292967u32,
+            0x27b70a85u32, 0x2e1b2138u32, 0x4d2c6dfcu32, 0x53380d13u32,
+            0x650a7354u32, 0x766a0abbu32, 0x81c2c92eu32, 0x92722c85u32,
+            0xa2bfe8a1u32, 0xa81a664bu32, 0xc24b8b70u32, 0xc76c51a3u32,
+            0xd192e819u32, 0xd6990624u32, 0xf40e3585u32, 0x106aa070u32,
+            0x19a4c116u32, 0x1e376c08u32, 0x2748774cu32, 0x34b0bcb5u32,
+            0x391c0cb3u32, 0x4ed8aa4au32, 0x5b9cca4fu32, 0x682e6ff3u32,
+            0x748f82eeu32, 0x78a5636fu32, 0x84c87814u32, 0x8cc70208u32,
+            0x90befffau32, 0xa4506cebu32, 0xbef9a3f7u32, 0xc67178f2u32,
+        |]
+
+    /// One-shot hash: returns the 32-byte SHA-256 digest of `data`.
+    function digest(data: Array<Uint8>): Array<Uint8> =
+        let k = roundConstants()
+        let msgLen = data.length
+        // Padded length: room for the message, the 0x80 byte, and the 8-byte
+        // bit-length, rounded up to a multiple of 64.
+        let paddedLen = ((msgLen + 72) / 64) * 64
+        let buf = Array<Uint8>.fill(paddedLen, 0u8)
+        data.copy(buf, 0)
+        buf.set(msgLen, 0x80u8)
+        let bitLen = msgLen.toInt64().toUint64() * 8u64
+        let mutable bi = 0
+        while bi < 8 do
+            let shift = ((7 - bi) * 8).toUint64()
+            buf.set(paddedLen - 8 + bi, (bitLen >> shift).toUint8())
+            bi = bi + 1
+
+        let mutable h0 = 0x6a09e667u32
+        let mutable h1 = 0xbb67ae85u32
+        let mutable h2 = 0x3c6ef372u32
+        let mutable h3 = 0xa54ff53au32
+        let mutable h4 = 0x510e527fu32
+        let mutable h5 = 0x9b05688cu32
+        let mutable h6 = 0x1f83d9abu32
+        let mutable h7 = 0x5be0cd19u32
+
+        let numBlocks = paddedLen / 64
+        let mutable blk = 0
+        while blk < numBlocks do
+            let base = blk * 64
+            let w = Array<Uint32>.fill(64, 0u32)
+            let mutable t = 0
+            while t < 16 do
+                let j = base + t * 4
+                let b0 = buf.get(j).toUint32()
+                let b1 = buf.get(j + 1).toUint32()
+                let b2 = buf.get(j + 2).toUint32()
+                let b3 = buf.get(j + 3).toUint32()
+                w.set(t, (b0 << 24u32) | (b1 << 16u32) | (b2 << 8u32) | b3)
+                t = t + 1
+            t = 16
+            while t < 64 do
+                let x15 = w.get(t - 15)
+                let x2 = w.get(t - 2)
+                let s0 = rotr(x15, 7u32) ^ rotr(x15, 18u32) ^ (x15 >> 3u32)
+                let s1 = rotr(x2, 17u32) ^ rotr(x2, 19u32) ^ (x2 >> 10u32)
+                w.set(t, w.get(t - 16) + s0 + w.get(t - 7) + s1)
+                t = t + 1
+
+            let mutable a = h0
+            let mutable b = h1
+            let mutable c = h2
+            let mutable d = h3
+            let mutable e = h4
+            let mutable f = h5
+            let mutable g = h6
+            let mutable h = h7
+            t = 0
+            while t < 64 do
+                let bigS1 = rotr(e, 6u32) ^ rotr(e, 11u32) ^ rotr(e, 25u32)
+                let ch = (e & f) ^ ((~e) & g)
+                let temp1 = h + bigS1 + ch + k.get(t) + w.get(t)
+                let bigS0 = rotr(a, 2u32) ^ rotr(a, 13u32) ^ rotr(a, 22u32)
+                let maj = (a & b) ^ (a & c) ^ (b & c)
+                let temp2 = bigS0 + maj
+                h = g
+                g = f
+                f = e
+                e = d + temp1
+                d = c
+                c = b
+                b = a
+                a = temp1 + temp2
+                t = t + 1
+
+            h0 = h0 + a
+            h1 = h1 + b
+            h2 = h2 + c
+            h3 = h3 + d
+            h4 = h4 + e
+            h5 = h5 + f
+            h6 = h6 + g
+            h7 = h7 + h
+            blk = blk + 1
+
+        let digest = Array<Uint8>.fill(32, 0u8)
+        writeWord(digest, 0, h0)
+        writeWord(digest, 4, h1)
+        writeWord(digest, 8, h2)
+        writeWord(digest, 12, h3)
+        writeWord(digest, 16, h4)
+        writeWord(digest, 20, h5)
+        writeWord(digest, 24, h6)
+        writeWord(digest, 28, h7)
+        digest
+
+    /// Write a 32-bit word big-endian into `dst` at byte offset `off`.
+    private function writeWord(dst: Array<Uint8>, off: Int32, word: Uint32): Unit =
+        dst.set(off, (word >> 24u32).toUint8())
+        dst.set(off + 1, (word >> 16u32).toUint8())
+        dst.set(off + 2, (word >> 8u32).toUint8())
+        dst.set(off + 3, word.toUint8())
+
+/// Incremental SHA-256 hasher. This first implementation buffers the input and
+/// hashes on `finalize`; it satisfies the streaming `Hasher` contract and can be
+/// replaced by a true block-incremental version without changing the API.
+class Sha256Hasher(mutable buffer: Array<Uint8>) implements Hasher =
+    public function update(self, data: Array<Uint8>): Unit =
+        self.buffer = self.buffer.concat(data)
+
+    public function finalize(self): Array<Uint8> =
+        Sha256Core.digest(self.buffer)
+
+    public function reset(self): Unit =
+        self.buffer = Array<Uint8>.empty()
+
+/// SHA-256 algorithm singleton type.
+class Sha256Algorithm() implements HashAlgorithm =
+    public property digestSize(self): Int32 = 32
+    public property blockSize(self): Int32 = 64
+    public function hasher(self): Hasher = Sha256Hasher(Array<Uint8>.empty())
+    public function hash(self, data: Array<Uint8>): Array<Uint8> = Sha256Core.digest(data)
+
+/// The SHA-256 algorithm. Use `Sha256.hash(data)` for one-shot hashing or
+/// `Sha256.hasher()` for incremental hashing.
+public let Sha256: HashAlgorithm = Sha256Algorithm()
+
+test "SHA-256 empty string" =
+    let digest = Sha256.hash("".bytes())
+    let expected = [|
+        0xe3u8, 0xb0u8, 0xc4u8, 0x42u8, 0x98u8, 0xfcu8, 0x1cu8, 0x14u8,
+        0x9au8, 0xfbu8, 0xf4u8, 0xc8u8, 0x99u8, 0x6fu8, 0xb9u8, 0x24u8,
+        0x27u8, 0xaeu8, 0x41u8, 0xe4u8, 0x64u8, 0x9bu8, 0x93u8, 0x4cu8,
+        0xa4u8, 0x95u8, 0x99u8, 0x1bu8, 0x78u8, 0x52u8, 0xb8u8, 0x55u8,
+    |]
+    assert digest.length == 32
+    let mutable i = 0
+    let mutable ok = true
+    while i < 32 do
+        if digest.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "SHA-256 abc" =
+    let digest = Sha256.hash("abc".bytes())
+    let expected = [|
+        0xbau8, 0x78u8, 0x16u8, 0xbfu8, 0x8fu8, 0x01u8, 0xcfu8, 0xeau8,
+        0x41u8, 0x41u8, 0x40u8, 0xdeu8, 0x5du8, 0xaeu8, 0x22u8, 0x23u8,
+        0xb0u8, 0x03u8, 0x61u8, 0xa3u8, 0x96u8, 0x17u8, 0x7au8, 0x9cu8,
+        0xb4u8, 0x10u8, 0xffu8, 0x61u8, 0xf2u8, 0x00u8, 0x15u8, 0xadu8,
+    |]
+    assert digest.length == 32
+    let mutable i = 0
+    let mutable ok = true
+    while i < 32 do
+        if digest.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "SHA-256 incremental hasher matches one-shot" =
+    let h = Sha256.hasher()
+    h.update("ab".bytes())
+    h.update("c".bytes())
+    let d1 = h.finalize()
+    let d2 = Sha256.hash("abc".bytes())
+    assert ConstantTime.equal(d1, d2)
+    // reset and reuse
+    h.reset()
+    h.update("abc".bytes())
+    assert ConstantTime.equal(h.finalize(), d2)
+
+test "SHA-256 digestSize and blockSize" =
+    assert Sha256.digestSize == 32
+    assert Sha256.blockSize == 64
+
+test "SHA-256 two-block message" =
+    // 56 bytes forces padding into a second block.
+    let digest = Sha256.hash("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".bytes())
+    let expected = [|
+        0x24u8, 0x8du8, 0x6au8, 0x61u8, 0xd2u8, 0x06u8, 0x38u8, 0xb8u8,
+        0xe5u8, 0xc0u8, 0x26u8, 0x93u8, 0x0cu8, 0x3eu8, 0x60u8, 0x39u8,
+        0xa3u8, 0x3cu8, 0xe4u8, 0x59u8, 0x64u8, 0xffu8, 0x21u8, 0x67u8,
+        0xf6u8, 0xecu8, 0xedu8, 0xd4u8, 0x19u8, 0xdbu8, 0x06u8, 0xc1u8,
+    |]
+    assert digest.length == 32
+    let mutable i = 0
+    let mutable ok = true
+    while i < 32 do
+        if digest.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok

@@ -1,0 +1,63 @@
+package standard.prelude
+
+function tupleDefault<T>(): T where T: Default = T.default
+
+test "tuple accessors preserve nested pair and prefix shapes" =
+    let pair = ((1, true), 3)
+    assert pair.init == (1, true)
+    assert pair.last == 3
+    assert (pair.init, pair.last) == pair
+    assert (pair.init ~ pair.last) == (1, true, 3)
+    let triple = (1, true, "x")
+    assert triple.init == (1, true)
+    assert triple.last == "x"
+    assert (triple.init ~ triple.last) == triple
+
+test "inductive tuple equality and hashing beyond six elements" =
+    let values = (1, 2, 3, 4, 5, 6, 7, 8)
+    assert values == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert values != (1, 2, 3, 4, 5, 6, 7, 9)
+    assert (1, 2, 3).hash() == Hashable.combine(Hashable.combine(1i64, 2i64), 3i64)
+    assert values.hash() == Hashable.combine(values.init.hash(), 8i64)
+    assert ((1, 2), 3).hash() == Hashable.combine((1, 2).hash(), 3i64)
+
+test "tuple defaults beyond six elements" =
+    let values = tupleDefault<(Int32, Bool, Int32, Bool, Int32, Bool, Int32)>()
+    assert values == (0, false, 0, false, 0, false, 0)
+
+test "tuple ordering is lexicographic" =
+    assert (1, 9, 9).compare((2, 0, 0)) == Ordering.Less
+    assert (1, 2, 4).compare((1, 2, 3)) == Ordering.Greater
+    assert (1, 2, 3, 4, 5, 6, 7).compare((1, 2, 3, 4, 5, 6, 7)) == Ordering.Equal
+
+test "tuple display preserves flat and nested punctuation" =
+    assert (1, true).format() == "(1, true)"
+    assert (1, true, "x").format() == "(1, true, x)"
+    assert ((1, true), "x").format() == "((1, true), x)"
+    assert (1, true, ("x", 2)).format() == "(1, true, (x, 2))"
+    assert (1, 2, 3, 4, 5, 6, 7).format() == "(1, 2, 3, 4, 5, 6, 7)"
+
+newtype TupleComparisonProbe = Int32
+
+implement Equatable for TupleComparisonProbe =
+    function equals(self: TupleComparisonProbe, other: TupleComparisonProbe): Bool =
+        assert self.value != 999
+        self.value == other.value
+
+implement Comparable for TupleComparisonProbe =
+    function compare(self: TupleComparisonProbe, other: TupleComparisonProbe): Ordering =
+        assert self.value != 999
+        self.value.compare(other.value)
+
+test "tuple comparison stops before later elements" =
+    let left = (TupleComparisonProbe(1), TupleComparisonProbe(2), TupleComparisonProbe(999))
+    let right = (TupleComparisonProbe(2), TupleComparisonProbe(2), TupleComparisonProbe(999))
+    assert left != right
+    assert left.compare(right) == Ordering.Less
+
+
+function formatExtendedTuple<T, U>(value: T ~ U): String where T: Tuple, T: Display, U: Display = value.format()
+
+test "tuple display forwards ordinary element Display bounds" =
+    assert formatExtendedTuple((1, true, "x")) == "(1, true, x)"
+    assert formatExtendedTuple((1, true, ("x", 2))) == "(1, true, (x, 2))"

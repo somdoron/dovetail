@@ -1,0 +1,87 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.String
+
+import standard.crypto.X509Certificate
+import standard.crypto.SecretKey
+import standard.time.Instant
+
+/// Connection configuration, negotiated results, and the event type surfaced by
+/// `TlsClient`/`TlsServer` (RFC 8446). The sans-I/O engine reads no clock and no
+/// entropy source: `currentTime` and `randomSeed` are supplied by the caller so
+/// the protocol logic stays pure and deterministically testable.
+
+public record TlsClientConfig =
+    serverName: String
+    cipherSuites: List<CipherSuite>
+    keyExchangeGroups: List<KeyExchangeGroup>
+    signatureAlgorithms: List<SignatureScheme>
+    trustAnchors: List<X509Certificate>
+    alpnProtocols: List<String>
+    currentTime: Instant
+    /// Entropy for the ClientHello random, session id, and ephemeral KX secret.
+    randomSeed: Array<Uint8>
+    /// A resumption ticket to offer (PSK), or `None` for a full handshake.
+    resumptionTicket: Option<StoredTicket>
+
+public record TlsServerConfig =
+    /// The server's certificate chain, leaf first. The DER sent in the
+    /// Certificate message is taken from each `X509Certificate.der`.
+    certificateChain: List<X509Certificate>
+    privateKey: SecretKey
+    signatureScheme: SignatureScheme
+    cipherSuites: List<CipherSuite>
+    keyExchangeGroups: List<KeyExchangeGroup>
+    alpnProtocols: List<String>
+    currentTime: Instant
+    /// Entropy for the ServerHello random and ephemeral KX secret.
+    randomSeed: Array<Uint8>
+    /// Store of issued resumption tickets, shared across connections so a later
+    /// connection can resume against a ticket this server handed out.
+    ticketStore: TicketStore
+
+public record NegotiatedParams =
+    cipherSuite: CipherSuite
+    keyExchangeGroup: KeyExchangeGroup
+    signatureScheme: SignatureScheme
+    peerCertificates: List<X509Certificate>
+    alpnProtocol: Option<String>
+    serverName: String
+
+/// An event produced by the protocol engine, drained via `nextEvent`.
+///
+/// `ApplicationData` carries the decrypted record's plaintext WITHOUT a copy:
+/// the array is the whole TLSInnerPlaintext (content followed by the record's
+/// type byte and any padding) and the `Int32` is the content length. Consumers
+/// must honor the length — only the first that-many bytes are application data.
+public enum TlsEvent =
+    HandshakeComplete(NegotiatedParams)
+    ApplicationData(Array<Uint8>, Int32)
+    ConnectionClosed
+    Error(TlsError)
+
+/// Slack-slot placeholder for `MutableQueue<TlsEvent>` storage. Never observed
+/// by consumers: the queue only hands back values that were enqueued.
+implement Default for TlsEvent =
+    public property default: TlsEvent = TlsEvent.ConnectionClosed
+
+/// The client handshake state machine states (RFC 8446 §4.1.1, client view).
+enum ClientState =
+    Start
+    WaitServerHello
+    WaitEncryptedExtensions
+    WaitCertificateOrFinished
+    WaitCertificateVerify
+    WaitFinished
+    Connected
+    Closed
+
+/// The server handshake state machine states (RFC 8446 §4.1.1, server view).
+enum ServerState =
+    ServerStart
+    WaitClientHello
+    WaitClientFinished
+    ServerConnected
+    ServerClosed

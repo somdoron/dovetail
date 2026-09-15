@@ -1,0 +1,31 @@
+package standard.prelude
+
+/// A type that provides scoped acquire / use / release semantics for a resource
+/// of type `T`, whose acquire/release can fail with error type `E`.
+///
+/// The generic associated type `Wrapped<U, E2>` lets the same trait serve both
+/// async and sync resources:
+///
+///   - For async resources (e.g. an open file backed by `Async.bracket`):
+///     `Wrapped<U, E2> = Async<U, E2>`.
+///   - For sync resources (e.g. a zeroized secret, a scoped lock):
+///     `Wrapped<U, E2> = U` — the continuation's result is returned directly.
+///     Sync impls use `E = Never` so they never need to invoke `errorF`.
+///
+/// `errorF` is how the `use` expression performs implicit error conversion
+/// when the resource's `E` differs from the enclosing context's expected error
+/// type `E2`. The compiler synthesizes `errorF` at every `use expr` site:
+///
+///   - `E == E2` → identity closure `(e) => e`.
+///   - `From<E> for E2` exists → `(e) => E2.from(e)`.
+///   - Otherwise → compile error at the use site.
+///
+/// The `use` prefix expression desugars into a call to `Usable.use`, capturing
+/// the rest of the current block as the continuation `f`.
+public trait Usable<T, E> =
+    type Wrapped<U, E2>
+    function use<U, E2>(
+        self: Self,
+        f: (T) => Wrapped<U, E2>,
+        errorF: (E) => E2
+    ): Wrapped<U, E2>

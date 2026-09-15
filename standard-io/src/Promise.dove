@@ -1,0 +1,78 @@
+module standard.io.Promise<T, E>
+
+// A promise's whole purpose is ORDERING, so every operation on it has to happen
+// where the program RUNS and not where it is DESCRIBED — `let done = p.complete(v)`
+// and `body.fork()` both only build a description. Hence the `thunk` below: the
+// state change is a step, and the wake is a step after it.
+//
+// And because they are separate steps, settling runs UNINTERRUPTIBLE. An
+// interrupt landing between the claim and the wake left the promise
+// `Completed` with every parked awaiter stranded — and later completers,
+// seeing the claim taken, had nothing to announce either, so nobody ever woke
+// them. The invariant: a promise that is `Completed` has issued (or will
+// unavoidably issue) its wake. The mask is what the interpreter already uses
+// for exactly this class of must-complete pair (a bracket's release); an
+// interrupt arriving mid-settle is deferred the few steps to the far side of
+// the wake, not lost.
+
+/// Complete the promise with `value`. Reports `true` if this call is the one
+/// that completed it, `false` if it was already settled.
+public function complete(self, value: T): Async<Bool, Never> =
+    let outcome: Result<T, Cause<E>> = Ok(value)
+    let claimed: Async<Bool, Never> = Async.thunk(() => self.claim(outcome))
+    claimed.andThen<Bool>((won: Bool) => self.wakeIfClaimed(won)).uninterruptible()
+
+/// Fail the promise with `error`, so every awaiter fails with it.
+public function failWith(self, error: E): Async<Bool, Never> =
+    self.failCause(Cause.Failed(error, emptyTrace()))
+
+/// Fail the promise with a full `Cause` — a defect or an interruption as well as
+/// a typed error.
+public function failCause(self, cause: Cause<E>): Async<Bool, Never> =
+    let outcome: Result<T, Cause<E>> = Error(cause)
+    let claimed: Async<Bool, Never> = Async.thunk(() => self.claim(outcome))
+    claimed.andThen<Bool>((won: Bool) => self.wakeIfClaimed(won)).uninterruptible()
+
+/// Move the promise from `Pending` to `Completed`, reporting whether this call
+/// is the one that moved it. Pure state and nothing else — the wake is a
+/// separate step so that this one can be a `thunk`.
+function claim(self, outcome: Result<T, Cause<E>>): Bool =
+    match self.state with
+    case PromiseState.Completed(_) => false
+    case PromiseState.Pending =>
+        self.state = PromiseState.Completed(outcome)
+        true
+
+/// Wake the awaiters, but only for the call that actually settled the promise.
+/// A loser has nothing to announce.
+function wakeIfClaimed(self, claimed: Bool): Async<Bool, Never> =
+    if claimed then
+        Async.wake(self.signal).map((_: Unit) => true)
+    else
+        Async.succeed(false)
+
+/// Wait for the promise and yield what it settled with: the value, or the cause
+/// it failed with.
+///
+/// The wait and the READ are separate, and that split is what lets a FAILED
+/// promise be awaited at all: `Await`'s check answers "has it settled", which is
+/// a question about the state and not about the value. A check that recognised
+/// only `Completed(Ok(_))` woke an awaiter and told it to park again.
+public function awaitPromise(self): Async<T, E> =
+    let check: Async<Option<Any>, Any> = Thunk<Option<Any>>(() =>
+        match self.state with
+        case PromiseState.Completed(_) =>
+            let settled: Any = true
+            Some(settled)
+        case PromiseState.Pending => None
+    )
+    let arrived: Async<Any, E> = Await<Any, E>(self.signal, check)
+    arrived.andThen<T>((_: Any) => self.settled())
+
+/// What the promise settled with. Only ever reached once the check above has
+/// said it is settled.
+function settled(self): Async<T, E> =
+    match self.state with
+    case PromiseState.Completed(Ok(value)) => Async.succeed(value)
+    case PromiseState.Completed(Error(cause)) => Async.fromCause(cause)
+    case PromiseState.Pending => panic "promise reported settled and then had no value"

@@ -1,0 +1,45 @@
+package standard.tls
+
+import standard.prelude.Array
+
+/// Small shared helpers for the TLS engine.
+
+/// A copy of `arr[start..end)` (clamped to the array bounds).
+function subArray(arr: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
+    let lo = if start < 0 then 0 else start
+    let hi = if end > arr.length then arr.length else end
+    let n = if hi > lo then hi - lo else 0
+    let result = Array<Uint8>.fill(n, 0u8)
+    arr.copy(lo, result, 0, n)
+    result
+
+/// The most KeyUpdate messages a peer may send between two deliveries of
+/// application data. An inbound KeyUpdate forces an HKDF key rotation, and a
+/// `request_update=1` also makes us send our own KeyUpdate (rotating our write
+/// key) — so an attacker who never sends application data can drive an
+/// amplification / CPU-burn loop (the TLS 1.3 KeyUpdate flood). We cap the
+/// KeyUpdates received "without intervening progress": the per-connection
+/// counter resets each time application data is delivered, so a legitimate
+/// peer that occasionally rekeys between real traffic is never affected, while
+/// a flood of back-to-back KeyUpdates is aborted (RFC 8446 §4.6.3).
+let maxKeyUpdatesWithoutProgress: Int32 = 8
+
+/// Whether a running count of KeyUpdates received since the last application-data
+/// delivery is still within the allowed bound (see `maxKeyUpdatesWithoutProgress`).
+function keyUpdateWithinLimit(count: Int32): Bool =
+    count <= maxKeyUpdatesWithoutProgress
+
+test "tls keyUpdateWithinLimit caps back-to-back KeyUpdates (C4)" =
+    assert keyUpdateWithinLimit(1)
+    assert keyUpdateWithinLimit(maxKeyUpdatesWithoutProgress)
+    assert keyUpdateWithinLimit(maxKeyUpdatesWithoutProgress + 1) == false
+
+test "tls subArray copies a slice" =
+    let a = [|0u8, 1u8, 2u8, 3u8, 4u8|]
+    let s = subArray(a, 1, 4)
+    assert s.length == 3
+    assert s.get(0) == 1u8
+    assert s.get(2) == 3u8
+    // clamping
+    assert subArray(a, 3, 100).length == 2
+    assert subArray(a, 2, 2).length == 0

@@ -1,0 +1,45 @@
+package standard.io.http
+
+import standard.http.HttpError
+import standard.io.net.NetError
+import standard.io.crypto.TlsIoError
+
+/// Errors surfaced by the HTTP server.
+/// Sub-categorized by what failed and what status code the wire response
+/// (if any) should carry. `Router.dispatch` maps a handler's failure to
+/// one of these; `HttpServer` then turns it into a response and emits.
+public enum ServerError =
+    /// Request was decodable as bytes but the route's typed decoder
+    /// rejected it (malformed JSON, invalid UTF-8, missing required
+    /// fields). Wire response: 400 Bad Request.
+    BadRequest(String)
+    /// No registered route matched method + path. Wire response: 404
+    /// Not Found with empty body in v1 (no custom 404 handler).
+    RouteNotFound
+    /// Handler panicked (or returned an unrecoverable failure). Wire
+    /// response: 500 Internal Server Error with empty body.
+    HandlerPanicked(String)
+    /// `Writers.writeResponse` rejected the response (e.g. invalid status
+    /// line, illegal header chars). The connection is half-broken at this
+    /// point so nothing is sent — caller drops the socket.
+    EmitFailed(HttpError)
+    /// TCP / DNS / socket-level failure on accept, read, or write.
+    NetworkError(NetError)
+    /// TLS failure on an HTTPS connection (handshake, record-layer, or a clean
+    /// close mid-exchange). Wire response: 500 (the socket is usually unusable).
+    TlsError(TlsIoError)
+
+implement Display for ServerError =
+    public function format(self: ServerError): String =
+        match self with
+            case ServerError.BadRequest(msg) => "bad request: " ++ msg
+            case ServerError.RouteNotFound => "no route matched"
+            case ServerError.HandlerPanicked(msg) => "handler panicked: " ++ msg
+            case ServerError.EmitFailed(e) => "response emit failed: " ++ e.message
+            case ServerError.NetworkError(e) => "network error: " ++ e.format()
+            case ServerError.TlsError(e) => "TLS error: " ++ e.format()
+
+/// Auto-conversion at `use` sites: TCP / accept errors become NetworkError.
+implement From<NetError> for ServerError =
+    public function from(value: NetError): ServerError =
+        ServerError.NetworkError(value)

@@ -1,0 +1,20 @@
+package standard.io.log
+
+import standard.io.Async
+
+/// A backend that consumes `LogRecord` values. Implementors choose how (and
+/// where) records are rendered and written: stderr, a file, an in-memory
+/// buffer, etc.
+///
+/// `emit` returns `Async<Unit, Never>` — sink implementations must absorb
+/// their own I/O errors (logging is best-effort and must not pollute the
+/// caller's error channel). The built-in sinks fall back to writing a one-line
+/// diagnostic to stderr when their underlying stream fails.
+///
+/// Sinks that buffer (Console, File) are constructed as `Resource<Sink, E>`
+/// values; the Resource's release runs a final flush before closing. Callers
+/// `use` the resource at top-level main, so flushing on shutdown (success or
+/// panic) is automatic and the trait itself has no `flush` method.
+public interface LogSink =
+    /// Render `event` and write it. Called once per emitted log event.
+    function emit(self: Self, event: LogRecord): Async<Unit, Never>

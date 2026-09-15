@@ -1,0 +1,273 @@
+package standard.io.http
+
+import standard.io.Async
+import standard.io.Queue
+import standard.io.Cause
+import standard.io.Random
+import standard.io.net.Tcp
+import standard.io.net.TcpListener
+import standard.io.net.TcpStream
+import standard.io.net.NetError
+import standard.time.Instant
+import standard.time.Duration
+import standard.crypto.X509Certificate
+import standard.io.crypto.ServerKey
+import standard.io.crypto.TlsServerStream
+import standard.tls.TlsServerConfig
+import standard.tls.CipherSuite
+import standard.tls.KeyExchangeGroup
+import standard.tls.TicketStore
+import standard.tls.alpnHttp1
+import standard.io.TimeExtension
+
+/// Per-connection tunables. `default()` is what `HttpServer.serve` uses
+/// when the caller doesn't supply one.
+public record ServerConfig =
+    /// Reject incoming bodies larger than this. Default 1 MiB.
+    maxBodyBytes: Int32
+    /// Cap on simultaneously-in-flight connections. New accepts block
+    /// once this many handler fibers are running. Default 128.
+    maxConcurrency: Int32
+    /// Wall-clock bound on a single connection's whole exchange — the TLS
+    /// handshake (HTTPS), the request read, the handler, and the response
+    /// write. A connection that overruns it is INTERRUPTED, which releases its
+    /// concurrency permit and tears its fiber down cleanly. Without a bound a
+    /// client that completes the TCP (or TLS) handshake and then sends nothing
+    /// parks the connection's first `read` forever while holding a permit;
+    /// `maxConcurrency` such silent connections stop the server accepting.
+    /// Newly acute on the TLS path, where a handshake can stall by design.
+    /// Default 30s.
+    connectionTimeout: Duration
+
+module ServerConfig =
+    public function default(): ServerConfig =
+        ServerConfig {
+            maxBodyBytes = 1048576i32
+            maxConcurrency = 128i32
+            connectionTimeout = Duration.ofSeconds(30i64)
+        }
+
+/// HTTP/1.1 server. Each accepted TCP connection runs in its own
+/// `fork`-ed fiber so a slow handler doesn't block the accept loop and
+/// so in-flight handlers are interrupted with the server when its
+/// surrounding async is cancelled. A token-style semaphore — a
+/// pre-filled `Queue<Bool>` (`Bool` because `Unit` doesn't implement
+/// `Default`, which `Queue` requires) — caps concurrency: the accept
+/// loop `take`s a permit before forking, each per-connection fiber
+/// `offer`s one back when it finishes.
+///
+/// Always emits `Connection: close` in v1, so per-connection and
+/// per-request are 1:1.
+///
+/// Entry points:
+///   - `serve(address, route)` binds the listener internally — primary
+///     production API; the listener's lifetime matches the server fiber's.
+///   - `serveOn(listener, route)` takes an already-bound listener —
+///     useful for tests that need to peek at the OS-assigned port (e.g.
+///     `127.0.0.1:0`) before the server fiber starts.
+///   - `serveTls` / `serveOnTls` are the HTTPS counterparts: each accepted
+///     connection is wrapped with `TlsServerStream.accept` (TLS termination)
+///     before the HTTP exchange runs. Build the `TlsServerConfig` with the
+///     `tlsServerConfig` helper or by hand.
+module HttpServer =
+    /// Bind to `address` and serve. Address format matches `Tcp.bind`
+    /// (e.g. `"0.0.0.0:8080"`, `"127.0.0.1:0"` for an OS-picked port).
+    public async function serve(address: String, route: Route): Async<Unit, ServerError> =
+        await HttpServer.serveWithConfig(address, route, ServerConfig.default())
+
+    public async function serveWithConfig(
+        address: String,
+        route: Route,
+        config: ServerConfig
+    ): Async<Unit, ServerError> =
+        let listener: TcpListener = use Tcp.bind(address)
+        await HttpServer.serveOnWithConfig(listener, route, config)
+
+    /// Serve on an already-bound listener. Caller owns the listener
+    /// resource (typical pattern is `use Tcp.bind(...)` in the
+    /// surrounding scope so the listener stays alive throughout `serveOn`).
+    public async function serveOn(listener: TcpListener, route: Route): Async<Unit, ServerError> =
+        await HttpServer.serveOnWithConfig(listener, route, ServerConfig.default())
+
+    public async function serveOnWithConfig(
+        listener: TcpListener,
+        route: Route,
+        config: ServerConfig
+    ): Async<Unit, ServerError> =
+        let handler = route.orNotFound()
+        await HttpServer.acceptLoop(listener, config, (stream: TcpStream) =>
+            handleConnection(stream, handler, config)
+        )
+
+    /// The accept loop, shared by HTTP and HTTPS. Everything except what to do
+    /// with an accepted socket is identical between the two, so `connectionBody`
+    /// is the only difference: plain HTTP runs the exchange straight over the
+    /// socket, HTTPS wraps it in a TLS handshake first.
+    ///
+    /// `maxConcurrency` is enforced by a permit queue seeded with that many
+    /// tokens: each iteration takes one before accepting and the connection
+    /// fiber returns it when the connection is done, however it ends.
+    async function acceptLoop(
+        listener: TcpListener,
+        config: ServerConfig,
+        connectionBody: (TcpStream) => Async<Unit, ServerError>
+    ): Async<Unit, ServerError> =
+        let permits: Queue<Bool> = await Queue<Bool>.makeUnbounded()
+        let mutable i = 0
+        while i < config.maxConcurrency do
+            await permits.offer(true)
+            i = i + 1
+        // Bound every connection's whole exchange by `connectionTimeout`. A
+        // connection that overruns is interrupted; the fiber then completes
+        // (its permit is returned by `acceptAndSpawn`'s fold) and the accept
+        // loop keeps running. This is what stops a silent client — one that
+        // finishes the handshake and never sends a request — from holding a
+        // permit forever.
+        let bounded: (TcpStream) => Async<Unit, ServerError> = (stream: TcpStream) =>
+            HttpServer.boundConnection(connectionBody, stream, config.connectionTimeout)
+        let mutable keepRunning = true
+        while keepRunning do
+            await permits.take()
+            keepRunning = await HttpServer.acceptAndSpawn(listener, permits, bounded)
+        ()
+
+    /// Run one connection's body under a completion-based timeout. `timeout`
+    /// races the body against a timer and INTERRUPTS the loser, so a body that
+    /// overruns is torn down (its finalizers — the socket / TLS close — run)
+    /// before this returns. A timed-out connection reports success: it was
+    /// dropped deliberately, not on a transport error, and the accept loop
+    /// treats it the same as a connection that finished — the permit comes back
+    /// either way.
+    async function boundConnection(
+        body: (TcpStream) => Async<Unit, ServerError>,
+        stream: TcpStream,
+        timeout: Duration
+    ): Async<Unit, ServerError> =
+        let outcome = await body(stream).timeout(timeout)
+        match outcome with
+            case Some(_) => ()
+            case None => ()
+
+    /// Accept **one** connection and fork its handler; report whether the accept
+    /// loop should keep going. `forkAndUse` acquires the accepted `TcpStream` in
+    /// *this* fiber — so `acceptStart` runs serially in the accept loop, never
+    /// overlapping (a p3 accept-stream permits only one outstanding accept) —
+    /// then runs the per-connection body in its own fiber which owns closing the
+    /// connection. The forked `Fiber` handle is discarded via `.asUnit()`.
+    ///
+    /// `forkAndUse` forks structurally (not a daemon), which is what makes
+    /// shutdown behave: the handlers belong to the serve fiber's scope, so a
+    /// serve loop that ends on its own waits for the in-flight requests to
+    /// finish, while an interrupted server cascades the interrupt to them
+    /// immediately.
+    ///
+    /// A failed accept must not take the whole server down — one refused or
+    /// reset connection is not a reason to stop serving the others — so it is
+    /// folded exactly like a failed handler: the permit this iteration took is
+    /// returned (no per-connection fiber exists to return it) and the loop goes
+    /// round again. The single exception is a closed listener, which can only
+    /// fail forever; returning `false` there stops the loop instead of spinning.
+    /// Bind-time failures stay fatal: they happen before this loop is entered.
+    async function acceptAndSpawn(
+        listener: TcpListener,
+        permits: Queue<Bool>,
+        connectionBody: (TcpStream) => Async<Unit, ServerError>
+    ): Async<Bool, ServerError> =
+        // `foldCause`, not `fold`: a handler that panics (or is interrupted)
+        // takes neither typed-failure arm, and the permit it holds would never
+        // come back. After `maxConcurrency` panicking handlers `permits.take()`
+        // blocks forever and the server stops accepting — a deadlock, not a
+        // degraded response.
+        let body: (TcpStream) => Async<Unit, Never> = (stream: TcpStream) =>
+            connectionBody(stream).foldCause<Unit, Never>(
+                (_: Cause<ServerError>) => permits.offer(true).asUnit(),
+                (_: Unit) => permits.offer(true).asUnit()
+            )
+        let attempt: Async<Unit, NetError> = listener.accept().forkAndUse<Unit, NetError>(body).asUnit()
+        await attempt.fold<Bool, ServerError>(
+            (e: NetError) => recoverAccept(e, permits),
+            (_: Unit) => Async.succeed(true)
+        )
+
+    // --- HTTPS (TLS termination) ------------------------------------------
+    // The plain-TCP entry points with one substitution: the connection body
+    // handed to `acceptLoop` wraps the accepted socket with
+    // `TlsServerStream.accept` before the HTTP exchange runs over the encrypted
+    // stream pair. The loop, the concurrency semaphore, and the accept-failure
+    // recovery are literally the same code.
+
+    /// Bind to `address` and serve HTTPS, terminating TLS with `tls`. Build the
+    /// config with `tlsServerConfig` (cert chain + key) or by hand.
+    public async function serveTls(address: String, route: Route, tls: TlsServerConfig): Async<Unit, ServerError> =
+        await HttpServer.serveTlsWithConfig(address, route, tls, ServerConfig.default())
+
+    public async function serveTlsWithConfig(
+        address: String,
+        route: Route,
+        tls: TlsServerConfig,
+        config: ServerConfig
+    ): Async<Unit, ServerError> =
+        let listener: TcpListener = use Tcp.bind(address)
+        await HttpServer.serveOnTls(listener, route, tls, config)
+
+    /// Serve HTTPS on an already-bound listener (caller owns the listener).
+    public async function serveOnTls(
+        listener: TcpListener,
+        route: Route,
+        tls: TlsServerConfig,
+        config: ServerConfig
+    ): Async<Unit, ServerError> =
+        let handler = route.orNotFound()
+        await HttpServer.acceptLoop(listener, config, (stream: TcpStream) =>
+            HttpServer.runTlsConnection(stream, handler, tls, config)
+        )
+
+    /// The HTTPS connection body: run the TLS handshake on the accepted socket,
+    /// then drive the HTTP exchange over the encrypted stream pair. Resource
+    /// release is LIFO — TLS close_notify first (which does not close the
+    /// socket), then the socket itself (the `forkAndUse` finalizer).
+    async function runTlsConnection(
+        stream: TcpStream,
+        handler: (Context) => Async<Response, ServerError>,
+        tls: TlsServerConfig,
+        config: ServerConfig
+    ): Async<Unit, ServerError> =
+        let tlsStream: TlsServerStream = use TlsServerStream.accept(tls, stream.input, stream.output)
+        await serveExchange(tlsStream.input, tlsStream.output, tlsServerMapErr, handler, config)
+
+    /// Build a `TlsServerConfig` from a certificate chain and a loaded signing
+    /// `ServerKey` (see `PrivateKeyFile.loadPrivateKeyPem`). Advertises `http/1.1`,
+    /// the standard cipher suites / key-exchange groups, and draws fresh entropy
+    /// plus the current time. Callers wanting full control can build the config
+    /// by hand instead.
+    public async function tlsServerConfig(
+        certificateChain: List<X509Certificate>,
+        key: ServerKey
+    ): Async<TlsServerConfig, Never> =
+        let now = await Instant.now
+        let seed = await Random.bytes(160i32)
+        TlsServerConfig {
+            certificateChain = certificateChain
+            privateKey = key.key
+            signatureScheme = key.scheme
+            cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+            keyExchangeGroups = [KeyExchangeGroup.X25519, KeyExchangeGroup.SecP256R1]
+            alpnProtocols = [alpnHttp1]
+            currentTime = now
+            randomSeed = seed
+            ticketStore = TicketStore.make()
+        }
+
+/// Fold a failed accept back into the loop: hand the permit back (this
+/// iteration took one and no connection fiber exists to return it) and say
+/// whether the loop can usefully continue. Only a closed listener is terminal;
+/// everything else is a per-connection problem.
+///
+/// The error itself is dropped rather than logged — `standard-io-http` has no
+/// logger of its own, and a server that writes to stderr per failed accept is
+/// its own denial of service.
+async function recoverAccept(error: NetError, permits: Queue<Bool>): Async<Bool, ServerError> =
+    await permits.offer(true)
+    match error with
+        case NetError.ListenerClosed => false
+        case _ => true

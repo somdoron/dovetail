@@ -1,0 +1,26 @@
+# SQLite shim component: sqlite3.c (upstream WASI build) statically linked with
+# a thin Rust layer exporting the dovetail:sqlite-raw/raw WIT interface.
+# Build with ./build.sh (requires wasi-sdk); the built sqlite-shim.wasm is
+# checked in at standard-sqlite/artifacts/sqlite.wasm for library consumers.
+[package]
+name = "sqlite-shim"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone: not part of the compiler workspace.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+
+[build-dependencies]
+cc = "1"
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

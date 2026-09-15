@@ -1,0 +1,139 @@
+package standard.collection
+
+import standard.prelude.Hashable
+import standard.prelude.Equatable
+import standard.prelude.Option
+
+/// An immutable set of unique values, backed by a Map.
+/// All mutating operations return a new Set, leaving the original unchanged.
+public record Set<T> where T: Hashable, T: Equatable =
+    inner: Map<T, Bool>
+
+module Set<T> =
+    /// Creates an empty set.
+    public function empty(): Set<T> =
+        let emptyMap: Map<T, Bool> = Map.empty()
+        Set { inner = emptyMap }
+
+    /// Returns a new set with the given value added. Duplicates are ignored.
+    public function add(self, value: T): Set<T> =
+        Set { inner = self.inner.put(value, true) }
+
+    /// Returns true if the set contains the given value.
+    public function contains(self, value: T): Bool =
+        self.inner.contains(value)
+
+    /// Returns a new set with the given value removed. Returns self if not present.
+    public function remove(self, value: T): Set<T> =
+        Set { inner = self.inner.remove(value) }
+
+    /// The number of elements in the set.
+    public property length(self): Int32 = self.inner.length
+
+    /// True if the set contains no elements.
+    public property isEmpty(self): Bool = self.inner.isEmpty
+
+    /// Returns a new set containing all elements from both sets.
+    public function union(self, other: Set<T>): Set<T> =
+        let result = other.inner.foldEntries(self.inner, (acc: Map<T, Bool>, k: T, v: Bool) =>
+            if !acc.contains(k) then acc.put(k, true) else acc
+        )
+        Set { inner = result }
+
+    /// Returns a new set containing only elements present in both sets.
+    public function intersection(self, other: Set<T>): Set<T> =
+        let empty: Map<T, Bool> = Map.empty()
+        let result = self.inner.foldEntries(empty, (acc: Map<T, Bool>, k: T, v: Bool) =>
+            if other.inner.contains(k) then acc.put(k, true) else acc
+        )
+        Set { inner = result }
+
+class SetIterator<T>(inner: Iterator<(T, Bool)>) implements Iterator<T> =
+    public function next(self): Option<T> =
+        match self.inner.next() with
+            case Some(entry) => Some(entry._0)
+            case None => None
+
+implement <T> Iterable<T> for Set<T> where T: Hashable, T: Equatable =
+    public function iterator(self): Iterator<T> =
+        SetIterator(self.inner.iterator())
+
+test "Set empty" =
+    let s: Set<String> = Set.empty()
+    assert s.isEmpty == true
+    assert s.length == 0
+
+test "Set add and contains" =
+    let s: Set<String> = Set.empty()
+    let s2 = s.add("a").add("b")
+    assert s2.contains("a") == true
+    assert s2.contains("b") == true
+    assert s2.contains("c") == false
+    assert s2.length == 2
+
+test "Set add duplicate" =
+    let s: Set<String> = Set.empty()
+    let s2 = s.add("a").add("a")
+    assert s2.length == 1
+    assert s2.contains("a") == true
+
+test "Set remove" =
+    let s: Set<String> = Set.empty()
+    let s2 = s.add("a").add("b")
+    let s3 = s2.remove("a")
+    assert s3.contains("a") == false
+    assert s3.contains("b") == true
+    assert s3.length == 1
+
+test "Set remove missing" =
+    let s: Set<String> = Set.empty()
+    let s2 = s.add("a")
+    let s3 = s2.remove("z")
+    assert s3.length == 1
+
+test "Set union" =
+    let s1: Set<String> = Set.empty()
+    let s1b = s1.add("a").add("b")
+    let s2: Set<String> = Set.empty()
+    let s2b = s2.add("b").add("c")
+    let u = s1b.union(s2b)
+    assert u.contains("a") == true
+    assert u.contains("b") == true
+    assert u.contains("c") == true
+    assert u.length == 3
+
+test "Set intersection" =
+    let s1: Set<String> = Set.empty()
+    let s1b = s1.add("a").add("b").add("c")
+    let s2: Set<String> = Set.empty()
+    let s2b = s2.add("b").add("c").add("d")
+    let i = s1b.intersection(s2b)
+    assert i.contains("b") == true
+    assert i.contains("c") == true
+    assert i.contains("a") == false
+    assert i.contains("d") == false
+    assert i.length == 2
+
+test "Set immutability" =
+    let s1: Set<String> = Set.empty()
+    let s2 = s1.add("a")
+    let s3 = s2.add("b")
+    assert s2.length == 1
+    assert s3.length == 2
+
+test "Set iterator" =
+    let s: Set<Int32> = Set.empty().add(1).add(2).add(3)
+    let mutable sum = 0
+    let mutable count = 0
+    for x in s do
+        sum = sum + x
+        count = count + 1
+    assert count == 3
+    assert sum == 6
+
+test "Set iterator empty" =
+    let s: Set<Int32> = Set.empty()
+    let mutable count = 0
+    for x in s do
+        count = count + 1
+    assert count == 0

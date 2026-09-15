@@ -1,0 +1,617 @@
+package standard.io
+
+import standard.wasi.ComponentStreamRead
+import standard.wasi.OpenFlag
+import standard.wasi.noteCopyProgress
+import standard.wasi.CopyResult
+import standard.wasi.IoError
+import standard.text.Charset
+
+
+
+/// The buffer one p3 copy asks for: 64 KiB.
+///
+/// Package-internal. It is the size this library allocates for one copy, not a
+/// number a caller should have to know: `read` takes whatever length the caller
+/// has a reason for and answers with at most that much. Callers elsewhere that
+/// want "a chunk" name their own buffer size, and asking for more or less than
+/// this costs nothing but a shorter answer.
+///
+/// A read's capacity is an ALLOCATION rather than a ceiling on the answer: the
+/// runtime pinned-allocs exactly this many bytes of linear memory before posting
+/// the copy (`emit_p3_stream_read_start`). So `read(Int64.max)` would ask for
+/// 2 GiB of linear memory; large requests are served one chunk at a time
+/// instead, and a caller that wants the whole stream loops — which is `readAll`.
+let readChunkBytes: Int64 = 65536i64
+
+/// Async, Resource-aware input stream over a byte transport. `WasiInputStream`
+/// drives a p3 `stream<u8>`; other subclasses (a TLS stream, say) decrypt bytes
+/// pulled from an underlying stream. The fs, socket, stdin and TLS libraries
+/// hand this out.
+///
+/// THE CONTRACT. `AsyncOutputStream` states the same rules in the same order,
+/// with the differences called out where they are real.
+///
+/// VOCABULARY. A stream is DEAD when it has recorded a transport failure,
+/// FINISHED when it ended without one, and LIVE otherwise. An OPERATION is any
+/// public method here; a COPY is one host transfer.
+///
+/// (1) EMPTY MEANS END OF STREAM, and nothing else means it. Every caller stops
+///     on empty, so a copy that transferred nothing without ending the stream is
+///     retried rather than reported — boundedly, see `readOpen`.
+///
+/// (2) NO OPERATION ANSWERS A DEAD STREAM WITH ANYTHING A CALLER READS AS CLEAN
+///     SUCCESS, and an empty array — which (1) defines as the end of the stream
+///     — is exactly that. A dead stream answers with the failure it recorded.
+///
+///     WHEN the question is asked differs by operation. One with nothing to
+///     fetch (a zero-length read) has only the health question, so it asks it and
+///     answers from it. One that can still reach the transport goes there FIRST
+///     and reports the death only once nothing is left to hand over — that is
+///     (3), and where (2) and (3) meet, (3) wins. What (2) forbids absolutely is
+///     the other order: a dead stream answering empty.
+///
+///     The question is `checkAlive`, abstract so that no implementation can omit
+///     it by saying nothing. A FINISHED stream is alive for this purpose and
+///     answers empty, because empty is what an ending is. A stream somebody
+///     CLOSED under a caller is not — see (9).
+///
+/// (3) A PAYLOAD TRANSFERRED IS A PAYLOAD DELIVERED. Whatever a copy moved is
+///     handed to the caller whatever the copy's status, and the reason it
+///     stopped is latched and reported by the NEXT operation. A `Dropped` copy
+///     carrying the last chunk of a file is the case this exists for.
+///
+///     It binds the RUNTIME as much as this class: by the time an ending is
+///     known the elements are already out of the pinned buffer, so a layer that
+///     reports the failure in place of them is not deferring those bytes, it is
+///     destroying them. `Async.streamRead` yields the ending alongside the
+///     elements for that reason.
+///
+/// (4) CANCELLED IS THIS OPERATION, not the transport. A cancel that carried
+///     nothing fails with the stream's own `canceledError`, leaves the stream
+///     usable, and is never latched as an ending.
+///
+///     A cancel that DID carry something is not this operation failing: it is a
+///     copy that completed too late to be stopped, and it arrives with its
+///     elements and, if it also ended the stream, with the ending beside them.
+///     (3) applies to it unchanged, and the fiber takes its interrupt after
+///     handing the payload on. `Runtime.settleCancelledRead` states the rule for
+///     both directions.
+///
+/// (5) A NEGATIVE LENGTH IS A CALLER BUG and panics, at the front door, before
+///     the health check: underflowed arithmetic is a bug whether or not the
+///     transport is healthy, and on a dead stream it would come back as a
+///     plausible transport error and be blamed on the peer. The panic is a
+///     deliberate trade — there is no way to synthesize a value of the abstract
+///     error type `E` here — so a length computed from peer-controlled data
+///     (`contentLength - alreadyRead` against a peer that oversends) is a remote
+///     kill switch, and no caller in this tree may pass one through unclamped.
+///
+/// (6) EVERY OPERATION STOPS ON SOMETHING THE STREAM DECIDES: `read` at one
+///     transport copy, `readAll` at the end of the stream. Neither stopping
+///     condition is the caller's to supply, which is what makes them mean the
+///     same thing on a file, a socket and a TLS session.
+///
+///     A read that stops on a byte COUNT is deliberately not offered. "How many
+///     bytes do I need before I can make progress" is a fact about the caller's
+///     parser rather than about the stream — a length-prefixed frame needs its
+///     four bytes, an HTTP state machine needs whatever came, and both run over
+///     the same socket. A stream that promised to fill a buffer could not serve
+///     the second: on a socket it would block for bytes the peer will not send
+///     until it has heard from us, which is a deadlock and not a slow read. So
+///     the loop belongs to whoever named the count; `read` shows its shape.
+///
+/// (7) THE EXTENSION POINTS ARE `protected` AND THE PUBLIC API IS `final`.
+///     `read` holds (5) and (8) for every transport, which is worth nothing if a
+///     caller can reach past it to the unguarded hook.
+///
+/// (8) WHAT A SUBCLASS OWES THE BASE is (1), and never handing back more bytes
+///     than it was asked for. It is given a validated, strictly positive length
+///     and owes nothing else.
+///
+///     The second half is CHECKED rather than merely documented: `read` is
+///     final, so it is the one place that can, and a subclass that overshoots
+///     panics there. There is nowhere for the surplus to go — this class holds
+///     no pushback buffer — and both silent alternatives are worse: dropping it
+///     inverts (3), handing it over overruns whatever the caller sized from the
+///     number it passed in.
+///
+/// (9) A STREAM CLOSED UNDER A CALLER IS NOT A STREAM THAT ENDED. `close`
+///     detaches every fiber on the handle and fails each with the stream's
+///     `canceledError`; a fiber that arrives an instant later is told the same
+///     thing rather than handed the empty array that (1) defines as the peer
+///     being done. Otherwise "did the peer finish, or did a sibling take the
+///     stream out from under me" is answered by which side of the close the
+///     scheduler put you on, and the losing side reports a truncated body as a
+///     complete one.
+public abstract class AsyncInputStream<E> where E : IoError =
+    /// Read up to `bytesLength` bytes: ONE transport copy.
+    ///
+    /// FEWER bytes than asked for is ordinary and is not a signal — a socket
+    /// answers with what the peer has sent so far, a file with what fits in one
+    /// copy. A caller that needs a particular NUMBER of bytes loops until it has
+    /// them; one that wants the whole stream uses `readAll`.
+    ///
+    ///     let got = ByteBuffer.make()
+    ///     while got.length < wanted do
+    ///         let chunk = await stream.read((wanted - got.length).toInt64())
+    ///         if chunk.length == 0 then <the stream ended first> else got.append(chunk)
+    ///
+    /// The `chunk.length == 0` arm is the one to get right: empty means the
+    /// stream ended (1), and a loop that stops on anything else — a short read,
+    /// say — truncates.
+    ///
+    /// ZERO does no transport work, so it is not a readiness probe. It is still
+    /// an operation and answers per (2): the recorded failure on a dead stream,
+    /// an empty array otherwise. NEGATIVE panics, per (5).
+    public final async function read(self, bytesLength: Int64): Async<Array<Uint8>, E> =
+        if bytesLength < 0i64 then
+            panic "input stream: read length must not be negative, got " ++ bytesLength.format()
+        else if bytesLength == 0i64 then
+            // The health check is the whole of a zero-length read: nothing is
+            // asked for, so there is nothing that could be preferred to the
+            // failure. The positive case below goes to the transport WITHOUT it,
+            // because a dead transport may still be holding bytes that are the
+            // caller's by (3).
+            await self.checkAlive()
+            Array<Uint8>.empty()
+        else
+            let chunk = await self.readAvailable(bytesLength)
+            // (8): a subclass that hands back more than it was asked for has
+            // taken those bytes off its transport and there is nothing this
+            // class can do with them, so it is reported as the bug it is — named
+            // and at the moment it happens, rather than as a wrong length
+            // somewhere above.
+            if chunk.length.toInt64() > bytesLength then
+                panic "input stream: a subclass returned " ++ chunk.length.format() ++ " bytes for a read of " ++ bytesLength.format()
+            else
+                chunk
+
+    /// One transport read. `bytesLength` is strictly positive — the base
+    /// validates it and handles both edges — and keeping (1) is this method's
+    /// job, since only the transport knows what its end of stream is.
+    ///
+    /// Also this method's job and not the base's: a stream that is dead but
+    /// still holding delivered bytes hands those over first and reports the
+    /// death on the read after, per (3).
+    protected abstract function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, E>
+
+    /// Fail with the transport failure this stream recorded, if it recorded one.
+    ///
+    /// The one question behind (2), asked by every operation that has no bytes to
+    /// go and get. A stream that has cleanly FINISHED is alive for this purpose —
+    /// its end of stream is a legitimate answer — so this succeeds there and the
+    /// empty array says the rest.
+    ///
+    /// Abstract rather than defaulted: the only default available ("nothing ever
+    /// goes wrong here") is false for every transport that can fail, so a stream
+    /// that really cannot die says so in one line and says it deliberately.
+    protected abstract function checkAlive(self): Async<Unit, E>
+
+    /// End this stream now and report what the transport made of it.
+    ///
+    /// Optional. The `Resource` that handed this stream out closes it on release
+    /// whether or not this was called; what calling it adds is *when* (now, not
+    /// at the end of the scope) and *what came of it* — a finalizer cannot fail,
+    /// so it has nowhere to put a transport error. Using the stream afterwards
+    /// is undefined.
+    ///
+    /// WHAT EVERY IMPLEMENTATION OWES, because it is the whole of (9) and a
+    /// subclass that skips it turns a close into an end of stream: after this
+    /// returns, no read on this stream answers with the empty array. It reports
+    /// the stream's `canceledError` — or whatever this transport calls "somebody
+    /// took this away from you" — for as long as anybody asks.
+    ///
+    /// WHAT IS THE TRANSPORT'S OWN BUSINESS is the read already in flight. A
+    /// transport that owns its handle CANCELS it, in this fiber or another, rather
+    /// than waiting: a read on a peer that never sends would never complete, so
+    /// there is no in-flight operation that closing could promise to outlive, and
+    /// those fibers fail with the origin's `Canceled`. A transport that does not
+    /// own the handle it reads through — a TLS session over somebody else's socket
+    /// — cannot, and lets the read in flight finish and be refused on its way out.
+    /// The difference is visible to a caller in latency, never in the answer.
+    public abstract function close(self): Async<Unit, E>
+
+    /// Read until EOF, accumulating into a single byte array. Reads in
+    /// 64 KiB chunks.
+    public final async function readAll(self): Async<Array<Uint8>, E> =
+        // A buffer rather than `accumulated.concat(chunk)`, which would re-copy
+        // everything read so far on every chunk: O(n²) in the length.
+        let accumulated = ByteBuffer.make()
+        let mutable done = false
+        while !done do
+            let chunk = await self.read(readChunkBytes)
+            if chunk.length == 0 then
+                done = true
+            else
+                accumulated.append(chunk)
+        accumulated.toArray()
+
+    /// Read until EOF and decode the full content as the given charset.
+    /// v1 only supports UTF-8.
+    public final async function readStringAll(self, charset: Charset): Async<String, E> =
+        match charset with
+        case Charset.Utf8 =>
+            let bytes = await self.readAll()
+            String.fromBytes(bytes, 0, bytes.length)
+        case _ => panic "unsupported charset"
+
+/// Where a `Wasi*Stream` is in its life.
+///
+/// One value rather than separate flags for "no new ops", "the ending has been
+/// read" and "the handles are gone", because those only ever move forwards and
+/// only in this order. Spelling the order out is what makes the awkward rules
+/// legible: why a failure means something different in `Closing` than in `Open`,
+/// and why the ending is read on one path into `Released` and not the other.
+///
+/// Shared by both directions; `WasiOutputStream` reads more out of it, because
+/// it has a result future to retire and the input side does not.
+enum StreamState =
+    /// Operations may post. The result future, if there is one, is unread.
+    Open
+    /// The stream ended on its own — a copy reported the end, or one failed — so
+    /// the runtime has already consumed the result future. Nothing may post; the
+    /// host handles are still ours to release.
+    Ended
+    /// `close` began on a stream that had not ended. Nothing may post, and the
+    /// result future is still unread — `close` is about to read it.
+    ///
+    /// Distinct from `Ended` for one load-bearing reason: a failure arriving in
+    /// this state is the close's own cancellation coming back, so it must NOT be
+    /// recorded as how the stream ended. Recording it would make `close` report
+    /// the error it caused in place of the one it exists to find.
+    Closing
+    /// A write stopped with part of its array on the transport and no way to
+    /// finish it — cancelled, or interrupted where it was parked. Nothing may
+    /// post: the byte stream has a hole in it, and a later write would splice
+    /// itself onto a truncated prefix without anybody being told. But the stream
+    /// did NOT end, so its result future is still unread and still owed a read.
+    ///
+    /// Which is why it is not `Ended`. The runtime consults the one-shot result
+    /// future only for a copy that reports the stream `Dropped`, so `Ended` means
+    /// "the runtime already spent it" and makes `dropHandles` skip the read —
+    /// and a cancel spends nothing. Write-side only: a read cancelled mid-chunk
+    /// leaves nothing behind for the next read to be confused by.
+    Torn
+    /// The host handles have been released. Terminal.
+    Released
+
+/// A p3-stream-backed input stream.
+///
+/// `source` describes the whole host operation — which readable end, how to post
+/// a copy, how to lift the bytes, the result future that says why the stream
+/// ended, and how to let all of it go. The runtime drives it; what is left here
+/// is what the stream's type cannot say: the end-of-stream latch, and what a
+/// caller gets for reading past it.
+///
+/// INTERNAL. It owns host handles, so it is only handed out attached to the
+/// `Resource` that releases them — see `resource`. Callers outside this package
+/// work with the abstract `AsyncInputStream` and never name this class.
+internal class WasiInputStream<E>(
+    public source: ComponentStreamRead<Array<Uint8>, E>,
+    // The bit behind `source.stillOpen` — the record above was rebuilt with a
+    // probe over this flag (`withStillOpen`, in `resource`). Flipped exactly
+    // where `state` leaves the postable world: entering `Closing` and entering
+    // `Released`, the two transitions a fiber OTHER than the lock-holding
+    // reader can make. Not on `Ended`, which only the lock holder observes and
+    // latches — the handle is still owned there, and the loop below never posts
+    // past it. See `OpenFlag` for why this is a holder and not the state itself.
+    openFlag: OpenFlag,
+    // Reads post only in `Open`. Leaving it is what stops a second read
+    // re-posting on a finished stream or re-reading its spent one-shot future,
+    // either of which traps — and both are reachable from ordinary code:
+    // `readAll()` then `read()`, a second `Console.readLine()` past EOF, an HTTP
+    // keep-alive re-read.
+    mutable state: StreamState,
+    mutable finishError: Option<E>,
+    // Held across a whole read. It is the state check that needs it, not the
+    // ABI — see `readAvailable`.
+    readLock: Mutex
+) extends AsyncInputStream<E>() where E : IoError =
+    // Every state but `Open` answers from the latch — on the way in, and again
+    // before every posted copy (see the loop), because a sibling fiber can close
+    // the stream between two copies. The alternative is not a wrong answer but a
+    // wrong stream, since the host reuses a dropped handle's index.
+    //
+    // THE LOCK IS WHAT MAKES THAT CHECK WORTH ANYTHING when two fibers share the
+    // stream. p3 allows one outstanding read per end and the runtime enforces
+    // that with a per-handle lock taken INSIDE `Async.streamRead` — but a fiber
+    // that finds it held is suspended on that node, and the grant re-runs the
+    // node and posts. Nothing re-asks this class's question in between, so the
+    // runtime's queue is a suspension point the state check cannot see across:
+    // reader B, queued behind A while A's copy ends the stream, would be granted
+    // the handle the instant A settles and post a copy on a stream whose
+    // one-shot future has been spent, which traps. Serializing here puts the
+    // check and the post in one critical section, and leaves the runtime's lock
+    // uncontended as the ABI backstop it is meant to be.
+    //
+    // `checkAlive` deliberately does not take it: a zero-length read posts
+    // nothing, so it has nothing to be ordered against, and making it wait behind
+    // a read parked on a peer that never sends would turn the one operation that
+    // answers immediately into one that never does.
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, E> =
+        // `orPanicWith`: the only way to fail this acquire is for this fiber to
+        // hold the lock already, and nothing here reads a stream from inside a
+        // read of it. That is an invariant of this class rather than a condition
+        // a caller could act on, so it stays out of `read`'s signature.
+        let _held = use self.readLock.acquire().orPanicWith((_: MutexError) => "WasiInputStream.read re-entered its own read lock")
+        match self.state with
+            case StreamState.Open => await self.readOpen(bytesLength)
+            case _ => await Async.fromResult(self.latchedResult())
+
+    /// How this stream died, if it did. A stream that ended cleanly is alive for
+    /// this purpose — its EOF is an answer, not a failure — so only a latched
+    /// transport error, or a close somebody else performed, is reported here.
+    ///
+    /// No copy is posted, and not only as an optimization: a zero-capacity copy
+    /// comes back with a count of zero, which is the one answer `readOpen`
+    /// refuses to believe, and on a stream whose ending has been read it would
+    /// re-read a spent one-shot future and trap.
+    protected override function checkAlive(self): Async<Unit, E> =
+        match self.unusable() with
+            case Some(error) => Async.fail(error)
+            case None => Async.succeed(())
+
+    /// Why this stream can no longer be read, if it cannot. The single statement
+    /// of that rule; `checkAlive` and `latchedResult` are two spellings of it.
+    ///
+    /// Three endings, and they are not one answer. A recorded TRANSPORT FAILURE
+    /// is reported as itself. A stream that ENDED with no failure is not unusable
+    /// at all — its EOF is a legitimate answer, and (1) is how it is given. A
+    /// stream somebody CLOSED reports `canceledError`, per (9): it did not end,
+    /// it was taken away, and that is the error the runtime raised in whichever
+    /// fibers were on the handle when `close` cancelled them.
+    function unusable(self): Option<E> =
+        match self.finishError with
+            case Some(error) => Some(error)
+            case None =>
+                match self.state with
+                    case StreamState.Closing => Some(self.source.canceledError)
+                    case StreamState.Released => Some(self.source.canceledError)
+                    case _ => None
+
+    /// The read itself, for a stream that was `Open` on the way in.
+    async function readOpen(self, bytesLength: Int64): Async<Array<Uint8>, E> =
+        // One chunk per copy. See `readChunkBytes`: this number is a linear
+        // memory allocation, not a limit on the answer.
+        let capacity = if bytesLength > readChunkBytes then readChunkBytes.toInt32() else bytesLength.toInt32()
+        let mutable delivered = Array<Uint8>.empty()
+        let mutable emptyCopies = 0
+        let mutable posting = true
+        while posting do
+            // Re-checked every time round rather than once on the way in: the
+            // `await` below hands the scheduler back, so a sibling can run
+            // `close()` between a copy settling and this loop re-posting. `close`
+            // cancels and then DROPS the handle — and a read posted on a dropped
+            // handle does not fail, it lands on whatever stream the host gave
+            // that index to next. Falling out to the latch turns "too late" into
+            // an answer instead of somebody else's bytes.
+            //
+            // THIS CHECK ALONE IS NOT ENOUGH, because it runs one interpreter
+            // step before the copy is posted, and the fairness budget can run
+            // the sibling `close` in between. The last word is the record's
+            // `stillOpen` probe — a view of this object's own state, consulted
+            // by the runtime INSIDE the posting step — which fails the read
+            // with `canceledError` exactly as the close would have, had it
+            // found the fiber parked. This check stays: it answers the common
+            // case from the latch without a failure, and it is what keeps the
+            // probe's `false` arm the rarity it should be.
+            match self.state with
+                case StreamState.Open =>
+                    // The runtime lifts the bytes and, if the copy reported the
+                    // stream ended, consults the result future — so an ending
+                    // arrives ALONGSIDE whatever that same copy moved, never
+                    // instead of it (3). A raised failure would have nowhere to
+                    // carry the bytes, and the bytes are out of the pinned buffer
+                    // already.
+                    //
+                    // So the failure channel here means one thing: this fiber was
+                    // detached from the handle by a `close`. That is (4), it is
+                    // not the transport, and it is not latched.
+                    let copied = await Async<Array<Uint8>, E>
+                        .streamRead(self.source, capacity)
+                    delivered = copied._1
+                    match copied._2 with
+                        case Some(error) =>
+                            // The stream ended and the result future said why.
+                            // Latch and stop: the tail hands over whatever this
+                            // copy carried, and the NEXT read reports the reason.
+                            self.latchEnding(Some(error))
+                            posting = false
+                        case None =>
+                            if copied._0 == CopyResult.Dropped then
+                                // A clean end of stream, latched WHERE IT IS
+                                // OBSERVED rather than after the loop: between
+                                // the two the fiber can be descheduled, and an
+                                // `Ended` written over a sibling close's
+                                // `Released` makes `dropHandles` drop the handles
+                                // twice, which traps.
+                                let noReason: Option<E> = None
+                                self.latchEnding(noReason)
+                                posting = false
+                            else if delivered.length > 0 then
+                                // Bytes, and the stream is still open. Whether
+                                // the copy completed or was cancelled on the way,
+                                // they are the caller's — (3) again, and a cancel
+                                // that lost its race is exactly the copy that
+                                // carries some.
+                                posting = false
+                            else if copied._0 == CopyResult.Cancelled then
+                                // Nothing came of it, and this is the one result
+                                // of the three that is about THIS OPERATION
+                                // rather than the transport: the copy was
+                                // cancelled out from under this fiber. Reported
+                                // with the same value the runtime raises in a
+                                // fiber it detaches. Retrying would send a
+                                // cancelled fiber back around a loop whose
+                                // patience runs out in a panic; returning empty
+                                // would report an interrupt as a clean end of
+                                // stream.
+                                await Async<Unit, E>.fail(self.source.canceledError)
+                            else
+                                // A copy that transferred nothing is not an end
+                                // of stream — only `Dropped` ends one — but every
+                                // caller reads an empty array as EOF, so handing
+                                // this back would stop `readAll` with a truncated
+                                // body. The stream is open and the bytes are still
+                                // coming: post again, boundedly. See
+                                // `emptyCopyLimit` for why there is a bound.
+                                emptyCopies = noteCopyProgress(emptyCopies, delivered.length, "input stream: a host copy transferred no bytes and did not end the stream")
+                case _ =>
+                    posting = false
+        // (3), and the whole of the answer: whatever the copy moved is the
+        // caller's, whatever else that copy reported. With nothing moved there is
+        // the latch — an end of stream, the failure that ended it, or the
+        // `canceledError` of a stream somebody closed.
+        if delivered.length > 0 then
+            delivered
+        else
+            await Async.fromResult(self.latchedResult())
+
+    /// Record that the stream has ended, and the transport's reason if it gave
+    /// one. The result future is one-shot and the runtime has already consumed
+    /// it, so every later read answers from here.
+    ///
+    /// It does NOT raise. The copy that observed the ending may also have carried
+    /// bytes, and those are the caller's before the reason is (3).
+    ///
+    /// ONLY FROM `Open`, and that guard does two jobs. The first reader to see
+    /// the ending records it; a straggler is reporting a consequence, not the
+    /// cause. And a copy can settle while a sibling's `close` runs — the fiber is
+    /// enqueued, not parked, between the two — so without the guard an `Ended`
+    /// would overwrite that close's `Released`, and `dropHandles` would drop host
+    /// handles it had already let go of. That traps.
+    function latchEnding(self, reason: Option<E>): Unit =
+        match self.state with
+            case StreamState.Open =>
+                self.state = StreamState.Ended
+                self.finishError = reason
+            case _ => ()
+
+    /// The answer every read gives once the stream is no longer `Open`: the
+    /// transport error that ended it, the `canceledError` of a stream somebody
+    /// closed, or EOF. See `unusable` — this is that rule with an empty array
+    /// standing in for "nothing wrong, and nothing left".
+    function latchedResult(self): Result<Array<Uint8>, E> =
+        match self.unusable() with
+            case Some(e) => Error(e)
+            case None => Ok(Array<Uint8>.empty())
+
+    /// Drop the host handles this stream owns, silently and without cancelling
+    /// anything.
+    ///
+    /// The *finalizer's* close, called by the `Resource` built alongside this
+    /// object and by nobody else — which is why it is not `close` and not part of
+    /// `AsyncInputStream`. It needs no cancel: a finalizer runs only after its
+    /// scope has unwound every fiber it owns, and interrupting a fiber both
+    /// cancels that fiber's copy and gives up its place in the handle's lock
+    /// queue, so by the time this runs nothing is posted and nothing is queued.
+    /// `close` below has no such guarantee and does the cancelling itself.
+    ///
+    /// Silent because a finalizer has nowhere to put an error, and idempotent
+    /// because `close` drops these handles early and the Resource then releases
+    /// over the top of it.
+    public function dropHandles(self): Unit =
+        match self.state with
+            case StreamState.Released => ()
+            case _ =>
+                self.state = StreamState.Released
+                // The handles are about to go, so the record's probe must say
+                // so before they do — the finalizer path enters here straight
+                // from `Open`, without passing `close`.
+                self.openFlag.open = false
+                // The runtime reads and drops the paired result future when a
+                // copy reports the stream ended. Closing a stream that never
+                // ended leaves that to `dropEnd`, which drops both halves.
+                self.source.dropEnd()
+
+    /// Detach every fiber from this stream's readable end, then drop it.
+    ///
+    /// Nothing is reported, and there is nothing it could report: every transport
+    /// failure on this side arrives on the read that met it, unlike the write
+    /// side's late error. The error channel is here for symmetry with
+    /// `AsyncOutputStream.close` and for subclasses that do have something to say.
+    ///
+    /// THREE STEPS, in this order, for every state that still owns the handle —
+    /// `Open` and `Ended` alike.
+    ///
+    /// LEAVE the current state for `Closing` first, synchronously, before
+    /// anything can yield. It stops a fiber arriving fresh at `read` from posting
+    /// a copy the drop would have to trap on, and it is the signal a concurrent
+    /// close reads.
+    ///
+    /// CANCEL second, and only then, because the detached fibers are merely
+    /// enqueued and none of them touches the handle on its way out. It is needed
+    /// on an `Ended` stream too: a reader that reached the runtime's per-handle
+    /// lock queue while an earlier read was posted is still waiting there, and
+    /// would be granted the lock — and post — the moment the holder lets go, on
+    /// whatever index the drop has by then handed back to the host.
+    ///
+    /// DROP last.
+    ///
+    /// `Released` is the one state where none of this may happen: the handle is
+    /// gone and its index reused, so a cancel aimed at it would detach whatever
+    /// fibers are on some other stream. That is what makes a second close safe.
+    ///
+    /// `Closing` does NOTHING: another close is between its cancel and its drop,
+    /// and dropping the handles from here would pull them out from under it. The
+    /// window is small — a close yields only if it exhausts its step budget
+    /// mid-way — and real. The first close finishes the job.
+    public override async function close(self): Async<Unit, E> =
+        match self.state with
+            case StreamState.Closing => ()
+            case StreamState.Released => ()
+            case _ => await self.detachAndDrop().uninterruptible()
+
+    /// The LATCH → CANCEL → DROP sequence, run as ONE uninterruptible unit.
+    ///
+    /// Once `state` is latched to `Closing` and the probe flipped, the cancel and
+    /// the drop MUST both run: an interrupt landing between the latch and the
+    /// `CancelStream` node — reachable when the close straddles the fairness
+    /// budget's boundary — would otherwise discard the rest of this method, and
+    /// with it the `detachFibersFrom` that drains the handle's lock queue and the
+    /// `dropHandles` that releases the handle. A queued waiter is then left on a
+    /// handle nothing will ever drain, and the handle itself leaks — permanently
+    /// on a stream nobody's `Resource` finalizer backstops. Masking makes the
+    /// three steps atomic against interruption; the interrupt is not lost, only
+    /// deferred to the mask's pop, exactly as a bracket release defers one. The
+    /// region has no wait of its own, so masking it delays nothing real.
+    async function detachAndDrop(self): Async<Unit, E> =
+        self.state = StreamState.Closing
+        // Flip the probe in the same synchronous breath as the state: from here
+        // to the drop, a copy-posting step anywhere else must see `stillOpen`
+        // false, or it posts on a handle this close is about to take away.
+        self.openFlag.open = false
+        await Async<Array<Uint8>, E>.cancelStreamRead(self.source)
+        self.dropHandles()
+
+module WasiInputStream<E> =
+    /// A p3 read stream as a `Resource`: acquiring opens it, releasing drops the
+    /// handles it owns.
+    ///
+    /// The only way to get one, deliberately. The stream object owns host handles
+    /// that nothing else knows how to release, so a constructor anyone could call
+    /// would be a public way to leak them — and under p3 a leaked handle is worse
+    /// than a leak, because the host reuses the index and a later operation lands
+    /// on somebody else's stream.
+    ///
+    /// Pairing acquisition with release here is also what lets the value handed
+    /// out be the abstract type: `Resource.map` widens it while keeping the
+    /// finalizer intact, so a caller gets an `AsyncInputStream` that closes itself
+    /// and never has to know what is underneath.
+    public function resource<E2>(open: () => Async<ComponentStreamRead<Array<Uint8>, E>, E2>): Resource<AsyncInputStream<E>, E2> where E : IoError =
+        // An `async` acquire rather than a `map`, so that `Mutex.make` can be the
+        // effect it is.
+        let acquire: () => Async<WasiInputStream<E>, E2> = async () =>
+            let raw = await open()
+            // The probe outlives this scope inside the record, so it closes
+            // over a flag made first rather than over the stream object made
+            // last — see `OpenFlag` for the construction-order knot this cuts.
+            let openFlag = OpenFlag(true)
+            let source = raw.withStillOpen(() => openFlag.open)
+            let readLock = await Mutex.make()
+            let noError: Option<E> = None
+            WasiInputStream<E>(source, openFlag, StreamState.Open, noError, readLock)
+        let held: Resource<WasiInputStream<E>, E2> =
+            Resource.make(acquire, (s: WasiInputStream<E>) => Async.thunk(() => s.dropHandles()))
+        held.map<AsyncInputStream<E>>((s: WasiInputStream<E>) => s)

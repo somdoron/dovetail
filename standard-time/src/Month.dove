@@ -1,0 +1,220 @@
+package standard.time
+
+/// Represents a month of the year from January to December.
+@derive(Equatable)
+public enum Month =
+    January
+    February
+    March
+    April
+    May
+    June
+    July
+    August
+    September
+    October
+    November
+    December
+
+function monthValue(m: Month): Int32 =
+    match m with
+        case January => 1
+        case February => 2
+        case March => 3
+        case April => 4
+        case May => 5
+        case June => 6
+        case July => 7
+        case August => 8
+        case September => 9
+        case October => 10
+        case November => 11
+        case December => 12
+
+function monthName(m: Month): String =
+    match m with
+        case January => "January"
+        case February => "February"
+        case March => "March"
+        case April => "April"
+        case May => "May"
+        case June => "June"
+        case July => "July"
+        case August => "August"
+        case September => "September"
+        case October => "October"
+        case November => "November"
+        case December => "December"
+
+function monthLength(m: Month, leapYear: Bool): Int32 =
+    match m with
+        case January => 31
+        case February => if leapYear then 29 else 28
+        case March => 31
+        case April => 30
+        case May => 31
+        case June => 30
+        case July => 31
+        case August => 31
+        case September => 30
+        case October => 31
+        case November => 30
+        case December => 31
+
+function monthFromValue(v: Int32): Month =
+    let n = ((v - 1) % 12 + 12) % 12
+    if n == 0 then Month.January
+    else if n == 1 then Month.February
+    else if n == 2 then Month.March
+    else if n == 3 then Month.April
+    else if n == 4 then Month.May
+    else if n == 5 then Month.June
+    else if n == 6 then Month.July
+    else if n == 7 then Month.August
+    else if n == 8 then Month.September
+    else if n == 9 then Month.October
+    else if n == 10 then Month.November
+    else Month.December
+
+/// Properties and operations for Month.
+module Month =
+    /// Returns the numeric value of this month (1 for January through 12 for December).
+    public property value(self): Int32 = monthValue(self)
+
+    /// Returns the English name of this month (e.g. "January").
+    public property name(self): String = monthName(self)
+
+    /// Three-letter English abbreviation (e.g. "Jan", "Jul"). Used by
+    /// `DateTimeFormatter` for the `MMM` pattern letter.
+    public property shortName(self): String =
+        match self with
+            case January => "Jan"
+            case February => "Feb"
+            case March => "Mar"
+            case April => "Apr"
+            case May => "May"
+            case June => "Jun"
+            case July => "Jul"
+            case August => "Aug"
+            case September => "Sep"
+            case October => "Oct"
+            case November => "Nov"
+            case December => "Dec"
+
+    /// Single-letter English narrow name (e.g. "J", "F"). Used by
+    /// `DateTimeFormatter` for the `MMMMM` pattern letter. Note that
+    /// some letters repeat (J = January/June/July, M = March/May, etc.)
+    /// — the narrow form is intentionally lossy and matches Java's
+    /// `SHORT_STANDALONE` / `narrow` conventions.
+    public property narrowName(self): String =
+        match self with
+            case January => "J"
+            case February => "F"
+            case March => "M"
+            case April => "A"
+            case May => "M"
+            case June => "J"
+            case July => "J"
+            case August => "A"
+            case September => "S"
+            case October => "O"
+            case November => "N"
+            case December => "D"
+
+    /// Returns the number of days in this month, accounting for leap years.
+    public function length(self, leapYear: Bool): Int32 =
+        monthLength(self, leapYear)
+
+    /// Returns the month that is the given number of months after this one, wrapping around.
+    public function plus(self, months: Int32): Month =
+        monthFromValue(monthValue(self) + months)
+
+    /// Returns the month that is the given number of months before this one, wrapping around.
+    public function minus(self, months: Int32): Month =
+        monthFromValue(monthValue(self) - months)
+
+    /// Look up by full English name (case-sensitive). Returns `None` for
+    /// any other string.
+    public function fromFullName(name: String): Option<Month> =
+        if name == "January" then Some(Month.January)
+        else if name == "February" then Some(Month.February)
+        else if name == "March" then Some(Month.March)
+        else if name == "April" then Some(Month.April)
+        else if name == "May" then Some(Month.May)
+        else if name == "June" then Some(Month.June)
+        else if name == "July" then Some(Month.July)
+        else if name == "August" then Some(Month.August)
+        else if name == "September" then Some(Month.September)
+        else if name == "October" then Some(Month.October)
+        else if name == "November" then Some(Month.November)
+        else if name == "December" then Some(Month.December)
+        else None
+
+    /// Look up by three-letter English abbreviation (case-sensitive).
+    public function fromShortName(name: String): Option<Month> =
+        if name == "Jan" then Some(Month.January)
+        else if name == "Feb" then Some(Month.February)
+        else if name == "Mar" then Some(Month.March)
+        else if name == "Apr" then Some(Month.April)
+        else if name == "May" then Some(Month.May)
+        else if name == "Jun" then Some(Month.June)
+        else if name == "Jul" then Some(Month.July)
+        else if name == "Aug" then Some(Month.August)
+        else if name == "Sep" then Some(Month.September)
+        else if name == "Oct" then Some(Month.October)
+        else if name == "Nov" then Some(Month.November)
+        else if name == "Dec" then Some(Month.December)
+        else None
+
+    /// Look up by numeric value (1-12). Returns `None` for any other
+    /// value (no wrap-around — use `plus` / `minus` for that).
+    public function fromValue(value: Int32): Option<Month> =
+        if value < 1 || value > 12 then None
+        else Some(monthFromValue(value))
+
+implement Display for Month =
+    /// Formats this month as its English name.
+    public function format(self: Month): String =
+        self.name
+
+test "Month value" =
+    assert Month.January.value == 1
+    assert Month.June.value == 6
+    assert Month.December.value == 12
+
+test "Month name" =
+    assert Month.January.name == "January"
+    assert Month.July.name == "July"
+    assert Month.December.name == "December"
+
+test "Month length non-leap year" =
+    assert Month.January.length(false) == 31
+    assert Month.February.length(false) == 28
+    assert Month.April.length(false) == 30
+    assert Month.December.length(false) == 31
+
+test "Month length leap year" =
+    assert Month.February.length(true) == 29
+
+test "Month plus" =
+    assert Month.January.plus(1) == Month.February
+    assert Month.November.plus(2) == Month.January
+    assert Month.January.plus(12) == Month.January
+
+test "Month minus" =
+    assert Month.March.minus(1) == Month.February
+    assert Month.January.minus(1) == Month.December
+    assert Month.June.minus(12) == Month.June
+
+test "Month equals" =
+    assert Month.March == Month.March
+    assert (Month.March == Month.April) == false
+
+test "Month display" =
+    assert Month.September.format() == "September"
+    assert Month.January.format() == "January"
+
+test "Month from value" =
+    assert monthFromValue(1) == Month.January
+    assert monthFromValue(12) == Month.December
+    assert monthFromValue(6) == Month.June

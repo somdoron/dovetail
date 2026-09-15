@@ -1,0 +1,7 @@
+package standard.prelude
+
+public record SourceLocation =
+    file: String
+    line: Int32
+    column: Int32
+    functionName: String

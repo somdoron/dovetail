@@ -1,0 +1,218 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Fiber
+import standard.io.Promise
+import standard.io.Resource
+
+// Tests for `Async.bracket`. Each test runs a program through `.run()` and
+// observes side effects via a mutable counter / sentinel.
+
+test "bracket runs release on success" =
+    let mutable released = 0
+    let mutable used = 0
+    let program: Async<Unit, Never> = Async.bracket<Int32>(
+        Async.succeed(42),
+        (_: Int32) => Async.thunk(() => released = released + 1),
+        (r: Int32) => Async.thunk(() => used = r)
+    )
+    program.run()
+    assert used == 42
+    assert released == 1
+
+test "bracket passes resource value to useFn" =
+    let mutable seen = -1
+    let program: Async<Unit, Never> = Async.bracket<Int32>(
+        Async.succeed(7),
+        (_: Int32) => Async.succeed(()),
+        (r: Int32) => Async.thunk(() => seen = r * 10)
+    )
+    program.run()
+    assert seen == 70
+
+test "nested brackets release LIFO" =
+    let mutable order = 0
+    // Encode order as base-10 digits: useFn first (1), inner release (2), outer release (3).
+    let program: Async<Unit, Never> = Async.bracket<Int32>(
+        Async.succeed(1),
+        (_: Int32) => Async.thunk(() => order = order * 10 + 3),
+        (_: Int32) =>
+            Async.bracket<Int32>(
+                Async.succeed(2),
+                (_: Int32) => Async.thunk(() => order = order * 10 + 2),
+                (_: Int32) => Async.thunk(() => order = order * 10 + 1)
+            )
+    )
+    program.run()
+    assert order == 123
+
+test "bracket chains with andThen after release" =
+    let mutable released = 0
+    let mutable after = 0
+    let bracketed: Async<Int32, Never> = Async.bracket<Int32>(
+        Async.succeed(10),
+        (_: Int32) => Async.thunk(() => released = released + 1),
+        (r: Int32) => Async.succeed(r + 5)
+    )
+    let program: Async<Unit, Never> = bracketed.andThen((v: Int32) =>
+        Async.thunk(() => after = v)
+    )
+    program.run()
+    assert released == 1
+    assert after == 15
+
+// --- an acquire is atomic against interruption --------------------------------
+// `acquire` produces the resource one step BEFORE the `BracketReleaseFrame` that
+// owns it is pushed, and the resource became real somewhere inside the acquire,
+// invisibly to the runtime. If the 1024-step budget expired anywhere in there,
+// an interrupt delivered on the way back overwrote the pending success and the
+// unwind read the acquire as having FAILED — no release was ever armed and the
+// resource leaked with nothing left that could close it.
+//
+// So the acquire is MASKED (`acquireRelease` in ZIO does the same): an interrupt
+// landing anywhere inside it is deferred to the end, where the acquire frame is
+// on top and `settlePendingAcquire` arms the release over it. Every round below
+// therefore acquires — that is the point — and every acquisition is released.
+//
+// The sweep still walks the step boundary one step at a time, because that is
+// what proves the mask holds across it: `burnExactly` pads the acquire with
+// `n / 2` `map`s (two steps each) over a `thunk` (one step) or a `succeed`
+// (none), which reaches any step count.
+
+async function burnSteps(count: Int32): Async<Unit, Never> =
+    let mutable i = 0i32
+    while i < count do
+        await Async.succeed(())
+        i = i + 1
+
+/// An `Async` that costs exactly `steps` interpreter steps to reduce to a value.
+function burnExactly(steps: Int32): Async<Unit, Never> =
+    let mutable chain: Async<Unit, Never> =
+        if (steps % 2i32) == 1i32 then Async.thunk(() => ()) else Async.succeed(())
+    let mutable i = 0i32
+    while i < steps / 2i32 do
+        chain = chain.map<Unit>((_: Unit) => ())
+        i = i + 1
+    chain
+
+/// An acquire whose LAST step is the one that both records the acquisition and
+/// leaves the resource pending on the bracket's acquire frame.
+function acquireAfter(steps: Int32, onAcquire: () => Unit): Async<Int32, Never> =
+    burnExactly(steps).map<Int32>((_: Unit) =>
+        onAcquire()
+        1i32
+    )
+
+function leakProbe(steps: Int32, gate: Promise<Unit, Never>,
+                   onAcquire: () => Unit, onRelease: () => Unit): Async<Unit, Never> =
+    Async<Unit, Never>.bracket<Int32>(
+        acquireAfter(steps, onAcquire),
+        (_: Int32) => Async.thunk(() => onRelease()),
+        // Parks forever: nothing ever completes the gate, so the fiber is still
+        // holding the resource when the interrupt arrives.
+        (_: Int32) => gate.awaitPromise()
+    )
+
+async function acquireInterruptProgram(setter: (Int32, Int32) => Unit): Async<Unit, Never> =
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let mutable acquired = 0i32
+    let mutable released = 0i32
+    let mutable steps = 980i32
+    let mutable round = 0i32
+    while round < 96i32 do
+        let onAcquire: () => Unit = () => acquired = acquired + 1i32
+        let onRelease: () => Unit = () => released = released + 1i32
+        let child: Fiber<Unit, Never> =
+            await leakProbe(steps, gate, onAcquire, onRelease).forkBackground()
+        // Outlast the child's budget so this fiber is next in the queue when the
+        // child's expires, and interrupt it there — the only moment an interrupt
+        // can land on a Running fiber. One iteration here is several interpreter
+        // steps, so 300 spans exactly ONE preemption: the child gets a single
+        // 1024-step slice, which is what puts the window within the sweep below.
+        await burnSteps(300i32)
+        await child.interrupt()
+        // `join` re-raises the cause, and this one was interrupted on purpose.
+        await child.join().foldCause<Unit, Never>(
+            (_: Cause<Never>) => Async.succeed(()),
+            (_: Unit) => Async.succeed(())
+        )
+        steps = steps + 1i32
+        round = round + 1
+    setter(acquired, released)
+
+@timeout(120000)
+test "bracket: an interrupt between acquire succeeding and its release being armed still releases" =
+    let mutable acquired = -1i32
+    let mutable released = -1i32
+    acquireInterruptProgram((a: Int32, r: Int32) =>
+        acquired = a
+        released = r
+    ).run()
+    // Every round acquires. Before the acquire was masked, the rounds whose
+    // budget expired part-way through it were cut off and never acquired at all
+    // — the sweep had to straddle that boundary to prove anything. An acquire
+    // that is atomic against interruption has no such boundary left: the
+    // interrupt waits for it to finish.
+    assert acquired == 96i32
+    // And every resource that came into existence was released.
+    assert released == acquired
+
+// --- the same window, for `attachToScope` --------------------------------------
+// An attach has the same one-step gap as a bracket — the acquire produces the
+// resource one step before the registration that owns it — but a different
+// repair: there is no release frame to swap to, so `settlePendingAcquire` must
+// do the registration itself, on the scope the `Attach` node captured. Without
+// that arm the pending success is clobbered, nothing is ever registered, and the
+// resource leaks with no frame and no scope entry that could close it.
+
+/// The attach twin of `leakProbe`: acquires on step `steps`, registers on the
+/// enclosing `use Async.scope()`, then parks forever still holding it.
+async function attachLeakProbe(steps: Int32, gate: Promise<Unit, Never>,
+                               onAcquire: () => Unit, onRelease: () => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => acquireAfter(steps, onAcquire),
+        (_: Int32) => Async.thunk(() => onRelease())
+    )
+    let _value: Int32 = await res.attachToScope()
+    await gate.awaitPromise()
+
+async function attachInterruptProgram(setter: (Int32, Int32) => Unit): Async<Unit, Never> =
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let mutable acquired = 0i32
+    let mutable released = 0i32
+    let mutable steps = 980i32
+    let mutable round = 0i32
+    while round < 96i32 do
+        let onAcquire: () => Unit = () => acquired = acquired + 1i32
+        let onRelease: () => Unit = () => released = released + 1i32
+        let child: Fiber<Unit, Never> =
+            await attachLeakProbe(steps, gate, onAcquire, onRelease).forkBackground()
+        await burnSteps(300i32)
+        await child.interrupt()
+        await child.join().foldCause<Unit, Never>(
+            (_: Cause<Never>) => Async.succeed(()),
+            (_: Unit) => Async.succeed(())
+        )
+        steps = steps + 1i32
+        round = round + 1
+    setter(acquired, released)
+
+// The attach twin of the sweep above, and the one that found the window in
+// `Resource.make`: its acquisition is `acquire().map(value => (value,
+// finalizer))`, so the resource is real one step before the map that pairs it
+// with its finalizer. `settlePendingAcquire` runs those pending pure maps down
+// to the acquire frame rather than discarding them, which is what keeps the
+// finalizer for a resource that already exists.
+@timeout(120000)
+test "attachToScope: an interrupt between acquire succeeding and its registration still releases" =
+    let mutable acquired = -1i32
+    let mutable released = -1i32
+    attachInterruptProgram((a: Int32, r: Int32) =>
+        acquired = a
+        released = r
+    ).run()
+    // Every acquisition the sweep made was released. A single unreleased one is
+    // a resource with nothing left that could close it.
+    assert acquired == released

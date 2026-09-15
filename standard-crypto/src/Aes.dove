@@ -1,0 +1,207 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// Constant-time AES block cipher (encryption only — GCM uses CTR mode, which
+/// never invokes the inverse cipher). FIPS-197.
+///
+/// The S-box is computed on the fly from the GF(2^8) multiplicative inverse
+/// (via a fixed addition chain) plus the affine transform — there is no
+/// secret-indexed table lookup, so there is no cache-timing side channel. All
+/// GF operations are branch-free. This is correctness-first; a bitsliced
+/// implementation would be faster but is deferred.
+module Aes =
+    /// Multiply by x in GF(2^8) (the AES field, modulus 0x11b). Branch-free.
+    private function xtime(x: Uint8): Uint8 =
+        let hi = 0u8 - (x >> 7u8)
+        (x << 1u8) ^ (0x1bu8 & hi)
+
+    /// GF(2^8) multiply, branch-free (constant 8 iterations).
+    private function gfMul(a: Uint8, b: Uint8): Uint8 =
+        let mutable product = 0u8
+        let mutable aa = a
+        let mutable bb = b
+        let mutable i = 0
+        while i < 8 do
+            let mask = 0u8 - (bb & 1u8)
+            product = product ^ (aa & mask)
+            aa = xtime(aa)
+            bb = bb >> 1u8
+            i = i + 1
+        product
+
+    /// Multiplicative inverse in GF(2^8): x^254 (with inv(0) = 0). Constant-time
+    /// addition chain: 254 = 11111110b = 2+4+8+16+32+64+128.
+    private function inverse(x: Uint8): Uint8 =
+        let p2 = gfMul(x, x)
+        let p4 = gfMul(p2, p2)
+        let p8 = gfMul(p4, p4)
+        let p16 = gfMul(p8, p8)
+        let p32 = gfMul(p16, p16)
+        let p64 = gfMul(p32, p32)
+        let p128 = gfMul(p64, p64)
+        gfMul(p2, gfMul(p4, gfMul(p8, gfMul(p16, gfMul(p32, gfMul(p64, p128))))))
+
+    /// Rotate a byte left by `n` bits (within 8 bits).
+    private function rotl8(b: Uint8, n: Uint8): Uint8 =
+        (b << n) | (b >> (8u8 - n))
+
+    /// AES S-box: affine transform of the multiplicative inverse.
+    /// s = inv ^ rotl(inv,1) ^ rotl(inv,2) ^ rotl(inv,3) ^ rotl(inv,4) ^ 0x63.
+    private function sbox(x: Uint8): Uint8 =
+        let b = inverse(x)
+        b ^ rotl8(b, 1u8) ^ rotl8(b, 2u8) ^ rotl8(b, 3u8) ^ rotl8(b, 4u8) ^ 0x63u8
+
+    /// Exposed for test vectors only — the S-box is otherwise an internal detail.
+    function sboxFor(x: Uint8): Uint8 = sbox(x)
+
+    private function addRoundKey(state: Array<Uint8>, roundKeys: Array<Uint8>, round: Int32): Unit =
+        let base = round * 16
+        let mutable i = 0
+        while i < 16 do
+            state.set(i, state.get(i) ^ roundKeys.get(base + i))
+            i = i + 1
+
+    private function subBytes(state: Array<Uint8>): Unit =
+        let mutable i = 0
+        while i < 16 do
+            state.set(i, sbox(state.get(i)))
+            i = i + 1
+
+    /// ShiftRows: row r (r = index mod 4) is cyclically shifted left by r.
+    private function shiftRows(state: Array<Uint8>): Unit =
+        let tmp = state.clone()
+        let mutable r = 0
+        while r < 4 do
+            let mutable c = 0
+            while c < 4 do
+                state.set(r + 4 * c, tmp.get(r + 4 * ((c + r) % 4)))
+                c = c + 1
+            r = r + 1
+
+    private function mixColumns(state: Array<Uint8>): Unit =
+        let mutable c = 0
+        while c < 4 do
+            let s0 = state.get(4 * c + 0)
+            let s1 = state.get(4 * c + 1)
+            let s2 = state.get(4 * c + 2)
+            let s3 = state.get(4 * c + 3)
+            state.set(4 * c + 0, xtime(s0) ^ (xtime(s1) ^ s1) ^ s2 ^ s3)
+            state.set(4 * c + 1, s0 ^ xtime(s1) ^ (xtime(s2) ^ s2) ^ s3)
+            state.set(4 * c + 2, s0 ^ s1 ^ xtime(s2) ^ (xtime(s3) ^ s3))
+            state.set(4 * c + 3, (xtime(s0) ^ s0) ^ s1 ^ s2 ^ xtime(s3))
+            c = c + 1
+
+    private function rcon(): Array<Uint8> =
+        [|0x01u8, 0x02u8, 0x04u8, 0x08u8, 0x10u8, 0x20u8, 0x40u8, 0x80u8, 0x1bu8, 0x36u8|]
+
+    /// Number of rounds for a 16-byte (AES-128) or 32-byte (AES-256) key.
+    function rounds(keyLen: Int32): Int32 =
+        if keyLen == 32 then 14 else 10
+
+    /// Expand a 16- or 32-byte key into the round-key schedule
+    /// ((rounds + 1) * 16 bytes).
+    function expand(key: Array<Uint8>): Array<Uint8> =
+        let nk = key.length / 4
+        let nr = rounds(key.length)
+        let rk = Array<Uint8>.fill((nr + 1) * 16, 0u8)
+        key.copy(rk, 0)
+        let rc = rcon()
+        let totalWords = (nr + 1) * 4
+        let mutable i = nk
+        while i < totalWords do
+            let t0 = rk.get((i - 1) * 4 + 0)
+            let t1 = rk.get((i - 1) * 4 + 1)
+            let t2 = rk.get((i - 1) * 4 + 2)
+            let t3 = rk.get((i - 1) * 4 + 3)
+            let mutable u0 = t0
+            let mutable u1 = t1
+            let mutable u2 = t2
+            let mutable u3 = t3
+            if i % nk == 0 then
+                // rotWord, subWord, xor Rcon
+                u0 = sbox(t1) ^ rc.get(i / nk - 1)
+                u1 = sbox(t2)
+                u2 = sbox(t3)
+                u3 = sbox(t0)
+            else if nk > 6 && i % nk == 4 then
+                u0 = sbox(t0)
+                u1 = sbox(t1)
+                u2 = sbox(t2)
+                u3 = sbox(t3)
+            rk.set(i * 4 + 0, rk.get((i - nk) * 4 + 0) ^ u0)
+            rk.set(i * 4 + 1, rk.get((i - nk) * 4 + 1) ^ u1)
+            rk.set(i * 4 + 2, rk.get((i - nk) * 4 + 2) ^ u2)
+            rk.set(i * 4 + 3, rk.get((i - nk) * 4 + 3) ^ u3)
+            i = i + 1
+        rk
+
+    /// Encrypt one 16-byte block under the given round keys (nr rounds).
+    function encryptBlock(roundKeys: Array<Uint8>, nr: Int32, input: Array<Uint8>): Array<Uint8> =
+        let state = Array<Uint8>.fill(16, 0u8)
+        input.copy(state, 0)
+        addRoundKey(state, roundKeys, 0)
+        let mutable round = 1
+        while round < nr do
+            subBytes(state)
+            shiftRows(state)
+            mixColumns(state)
+            addRoundKey(state, roundKeys, round)
+            round = round + 1
+        subBytes(state)
+        shiftRows(state)
+        addRoundKey(state, roundKeys, nr)
+        state
+
+test "AES S-box known values" =
+    // Computed S-box must match the standard table at sample points.
+    assert Aes.sboxFor(0x00u8) == 0x63u8
+    assert Aes.sboxFor(0x01u8) == 0x7cu8
+    assert Aes.sboxFor(0x53u8) == 0xedu8
+    assert Aes.sboxFor(0xffu8) == 0x16u8
+
+test "AES-128 FIPS-197 block" =
+    let key = [|
+        0x00u8, 0x01u8, 0x02u8, 0x03u8, 0x04u8, 0x05u8, 0x06u8, 0x07u8,
+        0x08u8, 0x09u8, 0x0au8, 0x0bu8, 0x0cu8, 0x0du8, 0x0eu8, 0x0fu8,
+    |]
+    let plaintext = [|
+        0x00u8, 0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8,
+        0x88u8, 0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8,
+    |]
+    let expected = [|
+        0x69u8, 0xc4u8, 0xe0u8, 0xd8u8, 0x6au8, 0x7bu8, 0x04u8, 0x30u8,
+        0xd8u8, 0xcdu8, 0xb7u8, 0x80u8, 0x70u8, 0xb4u8, 0xc5u8, 0x5au8,
+    |]
+    let rk = Aes.expand(key)
+    let ct = Aes.encryptBlock(rk, 10, plaintext)
+    let mutable i = 0
+    let mutable ok = true
+    while i < 16 do
+        if ct.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "AES-256 FIPS-197 block" =
+    let key = [|
+        0x00u8, 0x01u8, 0x02u8, 0x03u8, 0x04u8, 0x05u8, 0x06u8, 0x07u8,
+        0x08u8, 0x09u8, 0x0au8, 0x0bu8, 0x0cu8, 0x0du8, 0x0eu8, 0x0fu8,
+        0x10u8, 0x11u8, 0x12u8, 0x13u8, 0x14u8, 0x15u8, 0x16u8, 0x17u8,
+        0x18u8, 0x19u8, 0x1au8, 0x1bu8, 0x1cu8, 0x1du8, 0x1eu8, 0x1fu8,
+    |]
+    let plaintext = [|
+        0x00u8, 0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8,
+        0x88u8, 0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8,
+    |]
+    let expected = [|
+        0x8eu8, 0xa2u8, 0xb7u8, 0xcau8, 0x51u8, 0x67u8, 0x45u8, 0xbfu8,
+        0xeau8, 0xfcu8, 0x49u8, 0x90u8, 0x4bu8, 0x49u8, 0x60u8, 0x89u8,
+    |]
+    let rk = Aes.expand(key)
+    let ct = Aes.encryptBlock(rk, 14, plaintext)
+    let mutable i = 0
+    let mutable ok = true
+    while i < 16 do
+        if ct.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok

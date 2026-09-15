@@ -1,0 +1,98 @@
+package standard.prelude
+
+/// A trait for types that have a meaningful default value.
+/// Implementations must provide a static `default` property that returns
+/// the canonical zero/empty value for the type.
+public trait Default =
+    property default: Self
+
+implement Default for Bool =
+    public property default: Bool = false
+
+implement Default for Int8 =
+    public property default: Int8 = 0i8
+
+implement Default for Int16 =
+    public property default: Int16 = 0i16
+
+implement Default for Int32 =
+    public property default: Int32 = 0
+
+implement Default for Int64 =
+    public property default: Int64 = 0i64
+
+implement Default for Uint8 =
+    public property default: Uint8 = 0u8
+
+implement Default for Uint16 =
+    public property default: Uint16 = 0u16
+
+implement Default for Uint32 =
+    public property default: Uint32 = 0u32
+
+implement Default for Uint64 =
+    public property default: Uint64 = 0u64
+
+implement Default for Float32 =
+    public property default: Float32 = 0.0f32
+
+implement Default for Float64 =
+    public property default: Float64 = 0.0
+
+implement Default for String =
+    public property default: String = ""
+
+implement Default for Char =
+    public property default: Char = ' '
+
+implement <T> Default for Array<T> =
+    public property default: Array<T> = Array.empty()
+
+implement <A, B> Default for (A, B) where A: Default, B: Default =
+    public property default: (A, B) = (A.default, B.default)
+
+implement <T, U> Default for T ~ U where T: Tuple, T: Default, U: Default =
+    public property default: T ~ U = T.default ~ U.default
+
+test "Bool default" =
+    assert Bool.default == false
+
+test "Int8 default" =
+    assert Int8.default == 0i8
+
+test "Int16 default" =
+    assert Int16.default == 0i16
+
+test "Int32 default" =
+    assert Int32.default == 0
+
+test "Int64 default" =
+    assert Int64.default == 0i64
+
+test "Uint8 default" =
+    assert Uint8.default == 0u8
+
+test "Uint16 default" =
+    assert Uint16.default == 0u16
+
+test "Uint32 default" =
+    assert Uint32.default == 0u32
+
+test "Uint64 default" =
+    assert Uint64.default == 0u64
+
+test "Float32 default" =
+    assert Float32.default == 0.0f32
+
+test "Float64 default" =
+    assert Float64.default == 0.0
+
+test "String default" =
+    assert String.default == ""
+
+test "Char default" =
+    assert Char.default == ' '
+
+test "Array default is empty" =
+    let a = Array<Int32>.default
+    assert a.length == 0

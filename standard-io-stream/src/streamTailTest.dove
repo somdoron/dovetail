@@ -1,0 +1,56 @@
+package standard.io.stream
+
+import standard.io.Async
+
+function recursiveStreamTail(index: Int32, acquire: (Int32) => Async<Int32, String>, release: (Int32) => Async<Unit, Never>): Stream<Int32, String> =
+    Stream<Int32, String>.bracket(acquire(index), release)
+        .concat(recursiveStreamTail(index + 1, acquire, release))
+
+function emptyConcatTail(depth: Int32): Stream<Int32, String> =
+    if depth == 0 then Stream<Int32, String>.succeed(42)
+    else Stream<Int32, String>.empty.concat(emptyConcatTail(depth - 1))
+
+function retainedStreamExecutions(execution: StreamExecutionState): Int32 =
+    let upstream = match execution.upstream with
+        case Some(source) => retainedStreamExecutions(source)
+        case None => 0
+    let branch = match execution.branch with
+        case Some(session) => match session.state with
+            case Some(state) => retainedStreamExecutions(state.execution)
+            case None => 0
+        case None => 0
+    1 + upstream + branch
+
+@timeout(5000)
+test "Stream: recursive concat retires completed execution tails" =
+    let mutable acquired = 0
+    let mutable released = 0
+    let acquire: (Int32) => Async<Int32, String> = async (index: Int32) =>
+        acquired = acquired + 1
+        index
+    let release: (Int32) => Async<Unit, Never> = async (_: Int32) => released = released + 1
+    let source = recursiveStreamTail(0, acquire, release)
+    let program: Async<Unit, Any> = async do
+        let session = await StreamSession.make(source)
+        let mutable index = 0
+        while index < 80 do
+            let result = await session.next()
+            let chunk = result.require
+            assert (chunk[0] as Int32) == index
+            assert acquired == released + 1
+            assert retainedStreamExecutions(session.state.require.execution) <= 2
+            index = index + 1
+        await session.interrupt()
+        assert acquired == 80 && released == 80
+    program.mapError((_: Any) => "unexpected failure").run()
+
+// This checks retained execution states across 1,000 transitions, not throughput.
+@timeout(15000)
+test "Stream: empty concat traversal does not retain obsolete execution states" =
+    let program: Async<Unit, Any> = async do
+        let session = await StreamSession.make(emptyConcatTail(1000))
+        let result = await session.next()
+        assert (result.require[0] as Int32) == 42
+        assert retainedStreamExecutions(session.state.require.execution) == 1
+        await session.interrupt()
+    program.mapError((_: Any) => "unexpected failure").run()

@@ -1,0 +1,148 @@
+package standard.io.log
+
+import standard.io.Async
+import standard.time.Instant
+import standard.io.TimeExtension
+
+/// An immutable logger configuration: which sink to send records to, the
+/// minimum severity level to emit, contextual fields/spans inherited by every
+/// record, and a logger name (useful for dotted sub-naming).
+///
+/// All `with*` combinators return a new `Logger` — the original is unchanged.
+/// Loggers are cheap to copy and pass by value.
+///
+/// Quickstart:
+/// ```
+/// async function main(): Async<Unit, Never> =
+///     let sink = use ConsoleSink.make()
+///     let log = Logger.make(sink)
+///                     .withName("checkout")
+///                     .withField("service", "orders")
+///                     .withField("version", "1.4.2")
+///     await log.info("service started")
+///     let scoped = log.withSpanNamed("handleRequest").withField("requestId", 42i32)
+///     scoped.warn("slow upstream")
+/// ```
+public record Logger =
+    sink: LogSink
+    name: String
+    minLevel: LogLevel
+    spans: List<LogSpan>
+    fields: List<LogField>
+
+module Logger =
+    /// Build a fresh logger that writes to `sink`. Defaults: empty name,
+    /// `LogLevel.Info` minimum severity, no contextual spans or fields.
+    public function make(sink: LogSink): Logger =
+        Logger {
+            sink = sink
+            name = ""
+            minLevel = LogLevel.Info
+            spans = List<LogSpan>.empty
+            fields = List<LogField>.empty
+        }
+
+    // ── Naming / filtering ────────────────────────────────────────────
+
+    /// Return a child logger with `name` appended (dot-separated) to the
+    /// existing name. On a freshly-`new`'d logger (empty name) the result's
+    /// name is just `name`.
+    public function withName(self, name: String): Logger =
+        let combined = if self.name == "" then name else self.name ++ "." ++ name
+        Logger {
+            sink = self.sink
+            name = combined
+            minLevel = self.minLevel
+            spans = self.spans
+            fields = self.fields
+        }
+
+    /// Return a logger that drops records below `level`.
+    public function withMinLevel(self, level: LogLevel): Logger =
+        Logger {
+            sink = self.sink
+            name = self.name
+            minLevel = level
+            spans = self.spans
+            fields = self.fields
+        }
+
+    // ── Field context ─────────────────────────────────────────────────
+
+    /// Attach a `Display`-formatted field to every subsequent record.
+    public function withField<T>(self, key: String, value: T): Logger where T: Display =
+        self.withLogField(LogField.make(key, value))
+
+    /// Attach a pre-built `LogField` to every subsequent record.
+    public function withLogField(self, field: LogField): Logger =
+        Logger {
+            sink = self.sink
+            name = self.name
+            minLevel = self.minLevel
+            spans = self.spans
+            fields = self.fields.append(field)
+        }
+
+    /// Attach many fields at once.
+    public function withFields(self, fields: List<LogField>): Logger =
+        Logger {
+            sink = self.sink
+            name = self.name
+            minLevel = self.minLevel
+            spans = self.spans
+            fields = self.fields.concat(fields)
+        }
+
+    // ── Spans ─────────────────────────────────────────────────────────
+
+    /// Attach a pre-built span to every subsequent record. Spans are
+    /// outermost-first.
+    public function withSpan(self, span: LogSpan): Logger =
+        Logger {
+            sink = self.sink
+            name = self.name
+            minLevel = self.minLevel
+            spans = self.spans.append(span)
+            fields = self.fields
+        }
+
+    /// Shorthand for `withSpan(LogSpan.make(name))`.
+    public function withSpanNamed(self, name: String): Logger =
+        self.withSpan(LogSpan.make(name))
+
+    // ── Emission ──────────────────────────────────────────────────────
+
+    /// Emit a record at `level` with `message`. The message thunk is only
+    /// forced when `level` clears `minLevel` — disabled levels pay only a
+    /// comparison.
+    public function log(self, level: LogLevel, message: ByName<String>): Async<Unit, Never> =
+        if !level.isAtLeast(self.minLevel) then Async.succeed(())
+        else
+            Instant.now.andThen<Unit>((ts: Instant) =>
+                let event = LogRecord {
+                    timestamp = ts
+                    level = level
+                    loggerName = self.name
+                    spans = self.spans
+                    fields = self.fields
+                    message = message.get
+                }
+                self.sink.emit(event)
+            )
+
+    // Level-specific shorthands for `log(LogLevel.<name>, message)`.
+
+    public function trace(self, message: ByName<String>): Async<Unit, Never> =
+        self.log(LogLevel.Trace, message)
+
+    public function debug(self, message: ByName<String>): Async<Unit, Never> =
+        self.log(LogLevel.Debug, message)
+
+    public function info(self, message: ByName<String>): Async<Unit, Never> =
+        self.log(LogLevel.Info, message)
+
+    public function warn(self, message: ByName<String>): Async<Unit, Never> =
+        self.log(LogLevel.Warn, message)
+
+    public function error(self, message: ByName<String>): Async<Unit, Never> =
+        self.log(LogLevel.Error, message)

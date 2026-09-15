@@ -1,0 +1,327 @@
+package test
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.String
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Queue
+
+import standard.wasi.net.NetworkError
+
+import standard.io.http.Context
+import standard.io.http.Response
+import standard.io.http.ServerError
+import standard.io.http.ServerConfig
+import standard.io.http.HttpClientError
+import standard.io.http.serveExchange
+import standard.io.http.driveClientExchange
+
+import standard.io.net.NetError
+
+import standard.http.HttpRequest
+import standard.http.Headers
+import standard.http.normalizeAndValidate
+
+import standard.io.crypto.TlsClientStream
+import standard.io.crypto.TlsServerStream
+import standard.io.crypto.TlsIoError
+
+import standard.tls.TlsClientConfig
+import standard.tls.TlsServerConfig
+import standard.tls.CipherSuite
+import standard.tls.KeyExchangeGroup
+import standard.tls.SignatureScheme
+import standard.tls.TicketStore
+import standard.tls.alpnHttp1
+
+import standard.crypto.SecretKey
+import standard.crypto.Ed25519
+import standard.crypto.X509
+import standard.crypto.X509Certificate
+import standard.time.Instant
+
+/// End-to-end test for the *generic* HTTP exchange helpers (`serveExchange<E>`
+/// and `driveClientExchange<E>`) monomorphized at `E = TlsIoError`. A real TLS
+/// handshake runs over an in-memory full-duplex pair (two `Queue`s wired
+/// crosswise); the server echoes the request body and the client drives a full
+/// HTTP/1.1 request/response cycle over the encrypted streams. This is what
+/// proves the cross-package generic free-function dispatch + monomorphization
+/// the HTTPS client/server rely on; no real sockets are involved.
+
+// --- in-memory socket streams (queue-backed; blocking take/offer) ----------
+
+
+/// See the twin in the TLS interop test: a queue-backed double must honour
+/// invariant (8) — never more bytes than the caller asked for — because `read`
+/// now panics on a subclass that does not.
+function splitAt(bytes: Array<Uint8>, bytesLength: Int64): (Array<Uint8>, Array<Uint8>) =
+    let availWide = bytes.length.toInt64()
+    let want = if bytesLength > availWide then availWide else bytesLength
+    let take = want.toInt32()
+    (sliceBytes(bytes, 0i32, take), sliceBytes(bytes, take, bytes.length))
+
+function sliceBytes(source: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
+    let count = if end > start then end - start else 0i32
+    if count == 0i32 then
+        Array<Uint8>.empty()
+    else
+        let result = Array<Uint8>.fill(count, 0u8)
+        source.copy(start, result, 0i32, count)
+        result
+
+class MemInputStream(queue: Queue<Array<Uint8>>, mutable pending: Array<Uint8>) extends AsyncInputStream<NetworkError>() =
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, NetworkError> =
+        if self.pending.length == 0 then
+            self.pending = await self.queue.take()
+        else
+            ()
+        let split = splitAt(self.pending, bytesLength)
+        self.pending = split._1
+        split._0
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+class MemOutputStream(queue: Queue<Array<Uint8>>) extends AsyncOutputStream<NetworkError>() =
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    protected override function recordedFailure(self): Result<Unit, NetworkError> = Ok(())
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, NetworkError> =
+        await self.queue.offer(bytes.toArray())
+    protected override async function flushPending(self): Async<Unit, NetworkError> = ()
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+// --- self-signed Ed25519 certificate fixture (mirrors the X509/TLS tests) ---
+
+function derLen(n: Int32): Array<Uint8> =
+    if n < 128 then [|n.toUint8()|]
+    else if n < 256 then [|0x81u8, n.toUint8()|]
+    else [|0x82u8, (n / 256).toUint8(), (n % 256).toUint8()|]
+
+function tlv(tag: Uint8, content: Array<Uint8>): Array<Uint8> =
+    [|tag|].concat(derLen(content.length)).concat(content)
+
+function makeSelfSignedEd25519Cert(secret: SecretKey): Array<Uint8> =
+    let pub = Ed25519.derivePublicKey(secret).value
+    let edAlg = tlv(0x30u8, tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
+    let cnAttr = tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x04u8, 0x03u8|]).concat(tlv(0x0cu8, "CA".bytes())))
+    let name = tlv(0x30u8, tlv(0x31u8, cnAttr))
+    let version = tlv(0xa0u8, tlv(0x02u8, [|0x02u8|]))
+    let serial = tlv(0x02u8, [|0x2au8|])
+    let validity = tlv(0x30u8,
+        tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes())))
+    let spki = tlv(0x30u8, edAlg.concat(tlv(0x03u8, [|0x00u8|].concat(pub))))
+    // subjectAltName { dNSName "example.com" } so hostname verification passes.
+    let san = tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(tlv(0x04u8, tlv(0x30u8, tlv(0x82u8, "example.com".bytes())))))
+    let exts = tlv(0xa3u8, tlv(0x30u8, san))
+    let tbs = tlv(0x30u8,
+        version.concat(serial).concat(edAlg).concat(name).concat(validity).concat(name).concat(spki).concat(exts))
+    let sig = Ed25519.sign(secret, tbs)
+    tlv(0x30u8, tbs.concat(edAlg).concat(tlv(0x03u8, [|0x00u8|].concat(sig))))
+
+function clientConfigFor(cert: X509Certificate, now: Instant): TlsClientConfig =
+    TlsClientConfig {
+        serverName = "example.com"
+        cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519]
+        signatureAlgorithms = [SignatureScheme.Ed25519, SignatureScheme.EcdsaSecp256r1Sha256]
+        trustAnchors = [cert]
+        alpnProtocols = [alpnHttp1]
+        currentTime = now
+        randomSeed = Array<Uint8>.fill(160, 0x01u8)
+        resumptionTicket = None
+    }
+
+function serverConfigFor(cert: X509Certificate, secret: SecretKey, now: Instant): TlsServerConfig =
+    TlsServerConfig {
+        certificateChain = [cert]
+        privateKey = secret
+        signatureScheme = SignatureScheme.Ed25519
+        cipherSuites = [CipherSuite.Aes128GcmSha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519]
+        alpnProtocols = [alpnHttp1]
+        currentTime = now
+        randomSeed = Array<Uint8>.fill(160, 0x02u8)
+        ticketStore = TicketStore.make()
+    }
+
+// --- error mappings (test copies; the library's are private) ---------------
+
+function testServerMapErr(e: TlsIoError): ServerError =
+    match e with
+        case TlsIoError.Transport(n) => ServerError.NetworkError(NetError.from(n))
+        case TlsIoError.Protocol(_) => ServerError.TlsError(e)
+        case TlsIoError.Closed => ServerError.TlsError(e)
+        case TlsIoError.Canceled => ServerError.TlsError(e)
+        case TlsIoError.Truncated => ServerError.TlsError(e)
+
+function testClientMapErr(e: TlsIoError): HttpClientError =
+    match e with
+        case TlsIoError.Transport(n) => HttpClientError.NetworkError(NetError.from(n))
+        case TlsIoError.Protocol(_) => HttpClientError.TlsError(e)
+        case TlsIoError.Closed => HttpClientError.TlsError(e)
+        case TlsIoError.Canceled => HttpClientError.TlsError(e)
+        case TlsIoError.Truncated => HttpClientError.TlsError(e)
+
+// --- wire request builder ---------------------------------------------------
+
+function makeRequest(method: String, target: String, host: String, body: Array<Uint8>): HttpRequest =
+    let pairs = [("Host", host), ("Connection", "close")]
+    let withLen = if body.length > 0 then pairs.append(("Content-Length", body.length.format())) else pairs
+    let headers = match normalizeAndValidate(withLen) with
+        case Ok(h) => h
+        case Error(_) => Headers.empty()
+    HttpRequest {
+        method = method
+        target = target
+        headers = headers
+        httpVersion = "1.1"
+    }
+
+// --- exchange driver --------------------------------------------------------
+
+/// Echo handler: respond 200 with the request body as the response body.
+function echoHandler(ctx: Context): Async<Response, ServerError> =
+    Async.succeed(Response.ok(ctx.request.body))
+
+async function serverSide(
+    config: TlsServerConfig,
+    sin: AsyncInputStream<NetworkError>,
+    sout: AsyncOutputStream<NetworkError>
+): Async<Unit, ServerError> =
+    let serverTls = use TlsServerStream.accept(config, sin, sout)
+    await serveExchange(serverTls.input, serverTls.output, testServerMapErr, echoHandler, ServerConfig.default())
+
+async function clientSide(
+    config: TlsClientConfig,
+    cin: AsyncInputStream<NetworkError>,
+    cout: AsyncOutputStream<NetworkError>,
+    request: HttpRequest,
+    body: Array<Uint8>
+): Async<Response, HttpClientError> =
+    let clientTls = use TlsClientStream.connect(config, cin, cout)
+    await driveClientExchange(clientTls.input, clientTls.output, testClientMapErr, request, body)
+
+async function exchangeOnce(target: String, body: Array<Uint8>): Async<Response, HttpClientError> =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x42u8))
+    let certDer = makeSelfSignedEd25519Cert(secret)
+    let cert = X509.parseCertificate(certDer).require
+    let now = Instant.ofEpochSecond(1748736000i64)
+    let clientConfig = clientConfigFor(cert, now)
+    let serverConfig = serverConfigFor(cert, secret, now)
+    let request = makeRequest("GET", target, "example.com", body)
+
+    let c2s = await Queue<Array<Uint8>>.makeUnbounded()
+    let s2c = await Queue<Array<Uint8>>.makeUnbounded()
+    let clientIn: AsyncInputStream<NetworkError> = MemInputStream(s2c, Array<Uint8>.empty())
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(c2s)
+    let serverIn: AsyncInputStream<NetworkError> = MemInputStream(c2s, Array<Uint8>.empty())
+    let serverOut: AsyncOutputStream<NetworkError> = MemOutputStream(s2c)
+
+    let serverProgram: Async<Unit, Never> =
+        serverSide(serverConfig, serverIn, serverOut).catchAll((_: ServerError) => Async.succeed(()))
+    let serverFiber = await serverProgram.fork()
+    let resp = await clientSide(clientConfig, clientIn, clientOut, request, body)
+    await serverFiber.join()
+    resp
+
+// --- tests ------------------------------------------------------------------
+
+test "HTTPS exchange over in-memory TLS streams round-trips an empty-body request" =
+    let mutable response: Option<Response> = None
+    let program: Async<Unit, Never> = exchangeOnce("/", Array<Uint8>.empty()).fold(
+        (_: HttpClientError) => Async.succeed(()),
+        (r: Response) => Async.thunk(() => response = Some(r)))
+    program.run()
+    match response with
+        case None => assert false
+        case Some(r) =>
+            assert r.statusCode == 200
+            assert r.isSuccess
+
+test "HTTPS exchange over in-memory TLS streams echoes a non-empty body" =
+    let mutable response: Option<Response> = None
+    let payload = "hello tls".bytes()
+    let program: Async<Unit, Never> = exchangeOnce("/echo", payload).fold(
+        (_: HttpClientError) => Async.succeed(()),
+        (r: Response) => Async.thunk(() => response = Some(r)))
+    program.run()
+    match response with
+        case None => assert false
+        case Some(r) =>
+            assert r.statusCode == 200
+            assert r.bodyAsString() == "hello tls"
+
+// --- the late-error channel over TLS ---------------------------------------
+
+/// An underlying socket write half whose `close` reports a transport failure —
+/// what a real `WasiOutputStream.close` does when the peer reset the connection
+/// after the last accepted write. `write` and `flush` succeed, because a LATE
+/// error is by definition one that no write ever saw: a write resolves when the
+/// host accepts the bytes, and the reset arrives after that.
+class LateFailingOutputStream(queue: Queue<Array<Uint8>>) extends AsyncOutputStream<NetworkError>() =
+    // Alive right up to the close: a LATE error is by definition one no earlier
+    // operation could have seen.
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    // And nothing RECORDED either, for the same reason — which is what makes
+    // `flush` succeed here and `close` fail. That is the whole point of the
+    // double: only ending the stream can surface a late reset.
+    protected override function recordedFailure(self): Result<Unit, NetworkError> = Ok(())
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, NetworkError> =
+        await self.queue.offer(bytes.toArray())
+    protected override async function flushPending(self): Async<Unit, NetworkError> = ()
+    public override async function close(self): Async<Unit, NetworkError> =
+        await Async.fail(NetworkError.ConnectionReset)
+
+/// Run one HTTPS exchange whose server-side socket reports a late reset, and
+/// return how `serveExchange` described it. `""` means it reported nothing —
+/// which is the bug: a 200 logged for a response that never arrived.
+async function serveWithLateReset(
+    config: TlsServerConfig,
+    sin: AsyncInputStream<NetworkError>,
+    sout: AsyncOutputStream<NetworkError>
+): Async<String, Never> =
+    let serverTls = use TlsServerStream.accept(config, sin, sout)
+    let onFailure: (ServerError) => Async<String, Never> = (e: ServerError) =>
+        match e with
+            case ServerError.NetworkError(_) => Async.succeed("network")
+            case ServerError.TlsError(_) => Async.succeed("tls")
+            case _ => Async.succeed("other")
+    let onSuccess: (Unit) => Async<String, Never> = (_: Unit) => Async.succeed("")
+    await serveExchange(serverTls.input, serverTls.output, testServerMapErr, echoHandler, ServerConfig.default())
+        .fold<String, Never>(onFailure, onSuccess)
+
+async function exchangeWithLateReset(seen: Array<String>): Async<Unit, Never> =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x42u8))
+    let certDer = makeSelfSignedEd25519Cert(secret)
+    let cert = X509.parseCertificate(certDer).require
+    let now = Instant.ofEpochSecond(1748736000i64)
+    let clientConfig = clientConfigFor(cert, now)
+    let serverConfig = serverConfigFor(cert, secret, now)
+    let request = makeRequest("GET", "/", "example.com", Array<Uint8>.empty())
+
+    let c2s = await Queue<Array<Uint8>>.makeUnbounded()
+    let s2c = await Queue<Array<Uint8>>.makeUnbounded()
+    let clientIn: AsyncInputStream<NetworkError> = MemInputStream(s2c, Array<Uint8>.empty())
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(c2s)
+    let serverIn: AsyncInputStream<NetworkError> = MemInputStream(c2s, Array<Uint8>.empty())
+    let serverOut: AsyncOutputStream<NetworkError> = LateFailingOutputStream(s2c)
+
+    let serverFiber = await serveWithLateReset(serverConfig, serverIn, serverOut).fork()
+    let clientProgram: Async<Unit, Never> =
+        clientSide(clientConfig, clientIn, clientOut, request, Array<Uint8>.empty())
+            .fold<Unit, Never>((_: HttpClientError) => Async.succeed(()), (_: Response) => Async.succeed(()))
+    await clientProgram
+    let outcome = await serverFiber.join()
+    seen.set(0, outcome)
+
+@timeout(20000)
+test "an HTTPS exchange reports a reset that arrives after the last accepted write" =
+    let seen = Array<String>.fill(1, "unset")
+    exchangeWithLateReset(seen).run()
+    // Not "": `serveExchange`'s phase 4 closes the encrypted output stream, that
+    // close ends the underlying write half, and ONLY ending it makes the
+    // transport's verdict available. While `TlsOutputStream.close` was just a
+    // flush, this exchange reported success for a response the peer never got.
+    assert seen.get(0) == "network"

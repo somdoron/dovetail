@@ -1,0 +1,28 @@
+package test
+
+import standard.sqlite.Connection
+import standard.sqlite.SqlValue
+import standard.sqlite.SqliteError
+import standard.io.Async
+
+// Regression: this project depends on `standard-sqlite` but does NOT declare
+// `[[project.component]] name = "sqlite"` of its own. The sqlite component must
+// be composed into this output TRANSITIVELY (inherited from the dependency), so
+// these calls reach the real shim and return real data — not the generated
+// `panic "wit-import stub"` bodies that would remain if the component were not
+// aggregated. If transitive composition regresses, this test traps/panics.
+test "transitive sqlite: works without re-declaring the component" =
+    let mutable value: Int64 = -1i64
+    let program: Async<Unit, SqliteError> = transitiveProgram((v: Int64) => value = v)
+    program.run()
+    assert value == 42i64
+
+async function transitiveProgram(setValue: (Int64) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("transitive.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let params: Array<SqlValue> = [|SqlValue.Integer(42i64)|]
+    await conn.executeWith("INSERT INTO t (v) VALUES (?1)", params)
+    let rows = await conn.query("SELECT v FROM t")
+    match rows.head.get(0) with
+        case SqlValue.Integer(v) => setValue(v)
+        case _ => panic "expected integer"

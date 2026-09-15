@@ -1,0 +1,25 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// Key material typed by cryptographic role. Role-based typing (rather than
+/// per-algorithm types) prevents the most dangerous misuse — swapping a key for
+/// a nonce, or a symmetric key for an asymmetric one — without a type explosion.
+
+/// A symmetric key, used by AEAD ciphers, MACs, and KDFs.
+public newtype SymmetricKey = Array<Uint8>
+
+/// A nonce / initialization vector for an AEAD cipher.
+public newtype Nonce = Array<Uint8>
+
+/// A private (secret) key for an asymmetric algorithm.
+public newtype SecretKey = Array<Uint8>
+
+/// A public key for an asymmetric algorithm.
+public newtype PublicKey = Array<Uint8>
+
+/// An asymmetric key pair. The `publicKey` field is named in full (rather than
+/// `public`) because `public` is a reserved word.
+public record KeyPair =
+    secret: SecretKey
+    publicKey: PublicKey

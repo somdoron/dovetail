@@ -1,0 +1,85 @@
+package standard.prelude
+
+/// A read-only, bounded view of an array. Mutable aliases can still change elements.
+/// The view flattens to (data, start, length), boxing at single-slot boundaries.
+public type ReadonlySlice<out T> = intrinsic
+
+module ReadonlySlice<T> =
+    public function make(data: Array<T>, start: Int32, length: Int32): ReadonlySlice<T> = intrinsic
+
+    public function full(data: Array<T>): ReadonlySlice<T> = ReadonlySlice.make(data, 0, data.length)
+
+    public property readonly(self): ReadonlySlice<T> = self
+
+    public property length(self): Int32 = intrinsic
+    public function isEmpty(self): Bool = self.length == 0
+
+    public function get(self, index: Int32): T = intrinsic
+
+    /// Return a view of the half-open interval [start, end).
+    public function slice(self, start: Int32, end: Int32): ReadonlySlice<T> = intrinsic
+
+    /// Inclusive counterpart used by [|start..=end|]; check before incrementing.
+    public function sliceInclusive(self, start: Int32, end: Int32): ReadonlySlice<T> =
+        assert start >= 0 && end >= start && end < self.length, "slice out of bounds"
+        self.slice(start, end + 1)
+
+    public function drop(self, count: Int32): ReadonlySlice<T> = self.slice(count, self.length)
+    public function take(self, count: Int32): ReadonlySlice<T> = self.slice(0, count)
+
+    public function toArray(self): Array<T> =
+        if self.isEmpty() then Array.empty()
+        else
+            let result = Array.fill(self.length, self.get(0))
+            self.copyTo(Slice.full(result))
+            result
+
+    /// Copy to a mutable destination, including overlapping storage.
+    public function copyTo(self, dest: Slice<T>): Unit = intrinsic
+
+    public function map<U>(self, f: T => U): ReadonlySlice<U> =
+        if self.isEmpty() then Array<U>.empty().readonly
+        else
+            let result = Array.fill(self.length, f(self.get(0)))
+            let mutable i = 1
+            while i < self.length do
+                result.set(i, f(self.get(i)))
+                i = i + 1
+            result.readonly
+
+class ReadonlySliceIterator<T>(slice: ReadonlySlice<T>, mutable index: Int32) implements Iterator<T> =
+    public function next(self): Option<T> =
+        if self.index == self.slice.length then None
+        else
+            let item = self.slice.get(self.index)
+            self.index = self.index + 1
+            Some(item)
+
+implement <T> Iterable<T> for ReadonlySlice<T> =
+    public function iterator(self): Iterator<T> = ReadonlySliceIterator<T>(self, 0)
+
+implement <T> Display for ReadonlySlice<T> where T: Display =
+    public function format(self: ReadonlySlice<T>): String =
+        let mutable parts: List<String> = List.empty
+        let mutable i = 0
+        while i < self.length do
+            parts = List.Cons(self.get(i).format() ++ ",", parts)
+            i = i + 1
+        "[" ++ String.join(parts.reverse(), "") ++ "]"
+
+implement <T> Equatable for ReadonlySlice<T> where T: Equatable =
+    public function equals(self: ReadonlySlice<T>, other: ReadonlySlice<T>): Bool =
+        if self.length != other.length then false
+        else
+            let mutable equal = true
+            let mutable i = 0
+            while i < self.length do
+                if self.get(i) != other.get(i) then
+                    equal = false
+                    break
+                i = i + 1
+            equal
+
+implement <T> Index<Int32> for ReadonlySlice<T> =
+    type Output = T
+    public function get(self: ReadonlySlice<T>, index: Int32): T = self.get(index)

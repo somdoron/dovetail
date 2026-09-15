@@ -1,0 +1,375 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+
+/// Ed25519 (RFC 8032): EdDSA over the twisted Edwards curve birationally
+/// equivalent to Curve25519. Reuses the radix-2^51 field from `Curve25519` and
+/// SHA-512.
+///
+/// To minimise hand-transcribed constants, the curve constant d, 2d, sqrt(-1),
+/// and the base point are all computed at runtime from the field operations
+/// the only literal constant is the group order L (used for scalar reduction).
+/// Scalar arithmetic mod L is generic big-integer code (binary long division),
+/// favouring auditability over the ref10 limb code.
+module Ed25519Impl =
+    // --- Scalars mod L (little-endian bytes) ---
+
+    /// The order of the base point: L = 2^252 + 27742317777372353535851937790883648493.
+    private function orderL(): Array<Uint8> =
+        [|
+            0xedu8, 0xd3u8, 0xf5u8, 0x5cu8, 0x1au8, 0x63u8, 0x12u8, 0x58u8,
+            0xd6u8, 0x9cu8, 0xf7u8, 0xa2u8, 0xdeu8, 0xf9u8, 0xdeu8, 0x14u8,
+            0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8,
+            0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x00u8, 0x10u8,
+        |]
+
+    /// In-place left shift of a 32-byte little-endian value by one bit.
+    private function shl1(r: Array<Uint8>): Unit =
+        let mutable carry = 0u8
+        let mutable i = 0
+        while i < 32 do
+            let v = r.get(i)
+            r.set(i, (v << 1u8) | carry)
+            carry = v >> 7u8
+            i = i + 1
+
+    /// If r >= L, subtract L (branch-free).
+    private function reduceOnce(r: Array<Uint8>): Unit =
+        let l = orderL()
+        let t = Array<Uint8>.fill(32, 0u8)
+        let mutable borrow = 0
+        let mutable i = 0
+        while i < 32 do
+            let diff = r.get(i).toInt32() - l.get(i).toInt32() - borrow
+            t.set(i, (diff & 0xff).toUint8())
+            borrow = (diff >> 8) & 1
+            i = i + 1
+        // borrow == 0 means r >= L: take t; else keep r.
+        let useT = borrow.toUint8() - 1u8
+        i = 0
+        while i < 32 do
+            r.set(i, (t.get(i) & useT) | (r.get(i) & (~useT)))
+            i = i + 1
+
+    /// Reduce an arbitrary-length little-endian value mod L (binary long division).
+    private function modL(x: Array<Uint8>): Array<Uint8> =
+        let r = Array<Uint8>.fill(32, 0u8)
+        let mutable i = x.length * 8 - 1
+        while i >= 0 do
+            shl1(r)
+            let xbit = (x.get(i / 8) >> (i % 8).toUint8()) & 1u8
+            r.set(0, r.get(0) | xbit)
+            reduceOnce(r)
+            i = i - 1
+        r
+
+    /// 32x32-byte schoolbook multiply -> 64-byte little-endian product.
+    private function scMul(a: Array<Uint8>, b: Array<Uint8>): Array<Uint8> =
+        let p = Array<Uint8>.fill(64, 0u8)
+        let mutable i = 0
+        while i < 32 do
+            let mutable carry = 0u32
+            let mutable j = 0
+            while j < 32 do
+                let idx = i + j
+                let prod = a.get(i).toUint32() * b.get(j).toUint32() + p.get(idx).toUint32() + carry
+                p.set(idx, (prod & 0xffu32).toUint8())
+                carry = prod >> 8u32
+                j = j + 1
+            let mutable k = i + 32
+            while carry > 0u32 do
+                let cur = p.get(k).toUint32() + carry
+                p.set(k, (cur & 0xffu32).toUint8())
+                carry = cur >> 8u32
+                k = k + 1
+            i = i + 1
+        p
+
+    /// (a*b + c) mod L, all scalars 32-byte little-endian.
+    private function scMulAdd(a: Array<Uint8>, b: Array<Uint8>, c: Array<Uint8>): Array<Uint8> =
+        let p = scMul(a, b)
+        let mutable carry = 0u32
+        let mutable i = 0
+        while i < 32 do
+            let s = p.get(i).toUint32() + c.get(i).toUint32() + carry
+            p.set(i, (s & 0xffu32).toUint8())
+            carry = s >> 8u32
+            i = i + 1
+        while carry > 0u32 && i < 64 do
+            let s = p.get(i).toUint32() + carry
+            p.set(i, (s & 0xffu32).toUint8())
+            carry = s >> 8u32
+            i = i + 1
+        modL(p)
+
+    /// True iff the 32-byte little-endian scalar is < L.
+    private function scalarLessThanL(s: Array<Uint8>): Bool =
+        let l = orderL()
+        let mutable borrow = 0
+        let mutable i = 0
+        while i < 32 do
+            let diff = s.get(i).toInt32() - l.get(i).toInt32() - borrow
+            borrow = (diff >> 8) & 1
+            i = i + 1
+        borrow == 1
+
+    // --- Curve constants (computed) ---
+
+    /// d = -121665 / 121666 (mod p).
+    private function edwardsD(): Array<Uint64> =
+        Curve25519.fmul(
+            Curve25519.fneg(Curve25519.feConst(121665u64)),
+            Curve25519.finvert(Curve25519.feConst(121666u64)))
+
+    /// sqrt(-1) = 2^((p-1)/4) = (2^(2^252-3))^2 * 2.
+    private function sqrtm1(): Array<Uint64> =
+        let two = Curve25519.feConst(2u64)
+        Curve25519.fmul(Curve25519.fsquare(Curve25519.fpow22523(two)), two)
+
+    // --- Edwards points in extended coordinates (x, y, z, t), t = xy/z ---
+
+    private function identity(): EdPoint =
+        EdPoint {
+            x = Curve25519.feZero()
+            y = Curve25519.feOne()
+            z = Curve25519.feOne()
+            t = Curve25519.feZero()
+        }
+
+    /// Unified (complete) addition for a = -1 twisted Edwards; also doubles.
+    private function pointAdd(p1: EdPoint, p2: EdPoint, d2: Array<Uint64>): EdPoint =
+        let a = Curve25519.fmul(Curve25519.fsub(p1.y, p1.x), Curve25519.fsub(p2.y, p2.x))
+        let b = Curve25519.fmul(Curve25519.fadd(p1.y, p1.x), Curve25519.fadd(p2.y, p2.x))
+        let c = Curve25519.fmul(Curve25519.fmul(p1.t, p2.t), d2)
+        let dd = Curve25519.fmul(Curve25519.fmul(p1.z, p2.z), Curve25519.feConst(2u64))
+        let e = Curve25519.fsub(b, a)
+        let f = Curve25519.fsub(dd, c)
+        let g = Curve25519.fadd(dd, c)
+        let h = Curve25519.fadd(b, a)
+        EdPoint {
+            x = Curve25519.fmul(e, f)
+            y = Curve25519.fmul(g, h)
+            t = Curve25519.fmul(e, h)
+            z = Curve25519.fmul(f, g)
+        }
+
+    private function negatePoint(p: EdPoint): EdPoint =
+        EdPoint { x = Curve25519.fneg(p.x); y = p.y; z = p.z; t = Curve25519.fneg(p.t) }
+
+    private function feCSelect(bit: Uint64, a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let mask = 0u64 - bit
+        let r = Array<Uint64>.fill(5, 0u64)
+        let mutable i = 0
+        while i < 5 do
+            r.set(i, (a.get(i) & mask) | (b.get(i) & (~mask)))
+            i = i + 1
+        r
+
+    private function pointCSelect(bit: Uint64, a: EdPoint, b: EdPoint): EdPoint =
+        EdPoint {
+            x = feCSelect(bit, a.x, b.x)
+            y = feCSelect(bit, a.y, b.y)
+            z = feCSelect(bit, a.z, b.z)
+            t = feCSelect(bit, a.t, b.t)
+        }
+
+    /// Constant-time scalar multiplication (left-to-right double-and-add).
+    private function scalarMult(p: EdPoint, scalarBytes: Array<Uint8>, d2: Array<Uint64>): EdPoint =
+        let mutable r = identity()
+        let mutable i = 255
+        while i >= 0 do
+            r = pointAdd(r, r, d2)
+            let bit = ((scalarBytes.get(i / 8) >> (i % 8).toUint8()) & 1u8).toUint64()
+            let q = pointAdd(r, p, d2)
+            r = pointCSelect(bit, q, r)
+            i = i - 1
+        r
+
+    /// Base point B = (x_even, 4/5), recovered by decompression.
+    private function basePoint(d: Array<Uint64>): EdPoint =
+        let y = Curve25519.fmul(Curve25519.feConst(4u64), Curve25519.finvert(Curve25519.feConst(5u64)))
+        decompress(Curve25519.tobytes(y), d).require
+
+    /// Encode a point to 32 bytes: little-endian y with x's parity in bit 255.
+    private function compress(p: EdPoint): Array<Uint8> =
+        let zinv = Curve25519.finvert(p.z)
+        let x = Curve25519.fmul(p.x, zinv)
+        let y = Curve25519.fmul(p.y, zinv)
+        let s = Curve25519.tobytes(y)
+        s.set(31, s.get(31) | (Curve25519.feParity(x) << 7u8))
+        s
+
+    private function finishDecompress(x0: Array<Uint64>, y: Array<Uint64>, signBit: Uint8): Option<EdPoint> =
+        let x = if Curve25519.feParity(x0) != signBit then Curve25519.fneg(x0) else x0
+        Some(EdPoint { x = x; y = y; z = Curve25519.feOne(); t = Curve25519.fmul(x, y) })
+
+    /// Decode a 32-byte point encoding; `None` if it is not a valid point.
+    private function decompress(bytes: Array<Uint8>, d: Array<Uint64>): Option<EdPoint> =
+        let y = Curve25519.frombytes(bytes)
+        let signBit = (bytes.get(31) >> 7u8) & 1u8
+        let yy = Curve25519.fsquare(y)
+        let u = Curve25519.fsub(yy, Curve25519.feOne())
+        let v = Curve25519.fadd(Curve25519.fmul(d, yy), Curve25519.feOne())
+        let v3 = Curve25519.fmul(Curve25519.fsquare(v), v)
+        let v7 = Curve25519.fmul(Curve25519.fsquare(v3), v)
+        let pw = Curve25519.fpow22523(Curve25519.fmul(u, v7))
+        let x = Curve25519.fmul(Curve25519.fmul(u, v3), pw)
+        let vx2 = Curve25519.fmul(v, Curve25519.fsquare(x))
+        if Curve25519.feEqual(vx2, u) then
+            finishDecompress(x, y, signBit)
+        else if Curve25519.feEqual(vx2, Curve25519.fneg(u)) then
+            finishDecompress(Curve25519.fmul(x, sqrtm1()), y, signBit)
+        else
+            None
+
+    // --- Helpers ---
+
+    private function slice(src: Array<Uint8>, off: Int32, len: Int32): Array<Uint8> =
+        let r = Array<Uint8>.fill(len, 0u8)
+        src.copy(off, r, 0, len)
+        r
+
+    private function clampScalar(h: Array<Uint8>): Array<Uint8> =
+        let a = slice(h, 0, 32)
+        a.set(0, a.get(0) & 248u8)
+        a.set(31, (a.get(31) & 127u8) | 64u8)
+        a
+
+
+    function derivePublicKey(secret: Array<Uint8>): Array<Uint8> =
+        let d = edwardsD()
+        let d2 = Curve25519.fadd(d, d)
+        let a = clampScalar(Sha512.hash(secret))
+        compress(scalarMult(basePoint(d), a, d2))
+
+    function sign(secret: Array<Uint8>, message: Array<Uint8>): Array<Uint8> =
+        let d = edwardsD()
+        let d2 = Curve25519.fadd(d, d)
+        let base = basePoint(d)
+        let h = Sha512.hash(secret)
+        let a = clampScalar(h)
+        let prefix = slice(h, 32, 32)
+        let aEnc = compress(scalarMult(base, a, d2))
+        let r = modL(Sha512.hash(prefix.concat(message)))
+        let rEnc = compress(scalarMult(base, r, d2))
+        let k = modL(Sha512.hash(rEnc.concat(aEnc).concat(message)))
+        let s = scMulAdd(k, a, r)
+        rEnc.concat(s)
+
+    function verify(publicKey: Array<Uint8>, message: Array<Uint8>, signature: Array<Uint8>): Bool =
+        // A truncated public key would trap in decompress (reads index 31);
+        // require the full 32-byte key before decoding the point.
+        if (signature.length != 64) || (publicKey.length != 32) then
+            false
+        else
+            let rEnc = slice(signature, 0, 32)
+            let s = slice(signature, 32, 32)
+            if scalarLessThanL(s) == false then
+                false
+            else
+                let d = edwardsD()
+                let d2 = Curve25519.fadd(d, d)
+                match decompress(publicKey, d) with
+                    case None => false
+                    case Some(aPoint) =>
+                        let k = modL(Sha512.hash(rEnc.concat(publicKey).concat(message)))
+                        let base = basePoint(d)
+                        let sB = scalarMult(base, s, d2)
+                        let kA = scalarMult(aPoint, k, d2)
+                        // [S]B - [k]A should re-encode to R.
+                        let check = compress(pointAdd(sB, negatePoint(kA), d2))
+                        ConstantTime.equal(check, rEnc)
+
+/// An Edwards point in extended coordinates (x : y : z : t), with t = x*y/z.
+record EdPoint =
+    x: Array<Uint64>
+    y: Array<Uint64>
+    z: Array<Uint64>
+    t: Array<Uint64>
+
+/// Ed25519 as a `SignatureAlgorithm`. 32-byte keys, 64-byte signatures.
+class Ed25519Algorithm() implements SignatureAlgorithm =
+    public property signatureSize(self): Int32 = 64
+    public property secretKeySize(self): Int32 = 32
+    public property publicKeySize(self): Int32 = 32
+
+    public function derivePublicKey(self, secret: SecretKey): PublicKey =
+        PublicKey(Ed25519Impl.derivePublicKey(secret.value))
+
+    public function sign(self, key: SecretKey, message: Array<Uint8>): Array<Uint8> =
+        Ed25519Impl.sign(key.value, message)
+
+    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>): Bool =
+        Ed25519Impl.verify(key.value, message, signature)
+
+    // Any 32-byte string is a valid Ed25519 secret (it is used as a hash seed).
+    public function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey> =
+        Some(SecretKey(bytes))
+
+/// The Ed25519 signature algorithm.
+public let Ed25519: SignatureAlgorithm = Ed25519Algorithm()
+
+test "Ed25519 RFC 8032 test 1 (empty message)" =
+    let secret = SecretKey([|
+        0x9du8, 0x61u8, 0xb1u8, 0x9du8, 0xefu8, 0xfdu8, 0x5au8, 0x60u8,
+        0xbau8, 0x84u8, 0x4au8, 0xf4u8, 0x92u8, 0xecu8, 0x2cu8, 0xc4u8,
+        0x44u8, 0x49u8, 0xc5u8, 0x69u8, 0x7bu8, 0x32u8, 0x69u8, 0x19u8,
+        0x70u8, 0x3bu8, 0xacu8, 0x03u8, 0x1cu8, 0xaeu8, 0x7fu8, 0x60u8,
+    |])
+    let expectedPub = [|
+        0xd7u8, 0x5au8, 0x98u8, 0x01u8, 0x82u8, 0xb1u8, 0x0au8, 0xb7u8,
+        0xd5u8, 0x4bu8, 0xfeu8, 0xd3u8, 0xc9u8, 0x64u8, 0x07u8, 0x3au8,
+        0x0eu8, 0xe1u8, 0x72u8, 0xf3u8, 0xdau8, 0xa6u8, 0x23u8, 0x25u8,
+        0xafu8, 0x02u8, 0x1au8, 0x68u8, 0xf7u8, 0x07u8, 0x51u8, 0x1au8,
+    |]
+    let pub = Ed25519.derivePublicKey(secret)
+    assert ConstantTime.equal(pub.value, expectedPub)
+    let message: Array<Uint8> = [||]
+    let sig = Ed25519.sign(secret, message)
+    let expectedSig = [|
+        0xe5u8, 0x56u8, 0x43u8, 0x00u8, 0xc3u8, 0x60u8, 0xacu8, 0x72u8,
+        0x90u8, 0x86u8, 0xe2u8, 0xccu8, 0x80u8, 0x6eu8, 0x82u8, 0x8au8,
+        0x84u8, 0x87u8, 0x7fu8, 0x1eu8, 0xb8u8, 0xe5u8, 0xd9u8, 0x74u8,
+        0xd8u8, 0x73u8, 0xe0u8, 0x65u8, 0x22u8, 0x49u8, 0x01u8, 0x55u8,
+        0x5fu8, 0xb8u8, 0x82u8, 0x15u8, 0x90u8, 0xa3u8, 0x3bu8, 0xacu8,
+        0xc6u8, 0x1eu8, 0x39u8, 0x70u8, 0x1cu8, 0xf9u8, 0xb4u8, 0x6bu8,
+        0xd2u8, 0x5bu8, 0xf5u8, 0xf0u8, 0x59u8, 0x5bu8, 0xbeu8, 0x24u8,
+        0x65u8, 0x51u8, 0x41u8, 0x43u8, 0x8eu8, 0x7au8, 0x10u8, 0x0bu8,
+    |]
+    assert ConstantTime.equal(sig, expectedSig)
+    assert Ed25519.verify(pub, message, sig)
+
+test "Ed25519 RFC 8032 test 2 (one-byte message)" =
+    let secret = SecretKey([|
+        0x4cu8, 0xcdu8, 0x08u8, 0x9bu8, 0x28u8, 0xffu8, 0x96u8, 0xdau8,
+        0x9du8, 0xb6u8, 0xc3u8, 0x46u8, 0xecu8, 0x11u8, 0x4eu8, 0x0fu8,
+        0x5bu8, 0x8au8, 0x31u8, 0x9fu8, 0x35u8, 0xabu8, 0xa6u8, 0x24u8,
+        0xdau8, 0x8cu8, 0xf6u8, 0xedu8, 0x4fu8, 0xb8u8, 0xa6u8, 0xfbu8,
+    |])
+    let message = [|0x72u8|]
+    let pub = Ed25519.derivePublicKey(secret)
+    let sig = Ed25519.sign(secret, message)
+    let expectedSig = [|
+        0x92u8, 0xa0u8, 0x09u8, 0xa9u8, 0xf0u8, 0xd4u8, 0xcau8, 0xb8u8,
+        0x72u8, 0x0eu8, 0x82u8, 0x0bu8, 0x5fu8, 0x64u8, 0x25u8, 0x40u8,
+        0xa2u8, 0xb2u8, 0x7bu8, 0x54u8, 0x16u8, 0x50u8, 0x3fu8, 0x8fu8,
+        0xb3u8, 0x76u8, 0x22u8, 0x23u8, 0xebu8, 0xdbu8, 0x69u8, 0xdau8,
+        0x08u8, 0x5au8, 0xc1u8, 0xe4u8, 0x3eu8, 0x15u8, 0x99u8, 0x6eu8,
+        0x45u8, 0x8fu8, 0x36u8, 0x13u8, 0xd0u8, 0xf1u8, 0x1du8, 0x8cu8,
+        0x38u8, 0x7bu8, 0x2eu8, 0xaeu8, 0xb4u8, 0x30u8, 0x2au8, 0xeeu8,
+        0xb0u8, 0x0du8, 0x29u8, 0x16u8, 0x12u8, 0xbbu8, 0x0cu8, 0x00u8,
+    |]
+    assert ConstantTime.equal(sig, expectedSig)
+    assert Ed25519.verify(pub, message, sig)
+    // a tampered message must not verify
+    assert Ed25519.verify(pub, [|0x73u8|], sig) == false
+
+// B-2: a truncated public key must fail verification cleanly, not trap in
+// decompress (which reads index 31, needing a 32-byte key). Revert the
+// `publicKey.length != 32` guard in Ed25519Impl.verify to reintroduce the trap.
+test "Ed25519 verify rejects a truncated public key (no OOB trap)" =
+    let shortKey = Array<Uint8>.fill(10, 0x01u8)
+    let sig = Array<Uint8>.fill(64, 0x01u8)
+    assert Ed25519Impl.verify(shortKey, "msg".bytes(), sig) == false
+

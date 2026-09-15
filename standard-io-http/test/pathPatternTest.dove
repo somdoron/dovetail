@@ -1,0 +1,59 @@
+package test
+
+import standard.io.http.PathPattern
+import standard.io.http.PathParams
+
+// PathPattern parsing + matching, no router, no I/O.
+
+test "PathPattern.parse: single literal segment" =
+    let p = PathPattern.parse("/users")
+    assert p.specificity == 1
+    let m = p.tryMatch("/users")
+    assert m.isSome
+    assert m.require.get("id").isNone
+
+test "PathPattern.parse: literal + param" =
+    let p = PathPattern.parse("/users/{id}")
+    assert p.specificity == 1
+    let m = p.tryMatch("/users/42")
+    assert m.isSome
+    assert m.require.get("id").require == "42"
+
+test "PathPattern.parse: multiple params" =
+    let p = PathPattern.parse("/users/{id}/posts/{postId}")
+    assert p.specificity == 2
+    let m = p.tryMatch("/users/7/posts/blog")
+    assert m.isSome
+    let params = m.require
+    assert params.get("id").require == "7"
+    assert params.get("postId").require == "blog"
+
+test "PathPattern.tryMatch: literal mismatch returns None" =
+    let p = PathPattern.parse("/users/{id}")
+    let m = p.tryMatch("/posts/42")
+    assert m.isNone
+
+test "PathPattern.tryMatch: segment count mismatch returns None" =
+    let p = PathPattern.parse("/users/{id}")
+    let m = p.tryMatch("/users")
+    assert m.isNone
+    let m2 = p.tryMatch("/users/1/posts")
+    assert m2.isNone
+
+test "PathPattern.tryMatch: root path /" =
+    let p = PathPattern.parse("/")
+    assert p.specificity == 0
+    let m = p.tryMatch("/")
+    assert m.isSome
+
+test "PathPattern.tryMatch: trailing slash treated as equivalent" =
+    let p = PathPattern.parse("/users")
+    let m1 = p.tryMatch("/users")
+    let m2 = p.tryMatch("/users/")
+    assert m1.isSome
+    assert m2.isSome
+
+test "PathPattern.specificity: literals beat params" =
+    let p1 = PathPattern.parse("/users/me")          // 2 literals
+    let p2 = PathPattern.parse("/users/{id}")        // 1 literal, 1 param
+    assert p1.specificity > p2.specificity

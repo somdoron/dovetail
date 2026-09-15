@@ -1,0 +1,286 @@
+package standard.io.http
+
+import standard.http.Connection
+import standard.http.Headers
+import standard.http.HttpEvent
+import standard.http.HttpRequest
+import standard.http.HttpError
+import standard.http.NextEventResult
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.io.Async
+import standard.io.ByteBuffer
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Random
+import standard.io.net.Tcp
+import standard.io.net.TcpStream
+import standard.io.net.NetError
+import standard.wasi.net.NetworkError
+import standard.wasi.IoError
+import standard.time.Instant
+import standard.io.crypto.TlsClientStream
+import standard.io.crypto.TlsIoError
+import standard.tls.TlsClientConfig
+import standard.tls.CipherSuite
+import standard.tls.KeyExchangeGroup
+import standard.tls.SignatureScheme
+import standard.tls.alpnHttp1
+import standard.crypto.X509Certificate
+import standard.crypto.roots.Roots
+import standard.io.TimeExtension
+
+/// How much this package's two transports ask a socket for at a time.
+/// Its own number rather than the stream library's: what a chunk is worth
+/// here is an HTTP question — the state machine is fed whatever arrives, so
+/// this only trades a syscall against a buffer — and a transport that
+/// reached into another package for it would be coupled to a decision that
+/// package makes about linear memory. Shared by the client and server
+/// transports because they are one package making one trade, not because the
+/// number has to match anything.
+let receiveChunkBytes: Int64 = 65536i64
+
+/// Ceiling on the response body the client will accumulate before failing.
+/// A response body is buffered whole here (v1 exposes no streaming body API),
+/// so a malicious or compromised server — or a MITM on plain `http://` — could
+/// OOM the client with an unbounded body. 64 MiB sits well above any realistic
+/// API response yet far below linear-memory exhaustion. Mirrors the server's
+/// `maxBodyBytes` guard and applies to every framing (Content-Length, chunked,
+/// and Http10 read-to-EOF), since all three land in `HttpEvent.Data`.
+let maxResponseBodyBytes: Int32 = 67108864i32
+
+/// Ceiling on the response header block the client will buffer before the
+/// terminating blank line. Without it a server that streams headers forever, or
+/// never sends the blank line, would grow the buffer without bound. The sans-IO
+/// `Connection` already caps an incomplete event at its `maxIncompleteEventSize`
+/// (16 KiB) and surfaces a clean 431; this is the client's own explicit bound on
+/// the same phase, independent of that internal knob.
+let maxResponseHeaderBytes: Int32 = 65536i32
+
+/// Whether appending `incoming` bytes on top of `current` already-buffered bytes
+/// would push past `cap`. Split out so the size guards below are unit-testable
+/// without driving a socket, and shared by the body and header-block limits.
+function exceedsCap(current: Int32, incoming: Int32, cap: Int32): Bool =
+    current + incoming > cap
+
+/// Drive a `standard.http.Connection` (sans-IO state machine) over a fresh
+/// connection. `http://` uses a plain `TcpStream`; `https://` wraps it in TLS.
+/// The two share one driver — `driveClientExchange` — parameterised by the
+/// stream pair's error type and a lift into `HttpClientError`.
+
+/// Send a request over a plain TCP connection. v1 always opens a new socket per
+/// call (no pooling).
+public async function sendRequest(
+    host: String,
+    port: Uint16,
+    request: HttpRequest,
+    body: Array<Uint8>
+): Async<Response, HttpClientError> =
+    let stream: TcpStream = use Tcp.connect(host, port)
+    await driveClientExchange(stream.input, stream.output, netClientMapErr, request, body)
+
+/// Send a request over a TLS connection (HTTPS): connect TCP, run the handshake
+/// trusting the Mozilla roots, then drive the exchange over the encrypted pair.
+public async function sendRequestTls(
+    host: String,
+    port: Uint16,
+    request: HttpRequest,
+    body: Array<Uint8>,
+    trustAnchors: Option<List<X509Certificate>>
+): Async<Response, HttpClientError> =
+    let tcp: TcpStream = use Tcp.connect(host, port)
+    let config = await buildClientTlsConfig(host, trustAnchors)
+    let tls: TlsClientStream = use TlsClientStream.connect(config, tcp.input, tcp.output)
+    await driveClientExchange(tls.input, tls.output, tlsClientMapErr, request, body)
+
+function netClientMapErr(e: NetworkError): HttpClientError =
+    HttpClientError.from(NetError.from(e))
+
+function tlsClientMapErr(e: TlsIoError): HttpClientError =
+    match e with
+        case TlsIoError.Transport(n) => HttpClientError.NetworkError(NetError.from(n))
+        case TlsIoError.Protocol(_) => HttpClientError.TlsError(e)
+        case TlsIoError.Closed => HttpClientError.TlsError(e)
+        case TlsIoError.Canceled => HttpClientError.TlsError(e)
+        case TlsIoError.Truncated => HttpClientError.TlsError(e)
+
+/// Build a per-request HTTPS client config: advertise `http/1.1`, draw fresh
+/// entropy and the current time. Verifies the server cert against `trustAnchors`
+/// when supplied, otherwise the bundled Mozilla roots.
+async function buildClientTlsConfig(
+    host: String,
+    trustAnchors: Option<List<X509Certificate>>
+): Async<TlsClientConfig, HttpClientError> =
+    let now = await Instant.now
+    let seed = await Random.bytes(160i32)
+    let anchors = match trustAnchors with
+        case Some(certs) => certs
+        case None => Roots.mozillaRoots()
+    TlsClientConfig {
+        serverName = host
+        cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519, KeyExchangeGroup.SecP256R1]
+        signatureAlgorithms = [SignatureScheme.Ed25519, SignatureScheme.EcdsaSecp256r1Sha256, SignatureScheme.RsaPssRsaeSha256, SignatureScheme.RsaPssRsaeSha384]
+        trustAnchors = anchors
+        alpnProtocols = [alpnHttp1]
+        currentTime = now
+        randomSeed = seed
+        resumptionTicket = None
+    }
+
+/// Drive one request/response exchange over an established byte-stream pair
+/// (plain or TLS-encrypted). `mapErr` lifts the stream's transport error into
+/// `HttpClientError`.
+public async function driveClientExchange<E>(
+    input: AsyncInputStream<E>,
+    output: AsyncOutputStream<E>,
+    mapErr: (E) => HttpClientError,
+    request: HttpRequest,
+    body: Array<Uint8>
+): Async<Response, HttpClientError> where E : IoError =
+    let conn = Connection.client()
+
+    // Phase 1 — request line + headers.
+    await writeEvent(output, conn, HttpEvent.Request(request), mapErr)
+
+    // Phase 2 — body (only if non-empty; framing is Content-Length).
+    if body.length > 0 then
+        await writeEvent(output, conn, HttpEvent.Data(body), mapErr)
+
+    // Phase 3 — close the message (flushes the Content-Length writer).
+    await writeEvent(output, conn, HttpEvent.EndOfMessage(Headers.empty()), mapErr)
+
+    // Phase 4 — drive the receive side until we have a complete response.
+    let mutable statusCode = 0i32
+    let mutable reason = ""
+    let mutable responseHeaders = Headers.empty()
+    // Accumulated in a buffer, not by re-concatenating: a chunked response
+    // body would otherwise copy everything received so far on every chunk.
+    let bodyBytes = ByteBuffer.make()
+    let mutable seenResponse = false
+    // Bytes fed to the connection while still reading the header block (before
+    // the Response event). Capped so a server that never sends the blank line
+    // can't grow the buffer without bound. See `maxResponseHeaderBytes`.
+    let mutable headerBytesRead = 0i32
+    let mutable done = false
+    let mutable err: Option<HttpClientError> = None
+
+    while !done do
+        if err.isSome then
+            done = true
+        else
+            let evt = conn.nextEvent()
+            match evt with
+                case NextEventResult.NeedData =>
+                    let chunk = await input.read(receiveChunkBytes).mapError(mapErr)
+                    // Bound the header block: count bytes read while the Response
+                    // event hasn't arrived yet and fail past the cap.
+                    if !seenResponse then
+                        if exceedsCap(headerBytesRead, chunk.length, maxResponseHeaderBytes) then
+                            err = Some(HttpClientError.ProtocolError(HttpError.remote("response header block exceeds maxResponseHeaderBytes")))
+                        else
+                            headerBytesRead = headerBytesRead + chunk.length
+                    // Empty array == peer closed; signal EOF to the state
+                    // machine so it can finalise Http10/Content-Length bodies.
+                    conn.receiveData(chunk)
+                case NextEventResult.Paused =>
+                    // Client-side Paused shouldn't happen with `Connection: close`;
+                    // treat as terminal so we don't spin.
+                    done = true
+                case NextEventResult.Event(event) =>
+                    match event with
+                        case HttpEvent.Response(r) =>
+                            statusCode = r.statusCode
+                            reason = r.reason
+                            responseHeaders = r.headers
+                            seenResponse = true
+                        case HttpEvent.InformationalResponse(_) =>
+                            // 1xx — skip, the real Response follows.
+                            ()
+                        case HttpEvent.Data(chunk) =>
+                            // Bound the accumulated body so an unbounded response
+                            // can't OOM the client. Mirrors the server's
+                            // `maxBodyBytes` guard in `readWireRequest`.
+                            if exceedsCap(bodyBytes.length, chunk.length, maxResponseBodyBytes) then
+                                err = Some(HttpClientError.ProtocolError(HttpError.remote("response body exceeds maxResponseBodyBytes")))
+                            else
+                                bodyBytes.append(chunk)
+                        case HttpEvent.EndOfMessage(_) =>
+                            done = true
+                        case HttpEvent.ConnectionClosed =>
+                            if !seenResponse then
+                                err = Some(HttpClientError.UnexpectedEndOfStream)
+                            done = true
+                        case HttpEvent.Request(_) =>
+                            // Unreachable on the client receive path.
+                            err = Some(HttpClientError.ProtocolError(HttpError.remote("client received Request event")))
+                        case _ => ()
+                case NextEventResult.Error(e) =>
+                    err = Some(HttpClientError.ProtocolError(e))
+                case _ => ()
+
+    // Collapse the read side's outcome: a run that ends without a complete
+    // response is an unexpected EOF, even when no explicit error was recorded.
+    let readFailure: Option<HttpClientError> = match err with
+        case Some(e) => Some(e)
+        case None => if !seenResponse then Some(HttpClientError.UnexpectedEndOfStream) else None
+
+    match readFailure with
+        case None =>
+            // A complete response is proof the request was delivered. End the
+            // WRITE half now — spending the transport's one-shot result future
+            // and dropping the handles early — but BEST-EFFORT: a late write
+            // verdict is moot once the peer has answered, and a TLS peer
+            // (openssl s_server) can reset the connection on our close_notify.
+            // Letting that reset fail an already-delivered 200 would be a
+            // regression, so it is swallowed here. The `use` finalizer drops the
+            // handles over the top (idempotent).
+            await output.close().catchAll((_: E) => Async.succeed(()))
+            Response {
+                statusCode = statusCode
+                reason = reason
+                headers = responseHeaders
+                body = bodyBytes.toArray()
+                }
+        case Some(readErr) =>
+            // No complete response. End the write half and read its verdict: a
+            // `write` resolves when the host ACCEPTS the request bytes, not when
+            // the peer receives them, so a peer that reset AFTER accepting the
+            // request tail records `ConnectionReset` only on this one-shot result
+            // future — which nothing but a close ends. An `UnexpectedEndOfStream`
+            // from the read side is exactly that reset seen from the wrong end,
+            // so it YIELDS to the write's verdict; a genuine protocol error does
+            // not, and neither does a bare unexpected EOF when the write half was
+            // fine (a peer that simply hung up without answering).
+            let writeFailure: Option<HttpClientError> = await output.close()
+                .map<Option<HttpClientError>>((_: Unit) => None)
+                .catchAll((e: E) => Async.succeed(Some(mapErr(e))))
+            let finalErr = match (readErr, writeFailure) with
+                case (HttpClientError.UnexpectedEndOfStream, Some(writeErr)) => writeErr
+                case _ => readErr
+            await Async.fail(finalErr)
+
+/// Send one HttpEvent through the connection's writer and push the resulting
+/// bytes onto the output stream. The writer may produce no bytes (e.g.
+/// zero-length Content-Length EndOfMessage); skip the write in that case.
+async function writeEvent<E>(
+    output: AsyncOutputStream<E>,
+    conn: Connection,
+    event: HttpEvent,
+    mapErr: (E) => HttpClientError
+): Async<Unit, HttpClientError> where E : IoError =
+    let sendResult = conn.send(event)
+    let bytesOpt = await Async.fromResult(sendResult.mapError(HttpClientError.from))
+    match bytesOpt with
+        case Some(bytes) =>
+            if bytes.length > 0 then
+                await output.write(bytes.readonly).mapError(mapErr)
+        case None => ()
+
+test "exceedsCap bounds the client response body and header accumulation (C1/C2)" =
+    // At or below the cap is fine; strictly over the cap fails.
+    assert exceedsCap(0, 100, 100) == false
+    assert exceedsCap(60, 40, 100) == false
+    assert exceedsCap(60, 41, 100)
+    assert exceedsCap(maxResponseBodyBytes, 1, maxResponseBodyBytes)
+    assert exceedsCap(0, maxResponseHeaderBytes, maxResponseHeaderBytes) == false

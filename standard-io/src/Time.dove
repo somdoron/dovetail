@@ -1,0 +1,111 @@
+package standard.io
+
+import standard.io.TimeExtension
+import standard.time.Instant
+import standard.time.LocalDateTime
+import standard.time.LocalDate
+import standard.time.LocalTime
+import standard.time.YearMonth
+import standard.time.Year
+import standard.time.ZonedDateTime
+import standard.time.TimeZone
+import standard.wasi.clock.WallClock
+
+extension TimeExtension for Instant =
+    /// Reads the current Instant from the wall clock.
+    public property now: Async<Instant, Never> =
+        Async.thunk(() => WallClock.now)
+
+extension TimeExtension for LocalDateTime =
+    /// Reads the current LocalDateTime at UTC from the wall clock.
+    public property now: Async<LocalDateTime, Never> =
+        Async.thunk(() => WallClock.now.toLocalDateTime(TimeZone.utc))
+
+    /// Reads the current LocalDateTime at the given TimeZone.
+    public function nowAt(tz: TimeZone): Async<LocalDateTime, Never> =
+        Async.thunk(() => WallClock.now.toLocalDateTime(tz))
+
+extension TimeExtension for LocalTime =
+    /// Reads the current LocalTime at UTC from the wall clock.
+    public property now: Async<LocalTime, Never> =
+        Async.thunk(() => WallClock.now.toLocalTime(TimeZone.utc))
+
+    /// Reads the current LocalTime at the given TimeZone.
+    public function nowAt(tz: TimeZone): Async<LocalTime, Never> =
+        Async.thunk(() => WallClock.now.toLocalTime(tz))
+
+extension TimeExtension for LocalDate =
+    /// Reads today's LocalDate at UTC from the wall clock.
+    public property today: Async<LocalDate, Never> =
+        Async.thunk(() => WallClock.now.toLocalDate(TimeZone.utc))
+
+    /// Reads today's LocalDate at the given TimeZone.
+    public function todayAt(tz: TimeZone): Async<LocalDate, Never> =
+        Async.thunk(() => WallClock.now.toLocalDate(tz))
+
+extension TimeExtension for YearMonth =
+    /// Reads today's YearMonth at UTC from the wall clock.
+    public property today: Async<YearMonth, Never> =
+        Async.thunk(() => WallClock.now.toYearMonth(TimeZone.utc))
+
+    /// Reads today's YearMonth at the given TimeZone.
+    public function todayAt(tz: TimeZone): Async<YearMonth, Never> =
+        Async.thunk(() => WallClock.now.toYearMonth(tz))
+
+extension TimeExtension for Year =
+    /// Reads this year at UTC from the wall clock.
+    public property today: Async<Year, Never> =
+        Async.thunk(() => WallClock.now.toYear(TimeZone.utc))
+
+    /// Reads this year at the given TimeZone.
+    public function todayAt(tz: TimeZone): Async<Year, Never> =
+        Async.thunk(() => WallClock.now.toYear(tz))
+
+extension TimeExtension for ZonedDateTime =
+    /// Reads the current ZonedDateTime at UTC from the wall clock.
+    public property now: Async<ZonedDateTime, Never> =
+        Async.thunk(() => WallClock.now.toZonedDateTime(TimeZone.utc))
+
+    /// Reads the current ZonedDateTime at the given TimeZone.
+    public function nowAt(tz: TimeZone): Async<ZonedDateTime, Never> =
+        Async.thunk(() => WallClock.now.toZonedDateTime(tz))
+
+// --- Tests ---
+
+test "Instant.now reads wall clock" =
+    let program: Async<Unit, Never> =
+        Instant.now.map((i: Instant) => assert i.epochSecond > 0i64)
+    program.run()
+
+test "LocalDate.today matches Instant.now at UTC" =
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            LocalDate.today.map((d: LocalDate) =>
+                let derived = i.toLocalDate(TimeZone.utc)
+                assert d.year.value == derived.year.value
+                assert d.month.value == derived.month.value
+                assert d.day.value == derived.day.value
+            )
+        )
+    program.run()
+
+test "LocalDateTime.nowAt with EST offset differs from UTC by 5 hours" =
+    let est = TimeZone.of("EST", -18000)
+    let program: Async<Unit, Never> =
+        Instant.now.map((i: Instant) =>
+            let utc = i.toLocalDateTime(TimeZone.utc)
+            let local = i.toLocalDateTime(est)
+            // EST is UTC-5: combine year+day+hour into an absolute hour count
+            // and verify the difference is 5 hours.
+            let utcHours = utc.date.day.value * 24 + utc.time.hour
+            let localHours = local.date.day.value * 24 + local.time.hour
+            assert utcHours - localHours == 5
+        )
+    program.run()
+
+test "Year.today completes" =
+    // Verifies Year.today is wired up and produces a runnable Async. We don't
+    // pattern-match on the Year payload here because the `Async.map` closure
+    // performs an `x as T` cast that the Async machinery flags as potentially
+    // panicking for newtypes (Year = Int32 newtype) under full erasure.
+    Year.today.run()

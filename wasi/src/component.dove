@@ -1,0 +1,406 @@
+package standard.wasi
+
+// The component model's async primitives, as values.
+//
+// Each record here describes ONE operation completely: which waitable it lives
+// on, how to start it, how to cancel it, and how to lift what it produced. The
+// runtime knows how to drive any of them, so a package that talks to a component
+// hands one over and never writes a canonical-ABI step itself.
+//
+// The split is deliberate, and the line is "is this derivable from the WIT type?"
+// Everything in these records is: which import to call, how to lift an element,
+// how to release one nobody will receive. Everything NOT derivable — what a
+// dropped stream means to a file versus a socket, whether to retry a partial
+// write, when to give up — stays in the library above. That line is also what
+// lets a WIT binding generator emit these: it knows the types, and the types are
+// all these records need.
+
+
+/// An async component call: how to start it, and how to lift its result once the
+/// subtask returns.
+///
+/// `finish` yields a `Result` because that is what WIT declares — an async
+/// function returning `result<t, e>` gives `ComponentSubtask<T, E>`, one
+/// returning a bare value gives `E = Never`. The error is the callee's, not the
+/// transport's; a call that never returns at all is an interrupt, not an `E`.
+public record ComponentSubtask<out T, out E> =
+    start: () => AsyncCall
+    finish: (AsyncCall) => Result<T, E>
+
+/// The readable end of a `future<T>` — a one-shot channel — together with
+/// everything needed to take its value.
+///
+/// For a component that starts work and hands back a future instead of blocking:
+/// `task.return` immediately, resolve the future when the work is done. Awaiting
+/// one parks the fiber like any other completion, so a caller writes
+/// `await Async.futureValue(f)` and never sees the difference.
+///
+/// This is the readable end specifically. Dovetail only ever holds readable ends
+/// today; the writable end arrives with async exports, and splits this in two the
+/// way the stream records already are.
+///
+/// Nothing in this repo produces one yet. WASI's own futures — the `result`
+/// future paired with each stream end — are read through a single fused
+/// intrinsic, because at the moment a stream ends its future is already resolved
+/// and there is nothing to wait for. Those stay on `ComponentStreamRead.ending`
+/// until that intrinsic is split into `start`/`cancel`/`lift`; this record is
+/// what an imported component's future binds to, and the runtime already drives
+/// it.
+public record ComponentFuture<out T, out E> =
+    readable: Waitable
+    start: () => CopyOperation
+    /// Cancel the read in flight and report what it resolved to. A cancel can
+    /// lose the race with a completion that already copied the value in.
+    cancel: () => EventPayload
+    lift: (CopyOperation) => Result<T, E>
+    dropReadable: () => Unit
+
+/// A copy from the readable end of a `stream<T>`.
+///
+/// `lift` and `discardElements` take the same copy and the same count and differ
+/// only in where the elements go: to the caller, or nowhere. `discardElements`
+/// is not "free the buffer" — for a `stream<u8>` it is, but for a
+/// `stream<own<tcp-socket>>` the buffer holds a live socket that has to be
+/// closed, and dropping the buffer around it strands a connection nobody will
+/// ever serve. The element type decides, which is why this is derivable rather
+/// than policy.
+///
+public record ComponentStreamRead<out T, out E> =
+    readable: Waitable
+    /// Why the stream ended, read at the moment a copy reports it did. A
+    /// `stream<T>` has no error channel of its own — `Dropped` says the writer is
+    /// gone without saying why — so this is where a typed failure comes from. It
+    /// is the WASI-paired `future<result<_, error-code>>`, consumed and dropped
+    /// exactly once — and where an interface pairs no future, which is exactly
+    /// when `E` is `Never`, it is a constant `Ok`.
+    ending: () => Result<Unit, E>
+    start: (Int32) => CopyOperation
+    /// Cancel the copy in flight and report what it resolved to. A cancel can
+    /// lose the race — the host may already have copied elements in, and this
+    /// count is the only way to learn that they are there.
+    cancel: () => EventPayload
+    /// The failure raised locally when an explicit `close` aborts an operation on
+    /// this end — the copy in flight, or one queued behind it. Never a host code:
+    /// nothing has gone wrong with the transport, somebody closed the stream out
+    /// from under a fiber that was using it.
+    ///
+    /// It lives here rather than being supplied at the cancel site so that it is
+    /// typed by the same `E` as `ending`, and so that it cannot be paired with the
+    /// wrong `readable` — the handle and the error a caller would raise on it are
+    /// one thing, and are named once.
+    canceledError: E
+    /// Whether this end may still be posted on, asked by the runtime INSIDE the
+    /// copy-posting step — the one step nothing else can interleave with.
+    ///
+    /// The wrappers above validate their state before posting, but validation
+    /// and post are separate interpreter steps, and the fairness budget can run
+    /// a sibling `close` between them: the close cancels, DROPS the handle, and
+    /// the host reuses a dropped index — so the late post would not fail, it
+    /// would land on whatever stream the host gave that index to next. Only a
+    /// check in the posting step itself closes that window, and only this record
+    /// can carry the check there.
+    ///
+    /// `false` fails the would-be poster with `canceledError` — the same value,
+    /// by the same rule, that the close raised in the fibers it detached: which
+    /// side of a close the scheduler lands a fiber on must not change what it is
+    /// told (invariant (9) on `AsyncInputStream`).
+    ///
+    /// Raw host streams that nothing closes under the runtime's feet — stdio, a
+    /// file stream inside its Resource — answer a constant `true`; the stateful
+    /// wrappers rebuild the record with a probe over their own state. See
+    /// `withStillOpen` and `OpenFlag`.
+    stillOpen: () => Bool
+    /// Release the host handles this end owns: the readable, and the paired
+    /// result future where the interface has one.
+    ///
+    /// Here rather than supplied wherever the stream is wrapped, for the same
+    /// reason as `canceledError` and the hooks above it: this record is the one
+    /// description of the end, and only whoever built it knows which handles it
+    /// took. A wrapper handed the record alone could reach `readable` but never
+    /// the result future, which lives captured inside `ending`.
+    dropEnd: () => Unit
+    /// The elements copied. Well-defined at a count of zero for every element
+    /// type, because that is what a cancelled or ended copy reports: an empty
+    /// array of bytes, a `None` where a socket would have been. Frees the buffer
+    /// either way.
+    ///
+    /// A cancel that lost its race hands the elements back, and when the fiber
+    /// that asked for them is still there to resume, the runtime lifts them and
+    /// gives them to it — the only thing that knows whether they are bytes to
+    /// pass on or a socket to close. When it is NOT — see `discardElements`.
+    lift: (CopyOperation, Int32) => T
+    /// Release the elements of a copy NOBODY will receive: the same copy and the
+    /// same count as `lift`, with the elements going nowhere — the top comment's
+    /// `discard`, as a field. Not "free the buffer": for a `stream<u8>` it is
+    /// exactly that, but for a `stream<own<tcp-socket>>` the buffer holds a live
+    /// socket that has to be CLOSED, and freeing the buffer around it strands a
+    /// connection nobody will ever serve. The element type decides, which is why
+    /// this is derivable rather than policy.
+    ///
+    /// Reached on exactly one path: a cancel whose outcome is NOT delivered. A
+    /// force-close (`CancelStream`) fails the parked fiber with `canceledError`
+    /// instead of resuming it, so a completion the cancel raced has no fiber
+    /// left to take custody of what it moved — owned elements must still reach
+    /// the one party that knows how to close them, and with the fiber gone that
+    /// party is this record. Every path that still has a fiber delivers through
+    /// `lift` instead; `Runtime.settleCancelledRead` states the rule.
+    ///
+    /// Like `lift`, must be well-defined at a count of zero — free the buffer,
+    /// nothing else — because an undo comes through here too.
+    ///
+    /// `(CopyOperation, Int32)` rather than the lifted `T`, and not only to
+    /// reuse each interface's own lifting code: a `(T) => Unit` field would put
+    /// `T` in contravariant position on a record that is covariant in it, and
+    /// covariance is what lets the runtime hold every stream end as
+    /// `ComponentStreamRead<Any, Any>`.
+    discardElements: (CopyOperation, Int32) => Unit
+
+module ComponentStreamRead<T, E> =
+    /// This end with its liveness probe replaced and everything else carried
+    /// over unchanged. How a wrapper installs a probe over its own state
+    /// without the record ever knowing the wrapper exists — see `OpenFlag` for
+    /// why the probe cannot simply be built with the record.
+    public function withStillOpen(self, probe: () => Bool): ComponentStreamRead<T, E> =
+        ComponentStreamRead<T, E> {
+            readable = self.readable
+            ending = self.ending
+            start = self.start
+            cancel = self.cancel
+            canceledError = self.canceledError
+            stillOpen = probe
+            dropEnd = self.dropEnd
+            discardElements = self.discardElements
+            lift = self.lift
+        }
+
+/// One mutable bit — "posting on this end is still safe" — shared between a
+/// record's `stillOpen` probe and the wrapper that flips it.
+///
+/// A holder object because of construction order: the record exists BEFORE the
+/// wrapper that owns it (`open()` yields the record, then the wrapper is built
+/// around it), so a probe closing over the wrapper cannot exist when the
+/// record's fields are filled in. The flag is created first, captured by the
+/// probe (`withStillOpen`), and handed to the wrapper, which flips it exactly
+/// where posting stops being safe: entering `Closing` — a close is about to
+/// cancel and drop — and entering `Released` — the handles are gone. The same
+/// shape as `EndingLedger`, for the same reason: a fact two parties must agree
+/// on lives with neither of them.
+public class OpenFlag(public mutable open: Bool)
+
+/// Whether a stream end's one-shot result future has been read, and what it
+/// said.
+///
+/// The future resolves once, is read once, and traps on a second read — an
+/// uncatchable one, during teardown, where there is nowhere to report it. Two
+/// parties want to read it and neither can see the other: the RUNTIME, at the
+/// moment a copy reports the stream `Dropped`, and the WRAPPER, when it drops
+/// the handles and nothing has reported an ending yet.
+///
+/// They used to agree through a flag on the wrapper, set by the fiber that
+/// received the copy's outcome. That is a promise about a fiber, not about a
+/// handle, and it fails exactly when a fiber is what goes missing: an interrupt
+/// landing on a fiber that has been handed the outcome but has not yet run
+/// discards it, the flag is never set, and the wrapper reads the spent future.
+/// So the ledger lives HERE, with the handle it describes, and is written by
+/// whoever does the reading.
+///
+/// It caches the answer as well as the fact, so that a reason lost with a
+/// discarded outcome is still there for the `close` that goes looking for it.
+/// `Any` rather than `E` because a mutable field of type `E` would make this
+/// class invariant in it, and the stream records are covariant.
+public class EndingLedger(public mutable read: Bool, public mutable failure: Option<Any>)
+
+module EndingLedger =
+    /// A ledger for a future nobody has read.
+    public function fresh(): EndingLedger =
+        let noFailure: Option<Any> = None
+        EndingLedger(false, noFailure)
+
+/// A copy into the writable end of a `stream<u8>`.
+///
+/// Smaller than its read counterpart, and not by accident. A write always yields
+/// the same thing — the number of elements the host accepted — so there is no
+/// `T` and nothing to lift. And a write's pinned buffer is a private copy of the
+/// caller's bytes, so releasing one nobody will receive is always just freeing
+/// it; there is no `discard` to vary.
+///
+/// Kept separate from `ComponentStreamRead` because `Dropped` means opposite
+/// things on the two ends — end of input to a reader, a vanished reader to a
+/// writer — and because `stream.cancel-read` and `stream.cancel-write` are
+/// different imports that trap if crossed.
+public record ComponentStreamWrite<out E> =
+    writable: Waitable
+    /// Why the stream ended — the same paired future as on the read side, and the
+    /// only thing that turns a vanished reader into a typed failure.
+    ///
+    /// Not called directly by anything above this package: it is one-shot and has
+    /// two readers, so it is reached through `spendEnding`, which is the thing
+    /// that makes "at most once" true rather than merely intended.
+    ending: () => Result<Unit, E>
+    /// The record of whether `ending` has been read. See `EndingLedger`.
+    ledger: EndingLedger
+    start: (ReadonlySlice<Uint8>) => CopyOperation
+    cancel: () => EventPayload
+    /// The write-side twin of `ComponentStreamRead.canceledError`.
+    canceledError: E
+    /// The write-side twin of `ComponentStreamRead.stillOpen`, consulted in the
+    /// same place — the runtime's posting step — against the same race: a
+    /// sibling `close` landing between a wrapper's state check and the post,
+    /// after which the copy would go to whatever stream inherited the dropped
+    /// index. There is no `discardElements` twin, because there is nothing a
+    /// write could strand — see the record comment above.
+    stillOpen: () => Bool
+    /// Drop the writable end. Kept apart from `dropResult` because the order
+    /// matters: the result future only resolves once the host has seen
+    /// end-of-stream, so `ending` is read between these two.
+    dropWritable: () => Unit
+    /// Drop the result future, after `ending` has read it.
+    dropResult: () => Unit
+
+module ComponentStreamWrite<E> =
+    /// Why the stream ended, read at most once however many times it is asked.
+    ///
+    /// The first ask reads the host's one-shot future and records what it said;
+    /// every later ask is answered from the record. Both readers — the runtime
+    /// settling a `Dropped` copy, and the wrapper releasing the handles — go
+    /// through here, which is the whole of the guarantee: there is no path on
+    /// which `ending` is called twice, and none on which a reason that WAS read
+    /// is unavailable to whoever asks next.
+    public function spendEnding(self): Result<Unit, E> =
+        if self.ledger.read then
+            match self.ledger.failure with
+                case Some(recorded) => Error(recorded as E)
+                case None => Ok(())
+        else
+            self.ledger.read = true
+            let outcome = self.ending()
+            match outcome with
+                case Error(reason) =>
+                    let recorded: Any = reason
+                    self.ledger.failure = Some(recorded)
+                case Ok(_) => ()
+            outcome
+
+    /// The write-side twin of `ComponentStreamRead.withStillOpen`. The ledger
+    /// is carried over as the same object, which is load-bearing: the rebuilt
+    /// end and the one it was built from describe one handle, and must agree on
+    /// whether its one-shot future has been spent.
+    public function withStillOpen(self, probe: () => Bool): ComponentStreamWrite<E> =
+        ComponentStreamWrite<E> {
+            writable = self.writable
+            ending = self.ending
+            ledger = self.ledger
+            start = self.start
+            cancel = self.cancel
+            canceledError = self.canceledError
+            stillOpen = probe
+            dropWritable = self.dropWritable
+            dropResult = self.dropResult
+        }
+
+/// How many consecutive host copies may transfer nothing before the library
+/// stops believing the host.
+///
+/// ONE NUMBER, because there are three loops that post copies until they make
+/// progress — the byte read, the byte write, and `accept` — and they were three
+/// hand-rolled copies of the same counter, the same comparison and the same
+/// shape of panic string. Three copies of a rule is three chances for one of
+/// them to drift; the read side's bound was raised once already and the other
+/// two were not looked at.
+///
+/// WHY THERE IS A BOUND AT ALL, which is the part worth keeping written down: a
+/// re-post is not necessarily a park. The runtime settles a copy the host
+/// completes immediately WITHOUT returning to the scheduler, and `drainRunQueue`
+/// empties the run queue before the runtime ever waits on the host — so a host
+/// that answers "nothing, and the stream is still open" forever would not merely
+/// spin one fiber, it would hang the event loop and every other fiber with it. A
+/// panic is a worse failure than a wrong answer only when there is a right
+/// answer available, and here there is not: an empty copy is not an end of
+/// stream (that is invariant (1) on `AsyncInputStream`) and there is nothing else
+/// to report.
+///
+/// No conforming host produces even one of these.
+public let emptyCopyLimit: Int32 = 16
+
+/// Count one copy against the bound: reset by any progress, panic once
+/// `emptyCopyLimit` consecutive copies have made none.
+///
+/// `subject` is the whole message, given by the caller, because what "no
+/// progress" means is the caller's: no bytes accepted, no bytes delivered, no
+/// connection. It is suffixed with the count rather than interpolated, so every
+/// one of the three reads the same way in a crash report.
+public function noteCopyProgress(seen: Int32, moved: Int32, subject: String): Int32 =
+    if moved > 0i32 then
+        0i32
+    else
+        let next = seen + 1i32
+        if next >= emptyCopyLimit then
+            panic subject ++ " — " ++ next.format() ++ " consecutive times"
+        else
+            next
+
+// --- Tests ---
+
+/// A stream end whose result future counts how many times it is actually read
+/// and reports a failure when it is.
+///
+/// Nothing else about it is real: it never posts a copy, so the closures the
+/// runtime would drive are never called. The ledger is the whole subject.
+class EndingCounter(public mutable reads: Int32)
+
+function countingWrite(counter: EndingCounter): ComponentStreamWrite<Int32> =
+    ComponentStreamWrite<Int32> {
+        writable = Waitable(0i32)
+        ending = () =>
+            counter.reads = counter.reads + 1i32
+            Error(7i32)
+        ledger = EndingLedger.fresh()
+        start = (bytes: ReadonlySlice<Uint8>) => CopyOperation(0i64)
+        cancel = () => EventPayload(0i32)
+        canceledError = 0i32
+        stillOpen = () => true
+        dropWritable = () => ()
+        dropResult = () => ()
+    }
+
+test "a stream end's result future is read once however many times it is asked" =
+    // The invariant that makes the two readers of this future safe from each
+    // other. It is one-shot: the host traps on a second read, uncatchably and
+    // during teardown. The runtime reads it when a copy reports the stream ended;
+    // the wrapper reads it when it lets the handles go and nothing has reported
+    // one. Neither can see the other, and the flag they used to agree through
+    // lived on the WRAPPER and was set by the fiber the copy's outcome was handed
+    // to — a fiber an interrupt can stop before it records anything.
+    let counter = EndingCounter(0i32)
+    let end = countingWrite(counter)
+    let first = end.spendEnding()
+    let second = end.spendEnding()
+    let third = end.spendEnding()
+    assert counter.reads == 1i32
+    // And the ANSWER survives, which is the other half: a reason read by a copy
+    // whose outcome then went nowhere is still there for the `close` that goes
+    // looking for it. Guarding without recording would trade an uncatchable trap
+    // for a stream that reports a clean ending over a transport failure.
+    assert first.isError
+    assert second.isError
+    assert third.isError
+
+test "a stream end whose future reports nothing keeps reporting nothing" =
+    // The control: `Ok` is a recorded answer too, not "not asked yet".
+    let counter = EndingCounter(0i32)
+    let end = ComponentStreamWrite<Int32> {
+        writable = Waitable(0i32)
+        ending = () =>
+            counter.reads = counter.reads + 1i32
+            Ok(())
+        ledger = EndingLedger.fresh()
+        start = (bytes: ReadonlySlice<Uint8>) => CopyOperation(0i64)
+        cancel = () => EventPayload(0i32)
+        canceledError = 0i32
+        stillOpen = () => true
+        dropWritable = () => ()
+        dropResult = () => ()
+    }
+    assert end.spendEnding().isOk
+    assert end.spendEnding().isOk
+    assert counter.reads == 1i32

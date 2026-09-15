@@ -1,0 +1,76 @@
+package standard.io.http
+
+import standard.uri.UriError
+import standard.http.HttpError
+import standard.io.net.NetError
+import standard.json.JsonError
+import standard.io.crypto.TlsIoError
+
+/// Failure mode when decoding an HTTP body into a typed value.
+/// Surfaced by `RequestBodyCodec.decode` / `ResponseBodyCodec.decode`
+/// (the body-decode step that runs after a wire-level response arrives).
+public enum BodyDecodeError =
+    /// Bytes weren't valid UTF-8 when decoding a string body.
+    InvalidUtf8
+    /// Bytes parsed as a JSON value but were not the expected shape.
+    InvalidJson(JsonError)
+    /// Decoder-specific failure with a free-form message.
+    Custom(String)
+
+implement Display for BodyDecodeError =
+    public function format(self: BodyDecodeError): String =
+        match self with
+            case BodyDecodeError.InvalidUtf8 => "body was not valid UTF-8"
+            case BodyDecodeError.InvalidJson(_) => "body was not valid JSON"
+            case BodyDecodeError.Custom(msg) => msg
+
+
+/// Errors surfaced by the HTTP client.
+/// Wraps the three distinct error domains the client touches
+/// (URI parsing, network I/O, HTTP protocol) plus client-specific
+/// validation failures.
+public enum HttpClientError =
+    /// The supplied URL failed to parse.
+    UriParseFailed(UriError)
+    /// The URL's scheme is not "http" (e.g. "https", "ftp").
+    UnsupportedScheme(String)
+    /// The URL had no host component (e.g. relative path, scheme only).
+    MissingHost
+    /// TCP/DNS/socket failure.
+    NetworkError(NetError)
+    /// HTTP/1.1 protocol violation (from the standard-http state machine).
+    ProtocolError(HttpError)
+    /// Peer closed the connection before a complete response arrived.
+    UnexpectedEndOfStream
+    /// A user-supplied header was rejected by the validator.
+    InvalidHeader(String)
+    /// Response body codec rejected the bytes (e.g. invalid JSON shape).
+    /// Raised by the `RequestBuilder.send` layer; never by the raw
+    /// `HttpClient.send` primitive.
+    BodyDecodeFailed(BodyDecodeError)
+    /// TLS failure on an `https://` request (handshake, untrusted/expired cert,
+    /// hostname mismatch, or a record-layer error).
+    TlsError(TlsIoError)
+
+implement Display for HttpClientError =
+    public function format(self: HttpClientError): String =
+        match self with
+            case HttpClientError.UriParseFailed(_) => "URL parse failed"
+            case HttpClientError.UnsupportedScheme(scheme) => "unsupported URL scheme: " ++ scheme
+            case HttpClientError.MissingHost => "URL is missing a host"
+            case HttpClientError.NetworkError(e) => "network error: " ++ e.format()
+            case HttpClientError.ProtocolError(e) => "HTTP protocol error: " ++ e.message
+            case HttpClientError.UnexpectedEndOfStream => "peer closed connection before response was complete"
+            case HttpClientError.InvalidHeader(name) => "invalid header: " ++ name
+            case HttpClientError.BodyDecodeFailed(e) => "body decode failed: " ++ e.format()
+            case HttpClientError.TlsError(e) => "TLS error: " ++ e.format()
+
+/// Auto-conversion at `use` sites: TCP/DNS errors become NetworkError.
+implement From<NetError> for HttpClientError =
+    public function from(value: NetError): HttpClientError =
+        HttpClientError.NetworkError(value)
+
+/// Auto-conversion for HttpError propagated via `?`/lift.
+implement From<HttpError> for HttpClientError =
+    public function from(value: HttpError): HttpClientError =
+        HttpClientError.ProtocolError(value)

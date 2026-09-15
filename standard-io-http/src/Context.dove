@@ -1,0 +1,14 @@
+package standard.io.http
+
+/// Server-side handler context. Wraps the wire `Request` with the path
+/// captures produced by route matching and the parsed query string,
+/// isolated from the transport `Request` so the same shape can be used
+/// by middleware-injected state in the future.
+///
+/// Handlers are `(Context) => Async<Response, ServerError>`; routes are
+/// `(Context) => Async<Option<Response>, ServerError>` (the matched-or-not
+/// shape that combinators in `Routes` thread through).
+public record Context =
+    request: Request
+    pathParams: PathParams
+    queryParams: QueryParams

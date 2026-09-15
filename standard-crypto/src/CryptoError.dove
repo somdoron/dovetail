@@ -1,0 +1,15 @@
+package standard.crypto
+
+import standard.prelude.String
+
+/// Errors produced by cryptographic operations. Authentication and validation
+/// failures are values, not panics — callers must handle them.
+public enum CryptoError =
+    /// AEAD tag or MAC verification failed (ciphertext tampered or wrong key).
+    AuthenticationFailed
+    /// A key of the wrong size was supplied: (expected, got).
+    InvalidKeySize(Int32, Int32)
+    /// A nonce of the wrong size was supplied: (expected, got).
+    InvalidNonceSize(Int32, Int32)
+    /// Input was malformed or out of range for the operation.
+    InvalidInput(String)

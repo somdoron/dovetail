@@ -1,0 +1,132 @@
+package test
+
+import standard.io.net.Tcp
+import standard.io.net.TcpListener
+import standard.io.net.TcpStream
+import standard.io.net.NetError
+import standard.io.Async
+import standard.wasi.net.NetworkError
+
+// Minimal mirror of the HTTP flow: a forked server fiber accepts one
+// connection and echoes; the main fiber connects, writes, reads, closes.
+@timeout(5000)
+test "fork: server accepts+echoes, client round-trips" =
+    let mutable got = 0i32
+    let program: Async<Unit, NetError> = forkEchoProgram((n: Int32) => got = n)
+    program.run()
+    assert got == 5i32
+
+async function forkEchoProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
+    let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
+    let addr = await listener.localAddress()
+    // fork the server accept+echo loop
+    let serverFiber = await serverEcho(listener).forkBackground()
+    let port = match addr.split(":") with
+        case [_, portText] => parsePort(portText)
+        case _ => panic "expected a host:port local address"
+    let client: TcpStream = use Tcp.connect("127.0.0.1", port)
+    await client.output.write("hello".bytes().readonly).mapError(netFromNetwork)
+    let response = await client.input.read(64i64).mapError(netFromNetwork)
+    setter(response.length)
+
+async function serverEcho(listener: TcpListener): Async<Unit, NetError> =
+    let stream: TcpStream = use listener.accept()
+    let data = await stream.input.read(64i64).mapError(netFromNetwork)
+    await stream.output.write(data.readonly).mapError(netFromNetwork)
+
+// Mirror the HTTP shape more closely: the client writes TWICE (request line +
+// end-of-message), then reads the response; the server reads the request, then
+// writes the response in TWO chunks (headers + body). This exercises multiple
+// sequential writes on the *same* output stream, which the single-write echo
+// above does not.
+@timeout(5000)
+test "fork: multi-write on same stream both directions" =
+    let mutable got = 0i32
+    let program: Async<Unit, NetError> = forkMultiWriteProgram((n: Int32) => got = n)
+    program.run()
+    assert got == 10i32
+
+async function forkMultiWriteProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
+    let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
+    let addr = await listener.localAddress()
+    let serverFiber = await serverMultiWrite(listener).forkBackground()
+    let port = match addr.split(":") with
+        case [_, portText] => parsePort(portText)
+        case _ => panic "expected a host:port local address"
+    let client: TcpStream = use Tcp.connect("127.0.0.1", port)
+    // two sequential writes on the same output stream
+    await client.output.write("hello".bytes().readonly).mapError(netFromNetwork)
+    await client.output.write("world".bytes().readonly).mapError(netFromNetwork)
+    // read the echoed 10 bytes (may arrive in one or more reads)
+    let mutable total = 0i32
+    let mutable done = false
+    while !done do
+        let chunk = await client.input.read(64i64).mapError(netFromNetwork)
+        if chunk.length == 0 then done = true
+        else
+            total = total + chunk.length
+            if total >= 10 then done = true
+    setter(total)
+
+async function serverMultiWrite(listener: TcpListener): Async<Unit, NetError> =
+    let stream: TcpStream = use listener.accept()
+    // read the 10 bytes the client sends (in two writes)
+    let mutable buf = Array<Uint8>.empty()
+    let mutable done = false
+    while !done do
+        let chunk = await stream.input.read(64i64).mapError(netFromNetwork)
+        if chunk.length == 0 then done = true
+        else
+            buf = buf.concat(chunk)
+            if buf.length >= 10 then done = true
+    // write it back in two sequential writes on the same output stream
+    let first = buf.copy(0, Array<Uint8>.fill(5, 0u8), 0, 5)
+    let second = buf.copy(5, Array<Uint8>.fill(buf.length - 5, 0u8), 0, buf.length - 5)
+    await stream.output.write(first.readonly).mapError(netFromNetwork)
+    await stream.output.write(second.readonly).mapError(netFromNetwork)
+
+function netFromNetwork(e: NetworkError): NetError = NetError.from(e)
+
+function parsePort(text: String): Uint16 =
+    let mutable acc = 0i32
+    let mutable i = 0i32
+    while i < text.byteLength do
+        let c = text.bytes().get(i)
+        acc = acc * 10 + (c.toInt32() - 48)
+        i = i + 1
+    acc.toUint16()
+
+// Item 4 regression: writing to a peer that has closed must FAIL, not spin
+// forever reporting zero progress. The @timeout catches the old infinite loop;
+// the assert catches a write that wrongly reports success.
+@timeout(5000)
+test "fork: write to a closed peer fails, does not hang" =
+    let mutable outcome = 0i32
+    let program: Async<Unit, NetError> = writeClosedPeerProgram((n: Int32) => outcome = n)
+    program.run()
+    assert outcome == 1i32
+
+async function acceptThenClose(listener: TcpListener): Async<Unit, NetError> =
+    let stream: TcpStream = use listener.accept()
+    ()
+
+async function writeClosedPeerProgram(setter: (Int32) => Unit): Async<Unit, NetError> =
+    let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
+    let addr = await listener.localAddress()
+    // server accepts one connection then drops it (scope exit closes the socket)
+    let serverFiber = await acceptThenClose(listener).forkBackground()
+    let port = match addr.split(":") with
+        case [_, portText] => parsePort(portText)
+        case _ => panic "expected a host:port local address"
+    let client: TcpStream = use Tcp.connect("127.0.0.1", port)
+    let big = Array<Uint8>.fill(65536, 65u8)
+    let mutable i = 0i32
+    let mutable failed = false
+    while i < 1000 && !failed do
+        let didFail = await client.output.write(big.readonly).fold(
+            (_: NetworkError) => Async.succeed(true),
+            (_: Unit) => Async.succeed(false)
+        )
+        failed = didFail
+        i = i + 1
+    setter(if failed then 1i32 else 2i32)

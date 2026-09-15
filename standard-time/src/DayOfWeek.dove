@@ -1,0 +1,154 @@
+package standard.time
+
+/// Represents a day of the week from Monday to Sunday.
+@derive(Equatable)
+public enum DayOfWeek =
+    Monday
+    Tuesday
+    Wednesday
+    Thursday
+    Friday
+    Saturday
+    Sunday
+
+function dayOfWeekFromValue(v: Int32): DayOfWeek =
+    let n = ((v - 1) % 7 + 7) % 7
+    if n == 0 then DayOfWeek.Monday
+    else if n == 1 then DayOfWeek.Tuesday
+    else if n == 2 then DayOfWeek.Wednesday
+    else if n == 3 then DayOfWeek.Thursday
+    else if n == 4 then DayOfWeek.Friday
+    else if n == 5 then DayOfWeek.Saturday
+    else DayOfWeek.Sunday
+
+function dayOfWeekName(d: DayOfWeek): String =
+    match d with
+        case Monday => "Monday"
+        case Tuesday => "Tuesday"
+        case Wednesday => "Wednesday"
+        case Thursday => "Thursday"
+        case Friday => "Friday"
+        case Saturday => "Saturday"
+        case Sunday => "Sunday"
+
+/// Properties and operations for DayOfWeek.
+module DayOfWeek =
+    /// Returns the ISO-8601 numeric value (1 for Monday through 7 for Sunday).
+    public property value(self): Int32 =
+        match self with
+            case Monday => 1
+            case Tuesday => 2
+            case Wednesday => 3
+            case Thursday => 4
+            case Friday => 5
+            case Saturday => 6
+            case Sunday => 7
+
+    /// Returns the English name of this day (e.g. "Monday").
+    public property name(self): String = dayOfWeekName(self)
+
+    /// Three-letter English abbreviation (e.g. "Mon", "Sun"). Used by
+    /// `DateTimeFormatter` for the `E`/`EE`/`EEE` pattern letters.
+    public property shortName(self): String =
+        match self with
+            case Monday => "Mon"
+            case Tuesday => "Tue"
+            case Wednesday => "Wed"
+            case Thursday => "Thu"
+            case Friday => "Fri"
+            case Saturday => "Sat"
+            case Sunday => "Sun"
+
+    /// Single-letter English narrow name. Used by `DateTimeFormatter`
+    /// for the `EEEEE` pattern letter. Like the month narrow form, some
+    /// letters repeat (T = Tuesday/Thursday, S = Saturday/Sunday).
+    public property narrowName(self): String =
+        match self with
+            case Monday => "M"
+            case Tuesday => "T"
+            case Wednesday => "W"
+            case Thursday => "T"
+            case Friday => "F"
+            case Saturday => "S"
+            case Sunday => "S"
+
+    /// Returns the day that is the given number of days after this one, wrapping around the week.
+    public function plus(self, days: Int32): DayOfWeek =
+        dayOfWeekFromValue(self.value + days)
+
+    /// Returns the day that is the given number of days before this one, wrapping around the week.
+    public function minus(self, days: Int32): DayOfWeek =
+        dayOfWeekFromValue(self.value - days)
+
+    /// Look up by full English name (case-sensitive). Returns `None` for
+    /// any other string.
+    public function fromFullName(name: String): Option<DayOfWeek> =
+        if name == "Monday" then Some(DayOfWeek.Monday)
+        else if name == "Tuesday" then Some(DayOfWeek.Tuesday)
+        else if name == "Wednesday" then Some(DayOfWeek.Wednesday)
+        else if name == "Thursday" then Some(DayOfWeek.Thursday)
+        else if name == "Friday" then Some(DayOfWeek.Friday)
+        else if name == "Saturday" then Some(DayOfWeek.Saturday)
+        else if name == "Sunday" then Some(DayOfWeek.Sunday)
+        else None
+
+    /// Look up by three-letter English abbreviation (case-sensitive).
+    public function fromShortName(name: String): Option<DayOfWeek> =
+        if name == "Mon" then Some(DayOfWeek.Monday)
+        else if name == "Tue" then Some(DayOfWeek.Tuesday)
+        else if name == "Wed" then Some(DayOfWeek.Wednesday)
+        else if name == "Thu" then Some(DayOfWeek.Thursday)
+        else if name == "Fri" then Some(DayOfWeek.Friday)
+        else if name == "Sat" then Some(DayOfWeek.Saturday)
+        else if name == "Sun" then Some(DayOfWeek.Sunday)
+        else None
+
+    /// Look up by ISO numeric value (1=Monday through 7=Sunday).
+    public function fromValue(value: Int32): Option<DayOfWeek> =
+        if value < 1 || value > 7 then None
+        else Some(dayOfWeekFromValue(value))
+
+implement Display for DayOfWeek =
+    /// Formats this day as its English name.
+    public function format(self: DayOfWeek): String =
+        self.name
+
+test "DayOfWeek value" =
+    assert DayOfWeek.Monday.value == 1
+    assert DayOfWeek.Wednesday.value == 3
+    assert DayOfWeek.Friday.value == 5
+    assert DayOfWeek.Sunday.value == 7
+
+test "DayOfWeek name" =
+    assert DayOfWeek.Monday.name == "Monday"
+    assert DayOfWeek.Saturday.name == "Saturday"
+    assert DayOfWeek.Sunday.name == "Sunday"
+
+test "DayOfWeek plus" =
+    assert DayOfWeek.Monday.plus(1) == DayOfWeek.Tuesday
+    assert DayOfWeek.Friday.plus(2) == DayOfWeek.Sunday
+    assert DayOfWeek.Sunday.plus(1) == DayOfWeek.Monday
+    assert DayOfWeek.Monday.plus(7) == DayOfWeek.Monday
+
+test "DayOfWeek minus" =
+    assert DayOfWeek.Tuesday.minus(1) == DayOfWeek.Monday
+    assert DayOfWeek.Monday.minus(1) == DayOfWeek.Sunday
+    assert DayOfWeek.Wednesday.minus(7) == DayOfWeek.Wednesday
+
+test "DayOfWeek equals" =
+    assert DayOfWeek.Monday == DayOfWeek.Monday
+    assert DayOfWeek.Friday == DayOfWeek.Friday
+    assert (DayOfWeek.Monday == DayOfWeek.Tuesday) == false
+
+test "DayOfWeek display" =
+    assert DayOfWeek.Thursday.format() == "Thursday"
+    assert DayOfWeek.Sunday.format() == "Sunday"
+
+test "DayOfWeek from value" =
+    assert dayOfWeekFromValue(1) == DayOfWeek.Monday
+    assert dayOfWeekFromValue(7) == DayOfWeek.Sunday
+    assert dayOfWeekFromValue(4) == DayOfWeek.Thursday
+
+test "DayOfWeek plus wraps around" =
+    assert DayOfWeek.Saturday.plus(3) == DayOfWeek.Tuesday
+    assert DayOfWeek.Thursday.plus(14) == DayOfWeek.Thursday

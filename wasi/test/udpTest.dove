@@ -1,0 +1,16 @@
+package test
+
+import standard.wasi.udp.UdpSocket
+import standard.wasi.net.IpAddressFamily
+
+test "udp address family reports the family the socket was created with" =
+    let socket4 = UdpSocket.create(IpAddressFamily.Ipv4).require
+    match socket4.addressFamily() with
+        case IpAddressFamily.Ipv4 => ()
+        case _ => panic "expected Ipv4"
+    socket4.close()
+    let socket6 = UdpSocket.create(IpAddressFamily.Ipv6).require
+    match socket6.addressFamily() with
+        case IpAddressFamily.Ipv6 => ()
+        case _ => panic "expected Ipv6"
+    socket6.close()

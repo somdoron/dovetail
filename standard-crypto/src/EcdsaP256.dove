@@ -1,0 +1,182 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+
+/// ECDSA over NIST P-256 with SHA-256 and RFC 6979 deterministic nonces.
+///
+/// Signatures are 64 bytes: r ‖ s, each a 32-byte big-endian scalar. The nonce
+/// is generated deterministically (RFC 6979) using HMAC-SHA256, so signing
+/// needs no randomness — keeping the crypto package pure.
+module Ecdsa =
+    // --- scalar arithmetic mod n ---
+
+    private function nMul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let nn = P256Field.n()
+        let ni = P256Field.n0inv(nn)
+        P256Field.fromMont(
+            P256Field.montMul(P256Field.toMont(a, nn, ni), P256Field.toMont(b, nn, ni), nn, ni), nn, ni)
+
+    private function nAdd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        P256Field.add(a, b, P256Field.n())
+
+    private function nInv(a: Array<Uint64>): Array<Uint64> =
+        let nn = P256Field.n()
+        let ni = P256Field.n0inv(nn)
+        P256Field.fromMont(P256Field.montInv(P256Field.toMont(a, nn, ni), nn, ni), nn, ni)
+
+    private function hmac(key: Array<Uint8>, message: Array<Uint8>): Array<Uint8> =
+        HmacCore.compute(Sha256, key, message)
+
+    /// RFC 6979 deterministic nonce k for (private key, reduced hash z).
+    private function rfc6979(privKey: Array<Uint8>, zMod: Array<Uint64>): Array<Uint64> =
+        let nn = P256Field.n()
+        let xoct = privKey
+        let h1oct = P256.limbsToBe(zMod)
+        let mutable v = Array<Uint8>.fill(32, 0x01u8)
+        let mutable k = Array<Uint8>.fill(32, 0x00u8)
+        k = hmac(k, v.concat([|0x00u8|]).concat(xoct).concat(h1oct))
+        v = hmac(k, v)
+        k = hmac(k, v.concat([|0x01u8|]).concat(xoct).concat(h1oct))
+        v = hmac(k, v)
+        let mutable result = [|0u64, 0u64, 0u64, 0u64|]
+        let mutable found = false
+        while found == false do
+            v = hmac(k, v)
+            let cand = P256.beToLimbs(v, 0)
+            if (P256Field.isZero(cand) == false) && P256Field.lessThan(cand, nn) then
+                result = cand
+                found = true
+            else
+                k = hmac(k, v.concat([|0x00u8|]))
+                v = hmac(k, v)
+        result
+
+    /// Sign `message` with the 32-byte big-endian private key. Returns r ‖ s.
+    function sign(privKey: Array<Uint8>, message: Array<Uint8>): Array<Uint8> =
+        let nn = P256Field.n()
+        let zMod = P256Field.reduceOnce(P256.beToLimbs(Sha256.hash(message), 0), nn)
+        let k = rfc6979(privKey, zMod)
+        let bm = P256.bMont()
+        let rPoint = P256.scalarMult(k, P256.basePoint(), bm)
+        let r = P256Field.reduceOnce(P256.affineX(rPoint), nn)
+        let d = P256.beToLimbs(privKey, 0)
+        let s = nMul(nInv(k), nAdd(zMod, nMul(r, d)))
+        P256.limbsToBe(r).concat(P256.limbsToBe(s))
+
+    /// Verify a 64-byte (r ‖ s) signature.
+    function verify(pubKey: Array<Uint8>, message: Array<Uint8>, signature: Array<Uint8>): Bool =
+        // A truncated issuer key would trap in P256.decode (reads index 64);
+        // require the full 65-byte SEC1 uncompressed key before decoding.
+        if (signature.length != 64) || (pubKey.length != 65) then
+            false
+        else
+            let nn = P256Field.n()
+            let r = P256.beToLimbs(signature, 0)
+            let s = P256.beToLimbs(signature, 32)
+            if P256Field.isZero(r) || P256Field.isZero(s)
+                || (P256Field.lessThan(r, nn) == false) || (P256Field.lessThan(s, nn) == false) then
+                false
+            else
+                let zMod = P256Field.reduceOnce(P256.beToLimbs(Sha256.hash(message), 0), nn)
+                let w = nInv(s)
+                let u1 = nMul(zMod, w)
+                let u2 = nMul(r, w)
+                let bm = P256.bMont()
+                let r1 = P256.scalarMult(u1, P256.basePoint(), bm)
+                let r2 = P256.scalarMult(u2, P256.decode(pubKey), bm)
+                let rPoint = P256.pointAdd(r1, r2, bm)
+                let rx = P256Field.reduceOnce(P256.affineX(rPoint), nn)
+                P256Field.equal(rx, r)
+
+/// ECDSA over NIST P-256 (SHA-256, RFC 6979). 32-byte key, 65-byte uncompressed
+/// public key, 64-byte signature.
+class EcdsaP256Algorithm() implements SignatureAlgorithm =
+    public property signatureSize(self): Int32 = 64
+    public property secretKeySize(self): Int32 = 32
+    public property publicKeySize(self): Int32 = 65
+
+    public function derivePublicKey(self, secret: SecretKey): PublicKey =
+        let pub = P256.scalarMult(P256.beToLimbs(secret.value, 0), P256.basePoint(), P256.bMont())
+        PublicKey(P256.encode(pub))
+
+    public function sign(self, key: SecretKey, message: Array<Uint8>): Array<Uint8> =
+        Ecdsa.sign(key.value, message)
+
+    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>): Bool =
+        Ecdsa.verify(key.value, message, signature)
+
+    // The P-256 private key must be a scalar in [1, n-1]; reject otherwise.
+    public function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey> =
+        let s = P256.beToLimbs(bytes, 0)
+        if (P256Field.isZero(s) == false) && P256Field.lessThan(s, P256Field.n()) then
+            Some(SecretKey(bytes))
+        else
+            None
+
+/// The ECDSA-P256 signature algorithm.
+public let EcdsaP256: SignatureAlgorithm = EcdsaP256Algorithm()
+
+test "ECDSA-P256 RFC 6979 A.2.5 sign+verify (sample)" =
+    let privKey = SecretKey([|
+        0xc9u8, 0xafu8, 0xa9u8, 0xd8u8, 0x45u8, 0xbau8, 0x75u8, 0x16u8,
+        0x6bu8, 0x5cu8, 0x21u8, 0x57u8, 0x67u8, 0xb1u8, 0xd6u8, 0x93u8,
+        0x4eu8, 0x50u8, 0xc3u8, 0xdbu8, 0x36u8, 0xe8u8, 0x9bu8, 0x12u8,
+        0x7bu8, 0x8au8, 0x62u8, 0x2bu8, 0x12u8, 0x0fu8, 0x67u8, 0x21u8,
+    |])
+    let message = "sample".bytes()
+    let sig = EcdsaP256.sign(privKey, message)
+    let expected = [|
+        // r
+        0xefu8, 0xd4u8, 0x8bu8, 0x2au8, 0xacu8, 0xb6u8, 0xa8u8, 0xfdu8,
+        0x11u8, 0x40u8, 0xddu8, 0x9cu8, 0xd4u8, 0x5eu8, 0x81u8, 0xd6u8,
+        0x9du8, 0x2cu8, 0x87u8, 0x7bu8, 0x56u8, 0xaau8, 0xf9u8, 0x91u8,
+        0xc3u8, 0x4du8, 0x0eu8, 0xa8u8, 0x4eu8, 0xafu8, 0x37u8, 0x16u8,
+        // s
+        0xf7u8, 0xcbu8, 0x1cu8, 0x94u8, 0x2du8, 0x65u8, 0x7cu8, 0x41u8,
+        0xd4u8, 0x36u8, 0xc7u8, 0xa1u8, 0xb6u8, 0xe2u8, 0x9fu8, 0x65u8,
+        0xf3u8, 0xe9u8, 0x00u8, 0xdbu8, 0xb9u8, 0xafu8, 0xf4u8, 0x06u8,
+        0x4du8, 0xc4u8, 0xabu8, 0x2fu8, 0x84u8, 0x3au8, 0xcdu8, 0xa8u8,
+    |]
+    assert sig.length == 64
+    let mutable i = 0
+    let mutable ok = true
+    while i < 64 do
+        if sig.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+    // verify the signature we produced and the canonical one
+    let pub = EcdsaP256.derivePublicKey(privKey)
+    assert EcdsaP256.verify(pub, message, sig)
+    // tampered message must not verify
+    assert EcdsaP256.verify(pub, "Sample".bytes(), sig) == false
+
+test "ECDSA-P256 public key (RFC 6979 A.2.5)" =
+    let privKey = SecretKey([|
+        0xc9u8, 0xafu8, 0xa9u8, 0xd8u8, 0x45u8, 0xbau8, 0x75u8, 0x16u8,
+        0x6bu8, 0x5cu8, 0x21u8, 0x57u8, 0x67u8, 0xb1u8, 0xd6u8, 0x93u8,
+        0x4eu8, 0x50u8, 0xc3u8, 0xdbu8, 0x36u8, 0xe8u8, 0x9bu8, 0x12u8,
+        0x7bu8, 0x8au8, 0x62u8, 0x2bu8, 0x12u8, 0x0fu8, 0x67u8, 0x21u8,
+    |])
+    let ux = [|
+        0x60u8, 0xfeu8, 0xd4u8, 0xbau8, 0x25u8, 0x5au8, 0x9du8, 0x31u8,
+        0xc9u8, 0x61u8, 0xebu8, 0x74u8, 0xc6u8, 0x35u8, 0x6du8, 0x68u8,
+        0xc0u8, 0x49u8, 0xb8u8, 0x92u8, 0x3bu8, 0x61u8, 0xfau8, 0x6cu8,
+        0xe6u8, 0x69u8, 0x62u8, 0x2eu8, 0x60u8, 0xf2u8, 0x9fu8, 0xb6u8,
+    |]
+    let pub = EcdsaP256.derivePublicKey(privKey)
+    assert pub.value.get(0) == 0x04u8
+    let mutable i = 0
+    let mutable ok = true
+    while i < 32 do
+        if pub.value.get(1 + i) != ux.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+// B-2: a truncated issuer public key must fail verification cleanly, not trap in
+// P256.decode (which reads index 64, needing a 65-byte SEC1 key). Revert the
+// `pubKey.length != 65` guard in Ecdsa.verify to reintroduce the OOB trap.
+test "ECDSA-P256 verify rejects a truncated public key (no OOB trap)" =
+    let shortKey = Array<Uint8>.fill(10, 0x04u8)
+    let sig = Array<Uint8>.fill(64, 0x01u8)
+    assert Ecdsa.verify(shortKey, "msg".bytes(), sig) == false

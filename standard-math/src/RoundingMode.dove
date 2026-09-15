@@ -1,0 +1,43 @@
+package standard.math
+
+/// Rounding mode for decimal arithmetic.
+@derive(Equatable)
+public enum RoundingMode =
+    /// Rounds towards the nearest neighbor; ties round up.
+    HalfUp
+    /// Rounds towards the nearest neighbor; ties round down.
+    HalfDown
+    /// Rounds towards the nearest neighbor; ties round to the even neighbor.
+    HalfEven
+    /// Rounds towards negative infinity.
+    Floor
+    /// Rounds towards positive infinity.
+    Ceiling
+    /// Rounds away from zero.
+    Up
+    /// Rounds towards zero (truncation).
+    Down
+
+test "RoundingMode equality" =
+    assert RoundingMode.HalfUp == RoundingMode.HalfUp
+    assert RoundingMode.Floor == RoundingMode.Floor
+    assert (RoundingMode.HalfUp == RoundingMode.HalfDown) == false
+    assert (RoundingMode.Up == RoundingMode.Down) == false
+
+test "RoundingMode all variants are distinct" =
+    assert (RoundingMode.HalfUp == RoundingMode.HalfDown) == false
+    assert (RoundingMode.HalfUp == RoundingMode.HalfEven) == false
+    assert (RoundingMode.Floor == RoundingMode.Ceiling) == false
+    assert (RoundingMode.Up == RoundingMode.Down) == false
+
+test "RoundingMode match" =
+    let mode = RoundingMode.HalfEven
+    let name = match mode with
+        case RoundingMode.HalfUp => "half-up"
+        case RoundingMode.HalfDown => "half-down"
+        case RoundingMode.HalfEven => "half-even"
+        case RoundingMode.Floor => "floor"
+        case RoundingMode.Ceiling => "ceiling"
+        case RoundingMode.Up => "up"
+        case RoundingMode.Down => "down"
+    assert name == "half-even"

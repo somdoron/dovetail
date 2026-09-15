@@ -1,0 +1,32 @@
+package standard.prelude
+
+public trait Iterable<T> =
+    function iterator(self): Iterator<T>
+
+public interface Iterator<T> =
+    function next(self): Option<T>
+
+class ArrayIterator<T>(array: Array<T>, mutable index: Int32) implements Iterator<T> =
+    public function next(self): Option<T> =
+        if self.index == self.array.length then None
+        else
+            let current = self.array.get(self.index)
+            self.index = self.index + 1
+            Some(current)
+
+implement <T> Iterable<T> for Array<T> =
+    public function iterator(self): Iterator<T> = ArrayIterator<T>(self, 0)
+
+module Iterator<T> =
+    /// Drains the iterator into a `List`, preserving order.
+    ///
+    /// There is deliberately no `toArray` counterpart: sizing an array up front
+    /// needs a `T: Default` seed, which is exactly the constraint a list avoids.
+    public function toList(self): List<T> =
+        let mutable acc: List<T> = List.empty
+        let mutable draining = true
+        while draining do
+            match self.next() with
+                case Some(v) => acc = List.Cons(v, acc)
+                case None => draining = false
+        acc.reverse()

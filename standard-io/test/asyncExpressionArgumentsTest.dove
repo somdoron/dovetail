@@ -1,0 +1,126 @@
+package test
+
+import standard.io.Async
+
+function expressionSiblingBefore<T, E>(error: E, program: Async<T, E>): Async<T, E> = program
+function expressionSiblingAfter<T, E>(program: Async<T, E>, error: E): Async<T, E> = program
+
+module ExpressionArguments =
+    public function concrete(program: Async<Int32, Never>): Async<Int32, Never> = program
+    public function generic<T, E>(program: Async<T, E>): Async<T, E> = program
+    public function sibling<T, E>(program: Async<T, E>, error: E): Async<T, E> = program
+
+function expressionArgumentsClosure<T>(program: Async<Int32 => T, Never>): Async<Int32 => T, Never> = program
+
+test "async do arguments: infer context from earlier and later siblings" =
+    let before = expressionSiblingBefore("error", async do 21)
+    let after = expressionSiblingAfter(async do 21, "error")
+    let program: Async<Unit, String> = async do
+        assert (await before) + (await after) == 42
+    program.fold((_: String) => Async.thunk(() => assert false), (_: Unit) => Async.succeed(())).run()
+
+test "async do arguments: module calls keep the deferred argument" =
+    let mutable executions = 0
+    let concrete = ExpressionArguments.concrete(async do
+        executions = executions + 1
+        42
+    )
+    let generic = ExpressionArguments.generic(async do await Async.succeed(42))
+    assert executions == 0
+    let program: Async<Unit, Never> = async do
+        assert (await concrete) == 42
+        assert (await generic) == 42
+    program.run()
+    assert executions == 1
+
+test "async do arguments: module inference uses sibling constraints" =
+    let value = ExpressionArguments.sibling(async do 42, "error")
+    let program: Async<Unit, String> = async do
+        assert (await value) == 42
+    program.fold((_: String) => Async.thunk(() => assert false), (_: Unit) => Async.succeed(())).run()
+
+test "async do arguments: enum payload supplies context" =
+    let wrapped: Option<Async<Int32, Never>> = Option.Some(async do 42)
+    let program: Async<Unit, Never> = async do
+        match wrapped with
+        case Some(value) => assert (await value) == 42
+        case None => assert false
+    program.run()
+
+test "async do arguments: partial success context types closure parameters" =
+    let value = expressionArgumentsClosure(async do x => x + 1)
+    let program: Async<Unit, Never> = async do
+        let f = await value
+        assert f(41) == 42
+    program.run()
+
+class ExpressionArgumentBox<T>(public program: Async<T, Never>) =
+    public function create(program: Async<T, Never>): ExpressionArgumentBox<T> = ExpressionArgumentBox(program)
+
+test "async do arguments: class constructors and static methods supply context" =
+    let direct = ExpressionArgumentBox(async do 20)
+    let factory = ExpressionArgumentBox.create(async do 22)
+    let program: Async<Unit, Never> = async do
+        assert (await direct.program) + (await factory.program) == 42
+    program.run()
+
+module ExpressionClosureSiblings =
+    public function combine<T>(program: Async<T, Never>, transform: T => T): Async<T, Never> =
+        program.map(transform)
+    public function reversed<T>(transform: T => T, program: Async<T, Never>): Async<T, Never> =
+        program.map(transform)
+
+function expressionClosureSibling<T>(program: Async<T, Never>, transform: T => T): Async<T, Never> =
+    program.map(transform)
+
+test "async do arguments: infer sibling closure parameters before static dispatch" =
+    let moduleValue = ExpressionClosureSiblings.combine(async do 41, value => value + 1)
+    let reversedValue = ExpressionClosureSiblings.reversed(value => value + 1, async do 41)
+    let functionValue = expressionClosureSibling(async do 41, value => value + 1)
+    let program: Async<Unit, Never> = async do
+        assert (await moduleValue) == 42
+        assert (await reversedValue) == 42
+        assert (await functionValue) == 42
+    program.run()
+
+function expressionWrappedHint<T>(value: ByName<T>): ByName<T> = value
+function expressionByNameSibling<T>(hint: ByName<T>, program: Async<T, Never>): Async<T, Never> = program
+
+test "async do arguments: preserve an already wrapped ByName sibling" =
+    let hint: ByName<Int32> = expressionWrappedHint(42)
+    let wrapped = expressionByNameSibling(hint, async do 42)
+    let direct = expressionByNameSibling(42, async do 42)
+    let program: Async<Unit, Never> = async do
+        assert (await wrapped) == 42
+        assert (await direct) == 42
+    program.run()
+
+module ExpressionAsyncClosureSiblings =
+    public function combine<T>(program: Async<T, Never>, next: () => Async<T, Never>): Async<T, Never> =
+        program.andThen((_: T) => next())
+    public function annotated<T>(program: Async<T, Never>, next: Int32 => Async<T, Never>): Async<T, Never> =
+        program.andThen((_: T) => next(42))
+
+test "async do arguments: supply context to async closure siblings" =
+    let empty = ExpressionAsyncClosureSiblings.combine(async do 1, async () => 42)
+    let annotated = ExpressionAsyncClosureSiblings.annotated(async do 1, async (value: Int32) => value)
+    let program: Async<Unit, Never> = async do
+        assert (await empty) == 42
+        assert (await annotated) == 42
+    program.run()
+
+function expressionAnnotatedClosureSibling<T>(program: Async<T, Never>, next: Int32 => Async<T, Never>): Async<T, Never> =
+    program.andThen((_: T) => next(42))
+
+module ExpressionAnnotatedClosureConstraints =
+    public function combine<T, E>(program: Async<T, E>, error: Int32 => E): Async<T, E> = program
+
+test "async do arguments: annotated closure bodies keep partial return context" =
+    let moduleValue = ExpressionAsyncClosureSiblings.annotated(async do 1, (value: Int32) => async do value)
+    let functionValue = expressionAnnotatedClosureSibling(async do 1, (value: Int32) => async do value)
+    let constrained = ExpressionAnnotatedClosureConstraints.combine(async do 42, (_: Int32) => "error")
+    let program: Async<Unit, String> = async do
+        assert (await moduleValue) == 42
+        assert (await functionValue) == 42
+        assert (await constrained) == 42
+    program.fold((_: String) => Async.thunk(() => assert false), (_: Unit) => Async.succeed(())).run()

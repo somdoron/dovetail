@@ -1,0 +1,820 @@
+package test
+
+import standard.io.Async
+import standard.io.Fiber
+import standard.io.Promise
+import standard.io.Resource
+import standard.io.Console
+import standard.io.ConsoleError
+import standard.io.ReentrantMutex
+import standard.io.Cause
+import standard.time.Duration
+
+// Scopes: a fiber forked inside a `use`/`bracket` block belongs to that block,
+// and the resource is not released until every one of those fibers is gone.
+// `fork` is waited for, `forkBackground` is cancelled; both are waited for
+// before the finalizer runs. Every test here records an order of events, so it
+// fails on the ordering rather than merely on a hang, and carries a `@timeout`
+// because a broken scope shows up as a deadlock.
+
+// Forked bodies are handed to `fork` directly. They used to be built behind a
+// `deferred` thunk, because `Promise.complete` flipped its promise as the `Async`
+// was CONSTRUCTED — so a body whose first statement signalled did it from
+// whoever called `fork()`, before the fiber existed. That was a defect in the
+// primitive and is fixed there; the thunk went with it.
+
+/// A fiber that parks forever and records `mark` while unwinding, so a test can
+/// tell teardown-then-release apart from release-then-teardown.
+async function parkedUntilCancelled(
+    mark: (Int32) => Unit,
+    never: Promise<Unit, Never>,
+    tornDown: Int32,
+    ranOn: Int32
+): Async<Unit, Never> =
+    let body: Async<Unit, Never> = never.awaitPromise().map((_: Unit) => mark(ranOn))
+    await body.foldCause(
+        (_: Cause<Never>) => Async.thunk(() => mark(tornDown)),
+        (_: Unit) => Async.succeed(())
+    )
+
+// --- fork: the scope waits ----------------------------------------------------
+
+async function waitsForForkedFiber(mark: (Int32) => Unit): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = use res
+    // Still only queued when the block ends, so it runs during the drain. Under
+    // the old rules the release went first and this fiber was cancelled.
+    let _child: Fiber<Unit, Never> = await Async.thunk(() => mark(1i32)).fork()
+    ()
+
+@timeout(10000)
+test "Scope: a `use` block waits for a forked fiber before releasing" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    waitsForForkedFiber(mark).run()
+    assert order == 12i32
+
+// --- forkBackground: cancelled, but still awaited -----------------------------
+
+async function cancelsBackgroundFiber(mark: (Int32) => Unit): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let _value: Int32 = use res
+    let _child: Fiber<Unit, Never> =
+        await parkedUntilCancelled(mark, never, 1i32, 9i32).forkBackground()
+    // Let it reach its park, so the close has something live to cancel.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    ()
+
+@timeout(10000)
+test "Scope: a `use` block cancels a background fiber and waits for its teardown" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    cancelsBackgroundFiber(mark).run()
+    // 1 = the fiber finished unwinding, 2 = the resource was then released. A 9
+    // anywhere would mean it was resumed rather than cancelled.
+    assert order == 12i32
+
+// --- abnormal close: structured fibers are cancelled too ----------------------
+
+async function failsUnderForkedFiber(mark: (Int32) => Unit): Async<Unit, Int32> =
+    let res: Resource<Int32, Int32> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let _value: Int32 = use res
+    let _child: Fiber<Unit, Never> =
+        await parkedUntilCancelled(mark, never, 1i32, 9i32).fork()
+    await Async<Unit, Int32>.sleep(Duration.ofMillis(1i64))
+    // A structured fiber is waited for on a normal exit — but this exit is a
+    // failure, so it is cancelled instead and the block still cannot hang.
+    await Async<Unit, Int32>.fail(7i32)
+
+@timeout(10000)
+test "Scope: a failing `use` block cancels its forked fibers and still releases" =
+    let mutable order = 0i32
+    let mutable failure = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    let program: Async<Unit, Never> = failsUnderForkedFiber(mark).fold<Unit, Never>(
+        (e: Int32) => Async.thunk(() => failure = e),
+        (_: Unit) => Async.succeed(())
+    )
+    program.run()
+    assert order == 12i32
+    // The original failure is what escapes, not the interruption it caused.
+    assert failure == 7i32
+
+// --- nested scopes close innermost first --------------------------------------
+
+async function innerScope(mark: (Int32) => Unit): Async<Unit, Never> =
+    let inner: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = use inner
+    let _child: Fiber<Unit, Never> = await Async.thunk(() => mark(1i32)).fork()
+    ()
+
+async function nestedScopes(mark: (Int32) => Unit): Async<Unit, Never> =
+    let outer: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(3i32))
+    )
+    let _value: Int32 = use outer
+    await innerScope(mark)
+
+@timeout(10000)
+test "Scope: nested `use` blocks drain and release innermost first" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    nestedScopes(mark).run()
+    assert order == 123i32
+
+// --- a fiber that already finished costs nothing -------------------------------
+
+async function backgroundAlreadyDone(mark: (Int32) => Unit): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = use res
+    let _child: Fiber<Unit, Never> = await Async.thunk(() => mark(1i32)).forkBackground()
+    // Give it time to finish on its own, so the close finds an empty scope.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    ()
+
+@timeout(10000)
+test "Scope: a background fiber that already finished does not block the close" =
+    let mutable order = 0i32
+    let mutable releases = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+        if n == 2i32 then releases = releases + 1i32
+    backgroundAlreadyDone(mark).run()
+    assert order == 12i32
+    // The empty-scope fast path must not run the finalizer twice.
+    assert releases == 1i32
+
+// --- interrupted mid-drain: the resource is still released ---------------------
+
+async function drainsThenInterrupted(
+    mark: (Int32) => Unit,
+    never: Promise<Unit, Never>,
+    inScope: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = use res
+    let _child: Fiber<Unit, Never> =
+        await parkedUntilCancelled(mark, never, 1i32, 9i32).fork()
+    await inScope.complete(())
+    ()
+
+async function interruptWhileDraining(mark: (Int32) => Unit, setInterrupted: () => Unit): Async<Unit, Never> =
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let inScope: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let closing: Fiber<Unit, Never> =
+        await drainsThenInterrupted(mark, never, inScope).forkBackground()
+    await inScope.awaitPromise()
+    // Quiescence: once this resumes, every other fiber is parked — the closing
+    // fiber on its drain, its child on the promise.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await closing.interrupt()
+    await closing.join().foldCause(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => setInterrupted())
+                case _ => Async.succeed(())
+        ,
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: interrupting a fiber mid-drain still cancels the scope and releases" =
+    let mutable order = 0i32
+    let mutable interrupted = false
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    let setInterrupted: () => Unit = () =>
+        interrupted = true
+    interruptWhileDraining(mark, setInterrupted).run()
+    // The interrupt escalates the close: the fiber it was waiting for is
+    // cancelled, and the resource is still released before the interrupt
+    // propagates.
+    assert order == 12i32
+    assert interrupted
+
+// --- interrupting a fiber that is waiting for its own children ----------------
+
+async function bodyDoneWaitingForChild(
+    mark: (Int32) => Unit,
+    never: Promise<Unit, Never>,
+    forked: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _child: Fiber<Unit, Never> =
+        await parkedUntilCancelled(mark, never, 1i32, 9i32).fork()
+    await forked.complete(())
+    ()
+
+async function interruptFiberWaitingForChild(mark: (Int32) => Unit): Async<Unit, Never> =
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let forked: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let waiting: Fiber<Unit, Never> =
+        await bodyDoneWaitingForChild(mark, never, forked).forkBackground()
+    await forked.awaitPromise()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    // `waiting` has finished its body and is now politely waiting for a fiber
+    // that can never finish. Interrupting it has to stop that wait, not just
+    // relabel its result.
+    await waiting.interrupt()
+    await waiting.join().foldCause(
+        (_: Cause<Never>) => Async.thunk(() => mark(2i32)),
+        (_: Unit) => Async.thunk(() => mark(2i32))
+    )
+
+@timeout(10000)
+test "Scope: interrupting a fiber that is waiting for a child cancels the child" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    interruptFiberWaitingForChild(mark).run()
+    // 1 = the child was cancelled and unwound, 2 = the join then returned. A
+    // hang here would mean the interrupt left the wait in place.
+    assert order == 12i32
+
+// --- attachments: a scope drains its fibers before running them ---------------
+//
+// `Async.scope()` opens a scope that acquires nothing, and `attachToScope`
+// registers a finalizer on whichever scope is innermost. A scope's attachments
+// are owed everything a `use` block's release is owed: the drain first, then the
+// mask.
+
+async function attachUnderForkedFiber(mark: (Int32) => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = await res.attachToScope()
+    // Only queued when the block ends, so it runs during the drain. A `21` would
+    // mean the finalizer ran while a fiber that could still be using the
+    // resource was alive.
+    let _child: Fiber<Unit, Never> = await Async.thunk(() => mark(1i32)).fork()
+    ()
+
+@timeout(10000)
+test "Scope: an Async.scope drains its forked fibers before running attachments" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    attachUnderForkedFiber(mark).run()
+    assert order == 12i32
+
+async function attachOverBackgroundFiber(mark: (Int32) => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = await res.attachToScope()
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let _child: Fiber<Unit, Never> =
+        await parkedUntilCancelled(mark, never, 1i32, 9i32).forkBackground()
+    // Let the child install its cancellation handler before closing the scope.
+    await Async.yieldNow()
+
+@timeout(10000)
+test "Scope: an Async.scope cancels a background fiber before running attachments" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    attachOverBackgroundFiber(mark).run()
+    // A 9 anywhere would mean the fiber was resumed rather than cancelled.
+    assert order == 12i32
+
+// --- a release is not cut in half by an interrupt ------------------------------
+
+/// A finalizer with a suspension point of its own, so an interrupt has somewhere
+/// to land in the middle of it.
+async function slowRelease(mark: (Int32) => Unit): Async<Unit, Never> =
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    mark(1i32)
+
+async function holdsUntilInterrupted(
+    mark: (Int32) => Unit,
+    releasing: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => slowRelease(mark)
+    )
+    let _value: Int32 = use res
+    await releasing.complete(())
+    ()
+
+async function interruptDuringRelease(mark: (Int32) => Unit, setInterrupted: () => Unit): Async<Unit, Never> =
+    let releasing: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let holder: Fiber<Unit, Never> =
+        await holdsUntilInterrupted(mark, releasing).forkBackground()
+    await releasing.awaitPromise()
+    // Quiescence: by the time this resumes, the holder's block has ended and it
+    // is parked inside the finalizer's own sleep — the exact window where an
+    // interrupt used to abandon the release half-done.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await holder.interrupt()
+    await holder.join().foldCause(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => setInterrupted())
+                case _ => Async.succeed(())
+        ,
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: an interrupt cannot cut a release in half" =
+    let mutable released = 0i32
+    let mutable interrupted = false
+    let mark: (Int32) => Unit = (n: Int32) =>
+        released = n
+    let setInterrupted: () => Unit = () =>
+        interrupted = true
+    interruptDuringRelease(mark, setInterrupted).run()
+    // The finalizer ran to completion despite the interrupt landing inside it...
+    assert released == 1i32
+    // ...and the interrupt was deferred, not dropped.
+    assert interrupted
+
+// The same mask, for an attachment. A `use` block's release is masked by the
+// release frame; an attachment is masked by the frame that closes the scope it
+// was attached to, which is a different piece of code and so needs its own test.
+
+async function holdsAttachedUntilInterrupted(
+    mark: (Int32) => Unit,
+    releasing: Promise<Unit, Never>
+): Async<Unit, Never> =
+    use Async.scope()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => slowRelease(mark)
+    )
+    let _value: Int32 = await res.attachToScope()
+    await releasing.complete(())
+    ()
+
+async function interruptDuringAttachedRelease(
+    mark: (Int32) => Unit,
+    setInterrupted: () => Unit
+): Async<Unit, Never> =
+    let releasing: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let holder: Fiber<Unit, Never> =
+        await holdsAttachedUntilInterrupted(mark, releasing).forkBackground()
+    await releasing.awaitPromise()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await holder.interrupt()
+    await holder.join().foldCause(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => setInterrupted())
+                case _ => Async.succeed(())
+        ,
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: an interrupt cannot cut an attached finalizer in half" =
+    let mutable released = 0i32
+    let mutable interrupted = false
+    let mark: (Int32) => Unit = (n: Int32) =>
+        released = n
+    let setInterrupted: () => Unit = () =>
+        interrupted = true
+    interruptDuringAttachedRelease(mark, setInterrupted).run()
+    assert released == 1i32
+    assert interrupted
+
+// --- a fiber forked during `acquire` belongs to the resource -------------------
+
+async function acquireThatForks(mark: (Int32) => Unit, never: Promise<Unit, Never>): Async<Int32, Never> =
+    let _child: Fiber<Unit, Never> =
+        await parkedUntilCancelled(mark, never, 1i32, 9i32).forkBackground()
+    await Async<Int32, Never>.sleep(Duration.ofMillis(1i64))
+    1i32
+
+async function forkDuringAcquire(mark: (Int32) => Unit): Async<Unit, Never> =
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => acquireThatForks(mark, never),
+        (_: Int32) => Async.thunk(() => mark(2i32))
+    )
+    let _value: Int32 = use res
+    ()
+
+@timeout(10000)
+test "Scope: a fiber forked during `acquire` is owned by the resource" =
+    let mutable order = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        order = order * 10i32 + n
+    forkDuringAcquire(mark).run()
+    // The scope opens before `acquire`, so this fiber is cancelled and awaited
+    // at the close. Were it owned by the enclosing scope the release would come
+    // first (21) and the fiber would outlive the resource it was using.
+    assert order == 12i32
+
+// --- a failing fiber does not fail its scope ----------------------------------
+
+async function forkThatFails(): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.succeed(())
+    )
+    let _value: Int32 = use res
+    let child: Fiber<Unit, Int32> = await Async<Unit, Int32>.fail(5i32).fork()
+    await child.join().fold<Unit, Never>(
+        (_: Int32) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+async function failingChildProgram(setter: (Int32) => Unit): Async<Int32, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.succeed(())
+    )
+    let value: Int32 = use res
+    let child: Fiber<Unit, Int32> = await Async<Unit, Int32>.fail(5i32).fork()
+    let seen = await child.join().fold<Int32, Never>(
+        (e: Int32) => Async.succeed(e),
+        (_: Unit) => Async.succeed(0i32)
+    )
+    setter(seen)
+    value
+
+@timeout(10000)
+test "Scope: a forked fiber that fails does not fail the scope around it" =
+    let mutable seen = 0i32
+    let mutable value = 0i32
+    let setter: (Int32) => Unit = (n: Int32) =>
+        seen = n
+    let program: Async<Unit, Never> = failingChildProgram(setter).map((v: Int32) =>
+        value = v
+    )
+    program.run()
+    // The failure is visible through `join` only; the block's own value stands.
+    assert seen == 5i32
+    assert value == 1i32
+
+// --- a scope waiting on a fiber that never ends is reported, not hung ---------
+
+async function waitsForever(): Async<Unit, Never> =
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let _child: Fiber<Unit, Never> = await never.awaitPromise().fork()
+    ()
+
+// The message itself is pinned by the unit test in `Runtime.dove` — a Dovetail
+// `panic` writes its text to stderr and traps, so the harness only ever sees
+// the trap, never the wording.
+@panics
+@timeout(10000)
+test "Scope: waiting on a fiber that can never finish panics instead of hanging" =
+    waitsForever().run()
+
+// --- the same mask, for `forkAndUse` -------------------------------------------
+// `forkAndUse` spells its bracket out by hand from `foldCause` instead of going
+// through `Async.bracket`, so it does not get the interpreter's automatic mask
+// around a release. Without one, an interrupt landing inside the finalizer
+// abandons it half-done — for the accept loop that means a connection whose
+// stream end is dropped but whose result future never is.
+
+async function scopedBodyThatFinishes(started: Promise<Unit, Never>): Async<Unit, Never> =
+    await started.complete(())
+    ()
+
+async function forkAndUseThenInterrupt(mark: (Int32) => Unit): Async<Unit, Never> =
+    let started: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => slowRelease(mark)
+    )
+    let child: Fiber<Unit, Never> = await res.forkAndUse<Unit, Never>((_: Int32) => scopedBodyThatFinishes(started))
+    await started.awaitPromise()
+    // Quiescence: the child's body is over and it is parked inside the
+    // finalizer's own sleep — the exact window the mask exists for.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await child.interrupt()
+    await child.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: an interrupt cannot cut a forkAndUse release in half" =
+    let mutable released = 0i32
+    let mark: (Int32) => Unit = (n: Int32) =>
+        released = n
+    forkAndUseThenInterrupt(mark).run()
+    // The finalizer ran to completion even though the interrupt reached it
+    // mid-sleep; unmasked, it stops there and the resource stays half-released.
+    assert released == 1i32
+
+// --- the hard/soft mask distinction --------------------------------------------
+//
+// `Interruptible` punches the acquire mask (soft) so a queued mutex or an accept
+// stays cancellable — but it must NOT punch the mask a finalizer runs under
+// (hard), or "an interrupt cannot cut a release in half" dies the day a release
+// takes a lock. These pin both sides.
+
+/// A finalizer that must take a CONTENDED mutex: it queues behind the holder,
+/// inside the release's hard mask. The interrupt below lands while it is queued.
+async function finalizerTakesMutex(
+    mark: (Int32) => Unit,
+    m: ReentrantMutex,
+    ready: Promise<Unit, Never>,
+    never: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => lockedRelease(mark, m)
+    )
+    let _v = use res
+    await ready.complete(())
+    await never.awaitPromise()
+
+async function lockedRelease(mark: (Int32) => Unit, m: ReentrantMutex): Async<Unit, Never> =
+    let _held = use m.acquire()
+    await Async.thunk(() => mark(1i32))
+
+async function holdBriefly(
+    m: ReentrantMutex,
+    holding: Promise<Unit, Never>,
+    releaseIt: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _held = use m.acquire()
+    await holding.complete(())
+    await releaseIt.awaitPromise()
+
+async function mutexInFinalizerProgram(mark: (Int32) => Unit, setInterrupted: () => Unit): Async<Unit, Never> =
+    let m = await ReentrantMutex.make()
+    let holding: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let releaseIt: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    // The holder takes the mutex first and keeps it until told.
+    let holder: Fiber<Unit, Never> = await holdBriefly(m, holding, releaseIt).forkBackground()
+    await holding.awaitPromise()
+    let victim: Fiber<Unit, Never> = await finalizerTakesMutex(mark, m, ready, never).forkBackground()
+    await ready.awaitPromise()
+    // Interrupt the victim: it unwinds into its release, whose mutex acquire
+    // queues behind the holder INSIDE the hard mask. This second interrupt lands
+    // while it is queued there — and must be deferred, not delivered.
+    await victim.interrupt()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await victim.interrupt()
+    // Let the holder go; the release must now complete.
+    await releaseIt.complete(())
+    await victim.join().foldCause(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => setInterrupted())
+                case _ => Async.succeed(())
+        ,
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: a finalizer's contended mutex acquire cannot be cut by an interrupt" =
+    let mutable released = 0i32
+    let mutable interrupted = false
+    mutexInFinalizerProgram((n: Int32) => released = n, () => interrupted = true).run()
+    // The release ran to completion despite an interrupt landing while its
+    // mutex acquire was queued inside the hard mask...
+    assert released == 1i32
+    // ...and the interrupt was deferred, not dropped.
+    assert interrupted
+
+// A pending interrupt is delivered ON ENTRY to an `Interruptible` region — the
+// masked half of an acquire collects the interrupt, and the wait that follows
+// must never start.
+async function maskedThenInterruptibleWait(
+    mark: (Int32) => Unit,
+    ready: Promise<Unit, Never>,
+    gate: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let acquire: () => Async<Int32, Never> = async () =>
+        await ready.complete(())
+        // Parks masked (acquire mask, no opt-in): the interrupt below goes
+        // pending here.
+        await gate.awaitPromise()
+        // Entering the interruptible region must deliver the pending interrupt
+        // BEFORE this ten-second park ever starts.
+        await Async<Unit, Never>.sleep(Duration.ofSeconds(10i64)).interruptible()
+        1i32
+    let res: Resource<Int32, Never> = Resource.make(
+        acquire,
+        (_: Int32) => Async.thunk(() => mark(9i32))
+    )
+    let _v = use res
+    ()
+
+async function pendingAtEntryProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let fiber: Fiber<Unit, Never> =
+        await maskedThenInterruptibleWait(mark, ready, gate).forkBackground()
+    await ready.awaitPromise()
+    // The fiber is parked masked on `gate`; this interrupt can only go pending.
+    await fiber.interrupt()
+    // Wake it into the rest of the masked acquire.
+    await gate.complete(())
+    await fiber.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(5000)
+test "Scope: a pending interrupt is delivered at Interruptible entry, before the wait" =
+    let mutable released = 0i32
+    pendingAtEntryProgram((n: Int32) => released = n).run()
+    // The acquire never completed, so the finalizer never ran — and the test
+    // finishing at all (under its timeout) proves the ten-second interruptible
+    // park was never entered.
+    assert released == 0i32
+
+// A finalizer's ONLY escape hatch: `.timeout` fires inside the hard mask,
+// because the timer and the bounded work race in fresh fibers of their own,
+// born interruptible. This is what lets TLS teardown bound its close_notify
+// flush against a peer that stops reading — pin the mechanism, not the TLS.
+async function stalledButBoundedRelease(mark: (Int32) => Unit, never: Promise<Unit, Never>): Async<Unit, Never> =
+    // The "flush that never completes": parks forever unless the bound cuts it.
+    await never.awaitPromise().timeout(Duration.ofMillis(20i64))
+    mark(1i32)
+
+async function boundedFinalizerProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => stalledButBoundedRelease(mark, never)
+    )
+    let _v = use res
+    ()
+
+@timeout(5000)
+test "Scope: a timeout fires inside a hard-masked finalizer and bounds its stalled wait" =
+    let mutable order = 0i32
+    boundedFinalizerProgram((n: Int32) => order = n).run()
+    // The release ran past its stalled wait — the bound fired under the mask —
+    // and the program finished at all (the outer @timeout would trip on a hang).
+    assert order == 1i32
+
+// The same guarantee when the body did something CARRYING before the release —
+// a completed sleep marks the fiber as carrying, and that flag used to survive
+// into the release's park, where it made the mask pop skip the delivery it had
+// promised: the interrupt was dropped and the holder finished normally.
+async function sleepsThenHoldsUntilInterrupted(
+    mark: (Int32) => Unit,
+    releasing: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => slowRelease(mark)
+    )
+    let _value: Int32 = use res
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await releasing.complete(())
+    ()
+
+async function interruptDuringReleaseAfterSleep(mark: (Int32) => Unit, setInterrupted: () => Unit): Async<Unit, Never> =
+    let releasing: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let holder: Fiber<Unit, Never> =
+        await sleepsThenHoldsUntilInterrupted(mark, releasing).forkBackground()
+    await releasing.awaitPromise()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await holder.interrupt()
+    await holder.join().foldCause(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => setInterrupted())
+                case _ => Async.succeed(())
+        ,
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: a stale carrying flag does not make a release drop its interrupt" =
+    let mutable released = 0i32
+    let mutable interrupted = false
+    interruptDuringReleaseAfterSleep((n: Int32) => released = n, () => interrupted = true).run()
+    assert released == 1i32
+    assert interrupted
+
+// The same guarantee when the RELEASE ITSELF completes a host op after the
+// interrupt went pending: a write that the host accepts synchronously used to
+// mark the fiber as carrying on the spot, and that flag made the release's own
+// mask pop skip the delivery it owed.
+async function writingRelease(mark: (Int32) => Unit): Async<Unit, Never> =
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    await Console.write("").catchAll((_: ConsoleError) => Async.succeed(()))
+    mark(1i32)
+
+async function holdsWritingUntilInterrupted(
+    mark: (Int32) => Unit,
+    releasing: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => writingRelease(mark)
+    )
+    let _value: Int32 = use res
+    await releasing.complete(())
+    ()
+
+async function interruptDuringWritingRelease(mark: (Int32) => Unit, setInterrupted: () => Unit): Async<Unit, Never> =
+    let releasing: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let holder: Fiber<Unit, Never> =
+        await holdsWritingUntilInterrupted(mark, releasing).forkBackground()
+    await releasing.awaitPromise()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+    await holder.interrupt()
+    await holder.join().foldCause(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => setInterrupted())
+                case _ => Async.succeed(())
+        ,
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(10000)
+test "Scope: a release that writes after the interrupt went pending still delivers it" =
+    let mutable released = 0i32
+    let mutable interrupted = false
+    interruptDuringWritingRelease((n: Int32) => released = n, () => interrupted = true).run()
+    assert released == 1i32
+    assert interrupted
+
+
+// --- a structured child's DEFECT is join-only too (§5.4 rule 7) ---------------
+//
+// A child that panics does not fail its scope. That used to depend on timing:
+// `decideRace`'s promotion arm runs for every scope a fiber leaves, so a child
+// panicking while its parent was parked draining replaced the parent's result,
+// while the same panic a moment earlier was only visible through `join`. The
+// arm is gated on a race marker now, so both orderings agree — and a race still
+// surfaces its loser's finalizer panic (see raceTimeoutTest).
+
+async function panicsWhenReleased(go: Promise<Unit, Never>): Async<Unit, Never> =
+    await go.awaitPromise()
+    await Async<Unit, Never>.failPanic("structured child blew up")
+
+/// The parent completes `go` as the LAST thing in the scope, so the child is
+/// only queued when the parent is about to park draining that scope: the child
+/// panics mid-drain, the window the promotion used to fire in.
+async function childPanicsMidDrain(): Async<Int32, Never> =
+    use Async.scope()
+    let go: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let _child: Fiber<Unit, Never> = await panicsWhenReleased(go).fork()
+    await go.complete(())
+    7i32
+
+/// The same child, panicking BEFORE the parent reaches the close — the ordering
+/// that was always join-only. Both tests must now agree.
+async function childPanicsBeforeClose(): Async<Int32, Never> =
+    use Async.scope()
+    let go: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let child: Fiber<Unit, Never> = await panicsWhenReleased(go).fork()
+    await go.complete(())
+    await child.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+    7i32
+
+async function scopeOutcome(body: Async<Int32, Never>, seen: (Int32) => Unit): Async<Unit, Never> =
+    await body.foldCause<Unit, Never>(
+        (_: Cause<Never>) => Async.thunk(() => seen(-1i32)),
+        (value: Int32) => Async.thunk(() => seen(value))
+    )
+
+@timeout(5000)
+test "Scope: a structured child's panic mid-drain does not replace the parent's result" =
+    let mutable outcome = 0i32
+    scopeOutcome(childPanicsMidDrain(), (n: Int32) => outcome = n).run()
+    assert outcome == 7i32
+
+@timeout(5000)
+test "Scope: a structured child's panic before the close does not replace it either" =
+    let mutable outcome = 0i32
+    scopeOutcome(childPanicsBeforeClose(), (n: Int32) => outcome = n).run()
+    assert outcome == 7i32

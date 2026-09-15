@@ -1,0 +1,20 @@
+# Build-time helper: componentize the hand-written async-stackful core module
+# using the SAME wit-component version the Dovetail compiler embeds with, so the
+# async-stackful lift is recognized identically. (The `wasm-tools` CLI only
+# does async-stackful embed in --dummy mode, which discards the real module.)
+[package]
+name = "componentize-sqlite"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "componentize-sqlite"
+path = "src/main.rs"
+
+[dependencies]
+wit-component = "0.255"
+wit-parser = "0.255"
+anyhow = "1"

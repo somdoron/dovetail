@@ -1,0 +1,26 @@
+package a
+
+// Functions
+function add(x: Int32, y: Int32): Int32 = x + y
+
+public function greet(name: String): String = "hello"
+
+// Variables
+function main(): Unit =
+  let x = 42
+  let mutable count = 0
+  let name: String = "world"
+  count = count + 1
+  assert x == 42
+
+// Literals
+function literals(): Unit =
+  let b = true
+  let s = "hello world"
+  let i = 123
+  let f = 3.14
+  let u = ()
+  let big = 12345678901234567890big
+  let hexBig = 0xFFbig
+  let exact = 1.200dec
+  let exponent = 1.25e-3dec

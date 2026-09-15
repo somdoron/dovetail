@@ -1,0 +1,275 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.Result
+
+/// NIST P-256 point arithmetic and ECDH.
+///
+/// Points are projective (X:Y:Z) with coordinates in Montgomery form. Addition
+/// uses the Renes-Costello-Batina complete formula for a = -3, which has no
+/// exceptional cases (it also doubles and handles the identity), so the
+/// constant-time ladder needs only this one operation.
+module P256 =
+    /// n0inv(p) = 1 (since p ≡ -1 mod 2^64), so field Montgomery multiply is
+    /// `montMul(a, b, p, 1)`.
+    private function fmul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        P256Field.montMul(a, b, P256Field.p(), 1u64)
+
+    private function fadd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        P256Field.add(a, b, P256Field.p())
+
+    private function fsub(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        P256Field.sub(a, b, P256Field.p())
+
+    private function fone(): Array<Uint64> = P256Field.montOne(P256Field.p(), 1u64)
+
+    /// The curve constant b, in Montgomery form.
+    function bMont(): Array<Uint64> =
+        let b = [|0x3bce3c3e27d2604bu64, 0x651d06b0cc53b0f6u64, 0xb3ebbd55769886bcu64, 0x5ac635d8aa3a93e7u64|]
+        P256Field.toMont(b, P256Field.p(), 1u64)
+
+    /// The base point G in projective Montgomery form.
+    function basePoint(): P256Point =
+        let gx = [|0xf4a13945d898c296u64, 0x77037d812deb33a0u64, 0xf8bce6e563a440f2u64, 0x6b17d1f2e12c4247u64|]
+        let gy = [|0xcbb6406837bf51f5u64, 0x2bce33576b315eceu64, 0x8ee7eb4a7c0f9e16u64, 0x4fe342e2fe1a7f9bu64|]
+        P256Point {
+            x = P256Field.toMont(gx, P256Field.p(), 1u64)
+            y = P256Field.toMont(gy, P256Field.p(), 1u64)
+            z = fone()
+        }
+
+    private function identity(): P256Point =
+        P256Point { x = [|0u64, 0u64, 0u64, 0u64|]; y = fone(); z = [|0u64, 0u64, 0u64, 0u64|] }
+
+    /// Complete addition (Renes-Costello-Batina Algorithm 4, a = -3).
+    function pointAdd(p1: P256Point, p2: P256Point, b: Array<Uint64>): P256Point =
+        let t0 = fmul(p1.x, p2.x)
+        let t1 = fmul(p1.y, p2.y)
+        let t2 = fmul(p1.z, p2.z)
+        let mutable t3 = fadd(p1.x, p1.y)
+        let mutable t4 = fadd(p2.x, p2.y)
+        t3 = fmul(t3, t4)
+        t4 = fadd(t0, t1)
+        t3 = fsub(t3, t4)
+        t4 = fadd(p1.y, p1.z)
+        let mutable x3 = fadd(p2.y, p2.z)
+        t4 = fmul(t4, x3)
+        x3 = fadd(t1, t2)
+        t4 = fsub(t4, x3)
+        x3 = fadd(p1.x, p1.z)
+        let mutable y3 = fadd(p2.x, p2.z)
+        x3 = fmul(x3, y3)
+        y3 = fadd(t0, t2)
+        y3 = fsub(x3, y3)
+        let mutable z3 = fmul(b, t2)
+        x3 = fsub(y3, z3)
+        z3 = fadd(x3, x3)
+        x3 = fadd(x3, z3)
+        z3 = fsub(t1, x3)
+        x3 = fadd(t1, x3)
+        y3 = fmul(b, y3)
+        let mutable u1 = fadd(t2, t2)
+        let u2 = fadd(u1, t2)
+        y3 = fsub(y3, u2)
+        y3 = fsub(y3, t0)
+        u1 = fadd(y3, y3)
+        y3 = fadd(u1, y3)
+        u1 = fadd(t0, t0)
+        let mutable t0b = fadd(u1, t0)
+        t0b = fsub(t0b, u2)
+        let r1 = fmul(t4, y3)
+        let r2 = fmul(t0b, y3)
+        y3 = fmul(x3, z3)
+        y3 = fadd(y3, r2)
+        x3 = fmul(t3, x3)
+        x3 = fsub(x3, r1)
+        z3 = fmul(t4, z3)
+        let r3 = fmul(t3, t0b)
+        z3 = fadd(z3, r3)
+        P256Point { x = x3; y = y3; z = z3 }
+
+    private function feCSelect(bit: Uint64, a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let mask = 0u64 - bit
+        let r = Array<Uint64>.fill(4, 0u64)
+        let mutable i = 0
+        while i < 4 do
+            r.set(i, (a.get(i) & mask) | (b.get(i) & (~mask)))
+            i = i + 1
+        r
+
+    private function pointCSelect(bit: Uint64, a: P256Point, b: P256Point): P256Point =
+        P256Point {
+            x = feCSelect(bit, a.x, b.x)
+            y = feCSelect(bit, a.y, b.y)
+            z = feCSelect(bit, a.z, b.z)
+        }
+
+    /// Constant-time scalar multiplication (left-to-right double-and-add).
+    function scalarMult(scalar: Array<Uint64>, point: P256Point, b: Array<Uint64>): P256Point =
+        let mutable r = identity()
+        let mutable i = 255
+        while i >= 0 do
+            r = pointAdd(r, r, b)
+            let bit = (scalar.get(i / 64) >> (i % 64).toUint64()) & 1u64
+            let q = pointAdd(r, point, b)
+            r = pointCSelect(bit, q, r)
+            i = i - 1
+        r
+
+    /// Affine x of a point (normal, non-Montgomery limbs).
+    function affineX(p: P256Point): Array<Uint64> =
+        let zinv = P256Field.montInv(p.z, P256Field.p(), 1u64)
+        P256Field.fromMont(fmul(p.x, zinv), P256Field.p(), 1u64)
+
+    function affineY(p: P256Point): Array<Uint64> =
+        let zinv = P256Field.montInv(p.z, P256Field.p(), 1u64)
+        P256Field.fromMont(fmul(p.y, zinv), P256Field.p(), 1u64)
+
+    // --- byte <-> limb conversions (big-endian, SEC1) ---
+
+    /// 32 big-endian bytes at `off` -> 4 little-endian limbs.
+    function beToLimbs(bytes: Array<Uint8>, off: Int32): Array<Uint64> =
+        let r = Array<Uint64>.fill(4, 0u64)
+        let mutable i = 0
+        while i < 4 do
+            let mutable w = 0u64
+            let mutable j = 0
+            while j < 8 do
+                w = (w << 8u64) | bytes.get(off + (3 - i) * 8 + j).toUint64()
+                j = j + 1
+            r.set(i, w)
+            i = i + 1
+        r
+
+    /// 4 little-endian limbs -> 32 big-endian bytes.
+    function limbsToBe(a: Array<Uint64>): Array<Uint8> =
+        let r = Array<Uint8>.fill(32, 0u8)
+        let mutable i = 0
+        while i < 4 do
+            let w = a.get(3 - i)
+            let mutable j = 0
+            while j < 8 do
+                r.set(i * 8 + j, (w >> ((7 - j) * 8).toUint64()).toUint8())
+                j = j + 1
+            i = i + 1
+        r
+
+    /// Encode a point as SEC1 uncompressed: 0x04 ‖ X ‖ Y (65 bytes).
+    function encode(p: P256Point): Array<Uint8> =
+        let res = Array<Uint8>.fill(65, 0u8)
+        res.set(0, 0x04u8)
+        P256.limbsToBe(P256.affineX(p)).copy(res, 1)
+        P256.limbsToBe(P256.affineY(p)).copy(res, 33)
+        res
+
+    /// Decode a SEC1 uncompressed point into projective Montgomery form.
+    function decode(bytes: Array<Uint8>): P256Point =
+        let x = beToLimbs(bytes, 1)
+        let y = beToLimbs(bytes, 33)
+        P256Point {
+            x = P256Field.toMont(x, P256Field.p(), 1u64)
+            y = P256Field.toMont(y, P256Field.p(), 1u64)
+            z = fone()
+        }
+
+/// A P-256 point in projective coordinates (X:Y:Z), coordinates in Montgomery
+/// form.
+record P256Point =
+    x: Array<Uint64>
+    y: Array<Uint64>
+    z: Array<Uint64>
+
+/// ECDH over NIST P-256. 32-byte secret, 65-byte uncompressed public key,
+/// 32-byte shared secret (the x-coordinate of the shared point).
+class EcdhP256Algorithm() implements KeyExchange =
+    public property publicKeySize(self): Int32 = 65
+    public property secretKeySize(self): Int32 = 32
+    public property sharedSecretSize(self): Int32 = 32
+
+    public function derivePublicKey(self, secret: SecretKey): PublicKey =
+        let scalar = P256.beToLimbs(secret.value, 0)
+        let pub = P256.scalarMult(scalar, P256.basePoint(), P256.bMont())
+        PublicKey(P256.encode(pub))
+
+    public function computeSharedSecret(
+        self,
+        mySecret: SecretKey,
+        theirPublic: PublicKey
+    ): Result<SymmetricKey, CryptoError> =
+        // The peer's public key is untrusted (attacker-controlled in TLS); a
+        // truncated key would trap in P256.decode (reads index 64). Require the
+        // full 65-byte SEC1 uncompressed key before decoding.
+        if theirPublic.value.length != 65 then
+            Error(CryptoError.InvalidKeySize(65, theirPublic.value.length))
+        else
+            let scalar = P256.beToLimbs(mySecret.value, 0)
+            let point = P256.decode(theirPublic.value)
+            let shared = P256.scalarMult(scalar, point, P256.bMont())
+            Ok(SymmetricKey(P256.limbsToBe(P256.affineX(shared))))
+
+    // The P-256 private key must be a scalar in [1, n-1]; reject otherwise.
+    public function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey> =
+        let s = P256.beToLimbs(bytes, 0)
+        if (P256Field.isZero(s) == false) && P256Field.lessThan(s, P256Field.n()) then
+            Some(SecretKey(bytes))
+        else
+            None
+
+/// The ECDH-P256 key-exchange algorithm.
+public let EcdhP256: KeyExchange = EcdhP256Algorithm()
+
+test "P256 base point and 2G (NIST vectors)" =
+    // 1*G == G : derive public key for secret 1 and check x-coordinate.
+    let one = Array<Uint8>.fill(32, 0u8)
+    one.set(31, 1u8)
+    let g = EcdhP256.derivePublicKey(SecretKey(one))
+    let gxExpected = [|
+        0x6bu8, 0x17u8, 0xd1u8, 0xf2u8, 0xe1u8, 0x2cu8, 0x42u8, 0x47u8,
+        0xf8u8, 0xbcu8, 0xe6u8, 0xe5u8, 0x63u8, 0xa4u8, 0x40u8, 0xf2u8,
+        0x77u8, 0x03u8, 0x7du8, 0x81u8, 0x2du8, 0xebu8, 0x33u8, 0xa0u8,
+        0xf4u8, 0xa1u8, 0x39u8, 0x45u8, 0xd8u8, 0x98u8, 0xc2u8, 0x96u8,
+    |]
+    assert g.value.get(0) == 0x04u8
+    let mutable i = 0
+    let mutable ok = true
+    while i < 32 do
+        if g.value.get(1 + i) != gxExpected.get(i) then ok = false
+        i = i + 1
+    assert ok
+    // 2*G x-coordinate
+    let two = Array<Uint8>.fill(32, 0u8)
+    two.set(31, 2u8)
+    let g2 = EcdhP256.derivePublicKey(SecretKey(two))
+    let g2x = [|
+        0x7cu8, 0xf2u8, 0x7bu8, 0x18u8, 0x8du8, 0x03u8, 0x4fu8, 0x7eu8,
+        0x8au8, 0x52u8, 0x38u8, 0x03u8, 0x04u8, 0xb5u8, 0x1au8, 0xc3u8,
+        0xc0u8, 0x89u8, 0x69u8, 0xe2u8, 0x77u8, 0xf2u8, 0x1bu8, 0x35u8,
+        0xa6u8, 0x0bu8, 0x48u8, 0xfcu8, 0x47u8, 0x66u8, 0x99u8, 0x78u8,
+    |]
+    i = 0
+    while i < 32 do
+        if g2.value.get(1 + i) != g2x.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "ECDH-P256 agreement" =
+    let aliceSecret = SecretKey([|
+        0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8,
+        0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8, 0x00u8,
+        0x11u8, 0x22u8, 0x33u8, 0x44u8, 0x55u8, 0x66u8, 0x77u8, 0x88u8,
+        0x99u8, 0xaau8, 0xbbu8, 0xccu8, 0xddu8, 0xeeu8, 0xffu8, 0x01u8,
+    |])
+    let bobSecret = SecretKey([|
+        0x0fu8, 0x1eu8, 0x2du8, 0x3cu8, 0x4bu8, 0x5au8, 0x69u8, 0x78u8,
+        0x87u8, 0x96u8, 0xa5u8, 0xb4u8, 0xc3u8, 0xd2u8, 0xe1u8, 0xf0u8,
+        0x0fu8, 0x1eu8, 0x2du8, 0x3cu8, 0x4bu8, 0x5au8, 0x69u8, 0x78u8,
+        0x87u8, 0x96u8, 0xa5u8, 0xb4u8, 0xc3u8, 0xd2u8, 0xe1u8, 0xf2u8,
+    |])
+    let alicePub = EcdhP256.derivePublicKey(aliceSecret)
+    let bobPub = EcdhP256.derivePublicKey(bobSecret)
+    let aliceShared = EcdhP256.computeSharedSecret(aliceSecret, bobPub)
+    let bobShared = EcdhP256.computeSharedSecret(bobSecret, alicePub)
+    assert aliceShared.isOk
+    assert bobShared.isOk
+    assert ConstantTime.equal(aliceShared.require.value, bobShared.require.value)

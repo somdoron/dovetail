@@ -1,0 +1,511 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.Result
+import standard.prelude.String
+
+/// TLS 1.3 extensions (RFC 8446 §4.2). Several extensions are encoded
+/// differently depending on which handshake message carries them
+/// (`supported_versions` and `key_share` most notably), so both parsing and
+/// serialisation are parameterised by an `ExtensionContext`.
+
+/// The TLS 1.3 protocol version code (RFC 8446 §4.2.1).
+let versionTls13: Int32 = 0x0304
+
+/// A key-share offer/selection: a named group and its key-exchange bytes
+/// (RFC 8446 §4.2.8). For a HelloRetryRequest only the group is meaningful and
+/// `keyExchange` is empty.
+record KeyShareEntry =
+    group: KeyExchangeGroup
+    keyExchange: Array<Uint8>
+
+/// The handshake message a set of extensions belongs to. Controls the
+/// context-sensitive encodings.
+enum ExtensionContext =
+    ClientHelloContext
+    ServerHelloContext
+    HelloRetryRequestContext
+    EncryptedExtensionsContext
+
+/// A pre-shared-key identity offered in a ClientHello (RFC 8446 §4.2.11).
+record PskIdentity =
+    identity: Array<Uint8>
+    obfuscatedTicketAge: Int64
+
+/// A parsed extension. `Unknown` preserves type+body for extensions this
+/// library does not interpret (forward compatibility, and so a server can echo
+/// what it must). `PreSharedKey`/`PskSelectedIdentity` are the ClientHello and
+/// ServerHello forms of the same extension type (41).
+enum Extension =
+    ServerName(String)
+    SupportedVersions(List<Int32>)
+    SupportedGroups(List<KeyExchangeGroup>)
+    SignatureAlgorithms(List<SignatureScheme>)
+    KeyShare(List<KeyShareEntry>)
+    Alpn(List<String>)
+    Cookie(Array<Uint8>)
+    PskKeyExchangeModes(List<Int32>)
+    PreSharedKey(List<PskIdentity>, List<Array<Uint8>>)
+    PskSelectedIdentity(Int32)
+    Unknown(Int32, Array<Uint8>)
+
+let extServerName: Int32 = 0
+let extSupportedGroups: Int32 = 10
+let extSignatureAlgorithms: Int32 = 13
+let extAlpn: Int32 = 16
+let extPreSharedKey: Int32 = 41
+let extSupportedVersions: Int32 = 43
+let extCookie: Int32 = 44
+let extPskKeyExchangeModes: Int32 = 45
+let extKeyShare: Int32 = 51
+
+/// The `psk_dhe_ke` PSK-with-(EC)DHE key-exchange mode (RFC 8446 §4.2.9).
+let pskModeDheKe: Int32 = 1
+
+/// The two-byte extension type code.
+function extensionType(ext: Extension): Int32 =
+    match ext with
+        case ServerName(_) => extServerName
+        case SupportedGroups(_) => extSupportedGroups
+        case SignatureAlgorithms(_) => extSignatureAlgorithms
+        case Alpn(_) => extAlpn
+        case SupportedVersions(_) => extSupportedVersions
+        case Cookie(_) => extCookie
+        case KeyShare(_) => extKeyShare
+        case PskKeyExchangeModes(_) => extPskKeyExchangeModes
+        case PreSharedKey(_, _) => extPreSharedKey
+        case PskSelectedIdentity(_) => extPreSharedKey
+        case Unknown(t, _) => t
+
+// ---------------------------------------------------------------------------
+// Serialisation
+// ---------------------------------------------------------------------------
+
+/// A `uint16`-length-prefixed list of `uint16` values.
+function u16ListBody(values: List<Int32>): Array<Uint8> =
+    let inner = ByteWriter.make()
+    for v in values do
+        inner.putU16(v)
+    let w = ByteWriter.make()
+    w.putVec16(inner.toBytes())
+    w.toBytes()
+
+/// The `extension_data` body for one extension in a given context.
+function extensionBody(ext: Extension, context: ExtensionContext): Array<Uint8> =
+    match ext with
+        case ServerName(host) =>
+            if host.length == 0 then
+                Array<Uint8>.empty()
+            else
+                let entry = ByteWriter.make()
+                entry.putU8(0)                 // name_type = host_name
+                entry.putVec16(host.bytes())
+                let w = ByteWriter.make()
+                w.putVec16(entry.toBytes())    // ServerNameList
+                w.toBytes()
+        case SupportedVersions(versions) =>
+            match context with
+                case ClientHelloContext =>
+                    let inner = ByteWriter.make()
+                    for v in versions do
+                        inner.putU16(v)
+                    let w = ByteWriter.make()
+                    w.putVec8(inner.toBytes()) // ProtocolVersion versions<2..254>
+                    w.toBytes()
+                case _ =>
+                    // ServerHello / HelloRetryRequest: a single selected version.
+                    let w = ByteWriter.make()
+                    w.putU16(versions.headOption.or(versionTls13))
+                    w.toBytes()
+        case SupportedGroups(groups) =>
+            let codes = mapGroupsToCodes(groups)
+            u16ListBody(codes)
+        case SignatureAlgorithms(schemes) =>
+            let codes = mapSchemesToCodes(schemes)
+            u16ListBody(codes)
+        case KeyShare(entries) =>
+            match context with
+                case HelloRetryRequestContext =>
+                    let w = ByteWriter.make()
+                    w.putU16(groupCode(entries.head.group))
+                    w.toBytes()
+                case ServerHelloContext =>
+                    keyShareEntryBytes(entries.head)
+                case _ =>
+                    let inner = ByteWriter.make()
+                    for e in entries do
+                        inner.putBytes(keyShareEntryBytes(e))
+                    let w = ByteWriter.make()
+                    w.putVec16(inner.toBytes())   // client_shares<0..2^16-1>
+                    w.toBytes()
+        case Alpn(protocols) =>
+            let inner = ByteWriter.make()
+            for p in protocols do
+                inner.putVec8(p.bytes())
+            let w = ByteWriter.make()
+            w.putVec16(inner.toBytes())           // ProtocolNameList
+            w.toBytes()
+        case Cookie(cookie) =>
+            let w = ByteWriter.make()
+            w.putVec16(cookie)
+            w.toBytes()
+        case PskKeyExchangeModes(modes) =>
+            let inner = ByteWriter.make()
+            for m in modes do
+                inner.putU8(m)
+            let w = ByteWriter.make()
+            w.putVec8(inner.toBytes())            // ke_modes<1..255>
+            w.toBytes()
+        case PreSharedKey(identities, binders) =>
+            let ids = ByteWriter.make()
+            for id in identities do
+                ids.putVec16(id.identity)
+                ids.putU32(id.obfuscatedTicketAge)
+            let bnd = ByteWriter.make()
+            for b in binders do
+                bnd.putVec8(b)                    // PskBinderEntry<32..255>
+            let w = ByteWriter.make()
+            w.putVec16(ids.toBytes())             // identities<7..2^16-1>
+            w.putVec16(bnd.toBytes())             // binders<33..2^16-1>
+            w.toBytes()
+        case PskSelectedIdentity(index) =>
+            let w = ByteWriter.make()
+            w.putU16(index)
+            w.toBytes()
+        case Unknown(_, body) =>
+            body
+
+function keyShareEntryBytes(entry: KeyShareEntry): Array<Uint8> =
+    let w = ByteWriter.make()
+    w.putU16(groupCode(entry.group))
+    w.putVec16(entry.keyExchange)
+    w.toBytes()
+
+function mapGroupsToCodes(groups: List<KeyExchangeGroup>): List<Int32> =
+    groups.map(g => groupCode(g))
+
+function mapSchemesToCodes(schemes: List<SignatureScheme>): List<Int32> =
+    schemes.map(s => sigSchemeCode(s))
+
+/// Serialise an extension list (with its `uint16` total-length prefix) for the
+/// given context.
+function serializeExtensions(exts: List<Extension>, context: ExtensionContext): Array<Uint8> =
+    let inner = ByteWriter.make()
+    for ext in exts do
+        inner.putU16(extensionType(ext))
+        inner.putVec16(extensionBody(ext, context))
+    let w = ByteWriter.make()
+    w.putVec16(inner.toBytes())
+    w.toBytes()
+
+// ---------------------------------------------------------------------------
+// Parsing
+// ---------------------------------------------------------------------------
+
+/// Parse an extension list (the bytes after — and including — the `uint16`
+/// total-length prefix) for the given context.
+///
+/// One pass, prepending each extension and reversing at the end. Appending to
+/// an array instead copied every extension parsed so far on each one, and a
+/// peer-controlled extension block (up to 65535 bytes, ~16000 minimum-size
+/// extensions) made that O(n^2) — a DoS amplifier from one crafted ClientHello.
+function parseExtensions(reader: ByteReader, context: ExtensionContext): Result<List<Extension>, TlsError> =
+    let block = try reader.vec16()
+    let er = ByteReader.make(block)
+    let mutable result: List<Extension> = List.empty
+    // A 65536-bit set of seen extension types: RFC 8446 §4.2 forbids more than one
+    // extension of a given type per block; both peers MUST abort on a repeat. O(n) via
+    // the bitset (no O(n^2) scan on a peer-controlled extension count).
+    let seenBits = Array<Uint8>.fill(8192, 0u8)
+    while er.remaining >= 4 do
+        let extType = try er.u16()
+        let body = try er.vec16()
+        let byteIdx = extType >> 3
+        let bitMask = (1 << (extType & 7)).toUint8()
+        if (seenBits.get(byteIdx) & bitMask) != 0u8 then
+            try Result.Error(TlsError.IllegalParameter("duplicate extension"))
+        seenBits.set(byteIdx, seenBits.get(byteIdx) | bitMask)
+        result = result.prepend(try parseExtension(extType, body, context))
+    Ok(result.reverse())
+
+function parseExtension(extType: Int32, body: Array<Uint8>, context: ExtensionContext): Result<Extension, TlsError> =
+    let r = ByteReader.make(body)
+    if extType == extServerName then
+        if body.length == 0 then
+            Ok(Extension.ServerName(""))
+        else
+            let list = try r.vec16()
+            let lr = ByteReader.make(list)
+            let nameType = try lr.u8()
+            let host = try lr.vec16()
+            Ok(Extension.ServerName(String.fromBytes(host, 0, host.length)))
+    else if extType == extSupportedVersions then
+        match context with
+            case ClientHelloContext =>
+                let list = try r.vec8()
+                Ok(Extension.SupportedVersions(parseU16Array(list)))
+            case _ =>
+                let v = try r.u16()
+                Ok(Extension.SupportedVersions([v]))
+    else if extType == extSupportedGroups then
+        let list = try r.vec16()
+        Ok(Extension.SupportedGroups(codesToGroups(parseU16Array(list))))
+    else if extType == extSignatureAlgorithms then
+        let list = try r.vec16()
+        Ok(Extension.SignatureAlgorithms(codesToSchemes(parseU16Array(list))))
+    else if extType == extKeyShare then
+        parseKeyShare(r, context)
+    else if extType == extAlpn then
+        let list = try r.vec16()
+        parseAlpn(list)
+    else if extType == extCookie then
+        let cookie = try r.vec16()
+        Ok(Extension.Cookie(cookie))
+    else if extType == extPskKeyExchangeModes then
+        let modes = try r.vec8()
+        Ok(Extension.PskKeyExchangeModes(parseU8Array(modes)))
+    else if extType == extPreSharedKey then
+        parsePreSharedKey(r, context)
+    else
+        Ok(Extension.Unknown(extType, body))
+
+function parsePreSharedKey(r: ByteReader, context: ExtensionContext): Result<Extension, TlsError> =
+    match context with
+        case ServerHelloContext =>
+            let index = try r.u16()
+            Ok(Extension.PskSelectedIdentity(index))
+        case _ =>
+            // Two-pass (count, then fill-by-index) for both the identity and the
+            // binder lists: each is a peer-controlled variable-length vector, so
+            // per-element concat would be O(n^2) from one crafted ClientHello.
+            let idBytes = try r.vec16()
+            let idCounter = ByteReader.make(idBytes)
+            let mutable idCount = 0
+            let ir = ByteReader.make(idBytes)
+            let mutable identityAcc: List<PskIdentity> = List.empty
+            while ir.remaining >= 2 do
+                let identity = try ir.vec16()
+                let age = try ir.u32()
+                identityAcc = identityAcc.prepend(PskIdentity { identity = identity; obfuscatedTicketAge = age })
+            let identities = identityAcc.reverse()
+            let bndBytes = try r.vec16()
+            let bndCounter = ByteReader.make(bndBytes)
+            let mutable bndCount = 0
+            let br = ByteReader.make(bndBytes)
+            let mutable binderAcc: List<Array<Uint8>> = List.empty
+            while br.remaining >= 1 do
+                binderAcc = binderAcc.prepend(try br.vec8())
+            Ok(Extension.PreSharedKey(identities, binderAcc.reverse()))
+
+function parseU8Array(bytes: Array<Uint8>): List<Int32> =
+    let mutable vals: List<Int32> = List.empty
+    let mutable i = bytes.length - 1
+    while i >= 0 do
+        vals = vals.prepend(bytes.get(i).toInt32())
+        i = i - 1
+    vals
+
+function parseKeyShare(r: ByteReader, context: ExtensionContext): Result<Extension, TlsError> =
+    match context with
+        case HelloRetryRequestContext =>
+            let code = try r.u16()
+            match groupFromCode(code) with
+                case None => Error(TlsError.IllegalParameter("unknown key_share group"))
+                case Some(g) => Ok(Extension.KeyShare([KeyShareEntry { group = g; keyExchange = Array<Uint8>.empty() }]))
+        case ServerHelloContext =>
+            let entry = try parseKeyShareEntry(r)
+            Ok(Extension.KeyShare([entry]))
+        case _ =>
+            let list = try r.vec16()
+            let lr = ByteReader.make(list)
+            let mutable entries: List<KeyShareEntry> = List.empty
+            while lr.remaining >= 4 do
+                entries = entries.prepend(try parseKeyShareEntry(lr))
+            Ok(Extension.KeyShare(entries.reverse()))
+
+function parseKeyShareEntry(r: ByteReader): Result<KeyShareEntry, TlsError> =
+    let code = try r.u16()
+    let key = try r.vec16()
+    match groupFromCode(code) with
+        case None => Error(TlsError.IllegalParameter("unknown key_share group"))
+        case Some(g) => Ok(KeyShareEntry { group = g; keyExchange = key })
+
+function parseAlpn(list: Array<Uint8>): Result<Extension, TlsError> =
+    let lr = ByteReader.make(list)
+    let mutable protocols: List<String> = List.empty
+    while lr.remaining >= 1 do
+        let name = try lr.vec8()
+        protocols = protocols.prepend(String.fromBytes(name, 0, name.length))
+    Ok(Extension.Alpn(protocols.reverse()))
+
+function parseU16Array(bytes: Array<Uint8>): List<Int32> =
+    let r = ByteReader.make(bytes)
+    let mutable vals: List<Int32> = List.empty
+    while r.remaining >= 2 do
+        vals = vals.prepend(r.u16().or(0))
+    vals.reverse()
+
+/// The recognised groups, in order. Unknown codes are skipped (RFC 8446 §4.2.7).
+function codesToGroups(codes: List<Int32>): List<KeyExchangeGroup> =
+    let mutable groups: List<KeyExchangeGroup> = List.empty
+    for c in codes do
+        match groupFromCode(c) with
+            case Some(g) => groups = groups.prepend(g)
+            case None => ()
+    groups.reverse()
+
+/// The recognised schemes, in order. Unknown codes are skipped.
+function codesToSchemes(codes: List<Int32>): List<SignatureScheme> =
+    let mutable schemes: List<SignatureScheme> = List.empty
+    for c in codes do
+        match sigSchemeFromCode(c) with
+            case Some(s) => schemes = schemes.prepend(s)
+            case None => ()
+    schemes.reverse()
+
+/// Find the `key_share` entries in an extension list, if present.
+function findKeyShare(exts: List<Extension>): Option<List<KeyShareEntry>> =
+    let mutable found: Option<List<KeyShareEntry>> = None
+    for ext in exts do
+        match ext with
+            case KeyShare(entries) => found = Some(entries)
+            case _ => ()
+    found
+
+test "tls extensions round-trip a ClientHello set" =
+    let exts = [
+        Extension.ServerName("example.com"),
+        Extension.SupportedVersions([versionTls13]),
+        Extension.SupportedGroups([KeyExchangeGroup.X25519, KeyExchangeGroup.SecP256R1]),
+        Extension.SignatureAlgorithms([SignatureScheme.Ed25519, SignatureScheme.RsaPssRsaeSha256]),
+        Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0xabu8) }]),
+        Extension.Alpn(["h2", "http/1.1"]),
+    ]
+    let bytes = serializeExtensions(exts, ExtensionContext.ClientHelloContext)
+    let parsed = parseExtensions(ByteReader.make(bytes), ExtensionContext.ClientHelloContext).require
+    assert parsed.length == 6
+    match parsed with
+        case ServerName(host) :: _ => assert host == "example.com"
+        case _ => assert false
+    match parsed.drop(2) with
+        case SupportedGroups(groups) :: _ => assert groups.length == 2
+        case _ => assert false
+    match findKeyShare(parsed) with
+        case Some(entry :: _) => assert entry.keyExchange.length == 32
+        case _ => assert false
+
+test "tls extensions round-trip a ServerHello key_share and version" =
+    let exts = [
+        Extension.SupportedVersions([versionTls13]),
+        Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x01u8) }]),
+    ]
+    let bytes = serializeExtensions(exts, ExtensionContext.ServerHelloContext)
+    let parsed = parseExtensions(ByteReader.make(bytes), ExtensionContext.ServerHelloContext).require
+    match parsed with
+        case [SupportedVersions(vers), KeyShare(entries)] =>
+            assert vers == [versionTls13]
+            match entries with
+                case [entry] =>
+                    match entry.group with
+                        case X25519 => assert true
+                        case _ => assert false
+                case _ => assert false
+        case _ => assert false
+
+test "tls parseU16Array is linear and preserves order on a large vector" =
+    // 8000 uint16 values (16000 bytes) — the old per-element concat was O(n^2).
+    let count = 8000
+    let w = ByteWriter.make()
+    let mutable i = 0
+    while i < count do
+        w.putU16(i & 0xffff)
+        i = i + 1
+    let vals = parseU16Array(w.toBytes())
+    assert vals.length == count
+    match vals with
+        case first :: second :: _ =>
+            assert first == 0
+            assert second == 1
+        case _ => assert false
+    match vals.last with
+        case Some(lastValue) => assert lastValue == (count - 1) & 0xffff
+        case None => assert false
+    // an odd trailing byte is ignored, exactly like the old loop (remaining >= 2)
+    assert parseU16Array([|0x00u8, 0x2au8, 0x99u8|]) == [0x2a]
+
+test "tls parseU8Array preserves every byte in order" =
+    let bytes = [|0x00u8, 0x01u8, 0x7fu8, 0x80u8, 0xffu8|]
+    assert parseU8Array(bytes) == [0, 1, 127, 128, 255]
+
+test "tls parseExtensions is linear on a large peer-controlled block" =
+    // A ClientHello supported_groups repeated many times: exercises the
+    // extension-list parse over ~4000 extensions without O(n^2) blow-up.
+    let mutable built: List<Extension> = List.empty
+    let mutable i = 0
+    while i < 4000 do
+        built = built.prepend(Extension.Unknown(0x5500 + i, [|0xabu8|]))
+        i = i + 1
+    let exts = built.reverse()
+    let bytes = serializeExtensions(exts, ExtensionContext.ClientHelloContext)
+    let parsed = parseExtensions(ByteReader.make(bytes), ExtensionContext.ClientHelloContext).require
+    assert parsed.length == 4000
+    match parsed with
+        case Unknown(t, body) :: _ =>
+            assert t == 0x5500
+            assert body.length == 1
+        case _ => assert false
+    match parsed.last with
+        case Some(Unknown(t, _)) => assert t == 0x5500 + 3999
+        case _ => assert false
+
+test "tls codesToGroups drops unknowns, preserves order, no O(n^2)" =
+    // Many repeated peer-controlled supported_groups codes: the two-pass rewrite
+    // must be linear AND still drop unknowns and preserve the recognised order
+    // (its count pass and fill pass must agree exactly, or it OOBs / under-fills).
+    let count = 8000
+    let mutable built: List<Int32> = List.empty
+    let mutable i = count - 1
+    while i >= 0 do
+        built = built.prepend(if i % 3 == 0 then 0x001d else if i % 3 == 1 then 0x0017 else 0x0000)
+        i = i - 1
+    let groups = codesToGroups(built)
+    // one code in three (i % 3 == 2) is the unknown 0x0000 and is dropped
+    assert groups.length == count - (count / 3)
+    match groups with
+        case X25519 :: SecP256R1 :: _ => assert true
+        case _ => assert false
+
+test "tls parseKeyShare (ClientHello) preserves every entry, no O(n^2)" =
+    // A ClientHello key_share list of many minimal (4-byte) entries — the peer
+    // vector the upper-bound+copy rewrite must handle linearly without dropping,
+    // duplicating, or over-reading past the list.
+    let count = 4000
+    let inner = ByteWriter.make()
+    let mutable i = 0
+    while i < count do
+        inner.putU16(0x001d)
+        inner.putVec16(Array<Uint8>.empty())
+        i = i + 1
+    let outer = ByteWriter.make()
+    outer.putVec16(inner.toBytes())
+    match parseKeyShare(ByteReader.make(outer.toBytes()), ExtensionContext.ClientHelloContext) with
+        case Ok(KeyShare(entries)) =>
+            assert entries.length == count
+            match entries with
+                case entry :: _ =>
+                    match entry.group with
+                        case X25519 => assert true
+                        case _ => assert false
+                case _ => assert false
+        case _ => assert false
+
+test "tls extensions preserve unknown types" =
+    let exts = [Extension.Unknown(0xfafa, [|0x01u8, 0x02u8, 0x03u8|])]
+    let bytes = serializeExtensions(exts, ExtensionContext.ClientHelloContext)
+    let parsed = parseExtensions(ByteReader.make(bytes), ExtensionContext.ClientHelloContext).require
+    match parsed with
+        case [Unknown(t, body)] =>
+            assert t == 0xfafa
+            assert body.length == 3
+        case _ => assert false

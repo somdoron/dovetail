@@ -1,0 +1,72 @@
+package standard.prelude
+
+public trait Equatable =
+    function equals(self: Self, other: Self): Bool
+
+implement Equatable for Bool =
+    public function equals(self: Bool, other: Bool): Bool = self == other
+
+implement Equatable for Int8 =
+    public function equals(self: Int8, other: Int8): Bool = self == other
+
+implement Equatable for Int16 =
+    public function equals(self: Int16, other: Int16): Bool = self == other
+
+implement Equatable for Int32 =
+    public function equals(self: Int32, other: Int32): Bool = self == other
+
+implement Equatable for Int64 =
+    public function equals(self: Int64, other: Int64): Bool = self == other
+
+implement Equatable for Uint8 =
+    public function equals(self: Uint8, other: Uint8): Bool = self == other
+
+implement Equatable for Uint16 =
+    public function equals(self: Uint16, other: Uint16): Bool = self == other
+
+implement Equatable for Uint32 =
+    public function equals(self: Uint32, other: Uint32): Bool = self == other
+
+implement Equatable for Uint64 =
+    public function equals(self: Uint64, other: Uint64): Bool = self == other
+
+implement Equatable for Float32 =
+    public function equals(self: Float32, other: Float32): Bool = self == other
+
+implement Equatable for Float64 =
+    public function equals(self: Float64, other: Float64): Bool = self == other
+
+implement Equatable for Char =
+    public function equals(self: Char, other: Char): Bool = self == other
+
+implement Equatable for String =
+    public function equals(self: String, other: String): Bool = self == other
+
+implement <A, B> Equatable for (A, B) where A: Equatable, B: Equatable =
+    public function equals(self: (A, B), other: (A, B)): Bool =
+        if self._0.equals(other._0) then self._1.equals(other._1) else false
+
+implement <T, U> Equatable for T ~ U where T: Tuple, T: Equatable, U: Equatable =
+    public function equals(self: T ~ U, other: T ~ U): Bool =
+        self.init.equals(other.init) && self.last.equals(other.last)
+
+implement <T> Equatable for Array<T> where T: Equatable =
+    public function equals(self: Array<T>, other: Array<T>): Bool =
+        if self.length == other.length then
+            let mutable i = 0
+            let mutable isEquals = true
+            while i < self.length do
+                if self.get(i) != other.get(i) then
+                    isEquals = false
+                    break
+                i = i + 1
+            isEquals
+        else false
+
+test "Equatable Int32" =
+    assert 5i32.equals(5i32) == true
+    assert 5i32.equals(6i32) == false
+
+test "Equatable String" =
+    assert "hello".equals("hello") == true
+    assert "hello".equals("world") == false

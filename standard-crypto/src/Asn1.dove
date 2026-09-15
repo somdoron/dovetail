@@ -1,0 +1,148 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.String
+import standard.prelude.Result
+
+/// Minimal ASN.1 DER parser (tag-length-value), used by X.509 and public-key
+/// parsing. Definite-length only (DER). Not a public API — an implementation
+/// detail of the X.509 layer.
+
+/// A parsed DER element: its tag and the byte range of its content. The element
+/// itself spans [headerStart, contentEnd); the content is [contentStart, contentEnd).
+record Der =
+    tag: Uint8
+    headerStart: Int32
+    contentStart: Int32
+    contentEnd: Int32
+
+module Asn1 =
+    // Common DER tags.
+    function tagBoolean(): Uint8 = 0x01u8
+    function tagInteger(): Uint8 = 0x02u8
+    function tagBitString(): Uint8 = 0x03u8
+    function tagOctetString(): Uint8 = 0x04u8
+    function tagNull(): Uint8 = 0x05u8
+    function tagOid(): Uint8 = 0x06u8
+    function tagUtf8String(): Uint8 = 0x0cu8
+    function tagPrintableString(): Uint8 = 0x13u8
+    function tagUtcTime(): Uint8 = 0x17u8
+    function tagGeneralizedTime(): Uint8 = 0x18u8
+    function tagSequence(): Uint8 = 0x30u8
+    function tagSet(): Uint8 = 0x31u8
+    function tagContext(n: Uint8): Uint8 = 0xa0u8 | n
+
+    /// Read one DER element starting at `pos`.
+    function read(bytes: Array<Uint8>, pos: Int32): Result<Der, X509Error> =
+        if pos + 1 >= bytes.length then
+            Error(X509Error.MalformedCertificate("truncated header"))
+        else
+            let tag = bytes.get(pos)
+            let lenByte = bytes.get(pos + 1).toInt32()
+            if lenByte < 0x80 then
+                let contentStart = pos + 2
+                let contentEnd = contentStart + lenByte
+                if contentEnd > bytes.length then
+                    Error(X509Error.MalformedCertificate("length exceeds buffer"))
+                else
+                    Ok(Der { tag = tag; headerStart = pos; contentStart = contentStart; contentEnd = contentEnd })
+            else
+                let numLenBytes = lenByte - 0x80
+                if (numLenBytes == 0) || (numLenBytes > 4) || (pos + 2 + numLenBytes > bytes.length) then
+                    Error(X509Error.MalformedCertificate("bad long-form length"))
+                else
+                    let mutable len = 0
+                    let mutable i = 0
+                    while i < numLenBytes do
+                        len = (len * 256) + bytes.get(pos + 2 + i).toInt32()
+                        i = i + 1
+                    let contentStart = pos + 2 + numLenBytes
+                    let contentEnd = contentStart + len
+                    // A 4-byte length with the high bit set wraps `len` negative
+                    // (Int32); `contentStart + len` can likewise overflow past
+                    // Int32. Either makes `contentEnd < contentStart`, which the
+                    // plain `contentEnd > bytes.length` bound would let through as a
+                    // valid-looking inverted range — a downstream negative-size
+                    // `fill`/`copy` then traps. Reject both, so a malformed length
+                    // from an untrusted certificate is a clean parse error.
+                    if len < 0 || contentEnd < contentStart || contentEnd > bytes.length then
+                        Error(X509Error.MalformedCertificate("length exceeds buffer"))
+                    else
+                        Ok(Der { tag = tag; headerStart = pos; contentStart = contentStart; contentEnd = contentEnd })
+
+    /// Read an element and require a specific tag.
+    function readTagged(bytes: Array<Uint8>, pos: Int32, tag: Uint8): Result<Der, X509Error> =
+        let e = try read(bytes, pos)
+        if e.tag != tag then
+            Error(X509Error.MalformedCertificate("unexpected tag"))
+        else
+            Ok(e)
+
+    /// The raw element bytes (header through content), e.g. for signature input.
+    function elementBytes(bytes: Array<Uint8>, e: Der): Array<Uint8> =
+        let len = e.contentEnd - e.headerStart
+        let r = Array<Uint8>.fill(len, 0u8)
+        bytes.copy(e.headerStart, r, 0, len)
+        r
+
+    /// A copy of an element's content bytes.
+    function contentBytes(bytes: Array<Uint8>, e: Der): Array<Uint8> =
+        let len = e.contentEnd - e.contentStart
+        let r = Array<Uint8>.fill(len, 0u8)
+        bytes.copy(e.contentStart, r, 0, len)
+        r
+
+test "Asn1 parses a SEQUENCE of INTEGER and OID" =
+    // SEQUENCE { INTEGER 0x0102, OID 1.2.840.10045.2.1 (ecPublicKey, 7 bytes) }
+    let der = [|
+        0x30u8, 0x0du8,             // SEQUENCE, len 13
+        0x02u8, 0x02u8, 0x01u8, 0x02u8,  // INTEGER 0x0102
+        0x06u8, 0x07u8, 0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x02u8, 0x01u8,  // OID
+    |]
+    let seqR = Asn1.readTagged(der, 0, Asn1.tagSequence())
+    assert seqR.isOk
+    let seq = seqR.require
+    assert seq.contentStart == 2
+    assert seq.contentEnd == 15
+    // first child: INTEGER
+    let intR = Asn1.readTagged(der, seq.contentStart, Asn1.tagInteger())
+    assert intR.isOk
+    let intE = intR.require
+    let intVal = Asn1.contentBytes(der, intE)
+    assert intVal.length == 2
+    assert intVal.get(0) == 0x01u8
+    assert intVal.get(1) == 0x02u8
+    // second child: OID, starting at intE.contentEnd
+    let oidR = Asn1.readTagged(der, intE.contentEnd, Asn1.tagOid())
+    assert oidR.isOk
+    let oid = oidR.require
+    assert oid.contentEnd == 15
+    let oidVal = Asn1.contentBytes(der, oid)
+    assert oidVal.length == 7
+    assert oidVal.get(0) == 0x2au8
+
+test "Asn1 long-form length" =
+    // OCTET STRING with a 200-byte content (long form length: 0x81 0xc8)
+    let total = 203
+    let der = Array<Uint8>.fill(total, 0u8)
+    der.set(0, 0x04u8)
+    der.set(1, 0x81u8)
+    der.set(2, 0xc8u8)
+    let e = Asn1.read(der, 0)
+    assert e.isOk
+    assert e.require.contentStart == 3
+    assert e.require.contentEnd == 203
+
+test "Asn1 rejects truncated length" =
+    let der = [|0x30u8, 0x05u8, 0x02u8, 0x01u8|]
+    let e = Asn1.read(der, 0)
+    assert e.isError
+
+test "Asn1 rejects an overflowing 4-byte long-form length" =
+    // OCTET STRING whose 4-byte length is 0x80000000 — wraps Int32 negative, so
+    // `contentEnd < contentStart`. Without the overflow guard `read` returned Ok
+    // with an inverted range that a downstream negative-size fill/copy traps on;
+    // it must be a clean malformed-length error. (Reachable from an untrusted
+    // certificate via X509.parseCertificate, before any trust decision.)
+    let der = [|0x04u8, 0x84u8, 0x80u8, 0x00u8, 0x00u8, 0x00u8|]
+    assert Asn1.read(der, 0).isError

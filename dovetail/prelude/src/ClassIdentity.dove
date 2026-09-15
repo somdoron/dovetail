@@ -1,0 +1,8 @@
+module standard.prelude.ClassIdentity
+
+/// True exactly when both arguments refer to the same class instance.
+public function equals<T>(left: T, right: T): Bool where T: class = intrinsic
+
+/// Assigned lazily and stable for the object's lifetime. Collisions are legal;
+/// this hash is not a unique object id.
+public function hash<T>(value: T): Int64 where T: class = intrinsic

@@ -1,0 +1,8 @@
+package standard.text
+
+/// Text encoding for `String` ↔ bytes conversions. v1 only supports UTF-8;
+/// further variants (UTF-16, Latin-1, ASCII strict, …) will be added when
+/// there is a real user. Charset is intentionally a cross-cutting type —
+/// network, file I/O, and parser libraries all need encoding awareness.
+public enum Charset =
+    Utf8

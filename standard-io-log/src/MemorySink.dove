@@ -1,0 +1,29 @@
+package standard.io.log
+
+import standard.io.Async
+
+/// A `LogSink` that captures every record into an in-memory buffer. Built for
+/// testing — both `standard-io-log`'s own tests and downstream users who want
+/// to assert on their application's log output without touching disk or
+/// terminal.
+///
+/// Records are captured newest-first and put back in order by `snapshot`, so
+/// `emit` is constant-time rather than copying the whole buffer each time.
+public class MemorySink(internal mutable buffer: List<LogRecord>) implements LogSink =
+
+    /// Append `event` to the buffer.
+    public function emit(self, event: LogRecord): Async<Unit, Never> =
+        self.buffer = self.buffer.prepend(event)
+        Async.succeed(())
+
+    /// Return the captured records in emission order. A list is immutable, so
+    /// the result is unaffected by further `emit` calls on this sink.
+    public function snapshot(self): List<LogRecord> = self.buffer.reverse()
+
+    /// Drop all captured records.
+    public function clear(self): Unit =
+        self.buffer = List<LogRecord>.empty
+
+    /// Build a fresh, empty `MemorySink`.
+    public function make(): MemorySink =
+        MemorySink(List<LogRecord>.empty)

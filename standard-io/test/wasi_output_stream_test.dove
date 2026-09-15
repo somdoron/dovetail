@@ -1,0 +1,115 @@
+package test
+
+import standard.io.Async
+import standard.io.AsyncOutputStream
+import standard.io.TornWrite
+import standard.io.WasiOutputStream
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.CopyOperation
+import standard.wasi.EndingLedger
+import standard.wasi.EventPayload
+import standard.wasi.IoError
+import standard.wasi.Waitable
+
+// WHAT `flush` AND `close` ANSWER ON A STREAM SOMEBODY CLOSED.
+//
+// They ask different questions and it took a wrong answer to notice. `close`
+// asks what the TRANSPORT made of the stream, and a stream that ended cleanly
+// with every byte delivered has nothing to complain about however many times it
+// is asked — callers depend on that: a TLS connection closes its underlying
+// write half from `closeSend` and again when its `Resource` is released.
+// `flush` asks what became of MY writes, and writes a close cancelled were never
+// accepted.
+//
+// Driven through a synthetic stream end because no copy is posted here at all:
+// what is under test is the state machine around the handle, and a real socket
+// would only add a peer that has to be persuaded not to read.
+
+enum ClosedSinkError =
+    Gone
+    Canceled
+
+implement IoError for ClosedSinkError
+
+implement Display for ClosedSinkError =
+    public function format(self: ClosedSinkError): String =
+        match self with
+            case ClosedSinkError.Gone => "the transport is gone"
+            case ClosedSinkError.Canceled => "canceled by close"
+
+/// A stream end that is never actually written to. `start` panics rather than
+/// returning something plausible: a copy posted here would carry a made-up pinned
+/// buffer, and the runtime frees one of those on every settle path.
+function quietSink(): ComponentStreamWrite<ClosedSinkError> =
+    ComponentStreamWrite<ClosedSinkError> {
+        writable = Waitable(0i32)
+        ending = () => Ok(())
+        ledger = EndingLedger.fresh()
+        start = (bytes: ReadonlySlice<Uint8>) =>
+            panic "this stream end is never written to"
+        cancel = () => EventPayload(0i32)
+        canceledError = ClosedSinkError.Canceled
+        stillOpen = () => true
+        dropWritable = () => ()
+        dropResult = () => ()
+    }
+
+function reportFailure(error: ClosedSinkError): Async<String, Never> = Async.succeed("failed")
+
+function reportSuccess(value: Unit): Async<String, Never> = Async.succeed("clean")
+
+test "flush after a close reports the close; close still reports the transport" =
+    let outcomes = Array<String>.fill(4, "")
+    closeThenAskProgram(outcomes).run()
+    // The close that ended the stream is told what the transport made of it, and
+    // nothing went wrong, so: clean.
+    assert outcomes.get(0) == "clean"
+    // A flush afterwards is NOT clean. Its writes — anything queued behind the
+    // write lock when the close ran — were cancelled, not accepted, and `Ok(())`
+    // is how a stream taken away mid-flight was reported as a stream that
+    // behaved. Sequential here, where two fibers could only make it likely.
+    assert outcomes.get(1) == "failed"
+    // A second close is still the transport's verdict, unchanged. Idempotent in
+    // the ANSWER as well as the effect: a close that invented a failure the
+    // second time would fail the `Resource` release of anything that closes its
+    // own stream early, which the TLS connection does.
+    assert outcomes.get(2) == "clean"
+    // And the control from the other side of the contract: a WRITE is the
+    // question `checkAlive` answers, and a closed stream refuses it.
+    assert outcomes.get(3) == "failed"
+
+async function closeThenAskProgram(outcomes: Array<String>): Async<Unit, Never> =
+    // `attachToScope()` instead of `use`, deliberately: `use` desugars through
+    // the `Usable` trait impl, and with a resource whose value is a GENERIC
+    // ABSTRACT class (`AsyncOutputStream<E>` held as a `WasiOutputStream<E>`)
+    // that path hits the generic-base-class codegen bug being fixed elsewhere in
+    // this tree — the emitted component intermittently fails wasm validation,
+    // taking the whole package's test component down with it. `attachToScope` is
+    // an ordinary generic module function, monomorphized like `map`, and never
+    // touches the trait-impl path. The release still runs, at the end of this
+    // fiber, after every answer asserted below has been taken. See the note
+    // above `deadWriteProbe` in the output-stream contract test for the bug.
+    let sink: AsyncOutputStream<ClosedSinkError> =
+        await WasiOutputStream<ClosedSinkError>.resource<Never>(
+            ClosedSinkError.Gone, TornWrite.Fence, () => Async.succeed(quietSink())
+        ).attachToScope()
+    outcomes.set(0, await sink.close().fold<String, Never>(reportFailure, reportSuccess))
+    outcomes.set(1, await sink.flush().fold<String, Never>(reportFailure, reportSuccess))
+    outcomes.set(2, await sink.close().fold<String, Never>(reportFailure, reportSuccess))
+    outcomes.set(3, await sink.write([|1u8|].readonly).fold<String, Never>(reportFailure, reportSuccess))
+
+test "flush on a live stream reports nothing" =
+    let outcomes = Array<String>.fill(1, "")
+    liveFlushProgram(outcomes).run()
+    // The negative control for the test above: the closed-stream answer must come
+    // from the close, not from `flush` having become pessimistic.
+    assert outcomes.get(0) == "clean"
+
+async function liveFlushProgram(outcomes: Array<String>): Async<Unit, Never> =
+    // `attachToScope()`, not `use` — same generic-base-class codegen bug as
+    // `closeThenAskProgram` above, dodged the same way.
+    let sink: AsyncOutputStream<ClosedSinkError> =
+        await WasiOutputStream<ClosedSinkError>.resource<Never>(
+            ClosedSinkError.Gone, TornWrite.Fence, () => Async.succeed(quietSink())
+        ).attachToScope()
+    outcomes.set(0, await sink.flush().fold<String, Never>(reportFailure, reportSuccess))

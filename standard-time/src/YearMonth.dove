@@ -1,0 +1,137 @@
+package standard.time
+
+/// Represents a year and month combination, such as 2024-03.
+@derive(Equatable)
+public record YearMonth =
+    /// The year (e.g. 2024).
+    year: Year
+    /// The month of the year (1-12).
+    month: Month
+
+function normalizeYearMonth(y: Int32, m: Int32): YearMonth =
+    let mutable year = y
+    let mutable month = m
+    while month > 12 do
+        month = month - 12
+        year = year + 1
+    while month < 1 do
+        month = month + 12
+        year = year - 1
+    YearMonth { year = Year(year); month = monthFromValue(month) }
+
+/// Factory methods and operations for YearMonth.
+module YearMonth =
+    /// Creates a YearMonth from the given year and month, normalizing if month is out of range.
+    public function of(year: Int32, month: Int32): YearMonth =
+        normalizeYearMonth(year, month)
+
+    /// Returns the number of days in this year-month's month.
+    public function lengthOfMonth(self): Int32 =
+        lengthOfMonthImpl(self.year.value, self.month.value)
+
+    /// Returns a LocalDate on the given day within this year-month.
+    public function atDay(self, day: Int32): LocalDate =
+        LocalDate.of(self.year.value, self.month.value, day)
+
+    /// Returns a new YearMonth with the given number of months added.
+    public function plusMonths(self, months: Int32): YearMonth =
+        normalizeYearMonth(self.year.value, self.month.value + months)
+
+    /// Returns a new YearMonth with the given number of years added.
+    public function plusYears(self, years: Int32): YearMonth =
+        YearMonth { year = Year(self.year.value + years); month = self.month }
+
+implement Comparable for YearMonth =
+    /// Compares two year-months chronologically by year, then month.
+    public function compare(self: YearMonth, other: YearMonth): Ordering =
+        if self.year.value < other.year.value then Ordering.Less
+        else if self.year.value > other.year.value then Ordering.Greater
+        else if self.month.value < other.month.value then Ordering.Less
+        else if self.month.value > other.month.value then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for YearMonth =
+    /// Formats this year-month as yyyy-MM.
+    public function format(self: YearMonth): String =
+        padYearMonth(self.year.value, 4) ++ "-" ++ padYearMonth(self.month.value, 2)
+
+function padYearMonth(n: Int32, width: Int32): String =
+    let s = n.format()
+    let len = s.length
+    if len >= width then s
+    else
+        let pad = width - len
+        let mutable result = ""
+        let mutable i = 0
+        while i < pad do
+            result = result ++ "0"
+            i = i + 1
+        result ++ s
+
+test "YearMonth of" =
+    let ym = YearMonth.of(2024, 6)
+    assert ym.year.value == 2024
+    assert ym.month.value == 6
+
+test "YearMonth of normalizes overflow" =
+    let ym = YearMonth.of(2024, 13)
+    assert ym.year.value == 2025
+    assert ym.month.value == 1
+
+test "YearMonth lengthOfMonth" =
+    assert YearMonth.of(2024, 2).lengthOfMonth() == 29
+    assert YearMonth.of(2023, 2).lengthOfMonth() == 28
+    assert YearMonth.of(2024, 1).lengthOfMonth() == 31
+    assert YearMonth.of(2024, 4).lengthOfMonth() == 30
+
+test "YearMonth atDay" =
+    let ym = YearMonth.of(2024, 3)
+    let d = ym.atDay(15)
+    assert d.year.value == 2024
+    assert d.month.value == 3
+    assert d.day.value == 15
+
+test "YearMonth plusMonths" =
+    let ym = YearMonth.of(2024, 11)
+    let ym2 = ym.plusMonths(3)
+    assert ym2.year.value == 2025
+    assert ym2.month.value == 2
+
+test "YearMonth plusMonths negative" =
+    let ym = YearMonth.of(2024, 3)
+    let ym2 = ym.plusMonths(-5)
+    assert ym2.year.value == 2023
+    assert ym2.month.value == 10
+
+test "YearMonth plusYears" =
+    let ym = YearMonth.of(2024, 6)
+    let ym2 = ym.plusYears(2)
+    assert ym2.year.value == 2026
+    assert ym2.month.value == 6
+
+test "YearMonth equals" =
+    let a = YearMonth.of(2024, 6)
+    let b = YearMonth.of(2024, 6)
+    let c = YearMonth.of(2024, 7)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "YearMonth compare" =
+    let a = YearMonth.of(2024, 1)
+    let b = YearMonth.of(2024, 12)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "YearMonth compare different years" =
+    let a = YearMonth.of(2023, 12)
+    let b = YearMonth.of(2024, 1)
+    assert a.compare(b) == Ordering.Less
+
+test "YearMonth display" =
+    let ym = YearMonth.of(2024, 3)
+    assert ym.format() == "2024-03"
+
+test "YearMonth display padding" =
+    let ym = YearMonth.of(2024, 12)
+    assert ym.format() == "2024-12"

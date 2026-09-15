@@ -1,0 +1,105 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Rendezvous
+import standard.time.Duration
+
+test "Rendezvous: offer waits for its own delivery" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let mutable delivered = false
+        let producer: Async<Unit, Never> = async do
+            await channel.offer(42)
+            delivered = true
+        let fiber = await producer.fork()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        assert !delivered
+        assert (await channel.take()) == 42
+        await fiber.join()
+        assert delivered
+    program.run()
+
+test "Rendezvous: interrupted offer withdraws its value" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let canceled = await channel.offer(1).forkBackground()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        await canceled.interrupt()
+        await canceled.join().foldCause((_: Cause<Never>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
+        let producer = await channel.offer(2).fork()
+        assert (await channel.take()) == 2
+        await producer.join()
+    program.run()
+
+test "Rendezvous: parked producers are FIFO" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let first = await channel.offer(1).fork()
+        let second = await channel.offer(2).fork()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        assert (await channel.take()) == 1
+        assert (await channel.take()) == 2
+        await first.join()
+        await second.join()
+    program.run()
+
+test "Rendezvous: canceled take does not consume a later offer" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let canceled = await channel.take().forkBackground()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        await canceled.interrupt()
+        let producer = await channel.offer(3).fork()
+        assert (await channel.take()) == 3
+        await producer.join()
+    program.run()
+
+test "Rendezvous: shared notifications acknowledge only consumed offers" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let mutable firstDelivered = false
+        let mutable secondDelivered = false
+        let first = await channel.offer(1).map((_: Unit) => firstDelivered = true).fork()
+        let second = await channel.offer(2).map((_: Unit) => secondDelivered = true).fork()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        assert (await channel.take()) == 1
+        await first.join()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        assert firstDelivered
+        assert !secondDelivered
+        assert (await channel.take()) == 2
+        await second.join()
+        assert secondDelivered
+    program.run()
+
+test "Rendezvous: offer blueprint and waiters are reusable" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let offer = channel.offer(42)
+        let mutable index = 0
+        while index < 20 do
+            let mutable delivered = false
+            let producer = await offer.map((_: Unit) => delivered = true).fork()
+            await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+            assert !delivered
+            assert (await channel.take()) == 42
+            await producer.join()
+            assert delivered
+            index = index + 1
+    program.run()
+
+test "Rendezvous: cancellation removes a middle offer and preserves FIFO" =
+    let program: Async<Unit, Never> = async do
+        let channel = await Rendezvous<Int32>.make()
+        let first = await channel.offer(1).fork()
+        let middle = await channel.offer(2).forkBackground()
+        let last = await channel.offer(3).fork()
+        await Async<Unit, Never>.sleep(Duration.ofMillis(1i64))
+        await middle.interrupt()
+        await middle.join().foldCause((_: Cause<Never>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
+        assert (await channel.take()) == 1
+        assert (await channel.take()) == 3
+        await first.join()
+        await last.join()
+    program.run()

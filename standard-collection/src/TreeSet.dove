@@ -1,0 +1,293 @@
+package standard.collection
+
+import standard.prelude.Comparable
+import standard.prelude.Option
+
+/// An immutable sorted set of unique values, backed by a TreeMap.
+/// Elements must implement Comparable. All mutating operations return a new TreeSet.
+///
+/// `Comparable` is declared per function rather than once on the record because
+/// that is where it is needed: every operation that reaches the backing
+/// `TreeMap` requires it, and `length` / `isEmpty` do not.
+public record TreeSet<T> =
+    inner: TreeMap<T, Bool>
+
+module TreeSet<T> =
+    /// Creates an empty TreeSet.
+    public function empty(): TreeSet<T> where T: Comparable =
+        let map: TreeMap<T, Bool> = TreeMap.empty()
+        TreeSet { inner = map }
+
+    /// Returns a new set with the given value added in sorted order. Duplicates are ignored.
+    public function add(self, value: T): TreeSet<T> where T: Comparable =
+        TreeSet { inner = self.inner.put(value, true) }
+
+    /// Returns true if the set contains the given value.
+    public function contains(self, value: T): Bool where T: Comparable =
+        self.inner.contains(value)
+
+    /// Returns a new set with the given value removed. Returns self if not present.
+    public function remove(self, value: T): TreeSet<T> where T: Comparable =
+        TreeSet { inner = self.inner.remove(value) }
+
+    /// Returns the smallest element, or None if empty.
+    public function min(self): Option<T> where T: Comparable =
+        match self.inner.min() with
+            case Some((k, _)) => Some(k)
+            case _ => None
+
+    /// Returns the largest element, or None if empty.
+    public function max(self): Option<T> where T: Comparable =
+        match self.inner.max() with
+            case Some((k, _)) => Some(k)
+            case _ => None
+
+    /// The number of elements in the set.
+    public property length(self): Int32 = self.inner.length
+
+    /// True if the set contains no elements.
+    public property isEmpty(self): Bool = self.inner.isEmpty
+
+class TreeSetIterator<T>(inner: Iterator<(T, Bool)>) implements Iterator<T> =
+    public function next(self): Option<T> =
+        match self.inner.next() with
+            case Some(entry) => Some(entry._0)
+            case None => None
+
+implement <T> Iterable<T> for TreeSet<T> where T: Comparable =
+    public function iterator(self): Iterator<T> =
+        TreeSetIterator(self.inner.iterator())
+
+test "TreeSet empty" =
+    let s: TreeSet<String> = TreeSet.empty()
+    assert s.isEmpty == true
+    assert s.length == 0
+
+test "TreeSet add and contains" =
+    let s: TreeSet<String> = TreeSet.empty().add("b").add("a").add("c")
+    assert s.contains("a") == true
+    assert s.contains("b") == true
+    assert s.contains("c") == true
+    assert s.contains("d") == false
+    assert s.length == 3
+
+test "TreeSet add duplicate" =
+    let s: TreeSet<String> = TreeSet.empty().add("a").add("a")
+    assert s.length == 1
+
+test "TreeSet remove" =
+    let s: TreeSet<String> = TreeSet.empty().add("a").add("b").add("c")
+    let s2 = s.remove("b")
+    assert s2.contains("b") == false
+    assert s2.contains("a") == true
+    assert s2.contains("c") == true
+    assert s2.length == 2
+
+test "TreeSet remove missing" =
+    let s: TreeSet<String> = TreeSet.empty().add("a")
+    let s2 = s.remove("z")
+    assert s2.length == 1
+
+test "TreeSet min" =
+    let s: TreeSet<String> = TreeSet.empty().add("c").add("a").add("b")
+    let r = s.min()
+    assert r.isSome
+    assert r.require == "a"
+
+test "TreeSet max" =
+    let s: TreeSet<String> = TreeSet.empty().add("a").add("c").add("b")
+    let r = s.max()
+    assert r.isSome
+    assert r.require == "c"
+
+test "TreeSet min max empty" =
+    let s: TreeSet<String> = TreeSet.empty()
+    assert s.min().isNone
+    assert s.max().isNone
+
+test "TreeSet immutability" =
+    let s1: TreeSet<String> = TreeSet.empty().add("a")
+    let s2 = s1.add("b")
+    assert s1.length == 1
+    assert s2.length == 2
+
+/// A mutable sorted set backed by a MutableTreeMap.
+/// Elements must implement Comparable.
+public class MutableTreeSet<T>(mutable inner: MutableTreeMap<T, Bool>) implements Iterable<T> where T: Comparable =
+    /// Creates a new empty MutableTreeSet.
+    public function new(): MutableTreeSet<T> =
+        let inner: MutableTreeMap<T, Bool> = MutableTreeMap.new()
+        MutableTreeSet(inner)
+
+    /// Adds a value to the set. Does nothing if already present.
+    public function add(self, value: T): Unit =
+        self.inner.put(value, true)
+
+    /// Returns true if the set contains the given value.
+    public function contains(self, value: T): Bool =
+        self.inner.contains(value)
+
+    /// Removes a value from the set. Does nothing if not present.
+    public function remove(self, value: T): Unit =
+        self.inner.remove(value)
+
+    /// Returns the smallest element, or None if empty.
+    public function min(self): Option<T> =
+        self.inner.minKey()
+
+    /// Returns the largest element, or None if empty.
+    public function max(self): Option<T> =
+        self.inner.maxKey()
+
+    /// Removes all elements from the set.
+    public function clear(self): Unit = self.inner.clear()
+
+    /// The number of elements in the set.
+    public property length(self): Int32 = self.inner.length
+
+    /// True if the set contains no elements.
+    public property isEmpty(self): Bool = self.inner.isEmpty
+
+    /// Returns an iterator over the elements of the set in sorted order.
+    public function iterator(self): Iterator<T> =
+        TreeSetIterator(self.inner.iterator())
+
+test "MutableTreeSet new is empty" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    assert s.isEmpty == true
+    assert s.length == 0
+
+test "MutableTreeSet add and contains" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("b")
+    s.add("a")
+    s.add("c")
+    assert s.contains("a") == true
+    assert s.contains("b") == true
+    assert s.contains("c") == true
+    assert s.contains("d") == false
+    assert s.length == 3
+
+test "MutableTreeSet add duplicate" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("a")
+    s.add("a")
+    assert s.length == 1
+
+test "MutableTreeSet remove" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("a")
+    s.add("b")
+    s.add("c")
+    s.remove("b")
+    assert s.contains("b") == false
+    assert s.contains("a") == true
+    assert s.contains("c") == true
+    assert s.length == 2
+
+test "MutableTreeSet remove missing" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("a")
+    s.remove("z")
+    assert s.length == 1
+
+test "MutableTreeSet min" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("c")
+    s.add("a")
+    s.add("b")
+    let r = s.min()
+    assert r.isSome
+    assert r.require == "a"
+
+test "MutableTreeSet max" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("a")
+    s.add("c")
+    s.add("b")
+    let r = s.max()
+    assert r.isSome
+    assert r.require == "c"
+
+test "MutableTreeSet min max empty" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    assert s.min().isNone
+    assert s.max().isNone
+
+test "MutableTreeSet clear" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("a")
+    s.add("b")
+    s.add("c")
+    s.clear()
+    assert s.isEmpty == true
+    assert s.length == 0
+    assert s.contains("a") == false
+
+test "MutableTreeSet many entries" =
+    let s: MutableTreeSet<Int32> = MutableTreeSet.new()
+    let mutable i = 0
+    while i < 100 do
+        s.add(i)
+        i = i + 1
+    assert s.length == 100
+    assert s.contains(0) == true
+    assert s.contains(42) == true
+    assert s.contains(99) == true
+    assert s.contains(100) == false
+
+test "MutableTreeSet sorted order" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("d")
+    s.add("b")
+    s.add("e")
+    s.add("a")
+    s.add("c")
+    let rmin = s.min()
+    assert rmin.isSome
+    assert rmin.require == "a"
+    let rmax = s.max()
+    assert rmax.isSome
+    assert rmax.require == "e"
+
+test "MutableTreeSet mutability" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("a")
+    assert s.length == 1
+    s.add("b")
+    assert s.length == 2
+    s.remove("a")
+    assert s.length == 1
+    assert s.contains("a") == false
+    assert s.contains("b") == true
+
+test "TreeSet iterator sorted" =
+    let s: TreeSet<String> = TreeSet.empty().add("c").add("a").add("b")
+    let mutable result = ""
+    for x in s do
+        result = result ++ x
+    assert result == "abc"
+
+test "TreeSet iterator empty" =
+    let s: TreeSet<String> = TreeSet.empty()
+    let mutable count = 0
+    for x in s do
+        count = count + 1
+    assert count == 0
+
+test "MutableTreeSet iterator sorted" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    s.add("c")
+    s.add("a")
+    s.add("b")
+    let mutable result = ""
+    for x in s do
+        result = result ++ x
+    assert result == "abc"
+
+test "MutableTreeSet iterator empty" =
+    let s: MutableTreeSet<String> = MutableTreeSet.new()
+    let mutable count = 0
+    for x in s do
+        count = count + 1
+    assert count == 0

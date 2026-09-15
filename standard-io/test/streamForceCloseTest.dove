@@ -1,0 +1,200 @@
+package test
+
+import standard.io.Async
+import standard.io.Fiber
+import standard.io.Cause
+import standard.time.Duration
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.CopyOperation
+import standard.wasi.CopyResult
+import standard.wasi.EndingLedger
+import standard.wasi.EventPayload
+import standard.wasi.Waitable
+
+// WHAT A FORCE-CLOSE OWES THE ELEMENTS IT RACED, and what the runtime's
+// posting step owes a stream end that has been closed.
+//
+// Two rules, both about the same actor — `CancelStream`, the explicit close's
+// detach — and both driven synthetically, in the fixture style of
+// `interrupt_payload_test` (whose `CarriedError`, `blockedCopy` and
+// `idleWaitable` these tests share).
+//
+// THE FIRST is the cancel that loses its race with no fiber left to deliver
+// to. An interrupt's cancel (`releaseSuspensionsForFiber`) resumes the fiber
+// with whatever the copy moved — that is the raced-payload rule
+// `interrupt_payload_test` pins. A force-close does NOT resume the fiber; it
+// fails it with `canceledError` on purpose. So elements the host transferred
+// before the cancel landed have nobody to take custody of them, and for an
+// element type that OWNS something — the accept stream's `stream<own<tcp-
+// socket>>` — dropping them on the floor strands a live connection nobody
+// will ever serve or close. The record's `discardElements` is the party that
+// knows how to release them, and the runtime must call it.
+//
+// THE SECOND is the check→post scheduler window, stated deterministically
+// where `scheduler_window_test`'s close sweep drives it end-to-end: a stream
+// end whose `stillOpen` probe answers false must be refused IN THE POSTING
+// STEP, with the record's `canceledError` — the same answer, by the same
+// rule, that the close gave the fibers it detached. The fixtures' `start`
+// panics, which is a stand-in for what a real post would do: land on a
+// dropped, possibly reused handle index.
+
+// --- a force-close cancel that raced a completion disposes the elements ------
+
+/// A stream end whose copy blocks and whose cancel LOSES: the host had already
+/// transferred one element when the cancel landed. `discardElements` records
+/// what it was given instead of releasing anything — the point is WHO is
+/// called, with WHAT count.
+function strandingSource(waitable: Waitable, disposed: Array<Int32>): ComponentStreamRead<Array<Uint8>, CarriedError> =
+    ComponentStreamRead<Array<Uint8>, CarriedError> {
+        readable = waitable
+        ending = () => Ok(())
+        start = (capacity: Int32) => blockedCopy()
+        cancel = () => EventPayload.ofCopy(CopyResult.Completed, 1i32)
+        canceledError = CarriedError.Broken
+        stillOpen = () => true
+        dropEnd = () => ()
+        discardElements = (copy: CopyOperation, count: Int32) => disposed.set(0, disposed.get(0) + count)
+        lift = (copy: CopyOperation, count: Int32) => [|9u8|]
+    }
+
+function reportReadCanceled(error: CarriedError): Async<String, Never> = Async.succeed("canceled")
+
+function reportReadDelivered(copied: (CopyResult, Array<Uint8>, Option<CarriedError>)): Async<String, Never> =
+    Async.succeed("delivered")
+
+async function parkedReader(
+    source: ComponentStreamRead<Array<Uint8>, CarriedError>,
+    landed: Array<String>
+): Async<Unit, Never> =
+    landed.set(0, await Async<Array<Uint8>, CarriedError>
+        .streamRead(source, 64i32)
+        .fold<String, Never>(reportReadCanceled, reportReadDelivered))
+
+async function forceCloseProgram(disposed: Array<Int32>, landed: Array<String>): Async<Unit, Never> =
+    let source = strandingSource(idleWaitable(), disposed)
+    let reader: Fiber<Unit, Never> = await parkedReader(source, landed).fork()
+    // Parked on the copy, not merely enqueued — the force-close must find a
+    // suspension to cancel, or the case under test never happens.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    await Async<Array<Uint8>, CarriedError>.cancelStreamRead(source)
+    await reader.join()
+
+@timeout(10000)
+test "a force-close whose cancel raced a completion disposes the stranded elements" =
+    let disposed = Array<Int32>.fill(1, 0i32)
+    let landed = Array<String>.fill(1, "")
+    forceCloseProgram(disposed, landed).run()
+    // The detached fiber is told about the close, not handed the payload —
+    // that half is unchanged and is what makes the elements strandable at all.
+    assert landed.get(0) == "canceled"
+    // And the elements went through `discardElements`, with the count the
+    // cancel reported. For bytes this frees a buffer; for the accept stream it
+    // closes a live socket. Discarding them silently is a stranded connection.
+    assert disposed.get(0) == 1i32
+
+// --- the stillOpen probe is consulted inside the posting step ----------------
+
+/// A read end whose wrapper has closed it: the probe answers false. A copy
+/// posted anyway is exactly the unfixed race — a post chasing a dropped handle
+/// — so `start` says so as loudly as the real thing would be quiet.
+function closedReadEnd(): ComponentStreamRead<Array<Uint8>, CarriedError> =
+    ComponentStreamRead<Array<Uint8>, CarriedError> {
+        readable = Waitable(0i32)
+        ending = () => Ok(())
+        start = (capacity: Int32) => panic "a copy was posted on a read end whose probe says closed"
+        cancel = () => EventPayload(0i32)
+        canceledError = CarriedError.Broken
+        stillOpen = () => false
+        dropEnd = () => ()
+        discardElements = (copy: CopyOperation, count: Int32) => ()
+        lift = (copy: CopyOperation, count: Int32) => Array<Uint8>.empty()
+    }
+
+/// The write-side twin.
+function closedWriteEnd(): ComponentStreamWrite<CarriedError> =
+    ComponentStreamWrite<CarriedError> {
+        writable = Waitable(0i32)
+        ending = () => Ok(())
+        ledger = EndingLedger.fresh()
+        start = (bytes: ReadonlySlice<Uint8>) => panic "a copy was posted on a write end whose probe says closed"
+        cancel = () => EventPayload(0i32)
+        canceledError = CarriedError.Broken
+        stillOpen = () => false
+        dropWritable = () => ()
+        dropResult = () => ()
+    }
+
+async function readClosedProbe(landed: Array<String>): Async<Unit, Never> =
+    landed.set(0, await Async<Array<Uint8>, CarriedError>
+        .streamRead(closedReadEnd(), 64i32)
+        .fold<String, Never>(reportReadCanceled, reportReadDelivered))
+
+function reportWriteDelivered(copied: (CopyResult, Int32, Option<CarriedError>)): Async<String, Never> =
+    Async.succeed("delivered")
+
+async function writeClosedProbe(landed: Array<String>): Async<Unit, Never> =
+    landed.set(0, await Async<Unit, CarriedError>
+        .streamWrite(closedWriteEnd(), [|1u8|][|..|].readonly)
+        .fold<String, Never>(reportReadCanceled, reportWriteDelivered))
+
+@timeout(10000)
+test "a read posted on a closed end fails in the posting step, before the host is touched" =
+    let landed = Array<String>.fill(1, "")
+    readClosedProbe(landed).run()
+    // `canceledError`, exactly what a fiber detached by the close itself is
+    // failed with: which side of the close the scheduler put this fiber on
+    // must not change what it is told — invariant (9).
+    assert landed.get(0) == "canceled"
+
+@timeout(10000)
+test "a write posted on a closed end fails in the posting step, before the host is touched" =
+    let landed = Array<String>.fill(1, "")
+    writeClosedProbe(landed).run()
+    assert landed.get(0) == "canceled"
+
+// --- a failure wake carries nothing ------------------------------------------
+//
+// A force-close wakes the detached reader INTO ITS FAILURE PATH. That wake must
+// not mark the fiber as carrying — a `FailCause` owns no handle — because a
+// stale carrying flag makes an interrupt landing before the fiber's next step go
+// pending instead of delivering, and a fiber that then recovers, crosses a hard
+// mask (whose pop skips delivery while the flag is set), and finishes without
+// another park completes normally with the interrupt dropped.
+
+async function detachedThenMaskedReader(
+    source: ComponentStreamRead<Array<Uint8>, CarriedError>,
+    landed: Array<String>
+): Async<Unit, Never> =
+    landed.set(0, await Async<Array<Uint8>, CarriedError>
+        .streamRead(source, 64i32)
+        .fold<String, Never>(reportReadCanceled, reportReadDelivered))
+    // A hard mask crossed after recovering: its pop is where a deferred
+    // interrupt would be paid — unless the stale flag makes it skip.
+    await Async.succeed(()).uninterruptible()
+    ()
+
+async function detachThenInterruptProgram(landed: Array<String>): Async<Unit, Never> =
+    let disposed = Array<Int32>.fill(1, 0i32)
+    let source = strandingSource(idleWaitable(), disposed)
+    let reader: Fiber<Unit, Never> = await detachedThenMaskedReader(source, landed).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    // Detach (a failure wake: the reader is enqueued Running with a FailCause
+    // pending) and interrupt it in the SAME run — neither of these parks, so
+    // the reader gets no step in between. The interrupt lands on a Running
+    // fiber holding nothing; it must be delivered, not deferred.
+    await Async<Array<Uint8>, CarriedError>.cancelStreamRead(source)
+    await reader.interrupt()
+    landed.set(1, await reader.join().foldCause<String, Never>(
+        (_: Cause<Never>) => Async.succeed("interrupted"),
+        (_: Unit) => Async.succeed("finished")))
+
+@timeout(10000)
+test "an interrupt landing on a freshly detached fiber is delivered, not dropped" =
+    let landed = Array<String>.fill(2, "")
+    detachThenInterruptProgram(landed).run()
+    // The reader was interrupted before it could recover and run on. On the
+    // broken runtime the failure wake left it marked as carrying, the interrupt
+    // went pending, the hard mask's pop skipped it, and the join saw "finished".
+    assert landed.get(1) == "interrupted"
+

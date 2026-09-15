@@ -1,0 +1,24 @@
+package test
+
+import standard.io.Environment
+
+test "Environment.variables returns an array" =
+    let variables = Environment.variables
+    assert variables.length >= 0
+
+test "Environment.arguments returns an array" =
+    let arguments = Environment.arguments
+    assert arguments.length >= 0
+
+test "Environment.get returns None for missing key" =
+    let value = Environment.get("DEFINITELY_NOT_A_VAR_xyz_12345")
+    match value with
+        case None => assert true
+        case Some(_) => assert false
+
+test "Environment.get returns None under test runner (empty env)" =
+    // Test runner doesn't call inherit_env, so any lookup returns None.
+    let value = Environment.get("PATH")
+    match value with
+        case None => assert true
+        case Some(_) => assert false

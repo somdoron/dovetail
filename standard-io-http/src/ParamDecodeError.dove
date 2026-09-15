@@ -1,0 +1,18 @@
+package standard.io.http
+
+/// Failure mode when extracting a typed value from a `PathParams` or
+/// `QueryParams` accessor. Handlers typically lift this into a
+/// `ServerError.BadRequest` (→ 400) or a domain-specific error.
+public enum ParamDecodeError =
+    /// The named parameter wasn't present in the request.
+    Missing(String)
+    /// The parameter was present but its value didn't parse as the
+    /// requested type. Carries (param name, expected type).
+    InvalidFormat(String, String)
+
+implement Display for ParamDecodeError =
+    public function format(self: ParamDecodeError): String =
+        match self with
+            case ParamDecodeError.Missing(name) => "missing parameter '" ++ name ++ "'"
+            case ParamDecodeError.InvalidFormat(name, expected) =>
+                "parameter '" ++ name ++ "' is not a valid " ++ expected

@@ -1,0 +1,172 @@
+package standard.io.http
+
+import standard.collection.ArrayList
+import standard.uri.Uri
+import standard.uri.UriError
+import standard.uri.Authority
+import standard.http.Headers
+import standard.http.HttpRequest
+import standard.http.HttpError
+import standard.http.normalizeAndValidate
+import standard.crypto.X509Certificate
+import standard.io.Async
+
+/// HTTP/1.1 client over plain TCP (`http://`) or TLS (`https://`, trusting the
+/// Mozilla roots). One connection per request; closes after the response is read.
+/// No pooling, no redirect following, no cookies.
+module HttpClient =
+
+    /// Primitive: take a fully-formed `Request` and ship it over a fresh
+    /// TCP connection. Returns the wire-level `Response` — caller decodes
+    /// via `resp.bodyAsString()` / `resp.jsonBody<T>()` as appropriate.
+    /// Proxy / forwarding code calls this directly. `https://` requests verify
+    /// the server certificate against the bundled Mozilla roots.
+    public async function send(req: Request): Async<Response, HttpClientError> =
+        await HttpClient.sendWithTrust(req, None)
+
+    /// Like `send`, but for `https://` requests verifies the server certificate
+    /// against `trustAnchors` instead of the bundled Mozilla roots (certificate
+    /// pinning, a private CA, or testing). `None` uses the Mozilla roots; the
+    /// override is ignored for plain `http://`.
+    public async function sendWithTrust(
+        req: Request,
+        trustAnchors: Option<List<X509Certificate>>
+    ): Async<Response, HttpClientError> =
+        let prepared = await Async.fromResult(buildHttpRequest(req.method.name(), req.uri, req.headers, req.body.length, None))
+        if prepared.useTls then
+            await sendRequestTls(prepared.host, prepared.port, prepared.request, req.body, trustAnchors)
+        else
+            await sendRequest(prepared.host, prepared.port, prepared.request, req.body)
+
+    /// Builder for the given method + URL. Each method-specific shortcut
+    /// (`get` / `post` / …) is a pre-set wrapper.
+    public function request(method: Method, url: String): RequestBuilder =
+        let uri = match Uri.parse(url) with
+            case Ok(u) => u
+            case Error(_) =>
+                // Defer URL validation to `.send()` — store as a relative-
+                // path Uri so the builder still typechecks; the dispatch
+                // path will reject it cleanly.
+                Uri { scheme = None; authority = None; path = url; query = None; fragment = None }
+        RequestBuilder {
+            method = method
+            uri = uri
+            headers = ArrayList<(String, String)>.new()
+            body = Array<Uint8>.empty()
+            contentType = None
+        }
+
+    public function get(url: String): RequestBuilder =
+        HttpClient.request(Method.Get, url)
+
+    public function post(url: String): RequestBuilder =
+        HttpClient.request(Method.Post, url)
+
+    public function put(url: String): RequestBuilder =
+        HttpClient.request(Method.Put, url)
+
+    public function delete(url: String): RequestBuilder =
+        HttpClient.request(Method.Delete, url)
+
+    public function patch(url: String): RequestBuilder =
+        HttpClient.request(Method.Patch, url)
+
+    public function head(url: String): RequestBuilder =
+        HttpClient.request(Method.Head, url)
+
+    public function options(url: String): RequestBuilder =
+        HttpClient.request(Method.Options, url)
+
+/// Internal "request ready to ship" bundle — what the URL/header builder
+/// produces before handing off to `sendRequest`.
+record PreparedRequest =
+    host: String
+    port: Uint16
+    request: HttpRequest
+    useTls: Bool
+
+/// Build a wire-form HttpRequest from a Uri + Headers, injecting the
+/// required `Host`, `Connection: close`, optional `Content-Length`, and
+/// optional `Content-Type`. Used by both `send` and the legacy
+/// URL-string path (gone, but the helper shape stays for clarity).
+function buildHttpRequest(
+    method: String,
+    uri: Uri,
+    userHeaders: Headers,
+    bodyLength: Int32,
+    contentType: Option<String>
+): Result<PreparedRequest, HttpClientError> =
+    match uri.scheme with
+        case None => Error(HttpClientError.UnsupportedScheme(""))
+        case Some(scheme) =>
+            if scheme != "http" && scheme != "https" then
+                Error(HttpClientError.UnsupportedScheme(scheme))
+            else
+                let useTls = scheme == "https"
+                match uri.authority with
+                    case None => Error(HttpClientError.MissingHost)
+                    case Some(auth) =>
+                        if auth.host.length == 0 then
+                            Error(HttpClientError.MissingHost)
+                        else
+                            assembleRequest(method, auth, uri, userHeaders, bodyLength, contentType, useTls)
+
+function assembleRequest(
+    method: String,
+    auth: Authority,
+    uri: Uri,
+    userHeaders: Headers,
+    bodyLength: Int32,
+    contentType: Option<String>,
+    useTls: Bool
+): Result<PreparedRequest, HttpClientError> =
+    let defaultPort: Int32 = if useTls then 443 else 80
+    let port: Int32 = match auth.port with
+        case Some(p) => p
+        case None => defaultPort
+    if port < 0 || port > 65535 then
+        Error(HttpClientError.InvalidHeader("invalid port"))
+    else
+        let hostHeader = formatHostHeader(auth.host, port, defaultPort)
+        let path = if uri.path.length == 0 then "/" else uri.path
+        let target = match uri.query with
+            case Some(q) => path ++ "?" ++ q
+            case None => path
+
+        let headerPairs = ArrayList<(String, String)>.new()
+        headerPairs.add(("Host", hostHeader))
+        headerPairs.add(("Connection", "close"))
+        if bodyLength > 0 && !headersHas(userHeaders, "content-length") then
+            headerPairs.add(("Content-Length", bodyLength.format()))
+        match contentType with
+            case Some(ct) =>
+                if !headersHas(userHeaders, "content-type") then
+                    headerPairs.add(("Content-Type", ct))
+            case None => ()
+
+        for item in userHeaders.items do
+            if item.name != "host" && item.name != "connection" then
+                headerPairs.add((item.rawName, item.value))
+
+        match normalizeAndValidate(headerPairs.toArray().toList()) with
+            case Error(e) => Error(HttpClientError.ProtocolError(e))
+            case Ok(headers) =>
+                let request = HttpRequest {
+                    method = method
+                    target = target
+                    headers = headers
+                    httpVersion = "1.1"
+                }
+                Ok(PreparedRequest {
+                    host = auth.host
+                    port = port.toUint16()
+                    request = request
+                    useTls = useTls
+                })
+
+function formatHostHeader(host: String, port: Int32, defaultPort: Int32): String =
+    if port == defaultPort then host
+    else host ++ ":" ++ port.format()
+
+function headersHas(headers: Headers, lowerName: String): Bool =
+    headers.items.any(item => item.name == lowerName)

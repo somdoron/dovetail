@@ -1,0 +1,143 @@
+package standard.prelude
+
+module Int8 =
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+
+module Int16 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+
+module Int32 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+    public function bitsToFloat32(self): Float32 = intrinsic
+
+module Int64 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+    public function bitsToFloat64(self): Float64 = intrinsic
+
+module Uint8 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+
+module Uint16 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+
+module Uint32 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+
+module Uint64 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint128(self): Uint128 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+
+module Uint128 =
+    // Widening multiply: u64 × u64 → u128, lowering to a single `i64.mul_wide_u`.
+    public function multiply(x: Uint64, y: Uint64): Uint128 = intrinsic
+    // Construct a 128-bit value from its low and high 64-bit words. Lowers to a no-op:
+    // (lo, hi) is already the flattened `[lo, hi]` stack representation of a Uint128.
+    public function make(lo: Uint64, hi: Uint64): Uint128 = intrinsic
+    // Low 64-bit word: a single `Drop` of the high word (via `toUint64`).
+    public property low(self): Uint64 = self.toUint64()
+    // High 64-bit word: extracted directly from the flattened `[lo, hi]`
+    // representation (drops the low word), not via a 128-bit shift.
+    public property high(self): Uint64 = intrinsic
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+
+module Float32 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toFloat64(self): Float64 = intrinsic
+    public function toBits(self): Int32 = intrinsic
+
+module Float64 =
+    public function toInt8(self): Int8 = intrinsic
+    public function toInt16(self): Int16 = intrinsic
+    public function toInt32(self): Int32 = intrinsic
+    public function toInt64(self): Int64 = intrinsic
+    public function toUint8(self): Uint8 = intrinsic
+    public function toUint16(self): Uint16 = intrinsic
+    public function toUint32(self): Uint32 = intrinsic
+    public function toUint64(self): Uint64 = intrinsic
+    public function toFloat32(self): Float32 = intrinsic
+    public function toBits(self): Int64 = intrinsic

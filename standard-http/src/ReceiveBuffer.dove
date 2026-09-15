@@ -1,0 +1,321 @@
+package standard.http
+
+import standard.collection.ArrayList
+
+/// A mutable buffer for accumulating and parsing incoming HTTP data.
+/// Supports efficient line extraction and search position caching
+/// to avoid rescanning already-searched data.
+public class ReceiveBuffer(
+    mutable data: Array<Uint8>,
+    mutable len: Int32,
+    mutable nextLineSearch: Int32,
+    mutable multipleLinesSearch: Int32
+) =
+    public function new(): ReceiveBuffer =
+        ReceiveBuffer(Array.fill(1024, 0u8), 0, 0, 0)
+
+    /// Append bytes to the buffer.
+    public function addBytes(self, bytes: Array<Uint8>): Unit =
+        let needed = self.len + bytes.length
+        if needed > self.data.length then
+            let mutable newCap = self.data.length * 2
+            if newCap < needed then newCap = needed
+            self.data = self.data.extend(0u8, newCap)
+        let mutable i = 0
+        while i < bytes.length do
+            self.data.set(self.len + i, bytes.get(i))
+            i = i + 1
+        self.len = needed
+
+    /// Whether the buffer has any unconsumed data.
+    public property hasData(self): Bool = self.len > 0
+
+    /// Number of unconsumed bytes in the buffer.
+    public property length(self): Int32 = self.len
+
+    /// Return a copy of the unconsumed data.
+    public function toBytes(self): Array<Uint8> =
+        if self.len == 0 then Array<Uint8>.empty()
+        else
+            let result = Array.fill(self.len, 0u8)
+            self.data.copy(0, result, 0, self.len)
+            result
+
+    /// Consume count bytes from the front of the buffer.
+    function consume(self, count: Int32): Array<Uint8> =
+        let extracted = Array.fill(count, 0u8)
+        self.data.copy(0, extracted, 0, count)
+        let remaining = self.len - count
+        let mutable i = 0
+        while i < remaining do
+            self.data.set(i, self.data.get(count + i))
+            i = i + 1
+        self.len = remaining
+        self.nextLineSearch = 0
+        self.multipleLinesSearch = 0
+        extracted
+
+    /// Extract up to count bytes from the buffer. Returns None if buffer is empty.
+    public function extractAtMost(self, count: Int32): Option<Array<Uint8>> =
+        if self.len == 0 then None
+        else
+            let actual = if count > self.len then self.len else count
+            Some(self.consume(actual))
+
+    /// Extract the next CRLF-terminated line from the buffer.
+    /// Returns None if no complete line is available.
+    public function extractNextLine(self): Option<Array<Uint8>> =
+        let searchStart = if self.nextLineSearch > 1 then self.nextLineSearch - 1 else 0
+        let idx = findCrLf(self.data, searchStart, self.len)
+        if idx < 0 then
+            self.nextLineSearch = self.len
+            None
+        else
+            let lineEnd = idx + 2
+            Some(self.consume(lineEnd))
+
+    /// Extract everything up to the first blank line (double CRLF).
+    /// Returns a list of header lines (without line endings).
+    /// Returns None if no complete header block is available yet.
+    /// Returns an empty list for an immediate blank line.
+    ///
+    /// The outer sequence is a list; each line stays `Array<Uint8>`.
+    public function extractLines(self): Option<List<Array<Uint8>>> =
+        // Handle immediate empty line: \n or \r\n
+        let mutable immediateBlank = 0
+        if self.len > 0 then
+            if self.data.get(0).toInt32() == 10 then
+                immediateBlank = 1
+            else if self.len >= 2 then
+                if self.data.get(0).toInt32() == 13 then
+                    if self.data.get(1).toInt32() == 10 then
+                        immediateBlank = 2
+
+        if immediateBlank > 0 then
+            let _ = self.consume(immediateBlank)
+            Some(List<Array<Uint8>>.empty())
+        else
+            let searchStart = if self.multipleLinesSearch > 0 then self.multipleLinesSearch else 0
+            let blankIdx = findBlankLine(self.data, searchStart, self.len)
+            if blankIdx < 0 then
+                self.multipleLinesSearch = if self.len > 2 then self.len - 2 else 0
+                None
+            else
+                let raw = self.consume(blankIdx)
+                Some(splitByNewline(raw))
+
+    /// Check if the first byte indicates an obviously invalid request line.
+    public function isNextLineObviouslyInvalid(self): Bool =
+        if self.len == 0 then false
+        else self.data.get(0).toInt32() < 33
+
+/// Find \r\n in data[start..end). Returns index of \r or -1.
+function findCrLf(data: Array<Uint8>, start: Int32, end: Int32): Int32 =
+    let mutable i = start
+    let mutable result = -1
+    while i < end - 1 do
+        if data.get(i).toInt32() == 13 then
+            if data.get(i + 1).toInt32() == 10 then
+                if result < 0 then
+                    result = i
+                    i = end
+        i = i + 1
+    result
+
+/// Find a blank line pattern: \n\r?\n
+/// Returns the index AFTER the pattern, or -1.
+function findBlankLine(data: Array<Uint8>, start: Int32, end: Int32): Int32 =
+    let mutable i = start
+    let mutable result = -1
+    while i < end do
+        if data.get(i).toInt32() == 10 then
+            if i + 1 < end then
+                if data.get(i + 1).toInt32() == 10 then
+                    if result < 0 then
+                        result = i + 2
+                        i = end
+                else if i + 2 < end then
+                    if data.get(i + 1).toInt32() == 13 then
+                        if data.get(i + 2).toInt32() == 10 then
+                            if result < 0 then
+                                result = i + 3
+                                i = end
+        i = i + 1
+    result
+
+/// Split byte array by \n, strip trailing \r from each line, drop trailing empty lines.
+function splitByNewline(data: Array<Uint8>): List<Array<Uint8>> =
+    let lines = ArrayList<Array<Uint8>>.new()
+    let mutable lineStart = 0
+    let mutable i = 0
+    while i < data.length do
+        if data.get(i).toInt32() == 10 then
+            let mutable lineEnd = i
+            if lineEnd > lineStart then
+                if data.get(lineEnd - 1).toInt32() == 13 then
+                    lineEnd = lineEnd - 1
+            let lineLen = lineEnd - lineStart
+            let line = if lineLen > 0 then
+                    let buf = Array.fill(lineLen, 0u8)
+                    let _ = data.copy(lineStart, buf, 0, lineLen)
+                    buf
+                else Array<Uint8>.empty()
+            lines.add(line)
+            lineStart = i + 1
+        i = i + 1
+    if lineStart <= data.length then
+        let lineLen = data.length - lineStart
+        if lineLen > 0 then
+            let line = Array.fill(lineLen, 0u8)
+            let _ = data.copy(lineStart, line, 0, lineLen)
+            lines.add(line)
+        else
+            lines.add(Array<Uint8>.empty())
+
+    // Sanity check: the last two lines should be empty (from the blank line pattern).
+    // This mirrors Python h11's: assert lines[-2] == lines[-1] == b""
+    if lines.length >= 2 then
+        assert lines.get(lines.length - 1).length == 0
+        assert lines.get(lines.length - 2).length == 0
+
+    // Drop trailing empty lines
+    let mutable count = lines.length
+    while count > 0 do
+        if lines.get(count - 1).length == 0 then
+            count = count - 1
+        else
+            count = -count
+
+    let finalCount = if count < 0 then 0 - count else count
+    // The `ArrayList` above is the right builder for the byte slicing; the
+    // list is only the shape handed back to callers.
+    lines.toArray().toList().take(finalCount)
+
+/// Helper: convert a string to a byte array.
+public function stringToBytes(s: String): Array<Uint8> = s.bytes()
+
+/// Helper: convert a byte array to a string.
+public function bytesToString(data: Array<Uint8>): String =
+    if data.length == 0 then ""
+    else String.fromBytes(data, 0, data.length)
+
+test "ReceiveBuffer new is empty" =
+    let buf = ReceiveBuffer.new()
+    assert !buf.hasData
+    assert buf.length == 0
+    assert buf.toBytes().length == 0
+
+test "ReceiveBuffer addBytes and toBytes" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("123"))
+    assert buf.hasData
+    assert buf.length == 3
+    assert bytesToString(buf.toBytes()) == "123"
+
+test "ReceiveBuffer extractAtMost" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("12345"))
+
+    let r1 = buf.extractAtMost(2)
+    assert r1.isSome
+    assert bytesToString(r1.require) == "12"
+    assert buf.length == 3
+
+    let r2 = buf.extractAtMost(10)
+    assert r2.isSome
+    assert bytesToString(r2.require) == "345"
+
+    let r3 = buf.extractAtMost(10)
+    assert r3.isNone
+
+test "ReceiveBuffer extractNextLine" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("hello\r\nworld\r\n"))
+
+    let line1 = buf.extractNextLine()
+    assert line1.isSome
+    assert bytesToString(line1.require) == "hello\r\n"
+
+    let line2 = buf.extractNextLine()
+    assert line2.isSome
+    assert bytesToString(line2.require) == "world\r\n"
+
+    let line3 = buf.extractNextLine()
+    assert line3.isNone
+
+test "ReceiveBuffer extractNextLine partial" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("12\r"))
+    assert buf.extractNextLine().isNone
+
+    buf.addBytes(stringToBytes("\n"))
+    let line = buf.extractNextLine()
+    assert line.isSome
+    assert bytesToString(line.require) == "12\r\n"
+
+test "ReceiveBuffer extractLines" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("GET / HTTP/1.1\r\nHost: foo\r\nConnection: close\r\n\r\ntrailing"))
+
+    let lines = buf.extractLines()
+    assert lines.isSome
+    match lines.require with
+        case [requestLine, host, connection] =>
+            assert bytesToString(requestLine) == "GET / HTTP/1.1"
+            assert bytesToString(host) == "Host: foo"
+            assert bytesToString(connection) == "Connection: close"
+        case _ => assert false
+    assert bytesToString(buf.toBytes()) == "trailing"
+
+test "ReceiveBuffer extractLines empty body" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("\r\ntrailing"))
+
+    let lines = buf.extractLines()
+    assert lines.isSome
+    assert lines.require.length == 0
+    assert bytesToString(buf.toBytes()) == "trailing"
+
+test "ReceiveBuffer extractLines not ready" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("Host: foo\r\n"))
+    assert buf.extractLines().isNone
+
+test "ReceiveBuffer isNextLineObviouslyInvalid" =
+    let buf = ReceiveBuffer.new()
+    assert !buf.isNextLineObviouslyInvalid()
+
+    buf.addBytes(Array.fill(1, 16u8))
+    assert buf.isNextLineObviouslyInvalid()
+
+    let buf2 = ReceiveBuffer.new()
+    buf2.addBytes(stringToBytes("GET"))
+    assert !buf2.isNextLineObviouslyInvalid()
+
+test "ReceiveBuffer extractLines with LF-only delimiters" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 200 OK\nContent-type: text/plain\nConnection: close\n\nSome body"))
+
+    let lines = buf.extractLines()
+    assert lines.isSome
+    match lines.require with
+        case [statusLine, contentType, connection] =>
+            assert bytesToString(statusLine) == "HTTP/1.1 200 OK"
+            assert bytesToString(contentType) == "Content-type: text/plain"
+            assert bytesToString(connection) == "Connection: close"
+        case _ => assert false
+    assert bytesToString(buf.toBytes()) == "Some body"
+
+test "ReceiveBuffer extractLines with mixed CRLF and LF" =
+    let buf = ReceiveBuffer.new()
+    buf.addBytes(stringToBytes("HTTP/1.1 200 OK\nContent-type: text/plain\r\nConnection: close\n\nSome body"))
+
+    let lines = buf.extractLines()
+    assert lines.isSome
+    match lines.require with
+        case [statusLine, contentType, connection] =>
+            assert bytesToString(statusLine) == "HTTP/1.1 200 OK"
+            assert bytesToString(contentType) == "Content-type: text/plain"
+            assert bytesToString(connection) == "Connection: close"
+        case _ => assert false
+    assert bytesToString(buf.toBytes()) == "Some body"

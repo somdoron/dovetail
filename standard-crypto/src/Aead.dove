@@ -1,0 +1,31 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Result
+
+/// An Authenticated Encryption with Associated Data algorithm.
+///
+/// The one-shot `encrypt`/`decrypt` are the safe convenience API: `encrypt`
+/// returns ciphertext with the authentication tag appended; `decrypt` verifies
+/// the tag (constant-time) before returning plaintext, yielding
+/// `AuthenticationFailed` if it does not match. The low-level streaming
+/// `AeadCipher` building block (BearSSL's aad→flip→run→tag) is a planned
+/// addition for the streaming/async layer.
+public interface AeadAlgorithm =
+    property keySize(self): Int32
+    property nonceSize(self): Int32
+    property tagSize(self): Int32
+    function encrypt(
+        self,
+        key: SymmetricKey,
+        nonce: Nonce,
+        plaintext: Array<Uint8>,
+        authenticatedData: Array<Uint8>
+    ): Array<Uint8>
+    function decrypt(
+        self,
+        key: SymmetricKey,
+        nonce: Nonce,
+        ciphertext: Array<Uint8>,
+        authenticatedData: Array<Uint8>
+    ): Result<Array<Uint8>, CryptoError>

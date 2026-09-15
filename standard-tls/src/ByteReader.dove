@@ -1,0 +1,101 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Result
+
+/// A big-endian cursor over a byte slice, used to parse TLS handshake messages
+/// and extension bodies — both of which are dense trees of fixed-width integers
+/// and length-prefixed vectors (RFC 8446 §3). Every read is bounds-checked and
+/// returns `Result<_, TlsError>`; combine reads with `try` to bail out on the
+/// first short read with a `DecodeError`.
+class ByteReader(buf: Array<Uint8>, mutable pos: Int32) =
+    /// Start a reader at the front of `buf`.
+    public function make(buf: Array<Uint8>): ByteReader =
+        ByteReader(buf, 0)
+
+    /// Bytes not yet consumed.
+    public property remaining(self): Int32 = self.buf.length - self.pos
+
+    /// Whether every byte has been consumed.
+    public property atEnd(self): Bool = self.pos >= self.buf.length
+
+    /// Read a single byte as an `Int32` in 0..255.
+    public function u8(self): Result<Int32, TlsError> =
+        if self.pos + 1 > self.buf.length then
+            Error(TlsError.DecodeError("unexpected end of input"))
+        else
+            let b = self.buf.get(self.pos).toInt32()
+            self.pos = self.pos + 1
+            Ok(b)
+
+    /// Read a big-endian `uint16`.
+    public function u16(self): Result<Int32, TlsError> =
+        let hi = try self.u8()
+        let lo = try self.u8()
+        Ok((hi << 8) | lo)
+
+    /// Read a big-endian `uint24`.
+    public function u24(self): Result<Int32, TlsError> =
+        let b0 = try self.u8()
+        let b1 = try self.u8()
+        let b2 = try self.u8()
+        Ok((b0 << 16) | (b1 << 8) | b2)
+
+    /// Read a big-endian `uint32`.
+    public function u32(self): Result<Int64, TlsError> =
+        let hi = try self.u16()
+        let lo = try self.u16()
+        Ok((hi.toInt64() << 16i64) | lo.toInt64())
+
+    /// Read exactly `n` raw bytes.
+    public function bytes(self, n: Int32): Result<Array<Uint8>, TlsError> =
+        if n < 0 || self.pos + n > self.buf.length then
+            Error(TlsError.DecodeError("unexpected end of input"))
+        else
+            let slice = Array<Uint8>.fill(n, 0u8)
+            self.buf.copy(self.pos, slice, 0, n)
+            self.pos = self.pos + n
+            Ok(slice)
+
+    /// Read a `uint8`-length-prefixed vector (opaque v<0..255>).
+    public function vec8(self): Result<Array<Uint8>, TlsError> =
+        let n = try self.u8()
+        self.bytes(n)
+
+    /// Read a `uint16`-length-prefixed vector (opaque v<0..65535>).
+    public function vec16(self): Result<Array<Uint8>, TlsError> =
+        let n = try self.u16()
+        self.bytes(n)
+
+    /// Read a `uint24`-length-prefixed vector (opaque v<0..2^24-1>).
+    public function vec24(self): Result<Array<Uint8>, TlsError> =
+        let n = try self.u24()
+        self.bytes(n)
+
+    /// Consume and return all remaining bytes.
+    public function rest(self): Array<Uint8> =
+        let n = self.buf.length - self.pos
+        let slice = Array<Uint8>.fill(n, 0u8)
+        self.buf.copy(self.pos, slice, 0, n)
+        self.pos = self.pos + n
+        slice
+
+test "tls ByteReader reads fixed-width integers" =
+    let r = ByteReader.make([|0x12u8, 0x34u8, 0x56u8, 0x78u8, 0x9au8|])
+    assert r.u8().require == 0x12
+    assert r.u16().require == 0x3456
+    assert r.u8().require == 0x78
+    assert r.remaining == 1
+
+test "tls ByteReader reads u24 and length-prefixed vectors" =
+    let r = ByteReader.make([|0x01u8, 0x02u8, 0x03u8, 0x02u8, 0xaau8, 0xbbu8|])
+    assert r.u24().require == 0x010203
+    let v = r.vec8().require
+    assert v.length == 2
+    assert v.get(0) == 0xaau8
+    assert v.get(1) == 0xbbu8
+    assert r.atEnd
+
+test "tls ByteReader short read is a DecodeError" =
+    let r = ByteReader.make([|0x00u8|])
+    assert r.u16().isError

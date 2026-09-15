@@ -1,0 +1,233 @@
+package test
+
+import standard.json.Json
+import standard.json.JsonError
+import standard.json.JsonEncoder
+import standard.json.JsonDecoder
+
+// ── Record: encode, decode, round-trip ─────────────────────────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+record Point =
+    x: Int32
+    y: Int32
+
+test "derive: Point encodes to object" =
+    let p = Point { x = 3; y = 4 }
+    let j = p.toJson()
+    assert j.encode() == "{\"x\":3,\"y\":4}"
+
+test "derive: Point decodes from object" =
+    let result = Point.fromJson(Json.parse("{\"x\":7,\"y\":11}").require)
+    assert result.isOk
+    let p = result.require
+    assert p.x == 7
+    assert p.y == 11
+
+test "derive: Point round-trip" =
+    let p = Point { x = 1; y = 2 }
+    let decoded = Point.fromJson(p.toJson())
+    assert decoded.isOk
+    let q = decoded.require
+    assert q.x == p.x
+    assert q.y == p.y
+
+test "derive: Point missing field is an error" =
+    let result = Point.fromJson(Json.parse("{\"x\":1}").require)
+    assert result.isError
+    match result with
+        case Error(JsonError.MissingField(name)) => assert name == "y"
+        case _ => assert false
+
+test "derive: Point wrong root type is an error" =
+    let result = Point.fromJson(Json.Number(5.0))
+    assert result.isError
+    match result with
+        case Error(JsonError.TypeError(expected, got)) =>
+            assert expected == "Object"
+            assert got == "Number"
+        case _ => assert false
+
+// ── Nested record ──────────────────────────────────────────────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+record Inner =
+    n: Int32
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+record Outer =
+    inner: Inner
+    tag: String
+
+test "derive: nested records round-trip" =
+    let o = Outer { inner = Inner { n = 42 }; tag = "hi" }
+    let decoded = Outer.fromJson(o.toJson())
+    assert decoded.isOk
+    let q = decoded.require
+    assert q.inner.n == 42
+    assert q.tag == "hi"
+
+// ── Newtype (transparent) ──────────────────────────────────────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+newtype Cents = Int32
+
+test "derive: newtype encodes transparently" =
+    let c = Cents(199)
+    let j = c.toJson()
+    match j with
+        case Json.Number(n) => assert n == 199.0
+        case _ => assert false
+
+test "derive: newtype decodes from bare value" =
+    let result = Cents.fromJson(Json.Number(50.0))
+    assert result.isOk
+    assert result.require.value == 50
+
+test "derive: newtype round-trip" =
+    let c = Cents(7)
+    let decoded = Cents.fromJson(c.toJson())
+    assert decoded.isOk
+    assert decoded.require.value == 7
+
+// ── Enum: no-payload variant ───────────────────────────────────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+enum Color =
+    Red
+    Green
+    Blue
+
+test "derive: enum no-payload encode" =
+    let j = Color.Red.toJson()
+    assert j.encode() == "{\"type\":\"Red\"}"
+
+test "derive: enum no-payload decode" =
+    let result = Color.fromJson(Json.parse("{\"type\":\"Green\"}").require)
+    assert result.isOk
+    match result.require with
+        case Color.Green => assert true
+        case _ => assert false
+
+test "derive: enum no-payload round-trip" =
+    let decoded = Color.fromJson(Color.Blue.toJson())
+    assert decoded.isOk
+    match decoded.require with
+        case Color.Blue => assert true
+        case _ => assert false
+
+test "derive: enum unknown variant is an error" =
+    let result = Color.fromJson(Json.parse("{\"type\":\"Purple\"}").require)
+    assert result.isError
+
+// ── Enum: tuple payload (single and multi) ─────────────────────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+enum Shape =
+    Single(Int32)
+    Pair(Int32, String)
+
+test "derive: enum 1-tuple encode" =
+    let j = Shape.Single(5).toJson()
+    assert j.encode() == "{\"type\":\"Single\",\"value\":5}"
+
+test "derive: enum 1-tuple decode" =
+    let result = Shape.fromJson(Json.parse("{\"type\":\"Single\",\"value\":9}").require)
+    assert result.isOk
+    match result.require with
+        case Shape.Single(n) => assert n == 9
+        case _ => assert false
+
+test "derive: enum n-tuple encode" =
+    let j = Shape.Pair(3, "hi").toJson()
+    assert j.encode() == "{\"type\":\"Pair\",\"value\":[3,\"hi\"]}"
+
+test "derive: enum n-tuple decode" =
+    let result = Shape.fromJson(
+        Json.parse("{\"type\":\"Pair\",\"value\":[10,\"world\"]}").require
+    )
+    assert result.isOk
+    match result.require with
+        case Shape.Pair(n, s) =>
+            assert n == 10
+            assert s == "world"
+        case _ => assert false
+
+test "derive: enum n-tuple wrong arity is an error" =
+    let result = Shape.fromJson(
+        Json.parse("{\"type\":\"Pair\",\"value\":[1]}").require
+    )
+    assert result.isError
+
+test "derive: enum round-trip tuple variants" =
+    let single = Shape.Single(42)
+    let pair = Shape.Pair(100, "x")
+    match Shape.fromJson(single.toJson()).require with
+        case Shape.Single(n) => assert n == 42
+        case _ => assert false
+    match Shape.fromJson(pair.toJson()).require with
+        case Shape.Pair(n, s) =>
+            assert n == 100
+            assert s == "x"
+        case _ => assert false
+
+// ── Enum: record-style variant (internally tagged hoist) ───────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+enum Event =
+    Heartbeat
+    Login { user: String; ms: Int32 }
+    Logout { user: String }
+
+test "derive: enum record-style encode" =
+    let j = Event.Login { user = "alice"; ms = 1700000000 }.toJson()
+    assert j.encode() ==
+        "{\"type\":\"Login\",\"user\":\"alice\",\"ms\":1700000000}"
+
+test "derive: enum record-style decode" =
+    let result = Event.fromJson(
+        Json.parse("{\"type\":\"Logout\",\"user\":\"bob\"}").require
+    )
+    assert result.isOk
+    match result.require with
+        case Event.Logout { user } => assert user == "bob"
+        case _ => assert false
+
+test "derive: enum mixed-variant round-trip" =
+    let evs = Array.fill(3, Event.Heartbeat)
+    evs.set(0, Event.Heartbeat)
+    evs.set(1, Event.Login { user = "alice"; ms = 42 })
+    evs.set(2, Event.Logout { user = "alice" })
+    let mutable i = 0
+    while i < evs.length do
+        let original = evs.get(i)
+        match Event.fromJson(original.toJson()) with
+            case Ok(_) => assert true
+            case Error(_) => assert false
+        i = i + 1
+
+// ── Generic record with type-parameter bound ───────────────────────────
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+record Box<T> =
+    value: T
+
+test "derive: generic Box<Int32> round-trip" =
+    let b = Box<Int32> { value = 99 }
+    let decoded = Box<Int32>.fromJson(b.toJson())
+    assert decoded.isOk
+    assert decoded.require.value == 99
+
+test "derive: generic Box<String> round-trip" =
+    let b = Box<String> { value = "hi" }
+    let decoded = Box<String>.fromJson(b.toJson())
+    assert decoded.isOk
+    assert decoded.require.value == "hi"

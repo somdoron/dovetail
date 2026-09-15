@@ -1,0 +1,1151 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.Result
+import standard.prelude.String
+import standard.time.Instant
+
+/// A parsed X.509 certificate (the fields needed for chain validation). The
+/// `tbsBytes` are the exact DER that the signature covers; `der` is the full
+/// certificate DER (e.g. to re-send it on a TLS Certificate message).
+public record X509Certificate =
+    /// The complete DER encoding of the certificate, as parsed.
+    der: Array<Uint8>
+    tbsBytes: Array<Uint8>
+    serialNumber: Array<Uint8>
+    issuerRaw: Array<Uint8>
+    subjectRaw: Array<Uint8>
+    notBefore: Instant
+    notAfter: Instant
+    publicKeyAlgorithm: Array<Uint8>
+    /// Named-curve OID for EC keys (empty for non-EC); determines which ECDSA
+    /// verifier to use when this cert acts as an issuer.
+    publicKeyCurve: Array<Uint8>
+    publicKey: Array<Uint8>
+    signatureAlgorithm: Array<Uint8>
+    /// The DER of the signatureAlgorithm `parameters` element (the bytes after
+    /// the OID in the AlgorithmIdentifier), empty when absent. Needed to decode
+    /// RSASSA-PSS-params (hash + salt length); ignored for other schemes.
+    signatureAlgorithmParams: Array<Uint8>
+    signatureValue: Array<Uint8>
+    /// subjectAltName dNSName entries (IA5String), verbatim (not lowercased).
+    sanDnsNames: List<String>
+    /// subjectAltName iPAddress entries, each 4 bytes (v4) or 16 bytes (v6).
+    /// The outer sequence is a list; each address stays `Array<Uint8>`.
+    sanIpAddresses: List<Array<Uint8>>
+    /// True when a subjectAltName extension was present at all (any GeneralName).
+    hasSan: Bool
+    /// basicConstraints was present on the certificate.
+    hasBasicConstraints: Bool
+    /// basicConstraints cA flag (meaningful only when `hasBasicConstraints`).
+    isCa: Bool
+    /// basicConstraints pathLenConstraint was present.
+    hasPathLen: Bool
+    /// basicConstraints pathLenConstraint value (meaningful only when `hasPathLen`).
+    pathLen: Int32
+    /// keyUsage extension was present.
+    hasKeyUsage: Bool
+    /// keyUsage keyCertSign bit (bit 5) is set (meaningful only when `hasKeyUsage`).
+    keyCertSign: Bool
+    /// keyUsage digitalSignature bit (bit 0) is set (meaningful only when
+    /// `hasKeyUsage`). Required on a TLS leaf so it may sign the handshake.
+    keyUsageDigitalSignature: Bool
+    /// extendedKeyUsage (EKU) extension was present.
+    hasEku: Bool
+    /// EKU contains id-kp-serverAuth or anyExtendedKeyUsage (meaningful only when
+    /// `hasEku`); required for a certificate to serve as a TLS server leaf.
+    ekuServerAuth: Bool
+    /// A critical extension whose OID this parser does not recognize was present.
+    /// RFC 5280 §4.2 requires such a certificate to be rejected — an unhandled
+    /// critical constraint (e.g. nameConstraints, policyConstraints) must never be
+    /// silently ignored.
+    hasUnrecognizedCritical: Bool
+
+/// Extension fields decoded from a certificate's `[3]` extensions block.
+record CertExtensions =
+    sanDnsNames: List<String>
+    sanIpAddresses: List<Array<Uint8>>
+    hasSan: Bool
+    hasBasicConstraints: Bool
+    isCa: Bool
+    hasPathLen: Bool
+    pathLen: Int32
+    hasKeyUsage: Bool
+    keyCertSign: Bool
+    keyUsageDigitalSignature: Bool
+    hasEku: Bool
+    ekuServerAuth: Bool
+    hasUnknownCritical: Bool
+
+module X509 =
+    /// BIT STRING content with the leading "unused bits" byte stripped.
+    private function bitStringValue(der: Array<Uint8>, e: Der): Array<Uint8> =
+        // A zero-length BIT STRING (`03 00`) has no unused-bits octet, so
+        // `contentEnd - contentStart - 1` is -1 and `Array.fill(-1)` traps (a
+        // negative size becomes a huge unsigned `array.new`). An empty subjectPublicKey
+        // or signatureValue from an untrusted certificate would then crash the parser
+        // before any trust decision — reject it as empty instead.
+        if e.contentEnd - e.contentStart < 1 then
+            Array<Uint8>.empty()
+        else
+            let len = e.contentEnd - e.contentStart - 1
+            let r = Array<Uint8>.fill(len, 0u8)
+            der.copy(e.contentStart + 1, r, 0, len)
+            r
+
+    private function digit(c: Array<Uint8>, i: Int32): Int32 =
+        c.get(i).toInt32() - 48
+
+    private function digit2(c: Array<Uint8>, i: Int32): Int32 =
+        digit(c, i) * 10 + digit(c, i + 1)
+
+    /// Days from 1970-01-01 (Howard Hinnant's civil algorithm).
+    private function daysFromCivil(y: Int32, m: Int32, d: Int32): Int64 =
+        let yy = if m <= 2 then y - 1 else y
+        let era = (if yy >= 0 then yy else yy - 399) / 400
+        let yoe = yy - era * 400
+        let mp = if m > 2 then m - 3 else m + 9
+        let doy = (153 * mp + 2) / 5 + d - 1
+        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+        era.toInt64() * 146097i64 + doe.toInt64() - 719468i64
+
+    /// Parse a UTCTime or GeneralizedTime element to an `Instant` (UTC, 'Z').
+    private function parseTime(der: Array<Uint8>, e: Der): Result<Instant, X509Error> =
+        let c = Asn1.contentBytes(der, e)
+        // Both formats read fixed byte offsets; a truncated time content would
+        // trap on c.get(...). UTCTime reads up to index 11 (needs 12 bytes),
+        // GeneralizedTime up to index 13 (needs 14); reject anything shorter.
+        if e.tag == Asn1.tagUtcTime() then
+            if c.length < 12 then
+                Error(X509Error.MalformedCertificate("truncated UTCTime"))
+            else
+                let yy = digit2(c, 0)
+                let year = if yy < 50 then 2000 + yy else 1900 + yy
+                Ok(timeFrom(year, digit2(c, 2), digit2(c, 4), digit2(c, 6), digit2(c, 8), digit2(c, 10)))
+        else if e.tag == Asn1.tagGeneralizedTime() then
+            if c.length < 14 then
+                Error(X509Error.MalformedCertificate("truncated GeneralizedTime"))
+            else
+                let year = digit2(c, 0) * 100 + digit2(c, 2)
+                Ok(timeFrom(year, digit2(c, 4), digit2(c, 6), digit2(c, 8), digit2(c, 10), digit2(c, 12)))
+        else
+            Error(X509Error.MalformedCertificate("bad time tag"))
+
+    private function timeFrom(y: Int32, mo: Int32, d: Int32, h: Int32, mi: Int32, s: Int32): Instant =
+        let days = daysFromCivil(y, mo, d)
+        Instant.ofEpochSecond(days * 86400i64 + h.toInt64() * 3600i64 + mi.toInt64() * 60i64 + s.toInt64())
+
+    /// Parse a DER-encoded X.509 certificate.
+    public function parseCertificate(der: Array<Uint8>): Result<X509Certificate, X509Error> =
+        let cert = try Asn1.readTagged(der, 0, Asn1.tagSequence())
+        let tbs = try Asn1.readTagged(der, cert.contentStart, Asn1.tagSequence())
+        let tbsBytes = Asn1.elementBytes(der, tbs)
+        // optional [0] version
+        let first = try Asn1.read(der, tbs.contentStart)
+        let serialPos = if first.tag == Asn1.tagContext(0u8) then first.contentEnd else tbs.contentStart
+        let serial = try Asn1.readTagged(der, serialPos, Asn1.tagInteger())
+        let innerSigAlg = try Asn1.readTagged(der, serial.contentEnd, Asn1.tagSequence())
+        let innerSigAlgOid = try Asn1.readTagged(der, innerSigAlg.contentStart, Asn1.tagOid())
+        let issuer = try Asn1.readTagged(der, innerSigAlg.contentEnd, Asn1.tagSequence())
+        let validity = try Asn1.readTagged(der, issuer.contentEnd, Asn1.tagSequence())
+        let nb = try Asn1.read(der, validity.contentStart)
+        let notBefore = try parseTime(der, nb)
+        let na = try Asn1.read(der, nb.contentEnd)
+        let notAfter = try parseTime(der, na)
+        let subject = try Asn1.readTagged(der, validity.contentEnd, Asn1.tagSequence())
+        let spki = try Asn1.readTagged(der, subject.contentEnd, Asn1.tagSequence())
+        let alg = try Asn1.readTagged(der, spki.contentStart, Asn1.tagSequence())
+        let algOid = try Asn1.readTagged(der, alg.contentStart, Asn1.tagOid())
+        // SPKI algorithm parameter: an OID (named curve) for EC keys, else NULL.
+        let pubCurve =
+            if algOid.contentEnd < alg.contentEnd then
+                match Asn1.read(der, algOid.contentEnd) with
+                    case Ok(param) =>
+                        if param.tag == Asn1.tagOid() then Asn1.contentBytes(der, param)
+                        else Array<Uint8>.fill(0, 0u8)
+                    case Error(_) => Array<Uint8>.fill(0, 0u8)
+            else
+                Array<Uint8>.fill(0, 0u8)
+        let pubKeyBits = try Asn1.readTagged(der, alg.contentEnd, Asn1.tagBitString())
+        // back at Certificate level: signatureAlgorithm, signatureValue
+        let sigAlg = try Asn1.readTagged(der, tbs.contentEnd, Asn1.tagSequence())
+        let sigAlgOid = try Asn1.readTagged(der, sigAlg.contentStart, Asn1.tagOid())
+        // RFC 5280 4.1.1.2: the inner TBSCertificate.signature MUST equal the
+        // outer signatureAlgorithm. A mismatch means the algorithm that was
+        // signed differs from the one used to dispatch verification (a
+        // signature-substitution vector); reject the certificate.
+        if oidEquals(Asn1.contentBytes(der, innerSigAlgOid), Asn1.contentBytes(der, sigAlgOid)) == false then
+            try Result.Error(X509Error.MalformedCertificate("signature algorithm mismatch"))
+        // The signatureAlgorithm `parameters` (after the OID). For RSASSA-PSS
+        // this is the RSASSA-PSS-params SEQUENCE (hash + salt length); empty for
+        // schemes that carry NULL or no parameters.
+        let sigAlgParams =
+            if sigAlgOid.contentEnd < sigAlg.contentEnd then
+                match Asn1.read(der, sigAlgOid.contentEnd) with
+                    case Ok(p) => Asn1.elementBytes(der, p)
+                    case Error(_) => Array<Uint8>.fill(0, 0u8)
+            else
+                Array<Uint8>.fill(0, 0u8)
+        let sigVal = try Asn1.readTagged(der, sigAlg.contentEnd, Asn1.tagBitString())
+        // Extensions ([3]) follow the SPKI inside the TBS (past any [1]/[2] IDs).
+        let exts = try parseExtensions(der, tbs.contentEnd, spki.contentEnd)
+        Ok(X509Certificate {
+            der = Asn1.elementBytes(der, cert)
+            tbsBytes = tbsBytes
+            serialNumber = Asn1.contentBytes(der, serial)
+            issuerRaw = Asn1.elementBytes(der, issuer)
+            subjectRaw = Asn1.elementBytes(der, subject)
+            notBefore = notBefore
+            notAfter = notAfter
+            publicKeyAlgorithm = Asn1.contentBytes(der, algOid)
+            publicKeyCurve = pubCurve
+            publicKey = bitStringValue(der, pubKeyBits)
+            signatureAlgorithm = Asn1.contentBytes(der, sigAlgOid)
+            signatureAlgorithmParams = sigAlgParams
+            signatureValue = bitStringValue(der, sigVal)
+            sanDnsNames = exts.sanDnsNames
+            sanIpAddresses = exts.sanIpAddresses
+            hasSan = exts.hasSan
+            hasBasicConstraints = exts.hasBasicConstraints
+            isCa = exts.isCa
+            hasPathLen = exts.hasPathLen
+            pathLen = exts.pathLen
+            hasKeyUsage = exts.hasKeyUsage
+            keyCertSign = exts.keyCertSign
+            keyUsageDigitalSignature = exts.keyUsageDigitalSignature
+            hasEku = exts.hasEku
+            ekuServerAuth = exts.ekuServerAuth
+            hasUnrecognizedCritical = exts.hasUnknownCritical
+        })
+
+    /// Parse a PEM-armored certificate (the first `CERTIFICATE` block).
+    public function parseCertificatePem(pem: Array<Uint8>): Result<X509Certificate, X509Error> =
+        let der = try Pem.decode(pem)
+        parseCertificate(der)
+
+    public function parseCertificatePem(pem: String): Result<X509Certificate, X509Error> =
+        parseCertificatePem(pem.bytes())
+
+    /// Parse every certificate in a PEM bundle (e.g. a chain), in order.
+    public function parseCertificateChainPem(pem: Array<Uint8>): Result<List<X509Certificate>, X509Error> =
+        let mutable certs: List<X509Certificate> = List.empty
+        let mutable err: Option<X509Error> = None
+        for block in Pem.decodeAll(pem) do
+            if err.isNone then
+                match parseCertificate(block) with
+                    case Ok(c) => certs = certs.prepend(c)
+                    case Error(e) => err = Some(e)
+        match err with
+            case Some(e) => Error(e)
+            case None => Ok(certs.reverse())
+
+    public function parseCertificateChainPem(pem: String): Result<List<X509Certificate>, X509Error> =
+        parseCertificateChainPem(pem.bytes())
+
+    private function oidEquals(oid: Array<Uint8>, expected: Array<Uint8>): Bool =
+        if oid.length != expected.length then
+            false
+        else
+            let mutable eq = true
+            let mutable i = 0
+            while i < oid.length do
+                if oid.get(i) != expected.get(i) then eq = false
+                i = i + 1
+            eq
+
+    private function oidEd25519(): Array<Uint8> = [|0x2bu8, 0x65u8, 0x70u8|]
+    private function oidEcdsaSha256(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x04u8, 0x03u8, 0x02u8|]
+    private function oidEcdsaSha384(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x04u8, 0x03u8, 0x03u8|]
+    private function oidSecp256r1(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x03u8, 0x01u8, 0x07u8|]
+    private function oidSecp384r1(): Array<Uint8> = [|0x2bu8, 0x81u8, 0x04u8, 0x00u8, 0x22u8|]
+    private function oidSha256Rsa(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x0bu8|]
+    private function oidSha384Rsa(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x0cu8|]
+    private function oidRsaPss(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x0au8|]
+    // id-mgf1 (PKCS#1) 1.2.840.113549.1.1.8.
+    private function oidMgf1(): Array<Uint8> =
+        [|0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x08u8|]
+    // NIST hash OIDs (2.16.840.1.101.3.4.2.*), used inside RSASSA-PSS-params.
+    private function oidSha256(): Array<Uint8> =
+        [|0x60u8, 0x86u8, 0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x01u8|]
+    private function oidSha384(): Array<Uint8> =
+        [|0x60u8, 0x86u8, 0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x02u8|]
+    private function oidSha512(): Array<Uint8> =
+        [|0x60u8, 0x86u8, 0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x03u8|]
+
+    // Extension OIDs (all in the 2.5.29.* arc: 0x55 0x1d ..).
+    private function oidSubjectAltName(): Array<Uint8> = [|0x55u8, 0x1du8, 0x11u8|]
+    private function oidBasicConstraints(): Array<Uint8> = [|0x55u8, 0x1du8, 0x13u8|]
+    private function oidKeyUsage(): Array<Uint8> = [|0x55u8, 0x1du8, 0x0fu8|]
+    // extendedKeyUsage (2.5.29.37) and the KeyPurposeIds we recognise for TLS
+    // servers: id-kp-serverAuth (1.3.6.1.5.5.7.3.1) and anyExtendedKeyUsage
+    // (2.5.29.37.0), either of which permits use as a TLS server.
+    private function oidExtKeyUsage(): Array<Uint8> = [|0x55u8, 0x1du8, 0x25u8|]
+    private function oidServerAuth(): Array<Uint8> =
+        [|0x2bu8, 0x06u8, 0x01u8, 0x05u8, 0x05u8, 0x07u8, 0x03u8, 0x01u8|]
+    private function oidAnyExtKeyUsage(): Array<Uint8> = [|0x55u8, 0x1du8, 0x25u8, 0x00u8|]
+
+    /// Default (all-absent) extension info, used when a certificate carries no
+    /// `[3]` extensions block.
+    private function defaultExtensions(): CertExtensions =
+        CertExtensions {
+            sanDnsNames = List<String>.empty
+            sanIpAddresses = List<Array<Uint8>>.empty()
+            hasSan = false
+            hasBasicConstraints = false
+            isCa = false
+            hasPathLen = false
+            pathLen = 0i32
+            hasKeyUsage = false
+            keyCertSign = false
+            keyUsageDigitalSignature = false
+            hasEku = false
+            ekuServerAuth = false
+            hasUnknownCritical = false
+        }
+
+    /// Read a small non-negative DER INTEGER (e.g. a pathLenConstraint) as Int32.
+    private function smallInt(der: Array<Uint8>, e: Der): Int32 =
+        let mutable v = 0i32
+        let mutable i = e.contentStart
+        while i < e.contentEnd do
+            v = v * 256 + der.get(i).toInt32()
+            i = i + 1
+        v
+
+    /// Parse a subjectAltName extension value (an OCTET STRING wrapping a
+    /// SEQUENCE OF GeneralName). Extracts dNSName [2] (IA5String) and iPAddress
+    /// [7] (OCTET STRING) entries; other GeneralName choices are ignored.
+    /// Entries are prepended and reversed once: a certificate can carry
+    /// thousands of SAN entries, and appending to an array copied every entry
+    /// read so far on each one.
+    private function parseSan(der: Array<Uint8>, octet: Der): Result<(List<String>, List<Array<Uint8>>), X509Error> =
+        let seq = try Asn1.readTagged(der, octet.contentStart, Asn1.tagSequence())
+        let mutable dns: List<String> = List.empty
+        let mutable ips: List<Array<Uint8>> = List.empty
+        let mutable pos = seq.contentStart
+        while pos < seq.contentEnd do
+            let gn = try Asn1.read(der, pos)
+            // dNSName is context [2] primitive (0x82); iPAddress is [7] (0x87).
+            if gn.tag == 0x82u8 then
+                let content = Asn1.contentBytes(der, gn)
+                dns = dns.prepend(String.fromBytes(content, 0, content.length))
+            else if gn.tag == 0x87u8 then
+                ips = ips.prepend(Asn1.contentBytes(der, gn))
+            else
+                ()
+            pos = gn.contentEnd
+        Ok((dns.reverse(), ips.reverse()))
+
+    /// Parse a basicConstraints extension value: SEQUENCE { cA BOOLEAN DEFAULT
+    /// FALSE, pathLenConstraint INTEGER OPTIONAL }. Returns (isCa, hasPathLen, pathLen).
+    private function parseBasicConstraints(der: Array<Uint8>, octet: Der): Result<(Bool, Bool, Int32), X509Error> =
+        let seq = try Asn1.readTagged(der, octet.contentStart, Asn1.tagSequence())
+        if seq.contentStart >= seq.contentEnd then
+            Ok((false, false, 0i32))
+        else
+            let first = try Asn1.read(der, seq.contentStart)
+            if first.tag == Asn1.tagBoolean() then
+                // A well-formed BOOLEAN has exactly one content byte; a malformed
+                // zero-length one (`01 00`) would make `der.get(contentStart)` read past
+                // the value. Treat an empty BOOLEAN as FALSE rather than risk the read.
+                let isCa = first.contentStart < first.contentEnd && der.get(first.contentStart) != 0x00u8
+                if first.contentEnd < seq.contentEnd then
+                    let pl = try Asn1.readTagged(der, first.contentEnd, Asn1.tagInteger())
+                    Ok((isCa, true, smallInt(der, pl)))
+                else
+                    Ok((isCa, false, 0i32))
+            else if first.tag == Asn1.tagInteger() then
+                // cA defaults to FALSE; a pathLen without cA=TRUE has no effect.
+                Ok((false, true, smallInt(der, first)))
+            else
+                Ok((false, false, 0i32))
+
+    /// Parse a keyUsage extension value (BIT STRING). Returns
+    /// (keyCertSign, digitalSignature). Bit 0 is the most-significant bit of the
+    /// first data byte, so digitalSignature (bit 0) is mask 0x80 and keyCertSign
+    /// (bit 5) is mask 0x04.
+    private function parseKeyUsageBits(der: Array<Uint8>, octet: Der): Result<(Bool, Bool), X509Error> =
+        let bits = try Asn1.readTagged(der, octet.contentStart, Asn1.tagBitString())
+        if bits.contentEnd - bits.contentStart >= 2 then
+            let firstByte = der.get(bits.contentStart + 1)
+            Ok(((firstByte & 0x04u8) != 0x00u8, (firstByte & 0x80u8) != 0x00u8))
+        else
+            Ok((false, false))
+
+    /// Parse an extendedKeyUsage extension value (OCTET STRING wrapping a
+    /// SEQUENCE OF KeyPurposeId OID). Returns whether the sequence contains
+    /// id-kp-serverAuth or anyExtendedKeyUsage — either permits TLS server use.
+    private function parseExtKeyUsageServerAuth(der: Array<Uint8>, octet: Der): Result<Bool, X509Error> =
+        let seq = try Asn1.readTagged(der, octet.contentStart, Asn1.tagSequence())
+        let mutable serverAuth = false
+        let mutable pos = seq.contentStart
+        while pos < seq.contentEnd do
+            let oidE = try Asn1.readTagged(der, pos, Asn1.tagOid())
+            let oid = Asn1.contentBytes(der, oidE)
+            if oidEquals(oid, oidServerAuth()) || oidEquals(oid, oidAnyExtKeyUsage()) then
+                serverAuth = true
+            pos = oidE.contentEnd
+        Ok(serverAuth)
+
+    /// Locate and decode the certificate's `[3]` extensions block, which follows
+    /// the SPKI (and any optional `[1]`/`[2]` unique identifiers) inside the TBS.
+    private function parseExtensions(der: Array<Uint8>, tbsEnd: Int32, spkiEnd: Int32): Result<CertExtensions, X509Error> =
+        let mutable pos = spkiEnd
+        let mutable wrapper: Option<Der> = None
+        let mutable err: Option<X509Error> = None
+        let mutable scan = true
+        while (pos < tbsEnd) && scan do
+            match Asn1.read(der, pos) with
+                case Error(e) =>
+                    err = Some(e)
+                    scan = false
+                case Ok(e) =>
+                    if e.tag == Asn1.tagContext(3u8) then
+                        wrapper = Some(e)
+                        scan = false
+                    else
+                        pos = e.contentEnd
+        match err with
+            case Some(e) => Error(e)
+            case None =>
+                match wrapper with
+                    case None => Ok(defaultExtensions())
+                    case Some(w) => parseExtensionSeq(der, w)
+
+    /// Walk the SEQUENCE OF Extension inside the `[3]` wrapper, decoding the three
+    /// extensions we enforce (subjectAltName, basicConstraints, keyUsage).
+    private function parseExtensionSeq(der: Array<Uint8>, wrapper: Der): Result<CertExtensions, X509Error> =
+        let extSeq = try Asn1.readTagged(der, wrapper.contentStart, Asn1.tagSequence())
+        let mutable dnsNames: List<String> = List.empty
+        let mutable ipAddrs: List<Array<Uint8>> = List.empty
+        let mutable hasSan = false
+        let mutable hasBc = false
+        let mutable isCa = false
+        let mutable hasPathLen = false
+        let mutable pathLen = 0i32
+        let mutable hasKu = false
+        let mutable keyCertSign = false
+        let mutable keyUsageDigitalSignature = false
+        let mutable hasEku = false
+        let mutable ekuServerAuth = false
+        let mutable hasUnknownCritical = false
+        let mutable pos = extSeq.contentStart
+        while pos < extSeq.contentEnd do
+            let ext = try Asn1.readTagged(der, pos, Asn1.tagSequence())
+            let oidE = try Asn1.readTagged(der, ext.contentStart, Asn1.tagOid())
+            // After the OID: an optional critical BOOLEAN, then the extnValue OCTET STRING.
+            let afterOid = try Asn1.read(der, oidE.contentEnd)
+            // `critical` defaults to FALSE; it is present only as a BOOLEAN before the value.
+            let critical = afterOid.tag == Asn1.tagBoolean()
+                && afterOid.contentStart < afterOid.contentEnd
+                && der.get(afterOid.contentStart) != 0x00u8
+            let valueE = if afterOid.tag == Asn1.tagOctetString() then
+                    afterOid
+                else
+                    try Asn1.readTagged(der, afterOid.contentEnd, Asn1.tagOctetString())
+            let oid = Asn1.contentBytes(der, oidE)
+            if oidEquals(oid, oidSubjectAltName()) then
+                let sans = try parseSan(der, valueE)
+                dnsNames = sans._0
+                ipAddrs = sans._1
+                hasSan = true
+            else if oidEquals(oid, oidBasicConstraints()) then
+                let bc = try parseBasicConstraints(der, valueE)
+                hasBc = true
+                isCa = bc._0
+                hasPathLen = bc._1
+                pathLen = bc._2
+            else if oidEquals(oid, oidKeyUsage()) then
+                let ku = try parseKeyUsageBits(der, valueE)
+                keyCertSign = ku._0
+                keyUsageDigitalSignature = ku._1
+                hasKu = true
+            else if oidEquals(oid, oidExtKeyUsage()) then
+                ekuServerAuth = try parseExtKeyUsageServerAuth(der, valueE)
+                hasEku = true
+            else if critical then
+                // An unrecognized extension marked critical: RFC 5280 §4.2 says the
+                // certificate MUST be rejected. Flag it; `validate` fails the chain.
+                hasUnknownCritical = true
+            else
+                ()
+            pos = ext.contentEnd
+        Ok(CertExtensions {
+            sanDnsNames = dnsNames
+            sanIpAddresses = ipAddrs
+            hasSan = hasSan
+            hasBasicConstraints = hasBc
+            isCa = isCa
+            hasPathLen = hasPathLen
+            pathLen = pathLen
+            hasKeyUsage = hasKu
+            keyCertSign = keyCertSign
+            keyUsageDigitalSignature = keyUsageDigitalSignature
+            hasEku = hasEku
+            ekuServerAuth = ekuServerAuth
+            hasUnknownCritical = hasUnknownCritical
+        })
+
+    /// Copy a DER INTEGER magnitude right-aligned into `intSize` bytes (stripping
+    /// a leading 0x00 sign byte).
+    /// Returns false (writing nothing) when the magnitude exceeds `intSize`.
+    private function copyIntTo(src: Array<Uint8>, e: Der, dst: Array<Uint8>, off: Int32, intSize: Int32): Bool =
+        let mutable start = e.contentStart
+        if (e.contentEnd - start > 1) && (src.get(start) == 0x00u8) then
+            start = start + 1
+        let len = e.contentEnd - start
+        // An oversized INTEGER (len > intSize, e.g. a 33-byte r against P-256's
+        // intSize=32) would make `off + intSize - len` negative and trap on
+        // dst.set; reject so a malicious signature fails verification cleanly.
+        if len > intSize then
+            false
+        else
+            let mutable i = 0
+            while i < len do
+                dst.set(off + intSize - len + i, src.get(start + i))
+                i = i + 1
+            true
+
+    /// DER ECDSA signature (SEQUENCE { r, s }) -> raw r‖s, each `intSize` bytes.
+    private function ecdsaSigToRaw(sig: Array<Uint8>, intSize: Int32): Result<Array<Uint8>, X509Error> =
+        let seq = try Asn1.readTagged(sig, 0, Asn1.tagSequence())
+        let rE = try Asn1.readTagged(sig, seq.contentStart, Asn1.tagInteger())
+        let sE = try Asn1.readTagged(sig, rE.contentEnd, Asn1.tagInteger())
+        let raw = Array<Uint8>.fill(intSize * 2, 0u8)
+        // Reject an r or s whose magnitude overflows `intSize` before it can
+        // trap in copyIntTo; verifyEcdsa turns this Error into a clean failure.
+        if copyIntTo(sig, rE, raw, 0, intSize) && copyIntTo(sig, sE, raw, intSize, intSize) then
+            Ok(raw)
+        else
+            Error(X509Error.MalformedCertificate("ECDSA signature integer too large"))
+
+    /// Extract (modulus, exponent) big-endian bytes from an RSA SPKI key
+    /// (SEQUENCE { modulus INTEGER, exponent INTEGER }), stripping sign bytes.
+    private function parseRsaKey(spkiKey: Array<Uint8>): Result<(Array<Uint8>, Array<Uint8>), X509Error> =
+        let seq = try Asn1.readTagged(spkiKey, 0, Asn1.tagSequence())
+        let nE = try Asn1.readTagged(spkiKey, seq.contentStart, Asn1.tagInteger())
+        let eE = try Asn1.readTagged(spkiKey, nE.contentEnd, Asn1.tagInteger())
+        Ok((stripSign(spkiKey, nE), stripSign(spkiKey, eE)))
+
+    private function stripSign(src: Array<Uint8>, e: Der): Array<Uint8> =
+        let start = if (e.contentEnd - e.contentStart > 1) && (src.get(e.contentStart) == 0x00u8)
+            then e.contentStart + 1 else e.contentStart
+        let len = e.contentEnd - start
+        let r = Array<Uint8>.fill(len, 0u8)
+        src.copy(start, r, 0, len)
+        r
+
+    private function verifyEcdsa(issuer: X509Certificate, cert: X509Certificate): Bool =
+        if oidEquals(issuer.publicKeyCurve, oidSecp256r1()) then
+            match ecdsaSigToRaw(cert.signatureValue, 32) with
+                case Error(_) => false
+                case Ok(raw) => EcdsaP256.verify(PublicKey(issuer.publicKey), cert.tbsBytes, raw)
+        else if oidEquals(issuer.publicKeyCurve, oidSecp384r1()) then
+            match ecdsaSigToRaw(cert.signatureValue, 48) with
+                case Error(_) => false
+                case Ok(raw) => EcdsaP384.verify(PublicKey(issuer.publicKey), cert.tbsBytes, raw)
+        else
+            false
+
+    private function verifyRsaV15(issuer: X509Certificate, cert: X509Certificate, hash: HashAlgorithm, prefix: Array<Uint8>): Bool =
+        match parseRsaKey(issuer.publicKey) with
+            case Error(_) => false
+            case Ok(ne) => RsaPss.pkcs1Verify(hash, prefix, ne._0, ne._1, cert.tbsBytes, cert.signatureValue)
+
+    /// Map a NIST hash OID to its `HashAlgorithm` singleton; `None` for anything
+    /// we don't support (e.g. SHA-1), so an unknown hash fails closed.
+    private function pssHashFromOid(oid: Array<Uint8>): Option<HashAlgorithm> =
+        if oidEquals(oid, oidSha256()) then Some(Sha256)
+        else if oidEquals(oid, oidSha384()) then Some(Sha384)
+        else if oidEquals(oid, oidSha512()) then Some(Sha512)
+        else None
+
+    /// Read the maskGenAlgorithm `[1]` element (an AlgorithmIdentifier holding
+    /// id-mgf1 and its own hash AlgorithmIdentifier); returns the inner MGF hash
+    /// OID. Rejects any MGF other than MGF1.
+    private function parseMgfHashOid(params: Array<Uint8>, field: Der): Result<Array<Uint8>, X509Error> =
+        let algId = try Asn1.readTagged(params, field.contentStart, Asn1.tagSequence())
+        let mgfOid = try Asn1.readTagged(params, algId.contentStart, Asn1.tagOid())
+        if oidEquals(Asn1.contentBytes(params, mgfOid), oidMgf1()) == false then
+            Error(X509Error.MalformedCertificate("unsupported mask generation function"))
+        else
+            let innerAlg = try Asn1.readTagged(params, mgfOid.contentEnd, Asn1.tagSequence())
+            let innerOid = try Asn1.readTagged(params, innerAlg.contentStart, Asn1.tagOid())
+            Ok(Asn1.contentBytes(params, innerOid))
+
+    /// Read the saltLength `[2]` INTEGER. Bounds it (1-2 content bytes, positive)
+    /// so a malformed or oversized length is a clean error rather than a later
+    /// trap in emsaPssVerify (a negative salt length traps on a negative index).
+    private function parsePssSaltLength(params: Array<Uint8>, field: Der): Result<Int32, X509Error> =
+        let intE = try Asn1.readTagged(params, field.contentStart, Asn1.tagInteger())
+        let len = intE.contentEnd - intE.contentStart
+        if (len < 1) || (len > 2) || (params.get(intE.contentStart) >= 0x80u8) then
+            Error(X509Error.MalformedCertificate("bad RSASSA-PSS saltLength"))
+        else
+            Ok(smallInt(params, intE))
+
+    /// Decode RSASSA-PSS-params (RFC 4055 §3.1): SEQUENCE { hashAlgorithm [0],
+    /// maskGenAlgorithm [1], saltLength [2] INTEGER DEFAULT 20, trailerField [3]
+    /// } — all context-tagged, explicit. Returns the message-digest hash and salt
+    /// length. Fails closed (Error) when the parameters are absent/malformed,
+    /// name a hash we don't support, or use an MGF whose hash differs from the
+    /// message hash: `RsaPss.verify` uses a single hash for both the digest and
+    /// MGF1, so such a signature can't be verified correctly and must never be
+    /// accepted under a substituted hash.
+    private function parsePssParams(params: Array<Uint8>): Result<(HashAlgorithm, Int32), X509Error> =
+        if params.length == 0 then
+            Error(X509Error.MalformedCertificate("RSASSA-PSS parameters absent"))
+        else
+            let seq = try Asn1.readTagged(params, 0, Asn1.tagSequence())
+            // Absent hashAlgorithm [0] defaults to SHA-1 (unsupported): leave the
+            // OID empty so the final pssHashFromOid lookup fails closed.
+            let mutable hashOid: Array<Uint8> = Array<Uint8>.fill(0, 0u8)
+            let mutable mgfHashOid: Array<Uint8> = Array<Uint8>.fill(0, 0u8)
+            let mutable hasMgf = false
+            let mutable saltLength = 20
+            let mutable pos = seq.contentStart
+            let mutable err: Option<X509Error> = None
+            while (pos < seq.contentEnd) && err.isNone do
+                match Asn1.read(params, pos) with
+                    case Error(e) => err = Some(e)
+                    case Ok(field) =>
+                        if field.tag == Asn1.tagContext(0u8) then
+                            match Asn1.readTagged(params, field.contentStart, Asn1.tagSequence()) with
+                                case Error(e) => err = Some(e)
+                                case Ok(algId) =>
+                                    match Asn1.readTagged(params, algId.contentStart, Asn1.tagOid()) with
+                                        case Error(e) => err = Some(e)
+                                        case Ok(o) => hashOid = Asn1.contentBytes(params, o)
+                        else if field.tag == Asn1.tagContext(1u8) then
+                            match parseMgfHashOid(params, field) with
+                                case Error(e) => err = Some(e)
+                                case Ok(o) =>
+                                    mgfHashOid = o
+                                    hasMgf = true
+                        else if field.tag == Asn1.tagContext(2u8) then
+                            match parsePssSaltLength(params, field) with
+                                case Error(e) => err = Some(e)
+                                case Ok(n) => saltLength = n
+                        else
+                            ()
+                        pos = field.contentEnd
+            match err with
+                case Some(e) => Error(e)
+                case None =>
+                    // The MGF1 hash must match the message hash (single-hash
+                    // verify). An absent [1] defaults to MGF1-SHA-1, which can't
+                    // match a SHA-256/384/512 message hash — so it fails closed.
+                    if (hasMgf == false) || (oidEquals(mgfHashOid, hashOid) == false) then
+                        Error(X509Error.MalformedCertificate("unsupported RSASSA-PSS MGF"))
+                    else
+                        match pssHashFromOid(hashOid) with
+                            case None => Error(X509Error.MalformedCertificate("unsupported RSASSA-PSS hash"))
+                            case Some(h) => Ok((h, saltLength))
+
+    /// Verify `cert`'s signature using `issuer`'s public key, dispatching on the
+    /// signature OID (scheme + hash) and the issuer key's curve.
+    private function verifySignature(cert: X509Certificate, issuer: X509Certificate): Bool =
+        let sa = cert.signatureAlgorithm
+        if oidEquals(sa, oidEd25519()) then
+            Ed25519.verify(PublicKey(issuer.publicKey), cert.tbsBytes, cert.signatureValue)
+        else if oidEquals(sa, oidEcdsaSha256()) || oidEquals(sa, oidEcdsaSha384()) then
+            verifyEcdsa(issuer, cert)
+        else if oidEquals(sa, oidSha256Rsa()) then
+            verifyRsaV15(issuer, cert, Sha256, RsaPss.digestInfoSha256())
+        else if oidEquals(sa, oidSha384Rsa()) then
+            verifyRsaV15(issuer, cert, Sha384, RsaPss.digestInfoSha384())
+        else if oidEquals(sa, oidRsaPss()) then
+            // Decode the RSASSA-PSS-params (hash + salt) rather than assuming
+            // SHA-256; fail closed on absent/malformed/unsupported parameters so
+            // a signature is never checked under the wrong hash.
+            match parsePssParams(cert.signatureAlgorithmParams) with
+                case Error(_) => false
+                case Ok(hp) =>
+                    match parseRsaKey(issuer.publicKey) with
+                        case Error(_) => false
+                        case Ok(ne) => RsaPss.verify(hp._0, ne._0, ne._1, cert.tbsBytes, cert.signatureValue, hp._1)
+        else
+            false
+
+    private function bytesEqual(a: Array<Uint8>, b: Array<Uint8>): Bool =
+        if a.length != b.length then
+            false
+        else
+            let mutable eq = true
+            let mutable i = 0
+            while i < a.length do
+                if a.get(i) != b.get(i) then eq = false
+                i = i + 1
+            eq
+
+    /// Validate `chain` (leaf first) against `trustAnchors` at `currentTime`.
+    /// Checks per-link signatures, validity windows, and chain linking, up to
+    /// `maxDepth`.
+    public function validate(
+        chain: List<X509Certificate>,
+        trustAnchors: List<X509Certificate>,
+        maxDepth: Int32,
+        currentTime: Instant
+    ): Result<Unit, X509Error> =
+        if chain.isEmpty then
+            try Result.Error(X509Error.MalformedCertificate("empty chain"))
+        // Counted once: `length` walks the list, and the depth bound is what
+        // keeps that walk short.
+        let depth = chain.length
+        if depth > maxDepth then
+            try Result.Error(X509Error.ChainTooLong(maxDepth))
+        let now = currentTime.epochSecond
+        // Validity window for every cert in the chain.
+        for c in chain do
+            if now < c.notBefore.epochSecond then
+                try Result.Error(X509Error.CertificateNotYetValid)
+            else if now > c.notAfter.epochSecond then
+                try Result.Error(X509Error.CertificateExpired)
+            // RFC 5280 §4.2: a cert with a critical extension we cannot process MUST be
+            // rejected — an unhandled critical constraint (e.g. nameConstraints) must not
+            // be silently ignored, which would let a constrained sub-CA act unconstrained.
+            else if c.hasUnrecognizedCritical then
+                try Result.Error(X509Error.ConstraintViolation("unrecognized critical extension"))
+        // Leaf (position 0) usage checks for TLS server authentication. Each is
+        // enforced only when its extension is PRESENT — an absent EKU or keyUsage
+        // means unrestricted (RFC 5280 §4.2.1.12, §4.2.1.3), so such certs still
+        // validate. A cert issued for a different purpose (EKU without serverAuth)
+        // or one whose keyUsage forbids signing must not be accepted as a server.
+        // Non-empty by the guard above.
+        let leaf = chain.head
+        if leaf.hasEku && (leaf.ekuServerAuth == false) then
+            try Result.Error(X509Error.ConstraintViolation("leaf EKU lacks serverAuth"))
+        if leaf.hasKeyUsage && (leaf.keyUsageDigitalSignature == false) then
+            try Result.Error(X509Error.ConstraintViolation("leaf keyUsage lacks digitalSignature"))
+        // Each cert signed by the next; the last must chain to a trust anchor.
+        // Walked as overlapping pairs rather than by index — a list has no O(1)
+        // `get`, and the pairs are exactly `(head, tail.head)` at each step.
+        let mutable pairs = chain
+        while !pairs.tail.isEmpty do
+            let c = pairs.head
+            let issuer = pairs.tail.head
+            if bytesEqual(c.issuerRaw, issuer.subjectRaw) == false then
+                try Result.Error(X509Error.MalformedCertificate("issuer/subject mismatch"))
+            else if verifySignature(c, issuer) == false then
+                try Result.Error(X509Error.SignatureVerificationFailed)
+            pairs = pairs.tail
+        // CA / basic-constraints checks on every *in-chain issuer* (positions
+        // 1..n-1): each one signs the certificate below it, so it must be a CA
+        // authorised to issue certificates. The leaf (position 0) is exempt, and
+        // the external trust anchor is trusted a priori (not re-validated here).
+        // `j` is still the position of `issuer` in the chain — the
+        // pathLenConstraint check below is stated in terms of it.
+        let mutable j = 1
+        let mutable issuers = chain.tail
+        while !issuers.isEmpty do
+            let issuer = issuers.head
+            // A cert that signs another MUST carry basicConstraints cA=TRUE. This
+            // rejects the "leaf signs a forged leaf" attack: a normal end-entity
+            // cert (no basicConstraints, or cA=FALSE) cannot act as an issuer.
+            if issuer.hasBasicConstraints == false then
+                try Result.Error(X509Error.ConstraintViolation("issuer lacks basicConstraints cA=TRUE"))
+            else if issuer.isCa == false then
+                try Result.Error(X509Error.ConstraintViolation("issuer basicConstraints cA=FALSE"))
+            // keyUsage, when present, MUST allow certificate signing.
+            else if issuer.hasKeyUsage && (issuer.keyCertSign == false) then
+                try Result.Error(X509Error.ConstraintViolation("issuer keyUsage lacks keyCertSign"))
+            // pathLenConstraint: the number of intermediate CAs between this
+            // issuer and the leaf (there are j-1 of them) must not exceed it.
+            else if issuer.hasPathLen && (issuer.pathLen < j - 1) then
+                try Result.Error(X509Error.ConstraintViolation("path length constraint exceeded"))
+            j = j + 1
+            issuers = issuers.tail
+        // Top of chain must be signed by a trust anchor.
+        match chain.last with
+            case None => Error(X509Error.MalformedCertificate("empty chain"))
+            case Some(top) =>
+                let mutable anchored = false
+                for anchor in trustAnchors do
+                    if bytesEqual(top.issuerRaw, anchor.subjectRaw) && verifySignature(top, anchor) then
+                        anchored = true
+                        // Stop scanning the rest of the trust store once anchored.
+                        break
+                if anchored then Ok(()) else Error(X509Error.MissingTrustAnchor)
+
+/// Minimal DER builder (test support).
+module DerBuild =
+    function derLen(n: Int32): Array<Uint8> =
+        if n < 128 then
+            [|n.toUint8()|]
+        else if n < 256 then
+            [|0x81u8, n.toUint8()|]
+        else
+            [|0x82u8, (n / 256).toUint8(), (n % 256).toUint8()|]
+
+    function tlv(tag: Uint8, content: Array<Uint8>): Array<Uint8> =
+        [|tag|].concat(derLen(content.length)).concat(content)
+
+    function edAlg(): Array<Uint8> = tlv(0x30u8, tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
+
+    /// Name: SEQUENCE { SET { SEQUENCE { OID 2.5.4.3 (CN), UTF8String cn } } }.
+    function name(cn: String): Array<Uint8> =
+        tlv(0x30u8, tlv(0x31u8, tlv(0x30u8,
+            tlv(0x06u8, [|0x55u8, 0x04u8, 0x03u8|]).concat(tlv(0x0cu8, cn.bytes())))))
+
+    /// Build an Ed25519 certificate: `subject`/`issuer` CNs, `subjectPub` public
+    /// key, signed by `signer`, carrying the already-encoded `[3]` `exts` block
+    /// (pass an empty array for none).
+    function cert(subject: String, issuer: String, subjectPub: Array<Uint8>, signer: SecretKey, exts: Array<Uint8>): Array<Uint8> =
+        let version = tlv(0xa0u8, tlv(0x02u8, [|0x02u8|]))
+        let serial = tlv(0x02u8, [|0x2au8|])
+        let validity = tlv(0x30u8,
+            tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes())))
+        let spki = tlv(0x30u8, edAlg().concat(tlv(0x03u8, [|0x00u8|].concat(subjectPub))))
+        let tbs = tlv(0x30u8,
+            version.concat(serial).concat(edAlg()).concat(name(issuer)).concat(validity).concat(name(subject)).concat(spki).concat(exts))
+        let sig = Ed25519.sign(signer, tbs)
+        tlv(0x30u8, tbs.concat(edAlg()).concat(tlv(0x03u8, [|0x00u8|].concat(sig))))
+
+    /// Wrap one or more encoded Extension SEQUENCEs into the `[3]` extensions block.
+    function extsBlock(extensions: Array<Uint8>): Array<Uint8> =
+        tlv(0xa3u8, tlv(0x30u8, extensions))
+
+    function sanDns(dns: String): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x82u8, dns.bytes())))))
+
+    function sanIp(ip: Array<Uint8>): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x87u8, ip)))))
+
+    /// One subjectAltName extension carrying BOTH a dNSName and an iPAddress
+    /// GeneralName (SAN must appear exactly once per certificate).
+    function sanDnsAndIp(dns: String, ip: Array<Uint8>): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x82u8, dns.bytes()).concat(tlv(0x87u8, ip))))))
+
+    function basicConstraintsCa(): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x13u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x01u8, [|0xffu8|])))))
+
+    function basicConstraintsCaPathLen(n: Uint8): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x13u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x01u8, [|0xffu8|]).concat(tlv(0x02u8, [|n|]))))))
+
+    function basicConstraintsNotCa(): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x13u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x01u8, [|0x00u8|])))))
+
+    /// keyUsage BIT STRING whose first data byte is `firstByte` (keyCertSign is 0x04).
+    function keyUsage(firstByte: Uint8): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x0fu8|]).concat(
+            tlv(0x04u8, tlv(0x03u8, [|0x00u8, firstByte|]))))
+
+    /// extendedKeyUsage extension carrying a single KeyPurposeId (the raw OID
+    /// content bytes in `oidBytes`), wrapped as SEQUENCE OF OID in the extnValue.
+    function extKeyUsage(oidBytes: Array<Uint8>): Array<Uint8> =
+        tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x25u8|]).concat(
+            tlv(0x04u8, tlv(0x30u8, tlv(0x06u8, oidBytes)))))
+
+test "X509 parses subjectAltName dNSName and iPAddress" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x11u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let exts = DerBuild.extsBlock(DerBuild.sanDnsAndIp("example.com", [|127u8, 0u8, 0u8, 1u8|]))
+    let der = DerBuild.cert("leaf", "leaf", pub, secret, exts)
+    let cert = X509.parseCertificate(der).require
+    assert cert.hasSan
+    assert cert.sanDnsNames == ["example.com"]
+    match cert.sanIpAddresses with
+        case [address] =>
+            assert address.length == 4
+            assert address.get(0) == 127u8
+            assert address.get(3) == 1u8
+        case _ => assert false
+
+test "X509 parses basicConstraints and keyUsage" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x12u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let exts = DerBuild.extsBlock(DerBuild.basicConstraintsCaPathLen(2u8).concat(DerBuild.keyUsage(0x04u8)))
+    let cert = X509.parseCertificate(DerBuild.cert("ca", "ca", pub, secret, exts)).require
+    assert cert.hasBasicConstraints
+    assert cert.isCa
+    assert cert.hasPathLen
+    assert cert.pathLen == 2i32
+    assert cert.hasKeyUsage
+    assert cert.keyCertSign
+    // a certificate with no extensions reports everything absent
+    let bare = X509.parseCertificate(DerBuild.cert("x", "x", pub, secret, Array<Uint8>.empty())).require
+    assert bare.hasSan == false
+    assert bare.hasBasicConstraints == false
+    assert bare.hasKeyUsage == false
+
+test "X509 rejects a certificate with an unrecognized critical extension (RFC 5280 §4.2)" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x33u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+    // nameConstraints (OID 2.5.29.30) marked critical, but this parser does not enforce it.
+    let criticalUnknown = DerBuild.tlv(0x30u8,
+        DerBuild.tlv(0x06u8, [|0x55u8, 0x1du8, 0x1eu8|])
+        .concat(DerBuild.tlv(0x01u8, [|0xffu8|]))
+        .concat(DerBuild.tlv(0x04u8, [|0x30u8, 0x00u8|])))
+    let cert = X509.parseCertificate(DerBuild.cert("x", "x", pub, secret, DerBuild.extsBlock(criticalUnknown))).require
+    assert cert.hasUnrecognizedCritical
+    assert X509.validate([cert], [cert], 10, now).isError
+    // the SAME unhandled extension marked NON-critical is tolerated (RFC 5280 §4.2).
+    let nonCriticalUnknown = DerBuild.tlv(0x30u8,
+        DerBuild.tlv(0x06u8, [|0x55u8, 0x1du8, 0x1eu8|])
+        .concat(DerBuild.tlv(0x04u8, [|0x30u8, 0x00u8|])))
+    let cert2 = X509.parseCertificate(DerBuild.cert("x", "x", pub, secret, DerBuild.extsBlock(nonCriticalUnknown))).require
+    assert cert2.hasUnrecognizedCritical == false
+
+test "X509 validate rejects a non-CA acting as an issuer (forged-leaf attack)" =
+    // caSecret's cert has basicConstraints cA=FALSE, yet it signs a child cert.
+    let caSecret = SecretKey(Array<Uint8>.fill(32, 0x21u8))
+    let caPub = Ed25519.derivePublicKey(caSecret).value
+    let leafSecret = SecretKey(Array<Uint8>.fill(32, 0x22u8))
+    let leafPub = Ed25519.derivePublicKey(leafSecret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+
+    // issuer is self-signed (so it can be its own trust anchor) but NOT a CA
+    let issuerDer = DerBuild.cert("issuer", "issuer", caPub, caSecret, DerBuild.extsBlock(DerBuild.basicConstraintsNotCa()))
+    let issuer = X509.parseCertificate(issuerDer).require
+    let leafDer = DerBuild.cert("leaf", "issuer", leafPub, caSecret, DerBuild.extsBlock(DerBuild.sanDns("leaf.test")))
+    let leaf = X509.parseCertificate(leafDer).require
+    // signatures + name chaining are valid; only the CA constraint fails
+    assert X509.validate([leaf, issuer], [issuer], 10, now).isError
+
+    // same shape but issuer IS a CA with keyCertSign -> accepted
+    let caDer = DerBuild.cert("issuer", "issuer", caPub, caSecret,
+        DerBuild.extsBlock(DerBuild.basicConstraintsCa().concat(DerBuild.keyUsage(0x04u8))))
+    let ca = X509.parseCertificate(caDer).require
+    let leaf2 = X509.parseCertificate(DerBuild.cert("leaf", "issuer", leafPub, caSecret, DerBuild.extsBlock(DerBuild.sanDns("leaf.test")))).require
+    assert X509.validate([leaf2, ca], [ca], 10, now).isOk
+
+test "X509 validate rejects a CA whose keyUsage lacks keyCertSign" =
+    let caSecret = SecretKey(Array<Uint8>.fill(32, 0x31u8))
+    let caPub = Ed25519.derivePublicKey(caSecret).value
+    let leafSecret = SecretKey(Array<Uint8>.fill(32, 0x32u8))
+    let leafPub = Ed25519.derivePublicKey(leafSecret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+    // cA=TRUE but keyUsage = digitalSignature only (0x80), no keyCertSign
+    let caDer = DerBuild.cert("ca", "ca", caPub, caSecret,
+        DerBuild.extsBlock(DerBuild.basicConstraintsCa().concat(DerBuild.keyUsage(0x80u8))))
+    let ca = X509.parseCertificate(caDer).require
+    let leaf = X509.parseCertificate(DerBuild.cert("leaf", "ca", leafPub, caSecret, Array<Uint8>.empty())).require
+    assert X509.validate([leaf, ca], [ca], 10, now).isError
+
+test "X509 validate rejects a leaf whose EKU lacks serverAuth" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x51u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+    // EKU = codeSigning (1.3.6.1.5.5.7.3.3) only — not valid for a TLS server.
+    let codeSigning = [|0x2bu8, 0x06u8, 0x01u8, 0x05u8, 0x05u8, 0x07u8, 0x03u8, 0x03u8|]
+    let leaf = X509.parseCertificate(DerBuild.cert("leaf", "leaf", pub, secret, DerBuild.extsBlock(DerBuild.extKeyUsage(codeSigning)))).require
+    assert leaf.hasEku
+    assert leaf.ekuServerAuth == false
+    assert X509.validate([leaf], [leaf], 10, now).isError
+    // EKU = serverAuth (1.3.6.1.5.5.7.3.1) -> accepted (self-signed anchor).
+    let serverAuth = [|0x2bu8, 0x06u8, 0x01u8, 0x05u8, 0x05u8, 0x07u8, 0x03u8, 0x01u8|]
+    let okLeaf = X509.parseCertificate(DerBuild.cert("leaf", "leaf", pub, secret, DerBuild.extsBlock(DerBuild.extKeyUsage(serverAuth)))).require
+    assert okLeaf.hasEku
+    assert okLeaf.ekuServerAuth
+    assert X509.validate([okLeaf], [okLeaf], 10, now).isOk
+
+test "X509 validate rejects a leaf whose keyUsage lacks digitalSignature" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x52u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+    // keyUsage = keyCertSign only (0x04): digitalSignature (0x80) absent.
+    let noDs = X509.parseCertificate(DerBuild.cert("leaf", "leaf", pub, secret, DerBuild.extsBlock(DerBuild.keyUsage(0x04u8)))).require
+    assert noDs.hasKeyUsage
+    assert noDs.keyUsageDigitalSignature == false
+    assert X509.validate([noDs], [noDs], 10, now).isError
+    // keyUsage = digitalSignature (0x80) -> accepted.
+    let ds = X509.parseCertificate(DerBuild.cert("leaf", "leaf", pub, secret, DerBuild.extsBlock(DerBuild.keyUsage(0x80u8)))).require
+    assert ds.keyUsageDigitalSignature
+    assert X509.validate([ds], [ds], 10, now).isOk
+
+test "X509 validate accepts a leaf with no EKU and no keyUsage" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x53u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+    let leaf = X509.parseCertificate(DerBuild.cert("leaf", "leaf", pub, secret, Array<Uint8>.empty())).require
+    assert leaf.hasEku == false
+    assert leaf.hasKeyUsage == false
+    assert X509.validate([leaf], [leaf], 10, now).isOk
+
+test "X509 validate enforces pathLenConstraint" =
+    let rootSecret = SecretKey(Array<Uint8>.fill(32, 0x41u8))
+    let rootPub = Ed25519.derivePublicKey(rootSecret).value
+    let interSecret = SecretKey(Array<Uint8>.fill(32, 0x42u8))
+    let interPub = Ed25519.derivePublicKey(interSecret).value
+    let leafSecret = SecretKey(Array<Uint8>.fill(32, 0x43u8))
+    let leafPub = Ed25519.derivePublicKey(leafSecret).value
+    let now = Instant.ofEpochSecond(1748736000i64)
+
+    // root: CA with pathLen=0 (no intermediate CAs allowed below it)
+    let rootDer = DerBuild.cert("root", "root", rootPub, rootSecret, DerBuild.extsBlock(DerBuild.basicConstraintsCaPathLen(0u8)))
+    let root = X509.parseCertificate(rootDer).require
+    // inter: CA signed by root
+    let interDer = DerBuild.cert("inter", "root", interPub, rootSecret, DerBuild.extsBlock(DerBuild.basicConstraintsCa()))
+    let inter = X509.parseCertificate(interDer).require
+    // leaf signed by inter
+    let leafDer = DerBuild.cert("leaf", "inter", leafPub, interSecret, DerBuild.extsBlock(DerBuild.sanDns("leaf.test")))
+    let leaf = X509.parseCertificate(leafDer).require
+    // [leaf, inter, root]: root's pathLen=0 is exceeded (one intermediate CA below it)
+    assert X509.validate([leaf, inter, root], [root], 10, now).isError
+
+    // root with pathLen=1 permits exactly this one intermediate -> accepted
+    let root1Der = DerBuild.cert("root", "root", rootPub, rootSecret, DerBuild.extsBlock(DerBuild.basicConstraintsCaPathLen(1u8)))
+    let root1 = X509.parseCertificate(root1Der).require
+    let inter1Der = DerBuild.cert("inter", "root", interPub, rootSecret, DerBuild.extsBlock(DerBuild.basicConstraintsCa()))
+    let inter1 = X509.parseCertificate(inter1Der).require
+    let leaf1 = X509.parseCertificate(DerBuild.cert("leaf", "inter", leafPub, interSecret, DerBuild.extsBlock(DerBuild.sanDns("leaf.test")))).require
+    assert X509.validate([leaf1, inter1, root1], [root1], 10, now).isOk
+
+test "X509 parse + validate self-signed Ed25519 certificate" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x42u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    // AlgorithmIdentifier { OID 1.3.101.112 }  (Ed25519)
+    let edAlg = DerBuild.tlv(0x30u8, DerBuild.tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
+    // Name: SEQUENCE { SET { SEQUENCE { OID 2.5.4.3 (CN), UTF8String "CA" } } }
+    let cnAttr = DerBuild.tlv(0x30u8, DerBuild.tlv(0x06u8, [|0x55u8, 0x04u8, 0x03u8|]).concat(DerBuild.tlv(0x0cu8, "CA".bytes())))
+    let name = DerBuild.tlv(0x30u8, DerBuild.tlv(0x31u8, cnAttr))
+    let version = DerBuild.tlv(0xa0u8, DerBuild.tlv(0x02u8, [|0x02u8|]))
+    let serial = DerBuild.tlv(0x02u8, [|0x2au8|])
+    let validity = DerBuild.tlv(0x30u8,
+        DerBuild.tlv(0x17u8, "200101000000Z".bytes()).concat(DerBuild.tlv(0x17u8, "300101000000Z".bytes())))
+    let spki = DerBuild.tlv(0x30u8, edAlg.concat(DerBuild.tlv(0x03u8, [|0x00u8|].concat(pub))))
+    let tbs = DerBuild.tlv(0x30u8,
+        version.concat(serial).concat(edAlg).concat(name).concat(validity).concat(name).concat(spki))
+    let sig = Ed25519.sign(secret, tbs)
+    let certDer = DerBuild.tlv(0x30u8, tbs.concat(edAlg).concat(DerBuild.tlv(0x03u8, [|0x00u8|].concat(sig))))
+
+    let parsed = X509.parseCertificate(certDer)
+    assert parsed.isOk
+    let cert = parsed.require
+    assert cert.serialNumber.get(0) == 0x2au8
+    assert ConstantTime.equal(cert.publicKey, pub)
+    assert ConstantTime.equal(cert.issuerRaw, cert.subjectRaw)
+    assert cert.notBefore.epochSecond < cert.notAfter.epochSecond
+
+    // PEM round-trip: encode the DER, parse straight from PEM.
+    let pem = Pem.encode(certDer, "CERTIFICATE")
+    let fromPem = X509.parseCertificatePem(pem)
+    assert fromPem.isOk
+    assert ConstantTime.equal(fromPem.require.publicKey, pub)
+
+    let chain = [cert]
+    let anchors = [cert]
+    // 2025-06-01: within [2020, 2030]
+    let now = Instant.ofEpochSecond(1748736000i64)
+    assert X509.validate(chain, anchors, 10, now).isOk
+    // after notAfter (2030-01-01) -> expired
+    assert X509.validate(chain, anchors, 10, Instant.ofEpochSecond(1900000000i64)).isError
+    // flipping a signature byte must break verification
+    let badDer = certDer.clone()
+    badDer.set(badDer.length - 1, badDer.get(badDer.length - 1) ^ 0xffu8)
+    let badCert = X509.parseCertificate(badDer).require
+    assert X509.validate([badCert], anchors, 10, now).isError
+
+// B-1: an ECDSA signature whose r INTEGER magnitude exceeds intSize (33 bytes
+// for P-256's intSize=32) must be rejected, not trap in copyIntTo via a
+// negative dst.set index. Revert the `len > intSize` guard in copyIntTo (and the
+// success check in ecdsaSigToRaw) to reintroduce the OOB trap this catches.
+test "X509 bitStringValue tolerates a zero-length BIT STRING (no OOB trap)" =
+    // `03 00` is an empty BIT STRING (no unused-bits octet). The old code computed
+    // length -1 and trapped in Array.fill(-1); an untrusted cert with an empty
+    // subjectPublicKey/signatureValue must parse to empty, not crash the component.
+    let der = [|0x03u8, 0x00u8|]
+    let e = Asn1.read(der, 0).require
+    assert X509.bitStringValue(der, e).length == 0
+
+test "X509 ecdsaSigToRaw rejects oversized INTEGER (no OOB trap)" =
+    // SEQUENCE { INTEGER (33 bytes, high bit clear so no sign byte), INTEGER 5 }
+    let rDer = DerBuild.tlv(0x02u8, Array<Uint8>.fill(33, 0x01u8))
+    let sDer = DerBuild.tlv(0x02u8, [|0x05u8|])
+    let sig = DerBuild.tlv(0x30u8, rDer.concat(sDer))
+    assert X509.ecdsaSigToRaw(sig, 32).isError
+    // a well-formed 32-byte r/s still succeeds
+    let okSig = DerBuild.tlv(0x30u8,
+        DerBuild.tlv(0x02u8, Array<Uint8>.fill(32, 0x01u8)).concat(DerBuild.tlv(0x02u8, [|0x05u8|])))
+    assert X509.ecdsaSigToRaw(okSig, 32).isOk
+
+// B-3: a truncated UTCTime/GeneralizedTime content must be rejected rather than
+// trapping on a fixed-offset c.get(...). Revert the `c.length < 12`/`< 14`
+// guards in parseTime to reintroduce the OOB trap.
+test "X509 parseTime rejects truncated time content (no OOB trap)" =
+    // UTCTime with only 4 content bytes; parseTime reads up to index 11.
+    let shortUtc = DerBuild.tlv(0x17u8, "2001".bytes())
+    assert X509.parseTime(shortUtc, Asn1.read(shortUtc, 0).require).isError
+    // GeneralizedTime with only 6 content bytes; parseTime reads up to index 13.
+    let shortGen = DerBuild.tlv(0x18u8, "200101".bytes())
+    assert X509.parseTime(shortGen, Asn1.read(shortGen, 0).require).isError
+    // a full 12-byte UTCTime still parses
+    let goodUtc = DerBuild.tlv(0x17u8, "200101000000Z".bytes())
+    assert X509.parseTime(goodUtc, Asn1.read(goodUtc, 0).require).isOk
+
+// B-5: the TBSCertificate's inner signature AlgorithmIdentifier must match the
+// outer signatureAlgorithm (RFC 5280 4.1.1.2). Revert the oidEquals mismatch
+// check in parseCertificate to stop rejecting the substitution below.
+test "X509 rejects inner/outer signatureAlgorithm mismatch" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x55u8))
+    let pub = Ed25519.derivePublicKey(secret).value
+    let version = DerBuild.tlv(0xa0u8, DerBuild.tlv(0x02u8, [|0x02u8|]))
+    let serial = DerBuild.tlv(0x02u8, [|0x2au8|])
+    // inner: ecdsa-with-SHA256; outer: Ed25519 -> mismatch
+    let innerAlg = DerBuild.tlv(0x30u8, DerBuild.tlv(0x06u8,
+        [|0x2au8, 0x86u8, 0x48u8, 0xceu8, 0x3du8, 0x04u8, 0x03u8, 0x02u8|]))
+    let validity = DerBuild.tlv(0x30u8,
+        DerBuild.tlv(0x17u8, "200101000000Z".bytes()).concat(DerBuild.tlv(0x17u8, "300101000000Z".bytes())))
+    let spki = DerBuild.tlv(0x30u8, DerBuild.edAlg().concat(DerBuild.tlv(0x03u8, [|0x00u8|].concat(pub))))
+    let tbs = DerBuild.tlv(0x30u8,
+        version.concat(serial).concat(innerAlg).concat(DerBuild.name("x")).concat(validity).concat(DerBuild.name("x")).concat(spki))
+    let sig = Ed25519.sign(secret, tbs)
+    let certDer = DerBuild.tlv(0x30u8, tbs.concat(DerBuild.edAlg()).concat(DerBuild.tlv(0x03u8, [|0x00u8|].concat(sig))))
+    assert X509.parseCertificate(certDer).isError
+
+// B-4: an RSASSA-PSS signature must be verified with the hash + salt length from
+// the signature's RSASSA-PSS-params, not a hardcoded SHA-256 / salt 32. Build
+// the params SEQUENCE by hand and check parsePssParams decodes the hash (via its
+// digestSize) and salt, and fails closed on unsupported/mismatched/malformed
+// parameters (so a signature is never checked under the wrong hash).
+test "X509 parsePssParams decodes hash + salt, fails closed on bad params" =
+    let sha256Oid = [|0x60u8, 0x86u8, 0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x01u8|]
+    let sha384Oid = [|0x60u8, 0x86u8, 0x48u8, 0x01u8, 0x65u8, 0x03u8, 0x04u8, 0x02u8, 0x02u8|]
+    let sha1Oid = [|0x2bu8, 0x0eu8, 0x03u8, 0x02u8, 0x1au8|]
+    let mgf1Oid = [|0x2au8, 0x86u8, 0x48u8, 0x86u8, 0xf7u8, 0x0du8, 0x01u8, 0x01u8, 0x08u8|]
+    // AlgorithmIdentifier { OID, NULL }
+    let algId = (oid: Array<Uint8>) =>
+        DerBuild.tlv(0x30u8, DerBuild.tlv(0x06u8, oid).concat(DerBuild.tlv(0x05u8, Array<Uint8>.empty())))
+    // RSASSA-PSS-params with matching MGF1 hash. `mgfOid` may differ from
+    // `hashOid` to exercise the mismatch rejection.
+    let params = (hashOid: Array<Uint8>, mgfOid: Array<Uint8>, salt: Uint8) =>
+        let p0 = DerBuild.tlv(0xa0u8, algId(hashOid))
+        let mgf = DerBuild.tlv(0x30u8, DerBuild.tlv(0x06u8, mgf1Oid).concat(algId(mgfOid)))
+        let p1 = DerBuild.tlv(0xa1u8, mgf)
+        let p2 = DerBuild.tlv(0xa2u8, DerBuild.tlv(0x02u8, [|salt|]))
+        DerBuild.tlv(0x30u8, p0.concat(p1).concat(p2))
+
+    // SHA-384, salt 48 -> Sha384 (digestSize 48) and salt length 48.
+    let r384 = X509.parsePssParams(params(sha384Oid, sha384Oid, 48u8))
+    assert r384.isOk
+    assert r384.require._0.digestSize == 48
+    assert r384.require._1 == 48
+    // SHA-256, salt 32 -> Sha256 (digestSize 32) and salt length 32.
+    let r256 = X509.parsePssParams(params(sha256Oid, sha256Oid, 32u8))
+    assert r256.isOk
+    assert r256.require._0.digestSize == 32
+    assert r256.require._1 == 32
+
+    // Fail closed: unsupported hash (SHA-1).
+    assert X509.parsePssParams(params(sha1Oid, sha1Oid, 20u8)).isError
+    // Fail closed: MGF hash differs from the message hash (can't verify with a
+    // single-hash RsaPss.verify).
+    assert X509.parsePssParams(params(sha256Oid, sha384Oid, 32u8)).isError
+    // Fail closed: absent parameters.
+    assert X509.parsePssParams(Array<Uint8>.empty()).isError
+    // Fail closed: truncated params (a lone SEQUENCE tag byte).
+    assert X509.parsePssParams([|0x30u8|]).isError

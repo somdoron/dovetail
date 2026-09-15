@@ -1,0 +1,329 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.String
+import standard.prelude.Display
+
+import standard.crypto.HashAlgorithm
+import standard.crypto.Sha256
+import standard.crypto.Sha384
+import standard.crypto.AeadAlgorithm
+import standard.crypto.Aes128Gcm
+import standard.crypto.Aes256Gcm
+import standard.crypto.ChaCha20Poly1305
+import standard.crypto.KeyExchange
+import standard.crypto.X25519
+import standard.crypto.EcdhP256
+
+/// The wire constants and shared enums every layer of the TLS 1.3 stack keys
+/// off (RFC 8446). Each enum has a `*Code`/`*FromCode` pair giving its
+/// on-the-wire `uint16` (or `uint8` for content/alert types). Unknown codes
+/// decode to `None` so the caller can raise the right alert rather than panic.
+
+/// A TLS 1.3 cipher suite. Each pairs an AEAD with the hash used by HKDF and
+/// the transcript (RFC 8446 Appendix B.4). These three are the only suites TLS
+/// 1.3 defines; all are mandatory-to-implement coverage for this library.
+public enum CipherSuite =
+    Aes128GcmSha256
+    Aes256GcmSha384
+    ChaCha20Poly1305Sha256
+
+/// The named group for (EC)DHE key exchange (RFC 8446 §4.2.7).
+public enum KeyExchangeGroup =
+    X25519
+    SecP256R1
+
+/// A signature scheme for CertificateVerify and the `signature_algorithms`
+/// extension (RFC 8446 §4.2.3).
+public enum SignatureScheme =
+    EcdsaSecp256r1Sha256
+    Ed25519
+    RsaPssRsaeSha256
+    RsaPssRsaeSha384
+
+/// The record content type (RFC 8446 §5.1). `ChangeCipherSpec` only appears as
+/// the middlebox-compatibility dummy record.
+enum ContentType =
+    ChangeCipherSpec
+    Alert
+    Handshake
+    ApplicationData
+
+/// Alert severity (RFC 8446 §6). In TLS 1.3 all alerts except `close_notify`
+/// and `user_canceled` are fatal regardless of the level byte.
+enum AlertLevel =
+    Warning
+    Fatal
+
+/// Alert descriptions (RFC 8446 §6). Only the values this library emits or
+/// recognises are enumerated; any other code maps to `None`.
+enum AlertDescription =
+    CloseNotify
+    UnexpectedMessage
+    BadRecordMac
+    RecordOverflow
+    HandshakeFailure
+    BadCertificate
+    UnsupportedCertificate
+    CertificateRevoked
+    CertificateExpired
+    CertificateUnknown
+    IllegalParameter
+    UnknownCa
+    DecodeError
+    DecryptError
+    ProtocolVersion
+    InsufficientSecurity
+    InternalError
+    MissingExtension
+    UnsupportedExtension
+    NoApplicationProtocol
+    UserCanceled
+
+/// A protocol-level failure. These map onto TLS alert descriptions (see
+/// `alertFor`) so the connection can tell the peer why it is aborting.
+public enum TlsError =
+    UnexpectedMessage(String)
+    BadRecordMac
+    RecordOverflow
+    HandshakeFailure(String)
+    BadCertificate(String)
+    /// The leaf certificate's identity (SAN dNSName/iPAddress) did not match the
+    /// server name the client asked for (RFC 6125 hostname verification).
+    CertificateNameMismatch(String)
+    CertificateExpired
+    CertificateUnknown(String)
+    IllegalParameter(String)
+    DecodeError(String)
+    DecryptError
+    ProtocolVersion
+    InsufficientSecurity
+    InternalError(String)
+    MissingExtension(String)
+    UnsupportedExtension(String)
+    NoApplicationProtocol
+
+/// One-line, cause-carrying rendering. Each alert names itself and, where it
+/// carries a detail string (the offending message, the mismatched name, the
+/// decode context), includes it — the difference between a diagnosable TLS
+/// failure and "TLS protocol error". Mirrors the RFC 8446 alert vocabulary.
+implement Display for TlsError =
+    public function format(self: TlsError): String =
+        match self with
+            case TlsError.UnexpectedMessage(detail) => "unexpected TLS message: " ++ detail
+            case TlsError.BadRecordMac => "bad record MAC"
+            case TlsError.RecordOverflow => "TLS record overflow"
+            case TlsError.HandshakeFailure(detail) => "TLS handshake failure: " ++ detail
+            case TlsError.BadCertificate(detail) => "bad certificate: " ++ detail
+            case TlsError.CertificateNameMismatch(detail) => "certificate name mismatch: " ++ detail
+            case TlsError.CertificateExpired => "certificate expired"
+            case TlsError.CertificateUnknown(detail) => "certificate rejected: " ++ detail
+            case TlsError.IllegalParameter(detail) => "illegal TLS parameter: " ++ detail
+            case TlsError.DecodeError(detail) => "TLS decode error: " ++ detail
+            case TlsError.DecryptError => "TLS decrypt error"
+            case TlsError.ProtocolVersion => "unsupported TLS protocol version"
+            case TlsError.InsufficientSecurity => "insufficient TLS security"
+            case TlsError.InternalError(detail) => "internal TLS error: " ++ detail
+            case TlsError.MissingExtension(detail) => "missing TLS extension: " ++ detail
+            case TlsError.UnsupportedExtension(detail) => "unsupported TLS extension: " ++ detail
+            case TlsError.NoApplicationProtocol => "no negotiated application protocol (ALPN)"
+
+// ---------------------------------------------------------------------------
+// CipherSuite
+// ---------------------------------------------------------------------------
+
+/// The two-byte wire code for a cipher suite.
+function cipherSuiteCode(cs: CipherSuite): Int32 =
+    match cs with
+        case Aes128GcmSha256 => 0x1301
+        case Aes256GcmSha384 => 0x1302
+        case ChaCha20Poly1305Sha256 => 0x1303
+
+/// Decode a cipher-suite code, or `None` if unrecognised.
+function cipherSuiteFromCode(code: Int32): Option<CipherSuite> =
+    if code == 0x1301 then Some(CipherSuite.Aes128GcmSha256)
+    else if code == 0x1302 then Some(CipherSuite.Aes256GcmSha384)
+    else if code == 0x1303 then Some(CipherSuite.ChaCha20Poly1305Sha256)
+    else None
+
+/// The HKDF / transcript hash for a cipher suite (RFC 8446 §7.1).
+function hashFor(cs: CipherSuite): HashAlgorithm =
+    match cs with
+        case Aes128GcmSha256 => Sha256
+        case Aes256GcmSha384 => Sha384
+        case ChaCha20Poly1305Sha256 => Sha256
+
+/// The AEAD cipher for a cipher suite (RFC 8446 §5.2).
+function aeadFor(cs: CipherSuite): AeadAlgorithm =
+    match cs with
+        case Aes128GcmSha256 => Aes128Gcm
+        case Aes256GcmSha384 => Aes256Gcm
+        case ChaCha20Poly1305Sha256 => ChaCha20Poly1305
+
+/// The key-exchange algorithm for a named group.
+function keyExchangeFor(group: KeyExchangeGroup): KeyExchange =
+    match group with
+        case X25519 => X25519
+        case SecP256R1 => EcdhP256
+
+// ---------------------------------------------------------------------------
+// ALPN protocol identifiers (RFC 7301 / IANA TLS ALPN registry). ALPN ids are
+// opaque strings, so these are convenience constants — not an exhaustive enum.
+// ---------------------------------------------------------------------------
+
+/// ALPN id for HTTP/1.1.
+public let alpnHttp1: String = "http/1.1"
+
+/// ALPN id for HTTP/2 over TLS.
+public let alpnHttp2: String = "h2"
+
+/// ALPN id for HTTP/3.
+public let alpnHttp3: String = "h3"
+
+// ---------------------------------------------------------------------------
+// KeyExchangeGroup
+// ---------------------------------------------------------------------------
+
+/// The two-byte wire code for a named group.
+function groupCode(group: KeyExchangeGroup): Int32 =
+    match group with
+        case X25519 => 0x001d
+        case SecP256R1 => 0x0017
+
+/// Decode a named-group code, or `None` if unrecognised.
+function groupFromCode(code: Int32): Option<KeyExchangeGroup> =
+    if code == 0x001d then Some(KeyExchangeGroup.X25519)
+    else if code == 0x0017 then Some(KeyExchangeGroup.SecP256R1)
+    else None
+
+// ---------------------------------------------------------------------------
+// SignatureScheme
+// ---------------------------------------------------------------------------
+
+/// The two-byte wire code for a signature scheme.
+function sigSchemeCode(scheme: SignatureScheme): Int32 =
+    match scheme with
+        case EcdsaSecp256r1Sha256 => 0x0403
+        case Ed25519 => 0x0807
+        case RsaPssRsaeSha256 => 0x0804
+        case RsaPssRsaeSha384 => 0x0805
+
+/// Decode a signature-scheme code, or `None` if unrecognised.
+function sigSchemeFromCode(code: Int32): Option<SignatureScheme> =
+    if code == 0x0403 then Some(SignatureScheme.EcdsaSecp256r1Sha256)
+    else if code == 0x0807 then Some(SignatureScheme.Ed25519)
+    else if code == 0x0804 then Some(SignatureScheme.RsaPssRsaeSha256)
+    else if code == 0x0805 then Some(SignatureScheme.RsaPssRsaeSha384)
+    else None
+
+// ---------------------------------------------------------------------------
+// ContentType
+// ---------------------------------------------------------------------------
+
+/// The one-byte wire code for a record content type.
+function contentTypeCode(ct: ContentType): Int32 =
+    match ct with
+        case ChangeCipherSpec => 20
+        case Alert => 21
+        case Handshake => 22
+        case ApplicationData => 23
+
+/// Decode a content-type byte, or `None` if unrecognised.
+function contentTypeFromCode(code: Int32): Option<ContentType> =
+    if code == 20 then Some(ContentType.ChangeCipherSpec)
+    else if code == 21 then Some(ContentType.Alert)
+    else if code == 22 then Some(ContentType.Handshake)
+    else if code == 23 then Some(ContentType.ApplicationData)
+    else None
+
+// ---------------------------------------------------------------------------
+// Alerts
+// ---------------------------------------------------------------------------
+
+/// The one-byte wire code for an alert level.
+function alertLevelCode(level: AlertLevel): Int32 =
+    match level with
+        case Warning => 1
+        case Fatal => 2
+
+/// The one-byte wire code for an alert description.
+function alertDescriptionCode(desc: AlertDescription): Int32 =
+    match desc with
+        case CloseNotify => 0
+        case UnexpectedMessage => 10
+        case BadRecordMac => 20
+        case RecordOverflow => 22
+        case HandshakeFailure => 40
+        case BadCertificate => 42
+        case UnsupportedCertificate => 43
+        case CertificateRevoked => 44
+        case CertificateExpired => 45
+        case CertificateUnknown => 46
+        case IllegalParameter => 47
+        case UnknownCa => 48
+        case DecodeError => 50
+        case DecryptError => 51
+        case ProtocolVersion => 70
+        case InsufficientSecurity => 71
+        case InternalError => 80
+        case MissingExtension => 109
+        case UnsupportedExtension => 110
+        case NoApplicationProtocol => 120
+        case UserCanceled => 90
+
+/// The alert (level, description) a `TlsError` should be sent as (RFC 8446 §6).
+/// Every alert here is fatal: TLS 1.3 fatal alerts terminate the connection.
+function alertFor(err: TlsError): AlertDescription =
+    match err with
+        case UnexpectedMessage(_) => AlertDescription.UnexpectedMessage
+        case BadRecordMac => AlertDescription.BadRecordMac
+        case RecordOverflow => AlertDescription.RecordOverflow
+        case HandshakeFailure(_) => AlertDescription.HandshakeFailure
+        case BadCertificate(_) => AlertDescription.BadCertificate
+        case CertificateNameMismatch(_) => AlertDescription.BadCertificate
+        case CertificateExpired => AlertDescription.CertificateExpired
+        case CertificateUnknown(_) => AlertDescription.CertificateUnknown
+        case IllegalParameter(_) => AlertDescription.IllegalParameter
+        case DecodeError(_) => AlertDescription.DecodeError
+        case DecryptError => AlertDescription.DecryptError
+        case ProtocolVersion => AlertDescription.ProtocolVersion
+        case InsufficientSecurity => AlertDescription.InsufficientSecurity
+        case InternalError(_) => AlertDescription.InternalError
+        case MissingExtension(_) => AlertDescription.MissingExtension
+        case UnsupportedExtension(_) => AlertDescription.UnsupportedExtension
+        case NoApplicationProtocol => AlertDescription.NoApplicationProtocol
+
+test "tls cipher-suite code round-trips" =
+    let suites = [
+        CipherSuite.Aes128GcmSha256,
+        CipherSuite.Aes256GcmSha384,
+        CipherSuite.ChaCha20Poly1305Sha256,
+    ]
+    let mutable ok = true
+    for suite in suites do
+        let code = cipherSuiteCode(suite)
+        match cipherSuiteFromCode(code) with
+            case Some(back) => if cipherSuiteCode(back) != code then ok = false
+            case None => ok = false
+    assert ok
+    assert cipherSuiteCode(CipherSuite.Aes128GcmSha256) == 0x1301
+
+test "tls group and signature codes" =
+    assert groupCode(KeyExchangeGroup.X25519) == 0x001d
+    assert groupCode(KeyExchangeGroup.SecP256R1) == 0x0017
+    assert sigSchemeCode(SignatureScheme.Ed25519) == 0x0807
+    assert sigSchemeCode(SignatureScheme.RsaPssRsaeSha384) == 0x0805
+    match groupFromCode(0x0017) with
+        case Some(g) => assert groupCode(g) == 0x0017
+        case None => assert false
+    match sigSchemeFromCode(0x9999) with
+        case Some(_) => assert false
+        case None => assert true
+
+test "tls content-type codes" =
+    assert contentTypeCode(ContentType.Handshake) == 22
+    assert contentTypeCode(ContentType.ApplicationData) == 23
+    match contentTypeFromCode(21) with
+        case Some(ct) => assert contentTypeCode(ct) == 21
+        case None => assert false

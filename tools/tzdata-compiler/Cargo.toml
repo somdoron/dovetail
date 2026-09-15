@@ -1,0 +1,8 @@
+[package]
+name = "tzdata-compiler"
+version = "0.1.0"
+edition = "2024"
+description = "Compile IANA tz source files into the packed format consumed by standard-time"
+
+[dependencies]
+parse-zoneinfo = "0.3"

@@ -1,0 +1,163 @@
+package standard.collection
+
+import standard.prelude.Option
+
+/// A mutable LIFO (last-in, first-out) stack backed by a dynamically-resizing array.
+public class MutableStack<T>(internal mutable data: Array<T>, internal mutable size: Int32) implements Iterable<T> where T: Default =
+    /// Pushes a value onto the top of the stack, growing capacity if needed.
+    public function push(self, value: T): Unit =
+        if self.size >= self.data.length then
+            self.data = self.data.extend(value, self.data.length * 2)
+        self.data.set(self.size, value)
+        self.size = self.size + 1
+
+    /// Removes and returns the top element, or None if the stack is empty.
+    public function pop(self): Option<T> =
+        if self.size == 0 then None
+        else
+            let value = self.data.get(self.size - 1)
+            self.size = self.size - 1
+            Some(value)
+
+    /// Returns the top element without removing it, or None if empty.
+    public property peek(self): Option<T> =
+        if self.size == 0 then None
+        else Some(self.data.get(self.size - 1))
+
+    /// The number of elements on the stack.
+    public property length(self): Int32 = self.size
+
+    /// Creates a new empty MutableStack.
+    public function new(): MutableStack<T> =
+        MutableStack(Array.fill(4, T.default), 0)
+
+    /// Removes all elements that do not satisfy the predicate, preserving order.
+    public function filterInPlace(self, predicate: (T) => Bool): Unit =
+        let mutable write = 0
+        let mutable read = 0
+        while read < self.size do
+            if predicate(self.data.get(read)) then
+                self.data.set(write, self.data.get(read))
+                write = write + 1
+            read = read + 1
+        self.size = write
+
+    /// True if the stack contains no elements.
+    public property isEmpty(self): Bool = self.size == 0
+
+    /// Returns an iterator over the elements of the stack from bottom to top.
+    public function iterator(self): Iterator<T> = MutableStackIterator(self, 0)
+
+implement <T> Default for MutableStack<T> where T: Default =
+    public property default: MutableStack<T> = MutableStack.new()
+
+class MutableStackIterator<T>(stack: MutableStack<T>, mutable index: Int32) implements Iterator<T> where T: Default =
+    public function next(self): Option<T> =
+        if self.index >= self.stack.size then None
+        else
+            let value = self.stack.data.get(self.index)
+            self.index = self.index + 1
+            Some(value)
+
+test "MutableStack new is empty" =
+    let s = MutableStack<Int32>.new()
+    assert s.isEmpty == true
+    assert s.length == 0
+
+test "MutableStack push" =
+    let s = MutableStack<Int32>.new()
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    assert s.length == 3
+
+test "MutableStack peek" =
+    let s = MutableStack<Int32>.new()
+    s.push(10)
+    s.push(20)
+    assert s.peek.isSome
+    assert s.peek.require == 20
+
+test "MutableStack peek empty" =
+    let s = MutableStack<Int32>.new()
+    assert s.peek.isNone
+
+test "MutableStack pop" =
+    let s = MutableStack<Int32>.new()
+    s.push(10)
+    s.push(20)
+    let val = s.pop()
+    assert val.isSome
+    assert val.require == 20
+    assert s.length == 1
+
+test "MutableStack pop empty" =
+    let s = MutableStack<Int32>.new()
+    assert s.pop().isNone
+
+test "MutableStack LIFO order" =
+    let s = MutableStack<Int32>.new()
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    let r1 = s.pop()
+    assert r1.isSome
+    assert r1.require == 3
+    let r2 = s.pop()
+    assert r2.isSome
+    assert r2.require == 2
+    let r3 = s.pop()
+    assert r3.isSome
+    assert r3.require == 1
+    assert s.pop().isNone
+
+test "MutableStack push after pop" =
+    let s = MutableStack<Int32>.new()
+    s.push(1)
+    s.push(2)
+    s.pop()
+    s.push(3)
+    assert s.length == 2
+    assert s.peek.isSome
+    assert s.peek.require == 3
+
+test "MutableStack filterInPlace" =
+    let s = MutableStack<Int32>.new()
+    s.push(1)
+    s.push(2)
+    s.push(3)
+    s.push(4)
+    s.push(5)
+    s.filterInPlace((x: Int32) => x % 2 != 0)
+    assert s.length == 3
+    assert s.pop().require == 5
+    assert s.pop().require == 3
+    assert s.pop().require == 1
+
+test "MutableStack grows capacity" =
+    let s = MutableStack<Int32>.new()
+    let mutable i = 0
+    while i < 20 do
+        s.push(i)
+        i = i + 1
+    assert s.length == 20
+    let r = s.pop()
+    assert r.isSome
+    assert r.require == 19
+
+test "MutableStack iterator" =
+    let s = MutableStack<Int32>.new()
+    s.push(10)
+    s.push(20)
+    s.push(30)
+    let mutable sum = 0
+    for x in s do
+        sum = sum + x
+    assert sum == 60
+
+test "MutableStack iterator empty" =
+    let s = MutableStack<Int32>.new()
+    let mutable count = 0
+    for x in s do
+        count = count + 1
+    assert count == 0

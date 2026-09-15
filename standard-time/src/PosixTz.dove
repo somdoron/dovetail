@@ -1,0 +1,317 @@
+package standard.time
+
+/// Parsed POSIX TZ string (e.g. `EST5EDT,M3.2.0,M11.1.0/2`).
+///
+/// Used by `TzZone.offsetAt` to extrapolate offsets for epoch values
+/// past the last historical transition stored in the embedded blob.
+/// IANA's tzdata bundles a POSIX rule at the end of every zone's `Zone`
+/// continuation set so all zones with active DST keep projecting
+/// indefinitely.
+///
+/// Variant breakdown:
+///   `Fixed` — single offset, no DST (e.g. `UTC0` or `JST-9`)
+///   `Dst`   — std + dst offsets plus start/end rules for the DST window
+/// Variant payloads (positional). Use the accessor module functions
+/// when accessing fields outside a `match`.
+enum PosixRule =
+    /// `Fixed(stdOffsetSeconds, stdAbbrev)` — single offset, no DST.
+    Fixed(Int32, String)
+    /// `Dst(stdOffsetSeconds, dstOffsetSeconds, stdAbbrev, dstAbbrev,`
+    /// ` startRule, startTimeSec, endRule, endTimeSec)`
+    Dst(Int32, Int32, String, String, PosixDayRule, Int32, PosixDayRule, Int32)
+
+/// POSIX rule for a DST-transition day. Three forms:
+///   `JulianNoLeap(n)`   — day `n` of the year (1..365), skipping leap day
+///   `JulianWithLeap(n)` — day `n` of the year (0..365), includes leap
+///   `Mwd(month, week, day)` — `Mm.w.d` style: m=1..12, w=1..5 (5 = last),
+///                              d=0..6 with 0=Sunday
+enum PosixDayRule =
+    JulianNoLeap(Int32)
+    JulianWithLeap(Int32)
+    Mwd(Int32, Int32, Int32)
+
+module PosixTz =
+
+    /// Parse a POSIX TZ string. Returns `None` on malformed input. An
+    /// empty string returns `None` (the IANA blob uses `""` as a
+    /// "no projection rule" marker for zones whose offset is constant
+    /// past the last historical transition).
+    function parse(s: String): Option<PosixRule> =
+        if s.byteLength == 0 then None
+        else
+            let bytes = s.bytes()
+            let (stdAbbrev, p1) = parseAbbrev(bytes, 0)
+            if p1 < 0 then None
+            else
+                let (stdOff, p2) = parseOffset(bytes, p1)
+                if p2 < 0 then None
+                else
+                    if p2 >= bytes.length then
+                        // Fixed: no DST.
+                        Some(PosixRule.Fixed(-stdOff, stdAbbrev))
+                    else
+                        let (dstAbbrev, p3) = parseAbbrev(bytes, p2)
+                        if p3 < 0 then None
+                        else
+                            // DST offset defaults to STD + 3600 unless specified.
+                            let (dstOffRaw, p4) = if p3 < bytes.length && bytes.get(p3) != 44u8 then
+                                parseOffset(bytes, p3)
+                            else
+                                (stdOff - 3600, p3)
+                            if p4 < 0 then None
+                            else if p4 >= bytes.length || bytes.get(p4) != 44u8 then None
+                            else
+                                let (startRule, startTime, p5) = parseTransition(bytes, p4 + 1)
+                                if p5 < 0 then None
+                                else if p5 >= bytes.length || bytes.get(p5) != 44u8 then None
+                                else
+                                    let (endRule, endTime, _p6) = parseTransition(bytes, p5 + 1)
+                                    Some(PosixRule.Dst(
+                                        -stdOff,
+                                        -dstOffRaw,
+                                        stdAbbrev,
+                                        dstAbbrev,
+                                        startRule,
+                                        startTime,
+                                        endRule,
+                                        endTime
+                                    ))
+
+module PosixRule =
+
+    /// Active UTC offset (seconds) for `(year, dayOfYear)` under this
+    /// rule. `dayOfYear` is 0-based (Jan 1 = 0). `secondOfDay` is the
+    /// local time of day in seconds [0, 86400).
+    function offsetForLocal(
+        self,
+        year: Int32,
+        dayOfYear: Int32,
+        secondOfDay: Int32
+    ): Int32 =
+        match self with
+            case PosixRule.Fixed(off, _) => off
+            case PosixRule.Dst(stdOff, dstOff, _, _, startRule, startTime, endRule, endTime) =>
+                let startDay = ruleDayOfYear(startRule, year)
+                let endDay = ruleDayOfYear(endRule, year)
+                // Compare (day, time) against the rule transitions.
+                // Northern: startDay < endDay (DST in summer).
+                // Southern: startDay > endDay (DST spans year boundary).
+                let nowAfterStart = (dayOfYear > startDay) || (dayOfYear == startDay && secondOfDay >= startTime)
+                let nowBeforeEnd = (dayOfYear < endDay) || (dayOfYear == endDay && secondOfDay < endTime)
+                if startDay < endDay then
+                    if nowAfterStart && nowBeforeEnd then dstOff else stdOff
+                else
+                    // Southern hemisphere: DST is on for [start..endOfYear) ∪ [start-of-year..end)
+                    if nowAfterStart || nowBeforeEnd then dstOff else stdOff
+
+// --- Internal parser helpers ----------------------------------------------
+
+/// Parse a zone abbreviation. Two forms:
+///   `<XYZ+05>` — bracketed, allows '+', '-', digits
+///   `ABC`     — unquoted, letters only
+/// Returns the abbrev and the index AFTER the last consumed byte, or
+/// `("" , -1)` on parse error.
+internal function parseAbbrev(bytes: Array<Uint8>, start: Int32): (String, Int32) =
+    if start >= bytes.length then ("", -1)
+    else if bytes.get(start) == 60u8 then  // '<'
+        let mutable end = start + 1
+        while end < bytes.length && bytes.get(end) != 62u8 do
+            end = end + 1
+        if end >= bytes.length then ("", -1)
+        else
+            let s = String.fromBytes(bytes, start + 1, end - start - 1)
+            (s, end + 1)
+    else
+        let mutable end = start
+        while end < bytes.length && isAsciiAlpha(bytes.get(end)) do
+            end = end + 1
+        if end == start then ("", -1)
+        else
+            let s = String.fromBytes(bytes, start, end - start)
+            (s, end)
+
+/// Parse a `[+|-]H[H][:MM[:SS]]` offset. Returns seconds west of UTC
+/// (POSIX convention: positive offset = behind UTC) and the next index.
+internal function parseOffset(bytes: Array<Uint8>, start: Int32): (Int32, Int32) =
+    if start >= bytes.length then (0, start)
+    else
+        let mutable p = start
+        let mutable sign = 1
+        if bytes.get(p) == 43u8 then  // '+'
+            p = p + 1
+        else if bytes.get(p) == 45u8 then  // '-'
+            sign = -1
+            p = p + 1
+        let (h, p1) = parseUint(bytes, p)
+        if p1 < 0 then (0, -1)
+        else
+            let mutable hours = h
+            let mutable minutes = 0
+            let mutable seconds = 0
+            let mutable q = p1
+            if q < bytes.length && bytes.get(q) == 58u8 then  // ':'
+                let (m, q1) = parseUint(bytes, q + 1)
+                if q1 < 0 then (0, -1)
+                else
+                    minutes = m
+                    q = q1
+                    if q < bytes.length && bytes.get(q) == 58u8 then
+                        let (s, q2) = parseUint(bytes, q + 1)
+                        if q2 < 0 then (0, -1)
+                        else
+                            seconds = s
+                            q = q2
+                            (sign * (hours * 3600 + minutes * 60 + seconds), q)
+                    else
+                        (sign * (hours * 3600 + minutes * 60), q)
+            else
+                (sign * (hours * 3600 + minutes * 60 + seconds), q)
+
+/// Parse a transition `J<day>` / `<day>` / `M<month>.<week>.<day>`
+/// optionally followed by `/HH:MM:SS`. Returns the rule, the time of
+/// day in seconds (default 2:00:00 = 7200), and the next index.
+internal function parseTransition(bytes: Array<Uint8>, start: Int32): (PosixDayRule, Int32, Int32) =
+    if start >= bytes.length then (PosixDayRule.Mwd(0, 0, 0), 0, -1)
+    else
+        let first = bytes.get(start)
+        let (rule, afterRule) =
+            if first == 74u8 then  // 'J'
+                let (d, q) = parseUint(bytes, start + 1)
+                if q < 0 then (PosixDayRule.Mwd(0, 0, 0), -1)
+                else (PosixDayRule.JulianNoLeap(d), q)
+            else if first == 77u8 then  // 'M'
+                let (m, q1) = parseUint(bytes, start + 1)
+                if q1 < 0 || q1 >= bytes.length || bytes.get(q1) != 46u8 then  // '.'
+                    (PosixDayRule.Mwd(0, 0, 0), -1)
+                else
+                    let (w, q2) = parseUint(bytes, q1 + 1)
+                    if q2 < 0 || q2 >= bytes.length || bytes.get(q2) != 46u8 then
+                        (PosixDayRule.Mwd(0, 0, 0), -1)
+                    else
+                        let (d, q3) = parseUint(bytes, q2 + 1)
+                        if q3 < 0 then (PosixDayRule.Mwd(0, 0, 0), -1)
+                        else (PosixDayRule.Mwd(m, w, d), q3)
+            else
+                let (d, q) = parseUint(bytes, start)
+                if q < 0 then (PosixDayRule.Mwd(0, 0, 0), -1)
+                else (PosixDayRule.JulianWithLeap(d), q)
+        if afterRule < 0 then (rule, 0, -1)
+        else if afterRule < bytes.length && bytes.get(afterRule) == 47u8 then  // '/'
+            let (off, afterTime) = parseOffset(bytes, afterRule + 1)
+            (rule, off, afterTime)
+        else
+            // Default transition time: 02:00:00 local.
+            (rule, 7200, afterRule)
+
+/// Parse one or more ASCII digits as a non-negative Int32.
+internal function parseUint(bytes: Array<Uint8>, start: Int32): (Int32, Int32) =
+    let mutable p = start
+    let mutable acc = 0
+    while p < bytes.length && bytes.get(p) >= 48u8 && bytes.get(p) <= 57u8 do
+        acc = acc * 10 + (bytes.get(p).toInt32() - 48)
+        p = p + 1
+    if p == start then (0, -1) else (acc, p)
+
+internal function isAsciiAlpha(b: Uint8): Bool =
+    (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8)
+
+/// Convert a `PosixDayRule` to a 0-based day-of-year for a given year.
+internal function ruleDayOfYear(rule: PosixDayRule, year: Int32): Int32 =
+    match rule with
+        case PosixDayRule.JulianWithLeap(n) => n
+        case PosixDayRule.JulianNoLeap(n) =>
+            if !isLeapYear(year) || n < 60 then n - 1
+            else n
+        case PosixDayRule.Mwd(m, week, weekday) =>
+            // Day-of-year of the first day of month m.
+            let monthStart = monthDayOfYear(m, year)
+            // Weekday of (year, m, 1).
+            let firstDow = dayOfWeek(year, m, 1)
+            // First occurrence of target weekday in the month.
+            let firstOccurrence = (weekday - firstDow + 7) % 7
+            // weekN occurrence: (week-1) * 7 + firstOccurrence (0-indexed in month).
+            let dayInMonth = (week - 1) * 7 + firstOccurrence
+            // If week=5 ("last"), clamp to the last occurrence in the month.
+            let mLen = daysInMonth(m, year)
+            let clamped = if dayInMonth >= mLen then dayInMonth - 7 else dayInMonth
+            monthStart + clamped
+
+internal function isLeapYear(year: Int32): Bool =
+    (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
+
+internal function daysInMonth(m: Int32, year: Int32): Int32 =
+    if m == 1 then 31
+    else if m == 2 then if isLeapYear(year) then 29 else 28
+    else if m == 3 then 31
+    else if m == 4 then 30
+    else if m == 5 then 31
+    else if m == 6 then 30
+    else if m == 7 then 31
+    else if m == 8 then 31
+    else if m == 9 then 30
+    else if m == 10 then 31
+    else if m == 11 then 30
+    else 31
+
+/// 0-based day-of-year for the first day of month `m`.
+internal function monthDayOfYear(m: Int32, year: Int32): Int32 =
+    let mutable acc = 0
+    let mutable i = 1
+    while i < m do
+        acc = acc + daysInMonth(i, year)
+        i = i + 1
+    acc
+
+/// Day-of-week for (year, month, day) using Zeller's congruence; 0=Sunday.
+internal function dayOfWeek(year: Int32, month: Int32, day: Int32): Int32 =
+    let m = if month < 3 then month + 12 else month
+    let y = if month < 3 then year - 1 else year
+    let k = y % 100
+    let j = y / 100
+    let h = (day + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7
+    // Zeller: h=0 → Saturday. Convert to Sunday=0.
+    (h + 6) % 7
+
+// --- Tests -----------------------------------------------------------------
+
+test "PosixTz: parse fixed" =
+    match PosixTz.parse("UTC0") with
+        case Some(PosixRule.Fixed(off, abbrev)) =>
+            assert off == 0
+            assert abbrev == "UTC"
+        case _ => panic "expected Fixed"
+
+test "PosixTz: parse EST5EDT,M3.2.0,M11.1.0" =
+    match PosixTz.parse("EST5EDT,M3.2.0,M11.1.0") with
+        case Some(PosixRule.Dst(stdOff, dstOff, std, dst, _, _, _, _)) =>
+            assert stdOff == -18000   // EST: -5h
+            assert dstOff == -14400   // EDT: -4h
+            assert std == "EST"
+            assert dst == "EDT"
+        case _ => panic "expected Dst"
+
+test "PosixTz: parse JST-9 fixed" =
+    match PosixTz.parse("JST-9") with
+        case Some(PosixRule.Fixed(off, _)) => assert off == 9 * 3600
+        case _ => panic "expected Fixed"
+
+test "PosixTz: empty string returns None" =
+    match PosixTz.parse("") with
+        case None => ()
+        case _ => panic "expected None"
+
+test "PosixTz: NY mid-July is EDT (-4h)" =
+    match PosixTz.parse("EST5EDT,M3.2.0,M11.1.0") with
+        case Some(rule) =>
+            // July 15 = day 195 (0-based, non-leap), 12:00:00 local = 43200
+            let off = rule.offsetForLocal(2024, 196, 43200)
+            assert off == -14400
+        case _ => panic "expected Dst rule"
+
+test "PosixTz: NY mid-January is EST (-5h)" =
+    match PosixTz.parse("EST5EDT,M3.2.0,M11.1.0") with
+        case Some(rule) =>
+            // January 15 = day 14 (0-based)
+            let off = rule.offsetForLocal(2024, 14, 43200)
+            assert off == -18000
+        case _ => panic "expected Dst rule"

@@ -1,0 +1,311 @@
+package standard.sqlite
+
+import sqlite.raw.Raw
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Resource
+
+// =============================================================================
+// High-level SQLite API over the low-level generated bindings (`sqlite.raw`,
+// projected from the built-in sqlite component's WIT). The component's exports
+// are async-stackful: every call is an `Async` subtask, so SQLite's blocking
+// p2 filesystem I/O runs on the component's own fiber and suspends there
+// instead of stalling the caller's store. This layer owns all policy: raw s32
+// result codes become `Result<_, SqliteError>` with the connection's error
+// message folded in, rows become `Array<SqlValue>`, and lifecycles are
+// `Resource`s (scoped with `use`). Database/statement handles are opaque
+// `Uint64` values (raw pointers) from the shim.
+// See docs/component-model-design.md.
+// =============================================================================
+
+/// An error reported by SQLite: the raw result code plus the connection's
+/// human-readable error message at the time of failure.
+public record SqliteError =
+    code: Int32
+    message: String
+
+implement Display for SqliteError =
+    public function format(self: SqliteError): String =
+        "sqlite error " ++ self.code.format() ++ ": " ++ self.message
+
+/// Identity conversion, so `transaction`'s `E: From<SqliteError>` bound is
+/// satisfied for the common case where the body's error type IS `SqliteError`
+/// (Dovetail has no blanket `From<T> for T`).
+implement From<SqliteError> for SqliteError =
+    public function from(value: SqliteError): SqliteError = value
+
+/// A dynamically-typed SQL value: what SQLite stores in one column cell.
+public enum SqlValue =
+    Null
+    Integer(Int64)
+    Real(Float64)
+    Text(String)
+    Blob(Array<Uint8>)
+
+module SqlValue =
+    /// The name of this value's storage class, for error messages. Lives on
+    /// `SqlValue`'s module rather than as a free function so that derived
+    /// `FromSqlValue` implementations can reach it: generated code is spliced
+    /// into the user's file, which imports `SqlValue` but not this package's
+    /// free functions. (The same reason `standard.json`'s derives go through
+    /// `Json.getField`.)
+    public function storageClassName(self): String =
+        match self with
+            case SqlValue.Null => "Null"
+            case SqlValue.Integer(_) => "Integer"
+            case SqlValue.Real(_) => "Real"
+            case SqlValue.Text(_) => "Text"
+            case SqlValue.Blob(_) => "Blob"
+
+/// `ArrayList<T>` requires `T: Default`; `SqlBuilder` accumulates parameters
+/// into one. NULL is the natural zero of a SQL cell.
+implement Default for SqlValue =
+    public property default: SqlValue = SqlValue.Null
+
+/// An open database connection. Obtain with `use Connection.open(...)`; the
+/// connection is closed on scope exit.
+public record Connection =
+    db: Uint64
+
+/// A prepared statement. Obtain with `use conn.statement(...)`; finalized on
+/// scope exit. `Connection` helpers like `execute`/`query` manage statement
+/// lifecycles internally.
+public record PreparedStatement =
+    db: Uint64
+    stmt: Uint64
+
+module Connection =
+    /// The database file at `path` as a resource, created if missing.
+    /// Closed on scope exit.
+    public function open(path: String): Resource<Connection, SqliteError> =
+        // SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE
+        Connection.openWith(path, 0x6u32)
+
+    /// Like `open`, with an explicit SQLITE_OPEN_* flag mask.
+    public function openWith(path: String, flags: Uint32): Resource<Connection, SqliteError> =
+        let acquire: () => Async<Connection, SqliteError> = async () =>
+            let opened = await Raw.open(path, flags).mapError<SqliteError>(
+                (code: Int32) => SqliteError { code = code; message = "cannot open database" }
+            )
+            Connection { db = opened }
+        Resource.make(acquire, (conn: Connection) => Raw.dbClose(conn.db))
+
+    /// Rowid of the most recent successful INSERT on this connection.
+    public async function lastInsertRowid(self): Async<Int64, SqliteError> =
+        await Raw.lastInsertRowid(self.db)
+
+    /// Rows changed by the most recent statement.
+    public async function changes(self): Async<Int64, SqliteError> =
+        await Raw.changes(self.db)
+
+    /// Build the connection's current error as a typed `SqliteError`.
+    async function errorFrom(self, code: Int32): Async<SqliteError, Never> =
+        let msg = await Raw.errmsg(self.db)
+        SqliteError { code = code; message = msg }
+
+    /// `sql` compiled to a prepared statement, as a resource. Finalized on
+    /// scope exit.
+    public function statement(self, sql: String): Resource<PreparedStatement, SqliteError> =
+        let db = self.db
+        let acquire: () => Async<PreparedStatement, SqliteError> = async () =>
+            let handler: (Int32) => Async<Uint64, SqliteError> = async (code: Int32) =>
+                let e = await self.errorFrom(code)
+                await Async.fail(e)
+            let stmt = await Raw.prepare(db, sql).catchAll<SqliteError>(handler)
+            PreparedStatement { db = db; stmt = stmt }
+        Resource.make(
+            acquire,
+            (statement: PreparedStatement) => Raw.stmtFinalize(statement.stmt)
+        )
+
+    /// Run a statement that yields no rows. Returns the affected row count.
+    public async function execute(self, sql: String): Async<Int64, SqliteError> =
+        let noParams: Array<SqlValue> = Array.empty()
+        await self.executeWith(sql, noParams)
+
+    /// Run a parameterized statement that yields no rows.
+    public async function executeWith(self, sql: String, params: Array<SqlValue>): Async<Int64, SqliteError> =
+        let statement = use self.statement(sql)
+        await statement.bindAll(params)
+        await statement.drain()
+        await Raw.changes(self.db)
+
+    /// Run a query, returning every row as a `List` (each row an `Array` of
+    /// column values).
+    public async function query(self, sql: String): Async<List<Array<SqlValue>>, SqliteError> =
+        let noParams: Array<SqlValue> = Array.empty()
+        await self.queryWith(sql, noParams)
+
+    /// Run a parameterized query, returning every row as a `List`.
+    public async function queryWith(self, sql: String, params: Array<SqlValue>): Async<List<Array<SqlValue>>, SqliteError> =
+        let statement = use self.statement(sql)
+        await statement.bindAll(params)
+        await statement.collectRows()
+
+    /// Run a parameterized query expected to yield at most one row.
+    public async function queryOne(self, sql: String, params: Array<SqlValue>): Async<Option<Array<SqlValue>>, SqliteError> =
+        let rows = await self.queryWith(sql, params)
+        rows.headOption
+
+    /// Like `queryWith`, but each row carries the result set's column names so
+    /// it can be decoded through `FromRow`. This is what `Query.fetchAll` and
+    /// friends use; `queryWith` is unchanged for positional callers.
+    public async function queryRows(self, sql: String, params: Array<SqlValue>): Async<List<Row>, SqliteError> =
+        let statement = use self.statement(sql)
+        await statement.bindAll(params)
+        await statement.collectNamedRows()
+
+    /// Run `body` inside a transaction: `BEGIN`, then `body`, then `COMMIT` on
+    /// success. If `body` fails, panics, or is **interrupted**, the transaction
+    /// is rolled back — the rollback runs through `bracketWithResult`'s release,
+    /// which is masked and always runs, so an interrupt can never leave the
+    /// connection with a dangling open transaction.
+    ///
+    /// The body may fail with any error type `E` that a `SqliteError` can be
+    /// converted into (`E: From<SqliteError>`): the transaction's own `BEGIN`/
+    /// `COMMIT` errors lift into `E`, so a body that mixes SQL with domain logic
+    /// need not funnel everything through `SqliteError`. Use `E = SqliteError`
+    /// (the identity conversion) for a pure-SQL body.
+    ///
+    /// `COMMIT` runs inside the body (not the release) so a failed commit
+    /// surfaces as an error instead of being silently swallowed; if it fails,
+    /// the release then rolls the still-open transaction back. On success the
+    /// release does nothing — no redundant `ROLLBACK` round-trip.
+    ///
+    /// Not re-entrant: SQLite rejects `BEGIN` inside an active transaction, so a
+    /// nested `transaction` fails at its inner `BEGIN`. Savepoint-based nesting
+    /// would be a separate feature.
+    public function transaction<T, E>(self, body: (Connection) => Async<T, E>): Async<T, E> where E: From<SqliteError> =
+        let toE: (SqliteError) => E = (e: SqliteError) => E.from(e)
+        let commitThen: (T) => Async<T, E> = (value: T) =>
+            self.execute("COMMIT").mapError<E>(toE).map<T>((_: Int64) => value)
+        let runBody: (Unit) => Async<T, E> = (_: Unit) =>
+            body(self).andThen<T>(commitThen)
+        let rollbackQuietly: Async<Unit, Never> =
+            self.execute("ROLLBACK").catchAll<Never>((_: SqliteError) => Async.succeed(0i64)).asUnit()
+        let release: (Unit, Result<T, Cause<E>>) => Async<Unit, Never> = (_: Unit, outcome: Result<T, Cause<E>>) =>
+            match outcome with
+                case Ok(_) => Async.succeed(())
+                case Error(_) => rollbackQuietly
+        let begin: Async<Unit, E> = self.execute("BEGIN").mapError<E>(toE).asUnit()
+        Async<T, E>.bracketWithResult<Unit>(begin, release, runBody)
+
+module PreparedStatement =
+    async function errorFrom(self, code: Int32): Async<SqliteError, Never> =
+        let msg = await Raw.errmsg(self.db)
+        SqliteError { code = code; message = msg }
+
+    /// Bind one parameter. Parameter indexes are 1-based, as in SQL.
+    public async function bind(self, index: Int32, value: SqlValue): Async<Unit, SqliteError> =
+        let code =
+            match value with
+                case SqlValue.Null => await Raw.bindNull(self.stmt, index)
+                case SqlValue.Integer(v) => await Raw.bindInt64(self.stmt, index, v)
+                case SqlValue.Real(v) => await Raw.bindDouble(self.stmt, index, v)
+                case SqlValue.Text(v) => await Raw.bindText(self.stmt, index, v)
+                case SqlValue.Blob(v) => await Raw.bindBlob(self.stmt, index, v)
+        if code == 0 then ()
+        else
+            let e = await self.errorFrom(code)
+            await Async.fail(e)
+
+    /// Bind parameters positionally (`params.get(0)` binds to `?1`).
+    public async function bindAll(self, params: Array<SqlValue>): Async<Unit, SqliteError> =
+        let mutable i = 0
+        while i < params.length do
+            await self.bind(i + 1, params.get(i))
+            i = i + 1
+        ()
+
+    /// Advance the statement — this is where SQL actually executes, on the
+    /// component's own fiber. `true` when a row is available, `false` when
+    /// finished.
+    public async function step(self): Async<Bool, SqliteError> =
+        let code = await Raw.step(self.stmt)
+        if code == 100 then true
+        else if code == 101 then false
+        else
+            let e = await self.errorFrom(code)
+            await Async.fail(e)
+
+    /// Step until done, discarding any rows.
+    public async function drain(self): Async<Unit, SqliteError> =
+        let mutable hasRow = await self.step()
+        while hasRow do
+            hasRow = await self.step()
+        ()
+
+    /// Reset the statement so it can run again (bindings are kept).
+    public async function reset(self): Async<Unit, SqliteError> =
+        let code = await Raw.reset(self.stmt)
+        if code == 0 then ()
+        else
+            let e = await self.errorFrom(code)
+            await Async.fail(e)
+
+    /// Read one column of the current row.
+    public async function value(self, index: Int32): Async<SqlValue, Never> =
+        let columnType = await Raw.columnType(self.stmt, index)
+        if columnType == 1 then SqlValue.Integer(await Raw.columnInt64(self.stmt, index))
+        else if columnType == 2 then SqlValue.Real(await Raw.columnDouble(self.stmt, index))
+        else if columnType == 3 then SqlValue.Text(await Raw.columnText(self.stmt, index))
+        else if columnType == 4 then SqlValue.Blob(await Raw.columnBlob(self.stmt, index))
+        else SqlValue.Null
+
+    /// Name of one column of the result set.
+    public async function columnName(self, index: Int32): Async<String, Never> =
+        await Raw.columnName(self.stmt, index)
+
+    /// Read the entire current row.
+    public async function row(self): Async<Array<SqlValue>, Never> =
+        let count = await Raw.columnCount(self.stmt)
+        await self.valuesOf(count)
+
+    /// Read the first `count` columns of the current row.
+    async function valuesOf(self, count: Int32): Async<Array<SqlValue>, Never> =
+        if count == 0 then Array.empty()
+        else
+            let values = Array.fill(count, SqlValue.Null)
+            let mutable i = 0
+            while i < count do
+                let v = await self.value(i)
+                values.set(i, v)
+                i = i + 1
+            values
+
+    /// The result set's column names. Valid from `prepare` onward, so callers
+    /// read them once per statement rather than once per row.
+    public async function columnNames(self): Async<Array<String>, Never> =
+        let count = await Raw.columnCount(self.stmt)
+        if count == 0 then Array.empty()
+        else
+            let names = Array.fill(count, "")
+            let mutable i = 0
+            while i < count do
+                let name = await Raw.columnName(self.stmt, i)
+                names.set(i, name)
+                i = i + 1
+            names
+
+    /// Step through every row as a `Row`, attaching the result set's column
+    /// names. The names are fetched once, before the first `step`, and shared
+    /// by reference across every row.
+    async function collectNamedRows(self): Async<List<Row>, SqliteError> =
+        let names = await self.columnNames()
+        let mutable rows: List<Row> = List.empty
+        let mutable hasRow = await self.step()
+        while hasRow do
+            let values = await self.valuesOf(names.length)
+            rows = rows.prepend(Row.make(names, values))
+            hasRow = await self.step()
+        rows.reverse()
+
+    /// Step through every row, collecting them into a `List` in result order.
+    async function collectRows(self): Async<List<Array<SqlValue>>, SqliteError> =
+        let mutable rows: List<Array<SqlValue>> = List.empty
+        let mutable hasRow = await self.step()
+        while hasRow do
+            let r = await self.row()
+            rows = rows.prepend(r)
+            hasRow = await self.step()
+        rows.reverse()

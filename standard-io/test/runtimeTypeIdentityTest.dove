@@ -1,0 +1,86 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Fiber
+
+function assertRestoredStringCause(cause: Cause<String>): Unit =
+    let erased: Any = cause
+    assert erased is Cause<String>
+    assert !(erased is Cause<Int32>)
+    match cause with
+    case Cause.Failed(error, _) => assert error == "typed failure"
+    case _ => panic "expected typed failure"
+
+test "runtime identity: foldCause restores the typed cause" =
+    let mutable handled = false
+    let failed: Async<Int32, String> = Async.fail("typed failure")
+    failed.foldCause<Unit, Never>(
+        (cause: Cause<String>) => Async.thunk(() =>
+            assertRestoredStringCause(cause)
+            handled = true
+        ),
+        (_: Int32) => Async.thunk(() => panic "expected failure")
+    ).run()
+    assert handled
+
+test "runtime identity: bracket release restores a successful result" =
+    let mutable released = false
+    let program: Async<Int32, String> = Async<Int32, String>.bracketWithResult<Unit>(
+        Async.succeed(()),
+        (_: Unit, outcome: Result<Int32, Cause<String>>) => Async.thunk(() =>
+            let erased: Any = outcome
+            assert erased is Result<Int32, Cause<String>>
+            assert !(erased is Result<String, Cause<String>>)
+            match outcome with
+                case Ok(value) => assert value == 42
+                case Error(_) => panic "expected success"
+            released = true
+        ),
+        (_: Unit) => Async.succeed(42)
+    )
+    program.run()
+    assert released
+
+test "runtime identity: bracket release restores a failed result and its cause" =
+    let mutable released = false
+    let program: Async<Int32, String> = Async<Int32, String>.bracketWithResult<Unit>(
+        Async.succeed(()),
+        (_: Unit, outcome: Result<Int32, Cause<String>>) => Async.thunk(() =>
+            let erased: Any = outcome
+            assert erased is Result<Int32, Cause<String>>
+            assert !(erased is Result<Int32, Cause<Int32>>)
+            match outcome with
+                case Error(cause) => assertRestoredStringCause(cause)
+                case Ok(_) => panic "expected failure"
+            released = true
+        ),
+        (_: Unit) => Async.fail("typed failure")
+    )
+    program.foldCause<Unit, Never>(
+        (cause: Cause<String>) => Async.thunk(() => assertRestoredStringCause(cause)),
+        (_: Int32) => Async.thunk(() => panic "expected failure")
+    ).run()
+    assert released
+
+async function assertTypedForkHandle(background: Bool): Async<Unit, String> =
+    let source: Async<Int32, String> = Async.yieldNow().andThen<Int32>((_: Unit) => Async.succeed(42))
+    let fiber: Fiber<Int32, String> = await (if background then source.forkBackground() else source.fork())
+    let erased: Any = fiber
+    assert erased is Fiber<Int32, String>
+    assert !(erased is Fiber<String, String>)
+    assert !(erased is Fiber<Int32, Int32>)
+    let restored = erased as Fiber<Int32, String>
+    assert ClassIdentity.equals(fiber, restored)
+    let hash = ClassIdentity.hash(fiber)
+    assert ClassIdentity.hash(restored) == hash
+    assert (await fiber.join()) == 42
+    // A second join reads the completion stored on the same returned handle.
+    assert (await restored.join()) == 42
+    assert ClassIdentity.hash(fiber) == hash
+
+test "runtime identity: fork preserves typed handle identity and completion" =
+    assertTypedForkHandle(false).run()
+
+test "runtime identity: forkBackground preserves typed handle identity and completion" =
+    assertTypedForkHandle(true).run()

@@ -1,0 +1,666 @@
+package test
+
+import standard.io.Async
+import standard.io.Resource
+import standard.io.ReentrantMutex
+import standard.io.Fiber
+import standard.io.Promise
+import standard.io.Cause
+import standard.time.Duration
+
+// Interrupting a fiber must still run its resource finalizers (the `use`
+// bracket release) — interruption unwinds the continuation stack rather than
+// discarding it. Without this an interrupted server leaks every in-flight
+// connection.
+async function blockUnderResource(
+    res: Resource<Int32, Never>,
+    ready: Promise<Unit, Never>,
+    never: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _v = use res
+    await ready.complete(())
+    await never.awaitPromise()
+
+async function interruptReleaseProgram(mark: () => Unit): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark())
+    )
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let fiber: Fiber<Unit, Never> = await blockUnderResource(res, ready, never).fork()
+    // the forked fiber signals `ready` after acquiring the resource, then parks
+    // on `never`; awaiting `ready` guarantees it is suspended before we interrupt.
+    await ready.awaitPromise()
+    await fiber.interrupt()
+    // wait for it to finish unwinding its finalizer
+    await fiber.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+test "Resource: interrupt runs the finalizer" =
+    let mutable released = false
+    interruptReleaseProgram(() => released = true).run()
+    assert released
+
+// Interrupting a fiber parked on a real HOST waitable (a `sleep` timer subtask),
+// rather than on an in-runtime promise. The runtime must unlink the waitable
+// from the waitable-set BEFORE running `onCancel` — `awaitCall`'s onCancel drops
+// the subtask handle, and dropping a waitable that is still a set member traps.
+async function sleepUnderResource(
+    res: Resource<Int32, Never>,
+    ready: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _v = use res
+    await ready.complete(())
+    // Parks on a host timer subtask; the interrupt below lands here.
+    await Async<Unit, Never>.sleep(Duration.ofSeconds(60i64))
+
+async function interruptSleepProgram(mark: () => Unit): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark())
+    )
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let fiber: Fiber<Unit, Never> = await sleepUnderResource(res, ready).fork()
+    // `ready` fires before the sleep, and the forked fiber keeps running until it
+    // parks — so it is suspended on the timer by the time we resume here.
+    await ready.awaitPromise()
+    await fiber.interrupt()
+    await fiber.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(5000)
+test "Resource: interrupt while parked in sleep cancels the timer and releases" =
+    let mutable released = false
+    interruptSleepProgram(() => released = true).run()
+    assert released
+
+// An interrupt that arrives while the fiber is inside an `uninterruptible`
+// region is deferred to the end of that region. When it is finally delivered it
+// must unwind the REMAINING continuation — an enclosing bracket's release still
+// has to run — rather than completing the fiber and discarding those frames.
+async function uninterruptibleParked(
+    ready: Promise<Unit, Never>,
+    go: Promise<Unit, Never>
+): Async<Unit, Never> =
+    await ready.complete(())
+    await go.awaitPromise()
+
+async function bracketWithUninterruptibleBody(
+    res: Resource<Int32, Never>,
+    ready: Promise<Unit, Never>,
+    go: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _v = use res
+    await uninterruptibleParked(ready, go).uninterruptible()
+
+async function deferredInterruptProgram(mark: () => Unit): Async<Unit, Never> =
+    let res: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => mark())
+    )
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let go: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let fiber: Fiber<Unit, Never> = await bracketWithUninterruptibleBody(res, ready, go).fork()
+    await ready.awaitPromise()
+    // The fiber is parked INSIDE the uninterruptible region, so this interrupt is
+    // only marked pending.
+    await fiber.interrupt()
+    // Wake it: the region ends and the deferred interrupt is delivered.
+    await go.complete(())
+    await fiber.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(5000)
+test "Resource: deferred interrupt after an uninterruptible region runs the finalizer" =
+    let mutable released = false
+    deferredInterruptProgram(() => released = true).run()
+    assert released
+
+test "Resource minimal use desugar" =
+    let r: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(7),
+        (_: Int32) => Async.succeed(())
+    )
+    let mutable got = 0
+    let program: Async<Unit, Never> =
+        let v = use r
+        Async.thunk(() => got = v)
+    program.run()
+    assert got == 7
+
+// `attachToScope` with no enclosing `use` or `Async.scope()` registers on the
+// fiber's ROOT scope, so the resource lives as long as the fiber and is released
+// when the body ends. Never dangles, and — unlike the `useForever` this replaced
+// — the release actually runs.
+async function attachAtRootProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let r: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(7),
+        (_: Int32) => Async.thunk(() => mark(2))
+    )
+    let v = await r.attachToScope()
+    await Async.thunk(() => mark(v))
+
+test "Resource: attachToScope with no enclosing scope releases when the fiber ends" =
+    let mutable order = 0
+    attachAtRootProgram((n: Int32) => order = order * 10 + n).run()
+    // Body ran with the acquired value (7), then the root scope closed and released.
+    assert order == 72
+
+test "Resource with mutable release counter" =
+    let mutable released = 0
+    let r: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(7),
+        (_: Int32) => Async.thunk(() => released = released + 1)
+    )
+    let mutable got = 0
+    let program: Async<Unit, Never> =
+        let v = use r
+        Async.thunk(() => got = v)
+    program.run()
+    assert got == 7
+    assert released == 1
+
+test "Resource: nested resources release LIFO via use" =
+    let mutable order = 0
+    let outer: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => order = order * 10 + 3)
+    )
+    let inner: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(2),
+        (_: Int32) => Async.thunk(() => order = order * 10 + 2)
+    )
+    let program: Async<Unit, Never> =
+        let a = use outer
+        let b = use inner
+        Async.thunk(() => order = order * 10 + 1)
+    program.run()
+    assert order == 123
+
+// `Async.scope()` is a resource that acquires nothing, so `use` on it opens a
+// scope and nothing else. Written bare — no `let` — because the scope is never
+// a value worth naming. That shape goes down a desugar path (`extract_first_use`
+// on a statement that is not a `let`) that nothing else in the tree exercises,
+// so it is pinned here: the rest of the block must still become the
+// continuation, and a resource used inside must still release at the block's
+// end rather than on the spot.
+test "Async.scope: a bare `use Async.scope()` runs the rest of the block" =
+    let mutable order = 0
+    let r: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(7),
+        (_: Int32) => Async.thunk(() => order = order * 10 + 2)
+    )
+    let program: Async<Unit, Never> =
+        use Async.scope()
+        let v = use r
+        Async.thunk(() => order = order * 10 + v)
+    program.run()
+    // Body ran with the acquired value (7), then the resource released (2).
+    assert order == 72
+
+// --- attachToScope -----------------------------------------------------------
+//
+// `use r` opens a scope AND attaches `r` to it. `r.attachToScope()` only
+// attaches, to whichever scope is innermost when it runs. The tests below pin
+// the one rule that ties the two together: finalizers run in reverse
+// acquisition order, whichever spelling acquired them.
+
+function counted(value: Int32, mark: (Int32) => Unit, n: Int32): Resource<Int32, Never> =
+    Resource.make(
+        () => Async.succeed(value),
+        (_: Int32) => Async.thunk(() => mark(n))
+    )
+
+async function attachInScopeProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let v = await counted(7, mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+
+test "Resource: attachToScope releases at the end of the enclosing Async.scope" =
+    let mutable order = 0i32
+    attachInScopeProgram((n: Int32) => order = order * 10i32 + n).run()
+    // Body, then the scope closed and released. Not `21`: the release must not
+    // happen on the spot, at the end of the attaching statement.
+    assert order == 12i32
+
+async function attachLifoProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let a = await counted(1, mark, 4i32).attachToScope()
+    let b = await counted(2, mark, 3i32).attachToScope()
+    let c = await counted(3, mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+
+test "Resource: multiple attachToScope calls release LIFO" =
+    let mutable order = 0i32
+    attachLifoProgram((n: Int32) => order = order * 10i32 + n).run()
+    assert order == 1234i32
+
+// THE ordering test, and the reason a plain `use` bracket is a valid attach
+// target. `inner` is acquired after `outer`, so it must be released BEFORE it —
+// if an attach could skip the enclosing bracket and land on some outer scope,
+// this would come out `132` and a resource would outlive what it was derived
+// from. Under WASI p3, where handle indices are reused after a drop, that is
+// not a leak but a close landing on somebody else's handle.
+async function attachUnderUseProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let outerValue = use counted(1, mark, 3i32)
+    let innerValue = await counted(2, mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+
+test "Resource: attachToScope under a use releases before the use's own resource" =
+    let mutable order = 0i32
+    attachUnderUseProgram((n: Int32) => order = order * 10i32 + n).run()
+    assert order == 123i32
+
+async function attachThenFailProgram(mark: (Int32) => Unit): Async<Int32, Int32> =
+    use Async.scope()
+    let v = await counted(1, mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+    await Async<Int32, Int32>.fail(7i32)
+
+@timeout(5000)
+test "Resource: attachToScope releases when the scope's body fails" =
+    let mutable order = 0i32
+    let mutable failure = 0i32
+    let mark: (Int32) => Unit = (n: Int32) => order = order * 10i32 + n
+    let program: Async<Unit, Never> = attachThenFailProgram(mark).fold<Unit, Never>(
+        (e: Int32) => Async.thunk(() => failure = e),
+        (_: Int32) => Async.succeed(())
+    )
+    program.run()
+    assert order == 12i32
+    // The original failure escapes, not anything the unwind raised.
+    assert failure == 7i32
+
+async function attachInterruptedProgram(
+    mark: (Int32) => Unit,
+    ready: Promise<Unit, Never>,
+    never: Promise<Unit, Never>
+): Async<Unit, Never> =
+    use Async.scope()
+    let v = await counted(1, mark, 1i32).attachToScope()
+    await ready.complete(())
+    await never.awaitPromise()
+
+async function interruptAttachProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let never: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let fiber: Fiber<Unit, Never> =
+        await attachInterruptedProgram(mark, ready, never).fork()
+    await ready.awaitPromise()
+    await fiber.interrupt()
+    await fiber.join().foldCause(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+@timeout(5000)
+test "Resource: attachToScope releases when the fiber is interrupted" =
+    let mutable released = 0i32
+    interruptAttachProgram((_: Int32) => released = released + 1i32).run()
+    // Interruption unwinds the continuation, so the scope still closes and the
+    // attachment still runs — exactly once.
+    assert released == 1i32
+
+// The answer to the one footgun this feature has: an attach with no scope of its
+// own registers on the fiber's root scope, so a long-running loop that attached
+// per turn would hold every resource until the fiber ended. A scope inside the
+// loop body bounds each turn to itself — release before the next acquire, so at
+// most one is live at a time.
+async function loopTurn(mark: (Int32) => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let v = await counted(1, mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+
+async function attachLoopProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let mutable i = 0i32
+    while i < 3i32 do
+        await loopTurn(mark)
+        i = i + 1i32
+    ()
+
+@timeout(5000)
+test "Resource: attachToScope in a loop under a per-turn scope releases each turn" =
+    let mutable order = 0i32
+    attachLoopProgram((n: Int32) => order = order * 10i32 + n).run()
+    // `121212`, not `111222`: each turn releases before the next acquires.
+    assert order == 121212i32
+
+// Phase 7 — `From` auto-conversion at `use` sites. `use file.open(p)` should
+// just work when `From<FileError> for AppError` exists, without an explicit
+// `.mapError(...)`.
+
+newtype FileError = String
+
+implement Display for FileError =
+    public function format(self: FileError): String = self.value
+
+newtype AppError = String
+
+implement Display for AppError =
+    public function format(self: AppError): String = self.value
+
+implement From<FileError> for AppError =
+    public function from(value: FileError): AppError = AppError("io: " ++ value.value)
+
+test "Resource: From auto-conversion at use site" =
+    let mutable saw = ""
+    let acquire: () => Async<Int32, FileError> = () =>
+        let a: Async<Int32, FileError> = Async.fail(FileError("disk-bad"))
+        a
+    let fileResource: Resource<Int32, FileError> = Resource.make(
+        acquire,
+        (_: Int32) => Async.succeed(())
+    )
+    // The function returns Async<_, AppError> but the resource fails with
+    // FileError. The compiler auto-inserts `From.from` via the synthesized
+    // errorF — no explicit `.mapError(AppError.from)` needed at the use site.
+    let program: Async<Unit, AppError> =
+        let _v = use fileResource
+        Async.succeed(())
+    let recorded: Async<Unit, Never> = program.fold(
+        (e: AppError) => Async.thunk(() => saw = e.value),
+        (_: Unit) => Async.thunk(() => saw = "<unexpected success>")
+    )
+    recorded.run()
+    assert saw == "io: disk-bad"
+
+test "Resource: andThen releases the outer resource when the inner acquire fails" =
+    // Regression: a failed dependent (inner) acquire must NOT drop the outer finalizer.
+    // That finalizer is the only thing that frees the underlying handle, so dropping it
+    // leaks the resource (e.g. a socket from a failed Tcp.connect after the socket was
+    // already created).
+    let mutable outerReleased = false
+    let outerAcquire: () => Async<Int32, FileError> = () =>
+        let a: Async<Int32, FileError> = Async.succeed(1)
+        a
+    let outer: Resource<Int32, FileError> = Resource.make(
+        outerAcquire,
+        (_: Int32) => Async.thunk(() => outerReleased = true)
+    )
+    let innerAcquire: () => Async<Int32, FileError> = () =>
+        let a: Async<Int32, FileError> = Async.fail(FileError("inner-acquire-failed"))
+        a
+    let inner: Resource<Int32, FileError> = Resource.make(
+        innerAcquire,
+        (_: Int32) => Async.succeed(())
+    )
+    let program: Async<Unit, FileError> =
+        let _v = use outer.andThen<Int32>((_: Int32) => inner)
+        Async.succeed(())
+    let recorded: Async<Unit, Never> = program.fold(
+        (_: FileError) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+    recorded.run()
+    assert outerReleased
+
+test "Resource: zip releases the left resource when the right acquire fails" =
+    let mutable leftReleased = false
+    let leftAcquire: () => Async<Int32, FileError> = () =>
+        let a: Async<Int32, FileError> = Async.succeed(1)
+        a
+    let left: Resource<Int32, FileError> = Resource.make(
+        leftAcquire,
+        (_: Int32) => Async.thunk(() => leftReleased = true)
+    )
+    let rightAcquire: () => Async<Int32, FileError> = () =>
+        let a: Async<Int32, FileError> = Async.fail(FileError("right-acquire-failed"))
+        a
+    let right: Resource<Int32, FileError> = Resource.make(
+        rightAcquire,
+        (_: Int32) => Async.succeed(())
+    )
+    let program: Async<Unit, FileError> =
+        let _v = use left.zip<Int32>(right)
+        Async.succeed(())
+    let recorded: Async<Unit, Never> = program.fold(
+        (_: FileError) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+    recorded.run()
+    assert leftReleased
+
+// --- Switchable (ZIO-style resource swapping) ---
+
+test "Switchable: holds initial value, releases at scope end" =
+    let mutable released = 0
+    let initial: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => released = released + 1)
+    )
+    let mutable got = 0
+    let program: Async<Unit, Never> =
+        let sw = use Resource.switchable(initial)
+        Async.thunk(() => got = sw.value())
+    program.run()
+    assert got == 1
+    assert released == 1
+
+async function replaceProgram(
+    first: Resource<Int32, Never>,
+    second: Resource<Int32, Never>,
+    setAfter: (Int32) => Unit
+): Async<Unit, Never> =
+    let sw = use Resource.switchable(first)
+    let newVal = await sw.replace(second)
+    setAfter(newVal)
+
+test "Switchable: replace acquires new and releases old" =
+    let mutable releaseOrder = 0
+    let first: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(10),
+        (_: Int32) => Async.thunk(() => releaseOrder = releaseOrder * 10 + 1)
+    )
+    let second: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(20),
+        (_: Int32) => Async.thunk(() => releaseOrder = releaseOrder * 10 + 2)
+    )
+    let mutable afterReplace = 0
+    replaceProgram(first, second, (v: Int32) => afterReplace = v).run()
+    assert afterReplace == 20
+    // First released by replace, second released at scope end → order 12.
+    assert releaseOrder == 12
+
+async function beforeAfterProgram(
+    first: Resource<Int32, Never>,
+    second: Resource<Int32, Never>,
+    setBefore: (Int32) => Unit,
+    setAfter: (Int32) => Unit
+): Async<Unit, Never> =
+    let sw = use Resource.switchable(first)
+    setBefore(sw.value())
+    let _v = await sw.replace(second)
+    setAfter(sw.value())
+
+test "Switchable: value reflects the most recent resource" =
+    let first: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(100),
+        (_: Int32) => Async.succeed(())
+    )
+    let second: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(200),
+        (_: Int32) => Async.succeed(())
+    )
+    let mutable before = 0
+    let mutable after = 0
+    beforeAfterProgram(
+        first,
+        second,
+        (v: Int32) => before = v,
+        (v: Int32) => after = v
+    ).run()
+    assert before == 100
+    assert after == 200
+
+// --- forkAndUse: acquired in the parent, released by the child ----------------
+//
+// `forkAndUse` acquires in the CALLING fiber — so acquisition is serialized,
+// which is the whole reason it exists: a p3 accept stream permits one
+// outstanding accept, and the loop takes connections one at a time and hands
+// each to a fiber of its own. The release is armed by the `foldCause` the CHILD
+// steps into, which leaves a window with the resource held and nothing owning
+// it: the child is enqueued and has not run.
+//
+// A fiber in that window is exactly what a failing accept loop interrupts, and
+// what it leaks there is a socket per connection.
+
+/// The marker sits AFTER an await deliberately. `forkAndUse` builds the body in
+/// the calling fiber, and an `async function` runs everything up to its first
+/// `await` when it is called — so a marker before one would record the parent's
+/// construction rather than the child's execution, and this test would be about
+/// nothing.
+async function neverStarts(ran: Array<Bool>): Async<Unit, Never> =
+    await Async<Unit, Never>.sleep(Duration.ofMillis(10i64))
+    ran.set(0, true)
+
+@timeout(10000)
+test "forkAndUse releases a resource whose fiber is interrupted before its first step" =
+    let released = Array<Bool>.fill(1, false)
+    let bodyRan = Array<Bool>.fill(1, false)
+    forkAndUseInterruptProgram(released, bodyRan).run()
+    // The finalizer ran, so the connection this stands for was closed.
+    assert released.get(0)
+    // And the interrupt still means what it said: the body did not run. The
+    // deferral that makes the release survive is exactly ONE step — enough for
+    // the fiber's outermost handler to become a frame, and no further. Deferring
+    // to the next suspension instead would let a body whose first node resolves
+    // immediately finish normally, which is a fiber ignoring its interrupt.
+    assert !bodyRan.get(0)
+
+async function forkAndUseInterruptProgram(released: Array<Bool>, bodyRan: Array<Bool>): Async<Unit, Never> =
+    let held: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(7),
+        (_: Int32) => Async.thunk(() => released.set(0, true))
+    )
+    let child: Fiber<Unit, Never> = await held.forkAndUse<Unit, Never>((_: Int32) => neverStarts(bodyRan))
+    // Nothing between the fork and this has yielded, so the child is still in
+    // the run queue with its whole program — handlers included — sitting in the
+    // one field an interrupt used to overwrite.
+    await child.interrupt()
+    await child.join().foldCause<Unit, Never>(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+// --- interruptible acquires ----------------------------------------------------
+
+// A `.timeout` over an acquire whose park opted back in with `.interruptible()`
+// must fire on time and cancel the wait — the reason the opt-in exists. The
+// mutex acquire is the in-tree archetype: queued behind a holder, the waiter's
+// park is cancellable even though the acquire around it is masked.
+async function timeoutOverQueuedAcquire(mark: (Int32) => Unit): Async<Unit, Never> =
+    let m = await ReentrantMutex.make()
+    let holding: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let releaseIt: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let holder: Fiber<Unit, Never> = await holdMutexUntil(m, holding, releaseIt).forkBackground()
+    await holding.awaitPromise()
+    // Queued behind the holder; the timeout must cut this wait short.
+    let outcome: Option<Unit> = await lockBriefly(m).timeout(Duration.ofMillis(20i64))
+    match outcome with
+        case None => mark(1i32)
+        case Some(_) => mark(9i32)
+    await releaseIt.complete(())
+    ()
+
+async function holdMutexUntil(
+    m: ReentrantMutex,
+    holding: Promise<Unit, Never>,
+    releaseIt: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _held = use m.acquire()
+    await holding.complete(())
+    await releaseIt.awaitPromise()
+
+async function lockBriefly(m: ReentrantMutex): Async<Unit, Never> =
+    let _held = use m.acquire()
+    ()
+
+@timeout(5000)
+test "Resource: a timeout cancels an acquire queued on a contended mutex" =
+    let mutable order = 0i32
+    timeoutOverQueuedAcquire((n: Int32) => order = n).run()
+    assert order == 1i32
+
+
+// --- a panicking finalizer does not abandon the rest of the unwind -----------
+//
+// A scope's unwind is attachments-then-release. A finalizer that PANICS used to
+// abort the whole chain: neither the remaining attachments nor the bracket's
+// own release ran, so the `use` that owns the scope leaked its resource. The
+// chain now runs to the end and re-raises the FIRST cause — a leaked connection
+// is worse than a lost second panic.
+
+function panickingFinalizer(mark: (Int32) => Unit, n: Int32): Resource<Int32, Never> =
+    Resource.make(
+        () => Async.succeed(0i32),
+        (_: Int32) => Async.thunk(() => mark(n)).andThen<Unit>(
+            (_: Unit) => Async<Unit, Never>.failPanic("finalizer blew up")
+        )
+    )
+
+async function panickingAttachProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    let _owned: Int32 = use counted(1, mark, 4i32)
+    let _first: Int32 = await counted(2, mark, 3i32).attachToScope()
+    let _second: Int32 = await panickingFinalizer(mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+
+function recordPanic(cause: Cause<Never>, seen: (Int32) => Unit): Async<Unit, Never> =
+    match cause with
+    case Cause.Panicked(_, _) => Async.thunk(() => seen(1i32))
+    case _ => Async.thunk(() => seen(3i32))
+
+async function panickingAttachOutcome(
+    mark: (Int32) => Unit,
+    seen: (Int32) => Unit
+): Async<Unit, Never> =
+    await panickingAttachProgram(mark).foldCause<Unit, Never>(
+        (cause: Cause<Never>) => recordPanic(cause, seen),
+        (_: Unit) => Async.thunk(() => seen(2i32))
+    )
+
+@timeout(5000)
+test "Resource: a panicking attached finalizer still runs the rest of the chain" =
+    let mutable order = 0i32
+    let mutable outcome = 0i32
+    panickingAttachOutcome(
+        (n: Int32) => order = order * 10i32 + n,
+        (n: Int32) => outcome = n
+    ).run()
+    // Body (1), then LIFO: the panicking attachment (2), the attachment under
+    // it (3), and — the point of the fix — the `use`'s own release (4).
+    assert order == 1234i32
+    // The panic is not swallowed: it is re-raised once the chain is done.
+    assert outcome == 1i32
+
+async function twoPanicsProgram(mark: (Int32) => Unit): Async<Unit, Never> =
+    use Async.scope()
+    let _first: Int32 = await panickingFinalizer(mark, 3i32).attachToScope()
+    let _second: Int32 = await panickingFinalizer(mark, 2i32).attachToScope()
+    await Async.thunk(() => mark(1i32))
+
+async function twoPanicsOutcome(
+    mark: (Int32) => Unit,
+    seen: (Int32) => Unit
+): Async<Unit, Never> =
+    await twoPanicsProgram(mark).foldCause<Unit, Never>(
+        (cause: Cause<Never>) => recordPanic(cause, seen),
+        (_: Unit) => Async.thunk(() => seen(2i32))
+    )
+
+@timeout(5000)
+test "Resource: a second panicking finalizer still runs, and the first cause wins" =
+    let mutable order = 0i32
+    let mutable outcome = 0i32
+    twoPanicsOutcome(
+        (n: Int32) => order = order * 10i32 + n,
+        (n: Int32) => outcome = n
+    ).run()
+    assert order == 123i32
+    assert outcome == 1i32

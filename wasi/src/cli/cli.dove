@@ -1,0 +1,220 @@
+package standard.wasi.cli
+
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.EndingLedger
+import standard.wasi.CopyOperation
+import standard.wasi.EventPayload
+import standard.wasi.IoError
+import standard.wasi.Stream
+import standard.wasi.Waitable
+
+/// Untyped cli I/O error (a raw error-code); mapped to a friendlier type by
+/// the standard-io Console.
+public newtype CliIoError = Int32
+
+implement IoError for CliIoError
+
+module CliIoError =
+    /// Raised locally when an explicit `close` aborts an operation still in
+    /// flight. Unlike the socket and filesystem errors this is not an enum with
+    /// room for a variant — it carries a raw wasi:cli `error-code` — so the
+    /// marker has to be a sentinel.
+    ///
+    /// NEGATIVE VALUES ARE THE LOCAL MARKER SPACE. Host codes are non-negative
+    /// (0 = io, 1 = illegal-byte-sequence, 2 = pipe), so nothing on the wire
+    /// collides with one. `-1` is already taken by standard-io's Console for
+    /// "the host dropped this stream without recording a reason"; keep new
+    /// markers here so the two ends of that space stay visible to each other.
+    public property canceled: CliIoError = CliIoError(-2i32)
+
+/// A handle to a terminal input device.
+public newtype TerminalInput = Int32
+
+/// A handle to a terminal output device.
+public newtype TerminalOutput = Int32
+
+/// Terminal detection for standard I/O streams.
+/// Returns None when the stream is not connected to a terminal (e.g. piped or redirected).
+module Terminal =
+    /// Returns a terminal handle if stdin is connected to a terminal.
+    public property stdin: Option<TerminalInput> = intrinsic
+    /// Returns a terminal handle if stdout is connected to a terminal.
+    public property stdout: Option<TerminalOutput> = intrinsic
+    /// Returns a terminal handle if stderr is connected to a terminal.
+    public property stderr: Option<TerminalOutput> = intrinsic
+
+/// Access to environment variables, command-line arguments, and initial working directory.
+module Environment =
+    /// Returns all environment variables as key-value pairs.
+    public property variables: Array<(String, String)> = intrinsic
+    /// Returns the command-line arguments.
+    public property arguments: Array<String> = intrinsic
+    /// Returns the initial working directory, if available.
+    public property initialCwd: Option<String> = intrinsic
+
+/// Blocking console output for stdout and stderr, written straight from the
+/// generated code without going through the fiber runtime.
+///
+/// This is the runtime's OWN path, for contexts where there is no runtime to
+/// report to: panic reporting and `debug`. It blocks the whole component on
+/// backpressure, which is only defensible because the alternative there is no
+/// output at all — and for the same reason it is best-effort about failure: if
+/// the reader has gone (`app | head`, after head exits) it abandons the rest of
+/// the payload and returns, rather than taking the component down over a closed
+/// pipe or replacing a panic report with a stdio trap. Everything else —
+/// `standard.io.Console` — goes through `Stdout`/`Stderr` below, which suspend
+/// only the writing fiber and report a typed error.
+///
+/// The two paths open SEPARATE streams to the same target. p3 allows one
+/// outstanding operation per stream end, so sharing one would make a `debug`
+/// under a parked `Console` write either trap or steal the other's completion.
+/// The price is that output from the two can interleave at chunk boundaries
+/// while both are in flight; within either path order is exact.
+module Console =
+    /// Prints text to stdout (no newline).
+    public function print(text: String): Unit = intrinsic
+    /// Prints text followed by a newline to stdout.
+    public function println(line: String): Unit = intrinsic
+    /// Prints text to stderr (no newline).
+    public function eprint(text: String): Unit = intrinsic
+    /// Prints text followed by a newline to stderr.
+    public function eprintln(line: String): Unit = intrinsic
+
+/// The writable end of a standard-output stream, together with the one-shot
+/// future that resolves when the host is finished with it.
+///
+/// One value rather than a loose handle and a loose future: the two are only
+/// ever meaningful together, they have to be retired in a fixed order (the
+/// future resolves when the host sees end-of-stream, so it is read between
+/// dropping the writable end and dropping it), and every operation below needs
+/// exactly one of them. Passing the pair around as separate `Int32`s made every
+/// call site responsible for keeping them paired.
+public record StdoutStream =
+    stream: Int32
+    resultFuture: Int32
+
+module StdoutStream =
+    /// Open a stdout stream (wasi `write-via-stream`). Each call opens a new
+    /// one — the host allows several writers to a stdio target — so callers
+    /// that want a single process-wide writer must cache the result, as
+    /// `standard.io.Console` does. That caching is what serializes concurrent
+    /// writers onto the one outstanding write p3 permits per stream end.
+    public function open(): StdoutStream = intrinsic
+    /// Post an async write of the bounded byte view into a pinned buffer.
+    public function writeStart(self, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+    /// Cancel an in-flight write (before dropping the writable), returning the
+    /// packed status. A cancel can lose the race with a completion that already
+    /// copied bytes out, and the count is the only report of that.
+    public function cancelWrite(self): Int32 = intrinsic
+
+    /// Read the result future to learn why a write was dropped. Reads
+    /// synchronously, cancelling if it is not yet resolved (which reports `Ok`).
+    public function readResult(self): Result<Unit, CliIoError> = intrinsic
+
+    /// This stream as the component-model operation the runtime drives.
+    ///
+    /// Everything in it is mechanical — which import to post, how to release a
+    /// buffer nobody will receive — which is exactly why a WIT binding generator
+    /// could emit it. Nothing here decides what a dropped stream *means*; that is
+    /// `standard.io`'s job.
+    public function componentWrite(self): ComponentStreamWrite<CliIoError> =
+        ComponentStreamWrite<CliIoError> {
+            writable = Waitable(self.stream)
+            ending = () => self.readResult()
+            ledger = EndingLedger.fresh()
+            start = (bytes: ReadonlySlice<Uint8>) => self.writeStart(bytes)
+            cancel = () => EventPayload(self.cancelWrite())
+            canceledError = CliIoError.canceled
+            // Constant, as on every raw record: whoever WRAPS this end in
+            // something closable replaces the probe (`withStillOpen`); the raw
+            // record describes a handle nothing closes under the runtime.
+            stillOpen = () => true
+            // stdout and stderr live as long as the component; nothing ever
+            // drops them, so releasing is a no-op rather than an intrinsic.
+            dropWritable = () => ()
+            dropResult = () => ()
+        }
+
+/// The writable end of a standard-error stream. Same shape and same rules as
+/// `StdoutStream`, a different destination.
+public record StderrStream =
+    stream: Int32
+    resultFuture: Int32
+
+module StderrStream =
+    public function open(): StderrStream = intrinsic
+    public function writeStart(self, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+    public function cancelWrite(self): Int32 = intrinsic
+    public function readResult(self): Result<Unit, CliIoError> = intrinsic
+
+    public function componentWrite(self): ComponentStreamWrite<CliIoError> =
+        ComponentStreamWrite<CliIoError> {
+            writable = Waitable(self.stream)
+            ending = () => self.readResult()
+            ledger = EndingLedger.fresh()
+            start = (bytes: ReadonlySlice<Uint8>) => self.writeStart(bytes)
+            cancel = () => EventPayload(self.cancelWrite())
+            canceledError = CliIoError.canceled
+            stillOpen = () => true
+            // stdout and stderr live as long as the component; nothing ever
+            // drops them, so releasing is a no-op rather than an intrinsic.
+            dropWritable = () => ()
+            dropResult = () => ()
+        }
+
+/// Process lifecycle operations.
+module Process =
+    /// Exits the process. Ok indicates success, Err indicates failure.
+    public function exit(status: Result<Unit, Unit>): Unit = intrinsic
+
+/// The readable end of standard input, together with the one-shot future that
+/// resolves when stdin closes — cleanly, or with the error that ended it.
+///
+/// The future is the ONLY thing that separates end-of-input from a transport
+/// failure part-way through it: the host drops the stream either way, so a
+/// reader that ignores it reports a truncated stdin as a complete one. Which is
+/// the other reason the pair travels as one value.
+public record StdinStream =
+    stream: Int32
+    resultFuture: Int32
+
+module StdinStream =
+    /// Open a stdin stream (wasi `read-via-stream`).
+    public function open(): StdinStream = intrinsic
+    /// Post an async read of up to `capacity` bytes into a pinned buffer.
+    /// Consume the completion with `Stream.readFinish` (or `Stream.discard`).
+    public function readStart(self, capacity: Int32): CopyOperation = intrinsic
+    /// Cancel an in-flight read; returns the raw cancel status
+    /// (`code | count << 4`). A cancel can race a completion that already
+    /// copied bytes into the op's buffer, and `count` is the only way to
+    /// learn that they are there.
+    public function cancelRead(self): Int32 = intrinsic
+    /// Drop the readable end of a stdin stream.
+    public function dropReadable(self): Unit = intrinsic
+    /// Read the result future to learn how the input ended: `Ok` for a clean
+    /// end-of-input, `Error` for a host failure part-way through. Reads
+    /// synchronously, cancelling if it is not yet resolved (which reports `Ok`).
+    public function readResult(self): Result<Unit, CliIoError> = intrinsic
+    /// Drop the result future. Only after `readResult` — the future resolves
+    /// when the host sees end-of-input, so the read sits between dropping the
+    /// readable end and this.
+    public function dropResultFuture(self): Unit = intrinsic
+
+    /// This stream as the component-model operation the runtime drives.
+    public function componentRead(self): ComponentStreamRead<Array<Uint8>, CliIoError> =
+        ComponentStreamRead<Array<Uint8>, CliIoError> {
+            readable = Waitable(self.stream)
+            ending = () => self.readResult()
+            start = (capacity: Int32) => self.readStart(capacity)
+            cancel = () => EventPayload(self.cancelRead())
+            canceledError = CliIoError.canceled
+            stillOpen = () => true
+            dropEnd = () =>
+                self.dropReadable()
+                self.dropResultFuture()
+            // Bytes: releasing elements nobody will receive is freeing the
+            // pinned buffer, nothing owned to close.
+            discardElements = (copy: CopyOperation, count: Int32) => Stream.discard(copy)
+            lift = (copy: CopyOperation, count: Int32) => Stream.readFinish(copy, count)
+        }

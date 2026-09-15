@@ -1,0 +1,101 @@
+package test
+
+import standard.io.Async
+import standard.io.stream.Stream
+import standard.time.Duration
+
+@timeout(5000)
+test "Stream constructors: repeat effects are lazy and demand driven" =
+    let mutable executions = 0
+    let next = () =>
+        executions = executions + 1
+        Async<Int32, String>.succeed(executions)
+    let source = Stream<Int32, String>.repeatAsync(next())
+    let collected = source.take(2).runCollect()
+    assert executions == 0
+    let program: Async<Unit, String> = async do
+        assert (await collected) == [1, 2]
+        assert (await collected) == [3, 4]
+        assert executions == 4
+        let chunks = Stream<Int32, String>.repeatAsyncChunk(Async.succeed([| 5, 6 |].readonly))
+        let mutable lengths: List<Int32> = List.empty
+        await chunks.take(5).foreachChunk((chunk: ReadonlySlice<Int32>) => Async.thunk(() =>
+            lengths = List.Cons(chunk.length, lengths)
+        ))
+        assert lengths == [1, 2, 2]
+        assert (await Stream<Int32, String>.repeatAsync(Async.fail("failed"))
+            .catchAll((_: String) => Stream<Int32, Never>.succeed(9)).runCollect()) == [9]
+    program.run()
+
+@timeout(5000)
+test "Stream constructors: optional repeat effects distinguish EOF and failure" =
+    let mutable index = 0
+    let next: () => Async<Int32, Option<String>> = () =>
+        index = index + 1
+        if index <= 2 then Async.succeed(index) else Async.fail(None)
+    let program: Async<Unit, String> = async do
+        assert (await Stream<Int32, String>.repeatAsyncOption(next()).runCollect()) == [1, 2]
+        let mutable chunks = 0
+        let nextChunk: () => Async<ReadonlySlice<Int32>, Option<String>> = () =>
+            chunks = chunks + 1
+            if chunks == 1 then Async.succeed(Array<Int32>.empty().readonly)
+            else if chunks == 2 then Async.succeed([| 3, 4 |].readonly)
+            else Async.fail(None)
+        assert (await Stream<Int32, String>.repeatAsyncChunkOption(nextChunk()).runCollect()) == [3, 4]
+        assert chunks == 3
+        assert (await Stream<Int32, String>.repeatAsyncOption(Async.fail(Some("item")))
+            .catchAll((error: String) => Stream<Int32, Never>.succeed(error.length)).runCollect()) == [4]
+        assert (await Stream<Int32, String>.repeatAsyncChunkOption(Async.fail(Some("chunk")))
+            .catchAll((error: String) => Stream<Int32, Never>.succeed(error.length)).runCollect()) == [5]
+    program.run()
+
+@timeout(5000)
+test "Stream constructors: pure unfolds defer and reset initial state" =
+    let mutable starts = 0
+    let initial = () =>
+        starts = starts + 1
+        0
+    let source = Stream<Int32, Never>.unfold(initial(), (index: Int32) =>
+        if index < 3 then Some((index, index + 1)) else None
+    )
+    let collected = source.runCollect()
+    assert starts == 0
+    let program: Async<Unit, Never> = async do
+        assert (await collected) == [0, 1, 2]
+        assert (await collected) == [0, 1, 2]
+        assert starts == 2
+        let chunks = Stream<Int32, Never>.unfoldChunk(0, (index: Int32) =>
+            if index == 0 then Some((Array<Int32>.empty().readonly, 1))
+            else if index == 1 then Some(([| 7, 8 |].readonly, 2))
+            else None
+        )
+        assert (await chunks.runCollect()) == [7, 8]
+    program.run()
+
+@timeout(5000)
+test "Stream constructors: unfoldAsync emits single items and propagates errors" =
+    let source = Stream<Int32, String>.unfoldAsync(0, (index: Int32) =>
+        if index < 2 then Async.succeed((index, index + 1))
+        else Async.fail(Some("end"))
+    )
+    let program: Async<Unit, Never> = async do
+        assert (await source.catchAll((_: String) => Stream<Int32, Never>.succeed(9)).runCollect()) == [0, 1, 9]
+        assert (await Stream<Int32, Never>.unfoldAsync((), (_: Unit) => Async.fail(None)).runCollect()) == List.empty
+    program.run()
+
+@timeout(5000)
+test "Stream constructors: intervals delay repetitions and ticks wait before emitting" =
+    let mutable executions = 0
+    let next = () =>
+        executions = executions + 1
+        Async<Int32, Never>.succeed(executions)
+    let source = Stream<Int32, Never>.repeatAsyncWithInterval(next(), Duration.ofMillis(10000i64))
+    let program: Async<Unit, Never> = async do
+        assert (await source.take(1).runCollect()) == [1]
+        let result = await source.take(2).runCollect().timeout(Duration.ofMillis(1i64))
+        assert result.isNone
+        assert executions == 2
+        let ticks = Stream<Unit, Never>.tick(Duration.ofMillis(10000i64))
+        assert (await ticks.take(1).runCollect().timeout(Duration.ofMillis(1i64))).isNone
+        assert (await Stream<Unit, Never>.tick(Duration.zero()).take(2).runCollect()).length == 2
+    program.run()

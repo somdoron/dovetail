@@ -1,0 +1,293 @@
+package test
+
+import standard.sqlite.Connection
+import standard.sqlite.PreparedStatement
+import standard.sqlite.SqlValue
+import standard.sqlite.sql
+import standard.sqlite.SqlBuilder
+import standard.sqlite.SqliteError
+import standard.io.Async
+import standard.time.Duration
+
+// Integration tests against the real composed sqlite component (the test
+// runner mounts a writable tempdir as the cwd preopen). Connections and
+// statements are scoped with `use`; each program runs on the async runtime.
+
+test "create, insert, and select round-trip" =
+    let mutable row: Array<SqlValue> = Array.empty()
+    let mutable rowid: Int64 = 0i64
+    let program: Async<Unit, SqliteError> = roundTripProgram(
+        (r: Array<SqlValue>) => row = r,
+        (id: Int64) => rowid = id
+    )
+    program.run()
+    assert rowid == 1i64
+    assert row.length == 4
+    match row.get(0) with
+        case SqlValue.Integer(id) => assert id == 1i64
+        case _ => panic "id must be an integer"
+    match row.get(1) with
+        case SqlValue.Text(name) => assert name == "alice"
+        case _ => panic "name must be text"
+    match row.get(2) with
+        case SqlValue.Real(score) => assert score == 99.5
+        case _ => panic "score must be real"
+    match row.get(3) with
+        case SqlValue.Blob(data) =>
+            assert data.length == 4
+            assert data.get(0) == 0xdeu8
+            assert data.get(3) == 0xefu8
+        case _ => panic "data must be a blob"
+
+async function roundTripProgram(setRow: (Array<SqlValue>) => Unit, setRowid: (Int64) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("roundtrip.db")
+    await conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, score REAL, data BLOB)")
+    let params: Array<SqlValue> = [|
+        SqlValue.Text("alice"),
+        SqlValue.Real(99.5),
+        SqlValue.Blob([|0xdeu8, 0xadu8, 0xbeu8, 0xefu8|])
+    |]
+    await conn.executeWith("INSERT INTO users (name, score, data) VALUES (?1, ?2, ?3)", params)
+    setRowid(await conn.lastInsertRowid())
+    let rows = await conn.query("SELECT id, name, score, data FROM users")
+    assert rows.length == 1
+    setRow(rows.head)
+
+test "null values round-trip" =
+    let program: Async<Unit, SqliteError> = nullProgram()
+    program.run()
+
+async function nullProgram(): Async<Unit, SqliteError> =
+    let conn = use Connection.open("nulls.db")
+    await conn.execute("CREATE TABLE t (v TEXT)")
+    let params: Array<SqlValue> = [|SqlValue.Null|]
+    await conn.executeWith("INSERT INTO t (v) VALUES (?1)", params)
+    let rows = await conn.query("SELECT v FROM t")
+    match rows.head.get(0) with
+        case SqlValue.Null => ()
+        case _ => panic "expected null"
+
+test "syntax error surfaces code and message" =
+    let mutable code: Int32 = 0
+    let mutable message: String = ""
+    let program: Async<Unit, SqliteError> = syntaxErrorProgram(
+        (c: Int32) => code = c,
+        (m: String) => message = m
+    )
+    program.run()
+    assert code == 1
+    assert message.contains("SELEKT")
+
+async function syntaxErrorProgram(setCode: (Int32) => Unit, setMessage: (String) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("badsql.db")
+    let handler: (SqliteError) => Async<Int64, SqliteError> = (e: SqliteError) =>
+        setCode(e.code)
+        setMessage(e.message)
+        Async.succeed(0i64)
+    await conn.execute("SELEKT nope").catchAll<SqliteError>(handler)
+    ()
+
+test "constraint violation is an error" =
+    let mutable code: Int32 = 0
+    let program: Async<Unit, SqliteError> = constraintProgram((c: Int32) => code = c)
+    program.run()
+    assert code == 19
+
+async function constraintProgram(setCode: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("constraint.db")
+    await conn.execute("CREATE TABLE u (id INTEGER PRIMARY KEY, email TEXT UNIQUE)")
+    await conn.execute("INSERT INTO u (email) VALUES ('a@b.c')")
+    let handler: (SqliteError) => Async<Int64, SqliteError> = (e: SqliteError) =>
+        setCode(e.code)
+        Async.succeed(0i64)
+    await conn.execute("INSERT INTO u (email) VALUES ('a@b.c')").catchAll<SqliteError>(handler)
+    ()
+
+test "data persists across connections" =
+    let mutable body: String = ""
+    let program: Async<Unit, SqliteError> = persistProgram((s: String) => body = s)
+    program.run()
+    assert body == "remember me"
+
+async function persistProgram(setBody: (String) => Unit): Async<Unit, SqliteError> =
+    await persistWritePhase()
+    await persistReadPhase(setBody)
+
+async function persistWritePhase(): Async<Unit, SqliteError> =
+    let conn = use Connection.open("persist.db")
+    await conn.execute("CREATE TABLE notes (body TEXT)")
+    await conn.execute("INSERT INTO notes (body) VALUES ('remember me')")
+    ()
+
+async function persistReadPhase(setBody: (String) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("persist.db")
+    let rows = await conn.query("SELECT body FROM notes")
+    assert rows.length == 1
+    match rows.head.get(0) with
+        case SqlValue.Text(body) => setBody(body)
+        case _ => panic "expected text"
+
+test "query returns rows in order with multiple rows" =
+    let program: Async<Unit, SqliteError> = orderProgram()
+    program.run()
+
+async function orderProgram(): Async<Unit, SqliteError> =
+    let conn = use Connection.open("multi.db")
+    await conn.execute("CREATE TABLE n (v INTEGER)")
+    await conn.execute("INSERT INTO n (v) VALUES (3), (1), (2)")
+    let rows = (await conn.query("SELECT v FROM n ORDER BY v")).toArray()
+    assert rows.length == 3
+    match rows.get(0).get(0) with
+        case SqlValue.Integer(v) => assert v == 1i64
+        case _ => panic "expected integer"
+    match rows.get(2).get(0) with
+        case SqlValue.Integer(v) => assert v == 3i64
+        case _ => panic "expected integer"
+
+test "queryOne returns None for no rows" =
+    let program: Async<Unit, SqliteError> = queryOneProgram()
+    program.run()
+
+async function queryOneProgram(): Async<Unit, SqliteError> =
+    let conn = use Connection.open("one.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let noParams: Array<SqlValue> = Array.empty()
+    let result = await conn.queryOne("SELECT v FROM t", noParams)
+    match result with
+        case None => ()
+        case Some(_) => panic "expected no rows"
+
+test "transaction commits on success" =
+    let program: Async<Unit, SqliteError> = commitProgram()
+    program.run()
+
+async function commitProgram(): Async<Unit, SqliteError> =
+    let conn = use Connection.open("txcommit.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let body: (Connection) => Async<Int64, SqliteError> = (tx: Connection) =>
+        tx.execute("INSERT INTO t (v) VALUES (42)")
+    await conn.transaction<Int64, SqliteError>(body)
+    let rows = await conn.query("SELECT v FROM t")
+    assert rows.length == 1
+
+test "transaction rolls back on failure" =
+    let mutable failed: Bool = false
+    let program: Async<Unit, SqliteError> = rollbackProgram((b: Bool) => failed = b)
+    program.run()
+    assert failed
+
+async function rollbackProgram(setFailed: (Bool) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("txrollback.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let body: (Connection) => Async<Int64, SqliteError> = async (tx: Connection) =>
+        await tx.execute("INSERT INTO t (v) VALUES (42)")
+        await tx.execute("SELEKT broken")
+    let handler: (SqliteError) => Async<Int64, SqliteError> = (e: SqliteError) =>
+        setFailed(true)
+        Async.succeed(0i64)
+    await conn.transaction<Int64, SqliteError>(body).catchAll<SqliteError>(handler)
+    let rows = await conn.query("SELECT v FROM t")
+    assert rows.length == 0
+
+// The key guarantee of the `bracketWithResult`-based `transaction`: an
+// interruption (here, a timeout firing while the body is parked) rolls the
+// transaction back rather than leaving it open on the connection. The body
+// inserts a row and then blocks; the timeout interrupts it; the masked release
+// runs ROLLBACK; the row must be gone. `@timeout` guards the whole test in case
+// the rollback ever regresses and the body's long sleep is reached.
+@timeout(10000)
+test "transaction rolls back on interruption" =
+    let mutable timedOut: Bool = false
+    let program: Async<Unit, SqliteError> = interruptProgram((b: Bool) => timedOut = b)
+    program.run()
+    assert timedOut
+
+async function interruptProgram(setTimedOut: (Bool) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("txinterrupt.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let body: (Connection) => Async<Int64, SqliteError> = async (tx: Connection) =>
+        await tx.execute("INSERT INTO t (v) VALUES (42)")
+        await Async<Unit, Never>.sleep(Duration.ofSeconds(3600i64))
+        0i64
+    let outcome = await conn.transaction<Int64, SqliteError>(body).timeout(Duration.ofMillis(100i64))
+    match outcome with
+        case None => setTimedOut(true)
+        case Some(_) => panic "transaction should have been interrupted by the timeout"
+    let rows = await conn.query("SELECT v FROM t")
+    assert rows.length == 0
+
+// A caller's own error type, convertible from `SqliteError` — the bound
+// `transaction<T, E> where E: From<SqliteError>` requires.
+enum TxError =
+    Sql(SqliteError)
+    App(String)
+
+implement From<SqliteError> for TxError =
+    public function from(value: SqliteError): TxError = TxError.Sql(value)
+
+// The generic error channel: a transaction body may fail with the caller's own
+// error type, not just `SqliteError`. Here the body inserts a row and then
+// fails with a domain error (`TxError.App`); the transaction rolls back (row
+// gone), and the domain error propagates out unchanged.
+test "transaction body may fail with a custom error type" =
+    let mutable got: String = ""
+    let mutable rowCount: Int32 = -1
+    customErrorProgram((s: String) => got = s, (n: Int32) => rowCount = n).run()
+    assert got == "boom"
+    assert rowCount == 0
+
+async function customErrorProgram(setGot: (String) => Unit, setCount: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("txcustom.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let body: (Connection) => Async<Int64, TxError> = async (tx: Connection) =>
+        await tx.execute("INSERT INTO t (v) VALUES (42)").mapError<TxError>((e: SqliteError) => TxError.Sql(e))
+        await Async<Int64, TxError>.fail(TxError.App("boom"))
+    let handler: (TxError) => Async<Int64, SqliteError> = (e: TxError) =>
+        match e with
+            case TxError.App(msg) => setGot(msg)
+            case TxError.Sql(se) => setGot("sql:" ++ se.message)
+        Async.succeed(0i64)
+    await conn.transaction<Int64, TxError>(body).catchAll<SqliteError>(handler)
+    let rows = await conn.query("SELECT v FROM t")
+    setCount(rows.length)
+
+test "prepared statement reuse with reset" =
+    let program: Async<Unit, SqliteError> = reuseProgram()
+    program.run()
+
+async function reuseProgram(): Async<Unit, SqliteError> =
+    let conn = use Connection.open("reuse.db")
+    await conn.execute("CREATE TABLE t (v INTEGER)")
+    let statement = use conn.statement("INSERT INTO t (v) VALUES (?1)")
+    let first: Array<SqlValue> = [|SqlValue.Integer(1i64)|]
+    await statement.bindAll(first)
+    let firstHasRow = await statement.step()
+    assert firstHasRow == false
+    await statement.reset()
+    let second: Array<SqlValue> = [|SqlValue.Integer(2i64)|]
+    await statement.bindAll(second)
+    let secondHasRow = await statement.step()
+    assert secondHasRow == false
+    let rows = await conn.query("SELECT count(*) FROM t")
+    match rows.head.get(0) with
+        case SqlValue.Integer(count) => assert count == 2i64
+        case _ => panic "expected integer count"
+
+// --- prefixed-literal smoke check ---------------------------------------
+// Pins the lowering contract: `sql"..."` must produce exactly what the manual
+// builder chain does. If these ever diverge, the compiler has grown an opinion
+// about SQL that it is not supposed to have.
+test "sql literal lowers to the same Query as a manual builder chain" =
+    let id = 7i64
+    let name = "alice"
+    let fromLiteral = sql"SELECT * FROM users WHERE id = $id AND name = $name"
+    let fromChain =
+        SqlBuilder.empty()
+            .literal("SELECT * FROM users WHERE id = ")
+            .value(id)
+            .literal(" AND name = ")
+            .value(name)
+            .build()
+    assert fromLiteral.text == fromChain.text
+    assert fromLiteral.text == "SELECT * FROM users WHERE id = ? AND name = ?"
+    assert fromLiteral.params.length == 2

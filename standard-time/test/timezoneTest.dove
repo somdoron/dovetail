@@ -1,0 +1,106 @@
+package test
+
+import standard.time.Instant
+import standard.time.TimeZone
+import standard.time.TzData
+
+// ── Backward compatibility: Fixed zones still behave as constant offsets ──
+
+test "Fixed: TimeZone.of preserves offset" =
+    let tz = TimeZone.of("EST", -18000)
+    assert tz.isIana == false
+    assert tz.offsetSeconds == -18000
+    assert tz.offsetAt(0i64) == -18000
+    // Even at far-future / far-past timestamps:
+    assert tz.offsetAt(9999999999i64) == -18000
+
+test "Fixed: TimeZone.utc round-trips at epoch" =
+    let i = Instant.ofEpochSecond(0i64)
+    let dt = i.toLocalDateTime(TimeZone.utc)
+    assert dt.date.year.value == 1970
+    assert dt.time.hour == 0
+
+// ── IANA: DST forward (spring) ────────────────────────────────────────────
+
+test "IANA: NY summer is EDT (-04:00)" =
+    let tz = match TimeZone.named("America/New_York") with
+        case Some(t) => t
+        case None => panic "America/New_York not found"
+    assert tz.isIana
+    // 2024-07-15T12:00:00Z = 1721044800
+    let off = tz.offsetAt(1721044800i64)
+    assert off == -14400
+    assert tz.abbreviationAt(1721044800i64) == "EDT"
+
+test "IANA: NY winter is EST (-05:00)" =
+    let tz = TimeZone.named("America/New_York").require
+    // 2024-12-15T12:00:00Z = 1734264000
+    let off = tz.offsetAt(1734264000i64)
+    assert off == -18000
+    assert tz.abbreviationAt(1734264000i64) == "EST"
+
+test "IANA: NY spring-forward boundary (2024-03-10 02:30 EST → EDT)" =
+    let tz = TimeZone.named("America/New_York").require
+    // 1 second before spring-forward (2024-03-10 06:59:59Z) = 1710053999
+    assert tz.offsetAt(1710053999i64) == -18000
+    // At the transition (2024-03-10 07:00:00Z) = 1710054000
+    assert tz.offsetAt(1710054000i64) == -14400
+
+test "IANA: NY fall-back boundary (2024-11-03 01:30 EDT → EST)" =
+    let tz = TimeZone.named("America/New_York").require
+    // 1s before fall-back (2024-11-03 05:59:59Z) = 1730613599
+    assert tz.offsetAt(1730613599i64) == -14400
+    // At the transition (2024-11-03 06:00:00Z) = 1730613600
+    assert tz.offsetAt(1730613600i64) == -18000
+
+// ── IANA: hemisphere check ────────────────────────────────────────────────
+
+test "IANA: London is BST in summer (+01:00)" =
+    let tz = TimeZone.named("Europe/London").require
+    // 2024-07-15T12:00:00Z
+    assert tz.offsetAt(1721044800i64) == 3600
+    assert tz.abbreviationAt(1721044800i64) == "BST"
+
+test "IANA: Sydney is AEDT in southern summer (+11:00)" =
+    let tz = TimeZone.named("Australia/Sydney").require
+    // 2024-12-15T12:00:00Z — southern hemisphere summer
+    assert tz.offsetAt(1734264000i64) == 11 * 3600
+
+test "IANA: Sydney is AEST in southern winter (+10:00)" =
+    let tz = TimeZone.named("Australia/Sydney").require
+    // 2024-07-15T12:00:00Z — southern hemisphere winter
+    assert tz.offsetAt(1721044800i64) == 10 * 3600
+
+// ── IANA: zone alias resolution ───────────────────────────────────────────
+
+test "IANA: Asia/Kolkata aliases Asia/Calcutta (+05:30)" =
+    let tz = TimeZone.named("Asia/Kolkata").require
+    assert tz.offsetAt(1721044800i64) == 19800
+
+// ── Conversion: Instant → LocalDateTime via IANA ──────────────────────────
+
+test "IANA: Instant in NY summer renders as 08:00 EDT" =
+    let tz = TimeZone.named("America/New_York").require
+    // 2024-07-15T12:00:00Z = 1721044800
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let dt = i.toLocalDateTime(tz)
+    assert dt.date.year.value == 2024
+    assert dt.date.month.value == 7
+    assert dt.date.day.value == 15
+    assert dt.time.hour == 8
+    assert dt.time.minute == 0
+
+test "IANA: Instant in NY winter renders as 07:00 EST" =
+    let tz = TimeZone.named("America/New_York").require
+    // 2024-12-15T12:00:00Z = 1734264000
+    let i = Instant.ofEpochSecond(1734264000i64)
+    let dt = i.toLocalDateTime(tz)
+    assert dt.date.day.value == 15
+    assert dt.time.hour == 7
+
+// ── Unknown zone ─────────────────────────────────────────────────────────
+
+test "IANA: unknown zone returns None" =
+    match TimeZone.named("Nowhere/Imagined") with
+        case None => ()
+        case _ => panic "expected None"

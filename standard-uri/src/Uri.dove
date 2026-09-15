@@ -1,0 +1,598 @@
+package standard.uri
+
+import standard.prelude.Equatable
+import standard.prelude.Display
+import standard.prelude.Result
+import standard.prelude.Option
+import standard.prelude.Array
+import standard.prelude.String
+
+/// Errors that can occur when parsing or decoding a URI.
+public enum UriError =
+    /// The URI string has invalid syntax at the given position.
+    InvalidSyntax(String, Int32)
+    /// The port component is not a valid integer.
+    InvalidPort(String)
+    /// A percent-encoded sequence is malformed at the given position.
+    InvalidPercentEncoding(Int32)
+
+/// The authority component of a URI (e.g. "user@host:port").
+public record Authority =
+    /// Optional user information before the '@' (e.g. "user" in "user@host").
+    userInfo: Option<String>
+    /// The host name or IP address.
+    host: String
+    /// Optional port number.
+    port: Option<Int32>
+
+/// A parsed Uniform Resource Identifier with scheme, authority, path, query, and fragment.
+public record Uri =
+    /// The URI scheme (e.g. "http", "https"). None for relative URIs.
+    scheme: Option<String>
+    /// The authority component (host, optional port and user info).
+    authority: Option<Authority>
+    /// The path component (always present, may be empty).
+    path: String
+    /// The query string after '?', without the leading '?'.
+    query: Option<String>
+    /// The fragment after '#', without the leading '#'.
+    fragment: Option<String>
+
+/// Companion module for Uri with parsing, serialization, and encoding utilities.
+module Uri =
+    /// Parses a URI string into its components. Returns a UriError on invalid input.
+    public function parse(s: String): Result<Uri, UriError> =
+        uriParseAll(s)
+
+    /// Serializes this URI back into its string representation.
+    public function toString(self: Uri): String =
+        uriToString(self)
+
+    /// True if the URI has a scheme, making it an absolute URI.
+    public property isAbsolute(self: Uri): Bool =
+        match self.scheme with
+            case Some(_) => true
+            case None => false
+
+    /// Returns a new Uri with the path replaced by the given value.
+    public function withPath(self: Uri, newPath: String): Uri =
+        Uri { scheme = self.scheme; authority = self.authority; path = newPath; query = self.query; fragment = self.fragment }
+
+    /// Returns a new Uri with the scheme replaced by the given value.
+    public function withScheme(self: Uri, newScheme: String): Uri =
+        Uri { scheme = Some(newScheme); authority = self.authority; path = self.path; query = self.query; fragment = self.fragment }
+
+    /// Returns a new Uri with the authority replaced by the given value.
+    /// Used by proxy code to redirect a request at a different upstream.
+    public function withAuthority(self: Uri, newAuthority: Authority): Uri =
+        Uri { scheme = self.scheme; authority = Some(newAuthority); path = self.path; query = self.query; fragment = self.fragment }
+
+    /// Returns a new Uri with the authority's host replaced. If the Uri had no
+    /// authority, creates a minimal one (no user-info, no port) with the given host.
+    public function withHost(self: Uri, newHost: String): Uri =
+        let newAuth = match self.authority with
+            case Some(auth) => Authority { userInfo = auth.userInfo; host = newHost; port = auth.port }
+            case None => Authority { userInfo = None; host = newHost; port = None }
+        Uri { scheme = self.scheme; authority = Some(newAuth); path = self.path; query = self.query; fragment = self.fragment }
+
+    /// Returns a new Uri with the authority's port replaced. If the Uri had no
+    /// authority, creates one with an empty host and the given port.
+    public function withPort(self: Uri, newPort: Option<Int32>): Uri =
+        let newAuth = match self.authority with
+            case Some(auth) => Authority { userInfo = auth.userInfo; host = auth.host; port = newPort }
+            case None => Authority { userInfo = None; host = ""; port = newPort }
+        Uri { scheme = self.scheme; authority = Some(newAuth); path = self.path; query = self.query; fragment = self.fragment }
+
+    /// Percent-encodes a string for safe use in a URI. Unreserved characters are left as-is.
+    public function encode(s: String): String =
+        uriEncode(s)
+
+    /// Decodes a percent-encoded string. Returns an error for malformed sequences.
+    public function decode(s: String): Result<String, UriError> =
+        uriDecode(s)
+
+/// Compares two Uri values for structural equality across all components.
+implement Equatable for Uri =
+    public function equals(self: Uri, other: Uri): Bool =
+        uriEquals(self, other)
+
+/// Formats a Uri as its string representation for display.
+implement Display for Uri =
+    public function format(self: Uri): String =
+        uriToString(self)
+
+private function uriParseAll(s: String): Result<Uri, UriError> =
+    let schemeResult = uriParseScheme(s)
+    match schemeResult with
+        case Ok((scheme, rest)) =>
+            let authResult = uriParseAuthority(rest)
+            match authResult with
+                case Ok((auth, rest2)) =>
+                    let pathResult = uriParsePath(rest2)
+                    match pathResult with
+                        case Ok((path, rest3)) =>
+                            let queryResult = uriParseQuery(rest3)
+                            match queryResult with
+                                case Ok((query, rest4)) =>
+                                    let fragment = uriParseFragment(rest4)
+                                    Ok(Uri { scheme = scheme; authority = auth; path = path; query = query; fragment = fragment })
+                                case Error(e) => Error(e)
+                        case Error(e) => Error(e)
+                case Error(e) => Error(e)
+        case Error(e) => Error(e)
+
+private function uriIsSchemeChar(c: Char): Bool =
+    let b = String.fromChar(c).bytes().get(0).toInt32()
+    (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 43 || b == 45 || b == 46
+
+private function uriParseScheme(s: String): Result<(Option<String>, String), UriError> =
+    let colon = uriFindChar(s, ':', 0)
+    match colon with
+        case None => Ok((None, s))
+        case Some(idx) =>
+            let scheme = uriTake(s, idx)
+            let rest = uriSkip(s, idx + 1)
+            if uriIsScheme(scheme) then Ok((Some(scheme), rest))
+            else Ok((None, s))
+
+private function uriIsScheme(s: String): Bool =
+    let len = s.length
+    if len == 0 then false
+    else uriIsSchemeChar(s.getChar(0))
+
+private function uriParseAuthority(s: String): Result<(Option<Authority>, String), UriError> =
+    if s.length >= 2 then
+        let c0 = s.getChar(0)
+        let c1 = s.getChar(1)
+        if c0 == '/' && c1 == '/' then
+            let rest = uriSkip(s, 2)
+            uriParseAuthorityBody(rest)
+        else Ok((None, s))
+    else Ok((None, s))
+
+private function uriParseAuthorityBody(s: String): Result<(Option<Authority>, String), UriError> =
+    let end = uriFindAuthorityEnd(s)
+    let authStr = uriTake(s, end)
+    let rest = uriSkip(s, end)
+    if authStr.length == 0 then Ok((None, rest))
+    else
+        match uriParseHostPort(authStr) with
+            case Ok(auth) => Ok((Some(auth), rest))
+            case Error(e) => Error(e)
+
+private function uriFindAuthorityEnd(s: String): Int32 =
+    let len = s.length
+    let mutable i = 0
+    let mutable result = len
+    while i < len do
+        let c = s.getChar(i)
+        if c == '/' || c == '?' || c == '#' then
+            result = i
+            i = len
+        else i = i + 1
+    result
+
+private function uriParseHostPort(s: String): Result<Authority, UriError> =
+    let atPos = uriFindChar(s, '@', 0)
+    let (userInfo, hostPort) = match atPos with
+        case None => (None, s)
+        case Some(i) =>
+            (Some(uriTake(s, i)), uriSkip(s, i + 1))
+    let colonPos = uriFindChar(hostPort, ':', 0)
+    match colonPos with
+        case None =>
+            Ok(Authority { userInfo = userInfo; host = hostPort; port = None })
+        case Some(i) =>
+            let host = uriTake(hostPort, i)
+            let portStr = uriSkip(hostPort, i + 1)
+            match uriParsePort(portStr) with
+                case Ok(port) => Ok(Authority { userInfo = userInfo; host = host; port = Some(port) })
+                case Error(e) => Error(e)
+
+private function uriParsePort(s: String): Result<Int32, UriError> =
+    let len = s.length
+    if len == 0 then Error(UriError.InvalidPort("empty port"))
+    else
+        let mutable n = 0
+        let mutable i = 0
+        let mutable ok = true
+        while i < len do
+            let c = s.getChar(i)
+            if c >= '0' && c <= '9' then
+                n = n * 10 + (String.fromChar(c).bytes().get(0).toInt32() - 48)
+                i = i + 1
+            else
+                ok = false
+                i = len
+        if ok then Ok(n)
+        else Error(UriError.InvalidPort(s))
+
+private function uriParsePath(s: String): Result<(String, String), UriError> =
+    let queryPos = uriFindChar(s, '?', 0)
+    let hashPos = uriFindChar(s, '#', 0)
+    let pathEnd = uriMinPos(s.length, queryPos, hashPos)
+    let path = uriTake(s, pathEnd)
+    let rest = uriSkip(s, pathEnd)
+    Ok((path, rest))
+
+private function uriParseQuery(s: String): Result<(Option<String>, String), UriError> =
+    if s.length > 0 && s.getChar(0) == '?' then
+        let rest = uriSkip(s, 1)
+        let hashPos = uriFindChar(rest, '#', 0)
+        let queryEnd = uriOptToLen(rest.length, hashPos)
+        let query = uriTake(rest, queryEnd)
+        let rest2 = uriSkip(rest, queryEnd)
+        Ok((Some(query), rest2))
+    else Ok((None, s))
+
+private function uriOptToLen(len: Int32, opt: Option<Int32>): Int32 =
+    match opt with
+        case None => len
+        case Some(v) => v
+
+private function uriParseFragment(s: String): Option<String> =
+    if s.length > 0 && s.getChar(0) == '#' then
+        Some(uriSkip(s, 1))
+    else None
+
+private function uriFindChar(s: String, c: Char, start: Int32): Option<Int32> =
+    let len = s.length
+    let mutable i = start
+    let mutable found: Option<Int32> = None
+    while i < len do
+        if s.getChar(i) == c then
+            found = Some(i)
+            i = len
+        else
+            i = i + 1
+    found
+
+private function uriMinPos(len: Int32, a: Option<Int32>, b: Option<Int32>): Int32 =
+    match a with
+        case None =>
+            match b with
+                case None => len
+                case Some(v) => v
+        case Some(va) =>
+            match b with
+                case None => va
+                case Some(vb) => if va < vb then va else vb
+
+private function uriTake(s: String, n: Int32): String =
+    s.substring(0, n)
+
+private function uriSkip(s: String, n: Int32): String =
+    s.skip(n)
+
+private function uriToString(u: Uri): String =
+    let mutable result = ""
+    match u.scheme with
+        case Some(scheme) => result = result ++ scheme ++ ":"
+        case None => ()
+    match u.authority with
+        case Some(auth) =>
+            result = result ++ "//"
+            match auth.userInfo with
+                case Some(ui) => result = result ++ ui ++ "@"
+                case None => ()
+            result = result ++ auth.host
+            match auth.port with
+                case Some(p) => result = result ++ ":" ++ formatInt32Simple(p)
+                case None => ()
+        case None => ()
+    result = result ++ u.path
+    match u.query with
+        case Some(q) => result = result ++ "?" ++ q
+        case None => ()
+    match u.fragment with
+        case Some(f) => result = result ++ "#" ++ f
+        case None => ()
+    result
+
+private function formatInt32Simple(n: Int32): String =
+    if n == 0 then "0"
+    else
+        let buf = Array<Uint8>.fill(11, 0u8)
+        let mutable pos = 10
+        let mutable v = n
+        if v < 0 then v = 0 - v
+        while v > 0 do
+            buf.set(pos, (v % 10 + 48).toUint8())
+            pos = pos - 1
+            v = v / 10
+        String.fromBytes(buf, pos + 1, 10 - pos)
+
+private function uriEncode(s: String): String =
+    let len = s.length
+    let mutable result = ""
+    let mutable i = 0
+    while i < len do
+        let c = s.getChar(i)
+        let b = String.fromChar(c).bytes().get(0).toInt32()
+        if uriIsUnreserved(b) then
+            result = result ++ String.fromChar(c)
+        else
+            result = result ++ "%" ++ uriHexByte(b)
+        i = i + 1
+    result
+
+private function uriIsUnreserved(b: Int32): Bool =
+    if b >= 48 then
+        if b <= 57 then true
+        else if b >= 65 then
+            if b <= 90 then true
+            else if b >= 97 then
+                if b <= 122 then true
+                else false
+            else b == 45 || b == 46 || b == 95 || b == 126
+        else false
+    else false
+
+private function uriHexByte(b: Int32): String =
+    let hi = b / 16
+    let lo = b % 16
+    let hc = if hi < 10 then (hi + 48).toUint8() else (hi - 10 + 65).toUint8()
+    let lc = if lo < 10 then (lo + 48).toUint8() else (lo - 10 + 65).toUint8()
+    String.fromBytes(Array<Uint8>.fill(1, hc), 0, 1) ++ String.fromBytes(Array<Uint8>.fill(1, lc), 0, 1)
+
+private function uriDecode(s: String): Result<String, UriError> =
+    let len = s.length
+    let mutable result = ""
+    let mutable i = 0
+    let mutable ok = true
+    let mutable errPos = 0
+    while i < len do
+        let c = s.getChar(i)
+        if c == '%' then
+            if i + 2 >= len then
+                ok = false
+                errPos = i
+                i = len
+            else
+                let h = uriHexVal(String.fromChar(s.getChar(i + 1)).bytes().get(0).toInt32())
+                let l = uriHexVal(String.fromChar(s.getChar(i + 2)).bytes().get(0).toInt32())
+                if h < 0 || l < 0 then
+                    ok = false
+                    errPos = i
+                    i = len
+                else
+                    result = result ++ String.fromBytes(Array<Uint8>.fill(1, (h * 16 + l).toUint8()), 0, 1)
+                    i = i + 3
+        else
+            result = result ++ String.fromChar(c)
+            i = i + 1
+    if ok then Ok(result)
+    else Error(UriError.InvalidPercentEncoding(errPos))
+
+private function uriHexVal(b: Int32): Int32 =
+    if b >= 48 then
+        if b <= 57 then b - 48
+        else if b >= 65 then
+            if b <= 70 then b - 55
+            else if b >= 97 then
+                if b <= 102 then b - 87
+                else -1
+            else -1
+        else -1
+    else -1
+
+private function uriEquals(a: Uri, b: Uri): Bool =
+    if !optionStringEq(a.scheme, b.scheme) then false
+    else if !optionAuthorityEq(a.authority, b.authority) then false
+    else if a.path != b.path then false
+    else if !optionStringEq(a.query, b.query) then false
+    else optionStringEq(a.fragment, b.fragment)
+
+private function optionStringEq(a: Option<String>, b: Option<String>): Bool =
+    match a with
+        case None =>
+            match b with
+                case None => true
+                case Some(_) => false
+        case Some(sa) =>
+            match b with
+                case None => false
+                case Some(sb) => sa == sb
+
+private function optionAuthorityEq(a: Option<Authority>, b: Option<Authority>): Bool =
+    match a with
+        case None =>
+            match b with
+                case None => true
+                case Some(_) => false
+        case Some(aa) =>
+            match b with
+                case None => false
+                case Some(bb) =>
+                    optionStringEq(aa.userInfo, bb.userInfo) && aa.host == bb.host && optionInt32Eq(aa.port, bb.port)
+
+private function optionInt32Eq(a: Option<Int32>, b: Option<Int32>): Bool =
+    match a with
+        case None =>
+            match b with
+                case None => true
+                case Some(_) => false
+        case Some(va) =>
+            match b with
+                case None => false
+                case Some(vb) => va == vb
+
+test "Uri parse full URI" =
+    let result = Uri.parse("https://user@example.com:8080/path?query=1#frag")
+    assert result.isOk
+    let u = result.require
+    assert u.scheme.isSome
+    assert u.scheme.require == "https"
+    assert u.path == "/path"
+    assert u.query.isSome
+    assert u.query.require == "query=1"
+    assert u.fragment.isSome
+    assert u.fragment.require == "frag"
+    let auth = u.authority.require
+    assert auth.host == "example.com"
+    assert auth.port.isSome
+    assert auth.port.require == 8080
+    assert auth.userInfo.isSome
+    assert auth.userInfo.require == "user"
+
+test "Uri parse simple URL" =
+    let result = Uri.parse("http://example.com/hello")
+    assert result.isOk
+    let u = result.require
+    assert u.scheme.isSome
+    assert u.scheme.require == "http"
+    assert u.path == "/hello"
+    assert u.query.isNone
+    assert u.fragment.isNone
+
+test "Uri parse path only" =
+    let result = Uri.parse("/just/a/path")
+    assert result.isOk
+    let u = result.require
+    assert u.scheme.isNone
+    assert u.authority.isNone
+    assert u.path == "/just/a/path"
+
+test "Uri parse with query only" =
+    let result = Uri.parse("http://host/path?key=val")
+    assert result.isOk
+    let u = result.require
+    assert u.query.isSome
+    assert u.query.require == "key=val"
+    assert u.fragment.isNone
+
+test "Uri parse with fragment only" =
+    let result = Uri.parse("http://host/path#section")
+    assert result.isOk
+    let u = result.require
+    assert u.query.isNone
+    assert u.fragment.isSome
+    assert u.fragment.require == "section"
+
+test "Uri parse empty string" =
+    let result = Uri.parse("")
+    assert result.isOk
+    let u = result.require
+    assert u.scheme.isNone
+    assert u.authority.isNone
+    assert u.path == ""
+
+test "Uri toString roundtrip" =
+    let result = Uri.parse("https://example.com:443/path?q=1#top")
+    assert result.isOk
+    let u = result.require
+    assert u.toString() == "https://example.com:443/path?q=1#top"
+
+test "Uri toString simple" =
+    let result = Uri.parse("http://example.com/")
+    assert result.isOk
+    assert result.require.toString() == "http://example.com/"
+
+test "Uri isAbsolute" =
+    let abs = Uri.parse("https://example.com").require
+    assert abs.isAbsolute == true
+    let rel = Uri.parse("/relative/path").require
+    assert rel.isAbsolute == false
+
+test "Uri withPath" =
+    let u = Uri.parse("http://example.com/old").require
+    let u2 = u.withPath("/new")
+    assert u2.path == "/new"
+    assert u2.scheme.isSome
+    assert u2.scheme.require == "http"
+
+test "Uri withScheme" =
+    let u = Uri.parse("http://example.com/path").require
+    let u2 = u.withScheme("https")
+    assert u2.scheme.isSome
+    assert u2.scheme.require == "https"
+    assert u2.path == "/path"
+
+test "Uri withAuthority replaces existing" =
+    let u = Uri.parse("http://example.com/path?q=1").require
+    let newAuth = Authority { userInfo = None; host = "other.com"; port = Some(8080) }
+    let u2 = u.withAuthority(newAuth)
+    assert u2.authority.require.host == "other.com"
+    assert u2.authority.require.port.require == 8080
+    assert u2.path == "/path"
+    assert u2.query.require == "q=1"
+
+test "Uri withHost on existing authority preserves port and user-info" =
+    let u = Uri.parse("http://user@example.com:8080/path").require
+    let u2 = u.withHost("upstream.example.com")
+    let auth = u2.authority.require
+    assert auth.host == "upstream.example.com"
+    assert auth.port.require == 8080
+    assert auth.userInfo.require == "user"
+
+test "Uri withHost creates authority when none" =
+    let u = Uri.parse("/relative/path").require
+    let u2 = u.withHost("example.com")
+    let auth = u2.authority.require
+    assert auth.host == "example.com"
+    assert auth.port.isNone
+    assert auth.userInfo.isNone
+    assert u2.path == "/relative/path"
+
+test "Uri withPort sets port and preserves host" =
+    let u = Uri.parse("http://example.com/path").require
+    let u2 = u.withPort(Some(9090))
+    assert u2.authority.require.host == "example.com"
+    assert u2.authority.require.port.require == 9090
+
+test "Uri withPort can clear the port" =
+    let u = Uri.parse("http://example.com:8080/path").require
+    let u2 = u.withPort(None)
+    assert u2.authority.require.host == "example.com"
+    assert u2.authority.require.port.isNone
+
+test "Uri encode unreserved chars unchanged" =
+    assert Uri.encode("hello") == "hello"
+    assert Uri.encode("abc123") == "abc123"
+
+test "Uri encode special characters" =
+    let encoded = Uri.encode("hello world")
+    assert encoded == "hello%20world"
+
+test "Uri encode slash" =
+    let encoded = Uri.encode("/path/to/resource")
+    assert encoded.contains("%2F")
+
+test "Uri decode valid" =
+    let result = Uri.decode("hello%20world")
+    assert result.isOk
+    assert result.require == "hello world"
+
+test "Uri decode passthrough" =
+    let result = Uri.decode("hello")
+    assert result.isOk
+    assert result.require == "hello"
+
+test "Uri decode truncated percent" =
+    let result = Uri.decode("hello%2")
+    assert result.isError
+
+test "Uri decode invalid hex" =
+    let result = Uri.decode("hello%ZZ")
+    assert result.isError
+
+test "Uri encode decode roundtrip" =
+    let original = "hello world&foo=bar"
+    let encoded = Uri.encode(original)
+    let decoded = Uri.decode(encoded)
+    assert decoded.isOk
+    assert decoded.require == original
+
+test "Uri equality" =
+    let a = Uri.parse("http://example.com/path").require
+    let b = Uri.parse("http://example.com/path").require
+    assert a == b
+
+test "Uri inequality different path" =
+    let a = Uri.parse("http://example.com/a").require
+    let b = Uri.parse("http://example.com/b").require
+    assert (a == b) == false
+
+test "Uri Display format" =
+    let u = Uri.parse("https://example.com/path").require
+    assert u.format() == "https://example.com/path"

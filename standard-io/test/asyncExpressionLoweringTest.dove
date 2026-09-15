@@ -1,0 +1,134 @@
+package test
+
+import standard.io.Async
+import standard.io.Resource
+
+test "async do lowering: resource continuation preserves a computation value" =
+    let mutable releases = 0
+    let resource: Resource<Int32, Never> = Resource.make(
+        () => Async.succeed(42),
+        (_: Int32) => Async.thunk(() => releases = releases + 1)
+    )
+    let outer: Async<Async<Int32, Never>, Never> = async do
+        let first = use resource
+        let second = use Resource.succeed(1)
+        Async.succeed(first + second)
+    let program: Async<Unit, Never> = async do
+        let inner = await outer
+        assert releases == 1
+        assert (await inner) == 43
+    program.run()
+
+test "async do lowering: resource branches preserve nested computations" =
+    let program: Async<Unit, Never> = async do
+        for selected in [true, false] do
+            let outer: Async<Async<Int32, Never>, Never> = async do
+                if selected then
+                    let value = use Resource.succeed(42)
+                    Async.succeed(value)
+                else Async.succeed(7)
+            let inner = await outer
+            assert (await inner) == (if selected then 42 else 7)
+            let matched: Async<Async<Int32, Never>, Never> = async do
+                await Async.succeed(())
+                let beforeBranch = use Resource.succeed(())
+                match selected with
+                case true =>
+                    let value = use Resource.succeed(42)
+                    Async.succeed(value)
+                case false => Async.succeed(7)
+            let matchInner = await matched
+            assert (await matchInner) == (if selected then 42 else 7)
+    program.run()
+
+test "async do lowering: resource continuation preserves a failing computation value" =
+    let outer: Async<Async<Int32, String>, String> = async do
+        let value = use Resource.succeed(42)
+        Async.fail("inner failure")
+    let recovered: Async<Unit, Never> = outer.fold(
+        (_: String) => Async.thunk(() => assert false),
+        (inner: Async<Int32, String>) => inner.fold(
+            (message: String) => Async.thunk(() => assert message == "inner failure"),
+            (_: Int32) => Async.thunk(() => assert false)
+        )
+    )
+    recovered.run()
+
+newtype ExpressionSourceResource<T> = T
+
+implement <T> Usable<T, Never> for ExpressionSourceResource<T> =
+    type Wrapped<U, E2> = Async<U, E2>
+    public function use<U, E2>(self: ExpressionSourceResource<T>, f: (T) => Async<U, E2>, errorF: (Never) => E2): Async<U, E2> =
+        f(self.value)
+
+test "async do lowering: explicit use call remains a computation value" =
+    let outer: Async<Any, Never> = async do
+        ExpressionSourceResource(42).use(
+            (value: Int32) => Async.succeed(value),
+            (_: Never) => panic "unreachable"
+        )
+    let program: Async<Unit, Never> = async do
+        let value = await outer
+        assert value is Async<Int32, Never>
+    program.run()
+
+test "async do lowering: resource branches retain synchronous prefixes" =
+    let mutable acquisitions = 0
+    let resource: Resource<Unit, Never> = Resource.make(
+        () => Async.thunk(() => acquisitions = acquisitions + 1),
+        (_: Unit) => Async.succeed(())
+    )
+    let program: Async<Unit, Never> = async do
+        if true then
+            let prefix = 1
+            let value = use resource
+            assert prefix == 1
+        else ()
+    program.run()
+    assert acquisitions == 1
+
+test "async do lowering: resource continuation preserves an Any success value" =
+    let inner: Async<Any, Never> = Async.succeed(42)
+    let outer: Async<Any, Never> = async do
+        let value = use Resource.succeed(())
+        inner
+    let program: Async<Unit, Never> = async do
+        let value = await outer
+        assert value is Async<Any, Never>
+    program.run()
+
+newtype ExpressionSyncResource<T> = T
+
+implement <T> Usable<T, Never> for ExpressionSyncResource<T> =
+    type Wrapped<U, E2> = U
+    public function use<U, E2>(self: ExpressionSyncResource<T>, f: (T) => U, errorF: (Never) => E2): U =
+        f(self.value)
+
+test "async do lowering: synchronous closures isolate resource continuations" =
+    let program: Async<Unit, Never> = async do
+        let value: () => Int32 = () =>
+            let number = use ExpressionSyncResource(42)
+            number
+        assert value() == 42
+        let direct: () => Int32 = () => use ExpressionSyncResource(21)
+        assert direct() == 21
+    program.run()
+
+test "async do lowering: synchronous loop control stays local" =
+    let program: Async<Unit, Never> = async do
+        let mutable total = 0
+        for value in [1, 2] do
+            await Async.succeed(())
+            while true do
+                total = total + value
+                break
+        assert total == 3
+        while true do
+            let deferred: Async<Unit, Never> = async do await Async.succeed(())
+            break
+        let mutable iterations = 0
+        while iterations < 2 do
+            iterations = iterations + 1
+            continue
+        assert iterations == 2
+    program.run()

@@ -1,0 +1,1576 @@
+package standard.time
+
+// =============================================================================
+// DateTimeFormatter — Java-style pattern-based date/time formatter and parser.
+//
+// Build a formatter with `DateTimeFormatter.ofPattern("yyyy-MM-dd")` (compiles
+// the pattern once) and then call `.format(temporal)` / `.parseXxx(text)`
+// any number of times.
+//
+// Supported pattern letters (all with Java's repetition rules):
+//
+//   y   year (proleptic)                    yyyy=2024, yy=24 (parse: nn<70→2000+nn)
+//   M   month-of-year                       M=7, MM=07, MMM=Jul, MMMM=July, MMMMM=J
+//   L   standalone month                    same as M
+//   d   day-of-month                        d=4, dd=04
+//   D   day-of-year                         D=196, DDD=196
+//   E   day-of-week                         EEE=Mon, EEEE=Monday, EEEEE=M
+//   q   quarter                             q=3, qq=03
+//   w   week-of-year (ISO 8601)             w=28, ww=28
+//   a   AM/PM                               a=AM
+//   H   hour 0-23                           H=9, HH=09
+//   m   minute                              m=5, mm=05
+//   s   second                              s=3, ss=03
+//   S   fraction of second                  S=1 (tenths), SSS=001 (millis), SSSSSSSSS (nanos)
+//   G   era                                 G=AD, GGGG=Anno Domini, GGGGG=A
+//   V   IANA zone id                        VV=America/New_York
+//   z   zone abbreviation                   z=EST, zzzz=Eastern Standard Time
+//   Z   offset (no Z for UTC)               Z=+0500, ZZZZ=GMT+05:00, ZZZZZ=+05:00
+//   X   offset (Z for UTC)                  X=+05, XX=+0500, XXX=+05:00, XXXX=+0500, XXXXX=+05:00
+//   x   offset (no Z for UTC)               same shape as X; never emits "Z"
+//
+// Quoted text: `'foo'` is literal `foo`; `''` (inside or outside a quote) is
+// a literal `'`. Anything else non-alpha in the pattern is a literal char.
+//
+// Locale: English only (month/day names). Locale support is a follow-up.
+// =============================================================================
+
+/// One piece of a compiled pattern: either a verbatim chunk of text or a
+/// pattern field (letter + repetition count).
+public enum FormatPart =
+    Literal(String)
+    Field(Char, Int32)
+
+/// A compiled date/time formatter. Build with `DateTimeFormatter.ofPattern`
+/// (cheap if the formatter is reused) and call `.format(temporal)` /
+/// `.parseXxx(text)` on it.
+public record DateTimeFormatter =
+    pattern: String
+    parts: Array<FormatPart>
+
+/// Error returned by `parseXxx` methods on malformed input.
+public record DateTimeParseError =
+    /// The pattern the formatter was built from.
+    pattern: String
+    /// The input text that failed to parse.
+    text: String
+    /// Byte offset into `text` where the error was detected.
+    index: Int32
+    /// Human-readable description.
+    message: String
+
+/// A bag of optional date/time fields. Each `format(temporal)` projects its
+/// source into this shape; each `parseXxx(text)` builds one up from input,
+/// then assembles the requested concrete type. Internal — callers always
+/// see `LocalDate` / `LocalDateTime` / etc.
+internal record FormatContext =
+    year: Option<Int32>
+    month: Option<Int32>            // 1-12
+    day: Option<Int32>              // 1-31
+    dayOfYear: Option<Int32>
+    dayOfWeek: Option<Int32>        // 1=Mon..7=Sun (ISO)
+    hour: Option<Int32>             // 0-23
+    minute: Option<Int32>
+    second: Option<Int32>
+    nano: Option<Int32>
+    offsetSeconds: Option<Int32>
+    zoneId: Option<String>
+    zoneAbbrev: Option<String>
+
+module DateTimeFormatter =
+
+    /// Compile a pattern string into a formatter. Validates letter / width
+    /// combinations at this call — bad patterns panic here, not at format
+    /// time, so misconfigured presets surface during module init.
+    public function ofPattern(pattern: String): DateTimeFormatter =
+        let parts = compilePattern(pattern)
+        DateTimeFormatter { pattern = pattern; parts = parts }
+
+    /// Format a `LocalDate` (year, month, day fields). Patterns that
+    /// reference time-of-day or zone fields panic with a clear message.
+    public function format(self, date: LocalDate): String =
+        formatFromContext(self, contextFromLocalDate(date))
+
+    /// Format a `LocalTime` (hour, minute, second, nano).
+    public function format(self, time: LocalTime): String =
+        formatFromContext(self, contextFromLocalTime(time))
+
+    /// Format a `LocalDateTime` (date + time, no zone).
+    public function format(self, dt: LocalDateTime): String =
+        formatFromContext(self, contextFromLocalDateTime(dt))
+
+    /// Format a `ZonedDateTime` (date + time + zone). All zone-aware
+    /// pattern letters work.
+    public function format(self, zdt: ZonedDateTime): String =
+        formatFromContext(self, contextFromZonedDateTime(zdt))
+
+    /// Format an `Instant` interpreted in a specific zone. Equivalent to
+    /// `format(instant.toZonedDateTime(zone))` but skips the intermediate
+    /// allocation.
+    public function format(self, instant: Instant, zone: TimeZone): String =
+        formatFromContext(self, contextFromInstant(instant, zone))
+
+    /// Format a `YearMonth`. Patterns referencing day / time fields panic.
+    public function format(self, ym: YearMonth): String =
+        formatFromContext(self, contextFromYearMonth(ym))
+
+    /// Format a `MonthDay`. Patterns referencing year / time fields panic.
+    public function format(self, md: MonthDay): String =
+        formatFromContext(self, contextFromMonthDay(md))
+
+    // --- Named presets -----------------------------------------------------
+
+    /// ISO-8601 calendar date: `yyyy-MM-dd` (e.g. `"2024-07-15"`).
+    public let isoLocalDate: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    /// ISO-8601 wall-clock time: `HH:mm:ss` (e.g. `"08:00:00"`).
+    public let isoLocalTime: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss")
+
+    /// ISO-8601 local date-time: `yyyy-MM-ddTHH:mm:ss`.
+    public let isoLocalDateTime: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+    /// ISO-8601 offset date-time: `yyyy-MM-ddTHH:mm:ss±HH:MM`. UTC
+    /// renders as `Z`.
+    public let isoOffsetDateTime: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+
+    /// ISO-8601 with offset AND IANA zone in brackets:
+    /// `yyyy-MM-ddTHH:mm:ss±HH:MM[Region/City]`.
+    public let isoZonedDateTime: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX'['VV']'")
+
+    /// ISO-8601 instant in UTC: `yyyy-MM-ddTHH:mm:ssZ` (the trailing `Z`
+    /// is a literal, not a pattern letter — these are intended for use
+    /// with `format(instant, TimeZone.utc)`).
+    public let isoInstant: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+
+    /// RFC 1123 (HTTP) date format:
+    /// `EEE, dd MMM yyyy HH:mm:ss zzz` → `"Mon, 15 Jul 2024 12:00:00 GMT"`.
+    public let rfc1123: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss zzz")
+
+    /// Compact ISO date with no separators: `yyyyMMdd` → `"20240715"`.
+    public let basicIsoDate: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
+
+    // --- Parse direction ---------------------------------------------------
+
+    /// Parse a `LocalDate`. The pattern must supply year, month, and day.
+    public function parseLocalDate(self, text: String): Result<LocalDate, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) => assembleLocalDate(ctx, self.pattern, text)
+            case Error(e) => Error(e)
+
+    /// Parse a `LocalTime`. The pattern must supply hour, minute, (and
+    /// optionally second + fractional-second).
+    public function parseLocalTime(self, text: String): Result<LocalTime, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) => assembleLocalTime(ctx, self.pattern, text)
+            case Error(e) => Error(e)
+
+    /// Parse a `LocalDateTime`. The pattern must supply both date and time
+    /// fields.
+    public function parseLocalDateTime(self, text: String): Result<LocalDateTime, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) =>
+                match assembleLocalDate(ctx, self.pattern, text) with
+                    case Ok(d) =>
+                        match assembleLocalTime(ctx, self.pattern, text) with
+                            case Ok(t) => Ok(LocalDateTime.of(d, t))
+                            case Error(e) => Error(e)
+                    case Error(e) => Error(e)
+            case Error(e) => Error(e)
+
+    /// Parse a `ZonedDateTime`. The pattern must supply date, time, and
+    /// either a zone id (`V`) or an offset (`Z`/`X`/`x`).
+    public function parseZonedDateTime(self, text: String): Result<ZonedDateTime, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) =>
+                match assembleLocalDate(ctx, self.pattern, text) with
+                    case Ok(d) =>
+                        match assembleLocalTime(ctx, self.pattern, text) with
+                            case Ok(t) =>
+                                match resolveZone(ctx, self.pattern, text) with
+                                    case Ok(tz) => Ok(ZonedDateTime.of(LocalDateTime.of(d, t), tz))
+                                    case Error(e) => Error(e)
+                            case Error(e) => Error(e)
+                    case Error(e) => Error(e)
+            case Error(e) => Error(e)
+
+    /// Parse an `Instant`. If the pattern supplies a zone (id or offset),
+    /// it's used to convert; otherwise the input is interpreted as UTC
+    /// (which matches typical "ISO instant" patterns where the trailing
+    /// `Z` is a literal — e.g. `yyyy-MM-dd'T'HH:mm:ss'Z'`).
+    public function parseInstant(self, text: String): Result<Instant, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) =>
+                match assembleLocalDate(ctx, self.pattern, text) with
+                    case Ok(d) =>
+                        match assembleLocalTime(ctx, self.pattern, text) with
+                            case Ok(t) =>
+                                let tz = match resolveZone(ctx, self.pattern, text) with
+                                    case Ok(z) => z
+                                    case Error(_) => TimeZone.utc
+                                let off = tz.offsetSeconds
+                                let epoch = localToEpochSecond(
+                                    d.year.value, d.month.value, d.day.value,
+                                    t.hour, t.minute, t.second, off
+                                )
+                                let realOff = tz.offsetAt(epoch)
+                                let finalEpoch = localToEpochSecond(
+                                    d.year.value, d.month.value, d.day.value,
+                                    t.hour, t.minute, t.second, realOff
+                                )
+                                Ok(Instant { epochSecond = finalEpoch; nano = t.nano })
+                            case Error(e) => Error(e)
+                    case Error(e) => Error(e)
+            case Error(e) => Error(e)
+
+    /// Parse a `YearMonth`. The pattern must supply year and month.
+    public function parseYearMonth(self, text: String): Result<YearMonth, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) =>
+                match ctx.year with
+                    case None => Error(parseErr(self.pattern, text, 0, "missing 'y' (year)"))
+                    case Some(y) =>
+                        match ctx.month with
+                            case None => Error(parseErr(self.pattern, text, 0, "missing 'M' (month)"))
+                            case Some(m) => Ok(YearMonth.of(y, m))
+            case Error(e) => Error(e)
+
+    /// Parse a `MonthDay`. The pattern must supply month and day.
+    public function parseMonthDay(self, text: String): Result<MonthDay, DateTimeParseError> =
+        match scanInput(self, text) with
+            case Ok(ctx) =>
+                match ctx.month with
+                    case None => Error(parseErr(self.pattern, text, 0, "missing 'M' (month)"))
+                    case Some(m) =>
+                        match ctx.day with
+                            case None => Error(parseErr(self.pattern, text, 0, "missing 'd' (day)"))
+                            case Some(d) => Ok(MonthDay.of(m, d))
+            case Error(e) => Error(e)
+
+// --- Pattern compiler ------------------------------------------------------
+
+/// Tokenize `pattern` into a list of `FormatPart`s. Letters group into runs
+/// (e.g. `MMM` → `Field('M', 3)`); non-letter chars become literals.
+/// Quoted text `'…'` is emitted as a single `Literal`; `''` is an escaped
+/// single quote.
+internal function compilePattern(pattern: String): Array<FormatPart> =
+    let bytes = pattern.bytes()
+    let mutable parts = Array<FormatPart>.empty()
+    let mutable i = 0
+    let len = bytes.length
+    while i < len do
+        let b = bytes.get(i)
+        if isPatternLetter(b) then
+            // Letter run: consume consecutive identical letters.
+            let mutable count = 1
+            while i + count < len && bytes.get(i + count) == b do
+                count = count + 1
+            let ch = String.fromBytes(bytes, i, 1).getChar(0)
+            validateField(ch, count, pattern)
+            parts = parts.concat(Array<FormatPart>.fill(1, FormatPart.Field(ch, count)))
+            i = i + count
+        else if b == 39u8 then  // '\''
+            // Quoted run. `''` is a literal single quote. Otherwise consume
+            // until the closing `'`. An unclosed quote panics.
+            if i + 1 < len && bytes.get(i + 1) == 39u8 then
+                parts = parts.concat(Array<FormatPart>.fill(1, FormatPart.Literal("'")))
+                i = i + 2
+            else
+                let mutable end = i + 1
+                let mutable closed = false
+                while !closed && end < len do
+                    if bytes.get(end) == 39u8 then
+                        if end + 1 < len && bytes.get(end + 1) == 39u8 then
+                            // Embedded literal `''` inside a quoted run.
+                            end = end + 2
+                        else
+                            closed = true
+                    else
+                        end = end + 1
+                if !closed then panic "DateTimeFormatter: unclosed quote in pattern '" ++ pattern ++ "'"
+                // Build the literal — collapsing any embedded `''` to `'`.
+                let mutable lit = ""
+                let mutable j = i + 1
+                while j < end do
+                    if bytes.get(j) == 39u8 && j + 1 < end && bytes.get(j + 1) == 39u8 then
+                        lit = lit ++ "'"
+                        j = j + 2
+                    else
+                        lit = lit ++ String.fromBytes(bytes, j, 1)
+                        j = j + 1
+                parts = parts.concat(Array<FormatPart>.fill(1, FormatPart.Literal(lit)))
+                i = end + 1
+        else
+            // Any other char is a single-char literal. Adjacent literals
+            // are NOT merged — the format loop handles that uniformly.
+            parts = parts.concat(Array<FormatPart>.fill(1, FormatPart.Literal(String.fromBytes(bytes, i, 1))))
+            i = i + 1
+    parts
+
+/// True iff `b` is an ASCII letter — those are the only valid pattern
+/// letters. Other Unicode is treated as literal.
+internal function isPatternLetter(b: Uint8): Bool =
+    (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8)
+
+/// Reject unsupported letters / widths at compile time. The supported set
+/// is documented at the top of this file; anything else panics with the
+/// offending letter and a hint.
+internal function validateField(letter: Char, width: Int32, pattern: String): Unit =
+    if !isKnownLetter(letter) then
+        panic "DateTimeFormatter: unsupported pattern letter '" ++ String.fromChar(letter) ++ "' in pattern '" ++ pattern ++ "'"
+    let maxWidth = if letter == 'S' then 9 else 5
+    if width < 1 || width > maxWidth then
+        panic "DateTimeFormatter: '" ++ String.fromChar(letter) ++ "' width must be 1.." ++ maxWidth.format() ++ ", got " ++ width.format()
+
+internal function isKnownLetter(letter: Char): Bool =
+    match letter with
+        case 'y' => true
+        case 'M' => true
+        case 'L' => true
+        case 'd' => true
+        case 'D' => true
+        case 'q' => true
+        case 'w' => true
+        case 'E' => true
+        case 'a' => true
+        case 'H' => true
+        case 'm' => true
+        case 's' => true
+        case 'S' => true
+        case 'G' => true
+        case 'V' => true
+        case 'z' => true
+        case 'Z' => true
+        case 'X' => true
+        case 'x' => true
+        case _ => false
+
+// --- Context builders ------------------------------------------------------
+
+internal function emptyContext(): FormatContext =
+    FormatContext {
+        year = None
+        month = None
+        day = None
+        dayOfYear = None
+        dayOfWeek = None
+        hour = None
+        minute = None
+        second = None
+        nano = None
+        offsetSeconds = None
+        zoneId = None
+        zoneAbbrev = None
+    }
+
+internal function contextFromLocalDate(date: LocalDate): FormatContext =
+    FormatContext {
+        year = Some(date.year.value)
+        month = Some(date.month.value)
+        day = Some(date.day.value)
+        dayOfYear = Some(computeDayOfYear(date.year.value, date.month.value, date.day.value))
+        dayOfWeek = Some(computeDayOfWeek(date.year.value, date.month.value, date.day.value))
+        hour = None
+        minute = None
+        second = None
+        nano = None
+        offsetSeconds = None
+        zoneId = None
+        zoneAbbrev = None
+    }
+
+internal function contextFromLocalTime(time: LocalTime): FormatContext =
+    FormatContext {
+        year = None
+        month = None
+        day = None
+        dayOfYear = None
+        dayOfWeek = None
+        hour = Some(time.hour)
+        minute = Some(time.minute)
+        second = Some(time.second)
+        nano = Some(time.nano)
+        offsetSeconds = None
+        zoneId = None
+        zoneAbbrev = None
+    }
+
+internal function contextFromLocalDateTime(dt: LocalDateTime): FormatContext =
+    FormatContext {
+        year = Some(dt.date.year.value)
+        month = Some(dt.date.month.value)
+        day = Some(dt.date.day.value)
+        dayOfYear = Some(computeDayOfYear(dt.date.year.value, dt.date.month.value, dt.date.day.value))
+        dayOfWeek = Some(computeDayOfWeek(dt.date.year.value, dt.date.month.value, dt.date.day.value))
+        hour = Some(dt.time.hour)
+        minute = Some(dt.time.minute)
+        second = Some(dt.time.second)
+        nano = Some(dt.time.nano)
+        offsetSeconds = None
+        zoneId = None
+        zoneAbbrev = None
+    }
+
+internal function contextFromZonedDateTime(zdt: ZonedDateTime): FormatContext =
+    // Compute the epoch for the (local date+time, zone) pair to resolve
+    // the zone abbreviation. For Fixed zones offsetSeconds is constant;
+    // for IANA zones we walk the transition table.
+    let dt = zdt.dateTime
+    let epoch = localToEpochSecond(
+        dt.date.year.value, dt.date.month.value, dt.date.day.value,
+        dt.time.hour, dt.time.minute, dt.time.second,
+        zdt.zone.offsetSeconds  // initial guess; refined below for Iana
+    )
+    let offset = zdt.zone.offsetAt(epoch)
+    let abbrev = zdt.zone.abbreviationAt(epoch)
+    FormatContext {
+        year = Some(dt.date.year.value)
+        month = Some(dt.date.month.value)
+        day = Some(dt.date.day.value)
+        dayOfYear = Some(computeDayOfYear(dt.date.year.value, dt.date.month.value, dt.date.day.value))
+        dayOfWeek = Some(computeDayOfWeek(dt.date.year.value, dt.date.month.value, dt.date.day.value))
+        hour = Some(dt.time.hour)
+        minute = Some(dt.time.minute)
+        second = Some(dt.time.second)
+        nano = Some(dt.time.nano)
+        offsetSeconds = Some(offset)
+        zoneId = Some(zdt.zone.id)
+        zoneAbbrev = Some(abbrev)
+    }
+
+internal function contextFromInstant(instant: Instant, zone: TimeZone): FormatContext =
+    let local = instant.toLocalDateTime(zone)
+    let offset = zone.offsetAt(instant.epochSecond)
+    let abbrev = zone.abbreviationAt(instant.epochSecond)
+    FormatContext {
+        year = Some(local.date.year.value)
+        month = Some(local.date.month.value)
+        day = Some(local.date.day.value)
+        dayOfYear = Some(computeDayOfYear(local.date.year.value, local.date.month.value, local.date.day.value))
+        dayOfWeek = Some(computeDayOfWeek(local.date.year.value, local.date.month.value, local.date.day.value))
+        hour = Some(local.time.hour)
+        minute = Some(local.time.minute)
+        second = Some(local.time.second)
+        nano = Some(local.time.nano)
+        offsetSeconds = Some(offset)
+        zoneId = Some(zone.id)
+        zoneAbbrev = Some(abbrev)
+    }
+
+internal function contextFromYearMonth(ym: YearMonth): FormatContext =
+    FormatContext {
+        year = Some(ym.year.value)
+        month = Some(ym.month.value)
+        day = None
+        dayOfYear = None
+        dayOfWeek = None
+        hour = None
+        minute = None
+        second = None
+        nano = None
+        offsetSeconds = None
+        zoneId = None
+        zoneAbbrev = None
+    }
+
+internal function contextFromMonthDay(md: MonthDay): FormatContext =
+    FormatContext {
+        year = None
+        month = Some(md.month.value)
+        day = Some(md.day.value)
+        dayOfYear = None
+        dayOfWeek = None
+        hour = None
+        minute = None
+        second = None
+        nano = None
+        offsetSeconds = None
+        zoneId = None
+        zoneAbbrev = None
+    }
+
+// --- Format loop -----------------------------------------------------------
+
+internal function formatFromContext(formatter: DateTimeFormatter, ctx: FormatContext): String =
+    let mutable buf = ""
+    let mutable i = 0
+    while i < formatter.parts.length do
+        match formatter.parts.get(i) with
+            case FormatPart.Literal(s) =>
+                buf = buf ++ s
+            case FormatPart.Field(letter, width) =>
+                buf = buf ++ emitField(ctx, letter, width, formatter.pattern)
+        i = i + 1
+    buf
+
+/// Format a single field. Each letter has its own emit rule keyed off
+/// `width`; missing context fields panic with a message naming the letter
+/// and the offending pattern (e.g. asking `H` on a `LocalDate` formatter).
+internal function emitField(ctx: FormatContext, letter: Char, width: Int32, pattern: String): String =
+    match letter with
+        case 'y' => emitYear(requireField(ctx.year, "y", pattern), width)
+        case 'M' => emitMonth(requireField(ctx.month, "M", pattern), width)
+        case 'L' => emitMonth(requireField(ctx.month, "L", pattern), width)
+        case 'd' => padDecimal(requireField(ctx.day, "d", pattern), width)
+        case 'D' => padDecimal(requireField(ctx.dayOfYear, "D", pattern), width)
+        case 'q' => padDecimal(quarterFromMonth(requireField(ctx.month, "q", pattern)), width)
+        case 'w' => padDecimal(isoWeekOfYear(
+            requireField(ctx.year, "w", pattern),
+            requireField(ctx.month, "w", pattern),
+            requireField(ctx.day, "w", pattern)
+        ), width)
+        case 'E' => emitDayOfWeek(requireField(ctx.dayOfWeek, "E", pattern), width)
+        case 'a' => if requireField(ctx.hour, "a", pattern) < 12 then "AM" else "PM"
+        case 'H' => padDecimal(requireField(ctx.hour, "H", pattern), width)
+        case 'm' => padDecimal(requireField(ctx.minute, "m", pattern), width)
+        case 's' => padDecimal(requireField(ctx.second, "s", pattern), width)
+        case 'S' => emitFractionalSecond(requireField(ctx.nano, "S", pattern), width)
+        case 'G' => emitEra(requireField(ctx.year, "G", pattern), width)
+        case 'V' => requireField(ctx.zoneId, "V", pattern)
+        case 'z' => emitZoneName(ctx, width, pattern)
+        case 'Z' => emitOffsetZ(requireField(ctx.offsetSeconds, "Z", pattern), width)
+        case 'X' => emitOffsetX(requireField(ctx.offsetSeconds, "X", pattern), width, true)
+        case 'x' => emitOffsetX(requireField(ctx.offsetSeconds, "x", pattern), width, false)
+        case c =>
+            // validateField should have caught this at compile time.
+            panic "DateTimeFormatter: internal error — unhandled letter '" ++ String.fromChar(c) ++ "'"
+
+// --- Per-letter emit helpers ----------------------------------------------
+
+internal function emitYear(year: Int32, width: Int32): String =
+    // `y` (proleptic). `yy` = last two digits. Otherwise zero-pad to `width`.
+    if width == 2 then
+        let mutable mod = year
+        if mod < 0 then mod = -mod
+        padDecimal(mod % 100, 2)
+    else
+        // Negative years emit with a leading minus, padding adjusts.
+        if year < 0 then
+            "-" ++ padDecimal(-year, width)
+        else
+            padDecimal(year, width)
+
+internal function emitMonth(month: Int32, width: Int32): String =
+    if width <= 2 then padDecimal(month, width)
+    else
+        let m = match Month.fromValue(month) with
+            case Some(mm) => mm
+            case None => panic "DateTimeFormatter: invalid month " ++ month.format()
+        if width == 3 then m.shortName
+        else if width == 4 then m.name
+        else m.narrowName
+
+internal function emitDayOfWeek(dow: Int32, width: Int32): String =
+    let d = match DayOfWeek.fromValue(dow) with
+        case Some(dd) => dd
+        case None => panic "DateTimeFormatter: invalid day-of-week " ++ dow.format()
+    if width <= 3 then d.shortName
+    else if width == 4 then d.name
+    else d.narrowName
+
+internal function emitFractionalSecond(nano: Int32, width: Int32): String =
+    // Nanos are 0..999_999_999. To produce `width` fractional digits we
+    // scale by 10^(9-width).
+    let mutable divisor = 1
+    let mutable i = 0
+    while i < 9 - width do
+        divisor = divisor * 10
+        i = i + 1
+    let scaled = nano / divisor
+    padDecimal(scaled, width)
+
+internal function emitEra(year: Int32, width: Int32): String =
+    // Java: G/GG/GGG = "AD"/"BC", GGGG = "Anno Domini"/"Before Christ",
+    // GGGGG = "A"/"B".
+    let isAd = year >= 1
+    if width <= 3 then if isAd then "AD" else "BC"
+    else if width == 4 then if isAd then "Anno Domini" else "Before Christ"
+    else if isAd then "A" else "B"
+
+internal function emitZoneName(ctx: FormatContext, width: Int32, pattern: String): String =
+    // `z` / `zz` / `zzz` = abbreviation; `zzzz` = (currently same as
+    // abbreviation — full localized name needs CLDR, out of v1 scope).
+    let abbrev = requireField(ctx.zoneAbbrev, "z", pattern)
+    let _ = width
+    abbrev
+
+internal function emitOffsetZ(offsetSec: Int32, width: Int32): String =
+    // Java `Z`: 1-3 = +HHMM, 4 = GMT+HH:MM, 5 = +HH:MM[:SS] (extended).
+    if width <= 3 then formatOffsetHHMM(offsetSec, false)
+    else if width == 4 then "GMT" ++ formatOffsetHHMM(offsetSec, true)
+    else formatOffsetHHMMSS(offsetSec, true)
+
+internal function emitOffsetX(offsetSec: Int32, width: Int32, allowZ: Bool): String =
+    // Java `X` / `x`: width 1 = +HH (or +HHMM if non-zero minutes),
+    //                width 2 = +HHMM, width 3 = +HH:MM,
+    //                width 4 = +HHMM[ss], width 5 = +HH:MM[:SS].
+    // `X` emits "Z" when offsetSec == 0; `x` emits "+00".
+    if offsetSec == 0 && allowZ then "Z"
+    else if width == 1 then formatOffsetHH(offsetSec)
+    else if width == 2 then formatOffsetHHMM(offsetSec, false)
+    else if width == 3 then formatOffsetHHMM(offsetSec, true)
+    else if width == 4 then formatOffsetHHMMSS(offsetSec, false)
+    else formatOffsetHHMMSS(offsetSec, true)
+
+// --- Numeric / offset formatting helpers -----------------------------------
+
+/// Zero-pad an Int32 to `width` digits. Width 1 = compact (no padding).
+/// Negative values pass through with the sign — callers handle sign for
+/// fields where negatives are expected (year, offset).
+internal function padDecimal(n: Int32, width: Int32): String =
+    let s = n.format()
+    let len = s.length
+    if len >= width then s
+    else
+        let pad = width - len
+        let mutable result = ""
+        let mutable i = 0
+        while i < pad do
+            result = result ++ "0"
+            i = i + 1
+        result ++ s
+
+internal function formatOffsetHH(offsetSec: Int32): String =
+    let sign = if offsetSec < 0 then "-" else "+"
+    let abs = if offsetSec < 0 then -offsetSec else offsetSec
+    let h = abs / 3600
+    sign ++ padDecimal(h, 2)
+
+internal function formatOffsetHHMM(offsetSec: Int32, colon: Bool): String =
+    let sign = if offsetSec < 0 then "-" else "+"
+    let abs = if offsetSec < 0 then -offsetSec else offsetSec
+    let h = abs / 3600
+    let m = (abs % 3600) / 60
+    if colon then sign ++ padDecimal(h, 2) ++ ":" ++ padDecimal(m, 2)
+    else sign ++ padDecimal(h, 2) ++ padDecimal(m, 2)
+
+internal function formatOffsetHHMMSS(offsetSec: Int32, colon: Bool): String =
+    let sign = if offsetSec < 0 then "-" else "+"
+    let abs = if offsetSec < 0 then -offsetSec else offsetSec
+    let h = abs / 3600
+    let m = (abs % 3600) / 60
+    let s = abs % 60
+    if s == 0 then formatOffsetHHMM(offsetSec, colon)
+    else if colon then sign ++ padDecimal(h, 2) ++ ":" ++ padDecimal(m, 2) ++ ":" ++ padDecimal(s, 2)
+    else sign ++ padDecimal(h, 2) ++ padDecimal(m, 2) ++ padDecimal(s, 2)
+
+/// Demand a context field; panic with a helpful message if missing.
+internal function requireField<T>(field: Option<T>, letter: String, pattern: String): T =
+    match field with
+        case Some(v) => v
+        case None =>
+            panic "DateTimeFormatter: pattern '" ++ pattern ++ "' uses '" ++ letter ++ "' but the source value doesn't have that field"
+
+// --- Date arithmetic helpers ----------------------------------------------
+
+internal function isLeap(year: Int32): Bool =
+    (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0))
+
+internal function daysBeforeMonth(month: Int32, year: Int32): Int32 =
+    // 0-based days from Jan 1 to the first of `month`.
+    let mutable d = 0
+    let mutable i = 1
+    while i < month do
+        d = d + monthLengthInt(i, year)
+        i = i + 1
+    d
+
+internal function monthLengthInt(month: Int32, year: Int32): Int32 =
+    if month == 1 then 31
+    else if month == 2 then if isLeap(year) then 29 else 28
+    else if month == 3 then 31
+    else if month == 4 then 30
+    else if month == 5 then 31
+    else if month == 6 then 30
+    else if month == 7 then 31
+    else if month == 8 then 31
+    else if month == 9 then 30
+    else if month == 10 then 31
+    else if month == 11 then 30
+    else 31
+
+internal function computeDayOfYear(year: Int32, month: Int32, day: Int32): Int32 =
+    daysBeforeMonth(month, year) + day
+
+/// Zeller-style day-of-week, returning 1=Mon..7=Sun (ISO).
+internal function computeDayOfWeek(year: Int32, month: Int32, day: Int32): Int32 =
+    let m = if month < 3 then month + 12 else month
+    let y = if month < 3 then year - 1 else year
+    let k = y % 100
+    let j = y / 100
+    let h = (day + (13 * (m + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7
+    // Zeller's h: 0=Sat, 1=Sun, 2=Mon..6=Fri. Convert to ISO 1=Mon..7=Sun.
+    let iso = ((h + 5) % 7) + 1
+    iso
+
+internal function quarterFromMonth(month: Int32): Int32 =
+    (month - 1) / 3 + 1
+
+/// ISO 8601 week-of-year. Definition: week 1 contains the first Thursday
+/// of the year, equivalently the week containing Jan 4.
+internal function isoWeekOfYear(year: Int32, month: Int32, day: Int32): Int32 =
+    let doy = computeDayOfYear(year, month, day)
+    let dow = computeDayOfWeek(year, month, day)
+    // Days from "Monday of the week containing this date" to Jan 1.
+    let weekStart = doy - dow
+    // ISO week 1's Monday has weekStart in [-3..3] of Jan 1.
+    if weekStart >= 0 then weekStart / 7 + 1
+    else
+        // Date belongs to the last week of the previous year.
+        let prevYear = year - 1
+        let prevDays = if isLeap(prevYear) then 366 else 365
+        isoWeekOfYear(prevYear, 12, 31 + weekStart + dow)
+
+/// Convert a (year, month, day, hour, minute, second) tuple plus a UTC
+/// offset (seconds) to an epoch second. Inverse of the algorithm in
+/// `Instant.instantToYmdhms`.
+internal function localToEpochSecond(year: Int32, month: Int32, day: Int32, hour: Int32, minute: Int32, second: Int32, offsetSec: Int32): Int64 =
+    // Howard Hinnant's days-from-civil algorithm.
+    let y = if month <= 2 then year - 1 else year
+    let era = if y >= 0 then y / 400 else (y - 399) / 400
+    let yoe = y - era * 400
+    let mp = if month > 2 then month - 3 else month + 9
+    let doy = (153 * mp + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    let epochDay = (era.toInt64()) * 146097i64 + doe.toInt64() - 719468i64
+    let localSec = epochDay * 86400i64 + (hour * 3600 + minute * 60 + second).toInt64()
+    localSec - offsetSec.toInt64()
+
+// --- Parse direction -------------------------------------------------------
+
+/// State of an in-progress parse. `pos` is the byte offset into `bytes`.
+/// Immutable — `consumeField` returns a fresh `ParseState` with updated
+/// `pos` / `ctx`.
+internal record ParseState =
+    bytes: Array<Uint8>
+    pos: Int32
+    ctx: FormatContext
+    pattern: String
+    text: String
+
+/// Walk the formatter's parts against `text`, building up a FormatContext.
+/// Returns `Error` at the first part that fails to match.
+internal function scanInput(formatter: DateTimeFormatter, text: String): Result<FormatContext, DateTimeParseError> =
+    let mutable state = ParseState {
+        bytes = text.bytes()
+        pos = 0
+        ctx = emptyContext()
+        pattern = formatter.pattern
+        text = text
+    }
+    let mutable i = 0
+    let mutable failure: Option<DateTimeParseError> = None
+    while i < formatter.parts.length && failure.isNone do
+        match formatter.parts.get(i) with
+            case FormatPart.Literal(s) =>
+                match consumeLiteral(state, s) with
+                    case Ok(newPos) =>
+                        state = ParseState {
+                            bytes = state.bytes; pos = newPos; ctx = state.ctx
+                            pattern = state.pattern; text = state.text
+                        }
+                    case Error(e) => failure = Some(e)
+            case FormatPart.Field(letter, width) =>
+                match consumeField(state, letter, width) with
+                    case Ok(newState) => state = newState
+                    case Error(e) => failure = Some(e)
+        i = i + 1
+    match failure with
+        case Some(e) => Error(e)
+        case None => Ok(state.ctx)
+
+/// Consume a literal substring. Whitespace in the pattern matches one or
+/// more whitespace chars in the input (lenient — same as Java's SMART
+/// resolver style).
+internal function consumeLiteral(state: ParseState, s: String): Result<Int32, DateTimeParseError> =
+    let litBytes = s.bytes()
+    if isAllWhitespace(litBytes) then
+        // Lenient whitespace matching.
+        let mutable p = state.pos
+        while p < state.bytes.length && isWhitespace(state.bytes.get(p)) do
+            p = p + 1
+        if p == state.pos && litBytes.length > 0 then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected whitespace"))
+        else
+            Ok(p)
+    else
+        let mutable p = state.pos
+        let mutable j = 0
+        let mutable mismatch = false
+        while !mismatch && j < litBytes.length do
+            if p + j >= state.bytes.length || state.bytes.get(p + j) != litBytes.get(j) then
+                mismatch = true
+            else
+                j = j + 1
+        if mismatch then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected literal '" ++ s ++ "'"))
+        else
+            Ok(p + j)
+
+/// Consume one field's input. Returns a new ParseState with updated `pos`
+/// and `ctx` on success.
+internal function consumeField(state: ParseState, letter: Char, width: Int32): Result<ParseState, DateTimeParseError> =
+    match letter with
+        case 'y' => consumeYear(state, width)
+        case 'M' => consumeMonth(state, width)
+        case 'L' => consumeMonth(state, width)
+        case 'd' => consumeNumeric(state, width, 2, 'd', setDay)
+        case 'D' => consumeNumeric(state, width, 3, 'D', setDayOfYear)
+        case 'q' => consumeNumeric(state, width, 2, 'q', setQuarter)
+        case 'w' => consumeNumeric(state, width, 2, 'w', setWeekOfYear)
+        case 'E' => consumeDayOfWeek(state, width)
+        case 'a' => consumeAmPm(state)
+        case 'H' => consumeNumeric(state, width, 2, 'H', setHour)
+        case 'm' => consumeNumeric(state, width, 2, 'm', setMinute)
+        case 's' => consumeNumeric(state, width, 2, 's', setSecond)
+        case 'S' => consumeFractionalSecond(state, width)
+        case 'G' => consumeEra(state, width)
+        case 'V' => consumeZoneId(state)
+        case 'z' => consumeZoneAbbrev(state)
+        case 'Z' => consumeOffset(state, width, false)
+        case 'X' => consumeOffset(state, width, true)
+        case 'x' => consumeOffset(state, width, false)
+        case c => panic "DateTimeFormatter: internal — unhandled letter '" ++ String.fromChar(c) ++ "'"
+
+// --- Per-letter consume helpers --------------------------------------------
+
+/// Consume a year. `yy` reads exactly 2 digits and maps to a 4-digit
+/// year (nn<70 → 2000+nn, else 1900+nn — the SMART default). Other
+/// widths consume exactly `width` digits, optionally preceded by `-`.
+internal function consumeYear(state: ParseState, width: Int32): Result<ParseState, DateTimeParseError> =
+    if width == 2 then
+        let (n, newPos) = readDigits(state.bytes, state.pos, 2, 2)
+        if newPos < 0 then Error(parseErr(state.pattern, state.text, state.pos, "expected 2-digit year"))
+        else
+            let fullYear = if n < 70 then 2000 + n else 1900 + n
+            Ok(withContext(state, newPos, withYear(state.ctx, fullYear)))
+    else
+        // Possibly negative.
+        let (sign, p0) = if state.pos < state.bytes.length && state.bytes.get(state.pos) == 45u8 then
+            (-1, state.pos + 1)
+        else (1, state.pos)
+        let minDigits = if width == 1 then 1 else width
+        let maxDigits = if width == 1 then 9 else width
+        let (n, newPos) = readDigits(state.bytes, p0, minDigits, maxDigits)
+        if newPos < 0 then Error(parseErr(state.pattern, state.text, state.pos, "expected year digits"))
+        else Ok(withContext(state, newPos, withYear(state.ctx, sign * n)))
+
+/// Consume a month. Widths 1-2 are numeric; 3-5 are name lookups.
+internal function consumeMonth(state: ParseState, width: Int32): Result<ParseState, DateTimeParseError> =
+    if width <= 2 then
+        consumeNumeric(state, width, 2, 'M', setMonth)
+    else if width == 3 then
+        // Short name: read 3 letters, look up.
+        if state.pos + 3 > state.bytes.length then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected 3-letter month"))
+        else
+            let s = String.fromBytes(state.bytes, state.pos, 3)
+            match Month.fromShortName(s) with
+                case Some(m) => Ok(withContext(state, state.pos + 3, withMonth(state.ctx, m.value)))
+                case None => Error(parseErr(state.pattern, state.text, state.pos, "unknown short month name '" ++ s ++ "'"))
+    else if width == 4 then
+        // Full name — try each prefix.
+        consumeMonthFull(state)
+    else
+        // Narrow name — single letter. Ambiguous: pick first match.
+        if state.pos >= state.bytes.length then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected narrow month letter"))
+        else
+            let s = String.fromBytes(state.bytes, state.pos, 1)
+            match monthFromNarrow(s) with
+                case Some(m) => Ok(withContext(state, state.pos + 1, withMonth(state.ctx, m)))
+                case None => Error(parseErr(state.pattern, state.text, state.pos, "unknown narrow month '" ++ s ++ "'"))
+
+internal function consumeMonthFull(state: ParseState): Result<ParseState, DateTimeParseError> =
+    // Try longest first to avoid `June` matching when input is `July`.
+    let names = [|"September", "February", "November", "December", "January", "October", "August", "April", "March", "July", "June", "May"|]
+    let mutable matched: Option<(Int32, Int32)> = None
+    let mutable i = 0
+    while matched.isNone && i < names.length do
+        let name = names.get(i)
+        if prefixMatches(state.bytes, state.pos, name) then
+            match Month.fromFullName(name) with
+                case Some(m) => matched = Some((m.value, state.pos + name.byteLength))
+                case None => ()
+        i = i + 1
+    match matched with
+        case Some((mv, newPos)) => Ok(withContext(state, newPos, withMonth(state.ctx, mv)))
+        case None => Error(parseErr(state.pattern, state.text, state.pos, "expected month name"))
+
+internal function monthFromNarrow(s: String): Option<Int32> =
+    // First match wins: J=Jan, F=Feb, M=Mar, A=Apr, S=Sep, O=Oct, N=Nov, D=Dec.
+    // May/June/July collide on M/J; we pick the earliest.
+    if s == "J" then Some(1)
+    else if s == "F" then Some(2)
+    else if s == "M" then Some(3)
+    else if s == "A" then Some(4)
+    else if s == "S" then Some(9)
+    else if s == "O" then Some(10)
+    else if s == "N" then Some(11)
+    else if s == "D" then Some(12)
+    else None
+
+internal function consumeDayOfWeek(state: ParseState, width: Int32): Result<ParseState, DateTimeParseError> =
+    if width <= 3 then
+        if state.pos + 3 > state.bytes.length then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected day-of-week"))
+        else
+            let s = String.fromBytes(state.bytes, state.pos, 3)
+            match DayOfWeek.fromShortName(s) with
+                case Some(d) => Ok(withContext(state, state.pos + 3, withDayOfWeek(state.ctx, d.value)))
+                case None => Error(parseErr(state.pattern, state.text, state.pos, "unknown day-of-week '" ++ s ++ "'"))
+    else if width == 4 then
+        let names = [|"Wednesday", "Thursday", "Saturday", "Tuesday", "Monday", "Friday", "Sunday"|]
+        let mutable matched: Option<(Int32, Int32)> = None
+        let mutable i = 0
+        while matched.isNone && i < names.length do
+            let name = names.get(i)
+            if prefixMatches(state.bytes, state.pos, name) then
+                match DayOfWeek.fromFullName(name) with
+                    case Some(d) => matched = Some((d.value, state.pos + name.byteLength))
+                    case None => ()
+            i = i + 1
+        match matched with
+            case Some((dv, newPos)) => Ok(withContext(state, newPos, withDayOfWeek(state.ctx, dv)))
+            case None => Error(parseErr(state.pattern, state.text, state.pos, "expected full day-of-week name"))
+    else
+        // Narrow — single letter; first match wins.
+        if state.pos >= state.bytes.length then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected narrow day-of-week"))
+        else
+            let s = String.fromBytes(state.bytes, state.pos, 1)
+            let dv =
+                if s == "M" then 1
+                else if s == "T" then 2
+                else if s == "W" then 3
+                else if s == "F" then 5
+                else if s == "S" then 6
+                else 0
+            if dv == 0 then Error(parseErr(state.pattern, state.text, state.pos, "unknown narrow day-of-week '" ++ s ++ "'"))
+            else Ok(withContext(state, state.pos + 1, withDayOfWeek(state.ctx, dv)))
+
+internal function consumeAmPm(state: ParseState): Result<ParseState, DateTimeParseError> =
+    if state.pos + 2 > state.bytes.length then
+        Error(parseErr(state.pattern, state.text, state.pos, "expected AM/PM"))
+    else
+        let s = String.fromBytes(state.bytes, state.pos, 2)
+        if s == "AM" then
+            // Caller's H is interpreted as-is; we don't override since H is
+            // 0-23. AM/PM is informational unless combined with `h` (which
+            // we don't support in v1).
+            Ok(withContext(state, state.pos + 2, state.ctx))
+        else if s == "PM" then
+            Ok(withContext(state, state.pos + 2, state.ctx))
+        else
+            Error(parseErr(state.pattern, state.text, state.pos, "expected AM or PM"))
+
+internal function consumeFractionalSecond(state: ParseState, width: Int32): Result<ParseState, DateTimeParseError> =
+    let (n, newPos) = readDigits(state.bytes, state.pos, width, width)
+    if newPos < 0 then Error(parseErr(state.pattern, state.text, state.pos, "expected " ++ width.format() ++ " fractional-second digits"))
+    else
+        // Scale to nanoseconds.
+        let mutable mult = 1
+        let mutable i = 0
+        while i < 9 - width do
+            mult = mult * 10
+            i = i + 1
+        Ok(withContext(state, newPos, withNano(state.ctx, n * mult)))
+
+internal function consumeEra(state: ParseState, width: Int32): Result<ParseState, DateTimeParseError> =
+    if width <= 3 then
+        if state.pos + 2 > state.bytes.length then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected era (AD/BC)"))
+        else
+            let s = String.fromBytes(state.bytes, state.pos, 2)
+            if s == "AD" then Ok(withContext(state, state.pos + 2, state.ctx))
+            else if s == "BC" then Ok(withContext(state, state.pos + 2, state.ctx))
+            else Error(parseErr(state.pattern, state.text, state.pos, "expected AD or BC"))
+    else if width == 4 then
+        // "Anno Domini" or "Before Christ"
+        if prefixMatches(state.bytes, state.pos, "Anno Domini") then
+            Ok(withContext(state, state.pos + 11, state.ctx))
+        else if prefixMatches(state.bytes, state.pos, "Before Christ") then
+            Ok(withContext(state, state.pos + 13, state.ctx))
+        else
+            Error(parseErr(state.pattern, state.text, state.pos, "expected 'Anno Domini' or 'Before Christ'"))
+    else
+        // Single letter A or B.
+        if state.pos >= state.bytes.length then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected narrow era"))
+        else
+            let b = state.bytes.get(state.pos)
+            if b == 65u8 || b == 66u8 then Ok(withContext(state, state.pos + 1, state.ctx))
+            else Error(parseErr(state.pattern, state.text, state.pos, "expected 'A' or 'B'"))
+
+/// Consume an IANA zone id. Reads `[A-Za-z_]+(/[A-Za-z_]+)*` plus
+/// optional digits / `+` / `-` (some IANA ids have e.g. `GMT-5`).
+internal function consumeZoneId(state: ParseState): Result<ParseState, DateTimeParseError> =
+    let mutable p = state.pos
+    while p < state.bytes.length && isZoneIdChar(state.bytes.get(p)) do
+        p = p + 1
+    if p == state.pos then
+        Error(parseErr(state.pattern, state.text, state.pos, "expected IANA zone id"))
+    else
+        let id = String.fromBytes(state.bytes, state.pos, p - state.pos)
+        Ok(withContext(state, p, withZoneId(state.ctx, id)))
+
+internal function isZoneIdChar(b: Uint8): Bool =
+    // Letters, digits, `/`, `_`, `+`, `-`.
+    let isLetter = (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8)
+    let isDigit = b >= 48u8 && b <= 57u8
+    isLetter || isDigit || b == 47u8 || b == 95u8 || b == 43u8 || b == 45u8
+
+internal function consumeZoneAbbrev(state: ParseState): Result<ParseState, DateTimeParseError> =
+    // Read a run of letters / digits.
+    let mutable p = state.pos
+    while p < state.bytes.length && isAbbrevChar(state.bytes.get(p)) do
+        p = p + 1
+    if p == state.pos then
+        Error(parseErr(state.pattern, state.text, state.pos, "expected zone abbreviation"))
+    else
+        let abbr = String.fromBytes(state.bytes, state.pos, p - state.pos)
+        Ok(withContext(state, p, withZoneAbbrev(state.ctx, abbr)))
+
+internal function isAbbrevChar(b: Uint8): Bool =
+    (b >= 65u8 && b <= 90u8) || (b >= 97u8 && b <= 122u8) || (b >= 48u8 && b <= 57u8) || b == 43u8 || b == 45u8
+
+/// Consume an offset. `allowZ = true` accepts `Z` for UTC (the `X`
+/// letter); `false` requires an explicit sign (the `Z` and `x` letters).
+/// Width controls colon style and whether seconds are accepted.
+internal function consumeOffset(state: ParseState, width: Int32, allowZ: Bool): Result<ParseState, DateTimeParseError> =
+    if state.pos >= state.bytes.length then
+        Error(parseErr(state.pattern, state.text, state.pos, "expected offset"))
+    else if allowZ && state.bytes.get(state.pos) == 90u8 then  // 'Z'
+        Ok(withContext(state, state.pos + 1, withOffset(state.ctx, 0)))
+    else if allowZ && state.pos + 3 <= state.bytes.length && prefixMatches(state.bytes, state.pos, "GMT") then
+        // For `Z` width 4 we emit "GMT±HH:MM"; accept on parse too.
+        let advanced = ParseState {
+            bytes = state.bytes; pos = state.pos + 3; ctx = state.ctx
+            pattern = state.pattern; text = state.text
+        }
+        consumeOffsetCore(advanced, width, false)
+    else
+        consumeOffsetCore(state, width, false)
+
+internal function consumeOffsetCore(state: ParseState, width: Int32, _zoneAlreadyParsed: Bool): Result<ParseState, DateTimeParseError> =
+    let _ = _zoneAlreadyParsed
+    if state.pos >= state.bytes.length then
+        Error(parseErr(state.pattern, state.text, state.pos, "expected offset sign"))
+    else
+        let b = state.bytes.get(state.pos)
+        if b != 43u8 && b != 45u8 then
+            Error(parseErr(state.pattern, state.text, state.pos, "expected '+' or '-' in offset"))
+        else
+            let sign = if b == 45u8 then -1 else 1
+            let (h, p1) = readDigits(state.bytes, state.pos + 1, 2, 2)
+            if p1 < 0 then Error(parseErr(state.pattern, state.text, state.pos, "expected 2 hours digits"))
+            else
+                // Optional minutes (with or without colon depending on width).
+                let mutable p = p1
+                let mutable m = 0
+                let mutable s = 0
+                if p < state.bytes.length then
+                    if state.bytes.get(p) == 58u8 then  // ':'
+                        let (mm, p2) = readDigits(state.bytes, p + 1, 2, 2)
+                        if p2 >= 0 then
+                            m = mm
+                            p = p2
+                            if p < state.bytes.length && state.bytes.get(p) == 58u8 then
+                                let (ss, p3) = readDigits(state.bytes, p + 1, 2, 2)
+                                if p3 >= 0 then
+                                    s = ss
+                                    p = p3
+                    else if isDigit(state.bytes.get(p)) then
+                        // Compact form: +HHMM[SS].
+                        let (mm, p2) = readDigits(state.bytes, p, 2, 2)
+                        if p2 >= 0 then
+                            m = mm
+                            p = p2
+                            if p < state.bytes.length && isDigit(state.bytes.get(p)) then
+                                let (ss, p3) = readDigits(state.bytes, p, 2, 2)
+                                if p3 >= 0 then
+                                    s = ss
+                                    p = p3
+                let total = sign * (h * 3600 + m * 60 + s)
+                let _ = width
+                Ok(withContext(state, p, withOffset(state.ctx, total)))
+
+/// Generic numeric consumer. `width=1` is compact (1..`maxDigits` digits);
+/// width >= 2 reads exactly `width` digits.
+internal function consumeNumeric(state: ParseState, width: Int32, maxDigits: Int32, letter: Char, setter: (FormatContext, Int32) => FormatContext): Result<ParseState, DateTimeParseError> =
+    let (minD, maxD) = if width == 1 then (1, maxDigits) else (width, width)
+    let (n, newPos) = readDigits(state.bytes, state.pos, minD, maxD)
+    if newPos < 0 then
+        Error(parseErr(state.pattern, state.text, state.pos, "expected digits for '" ++ String.fromChar(letter) ++ "'"))
+    else
+        Ok(withContext(state, newPos, setter(state.ctx, n)))
+
+// --- ParseState mutators (returning new contexts) --------------------------
+
+internal function withContext(state: ParseState, newPos: Int32, ctx: FormatContext): ParseState =
+    ParseState { bytes = state.bytes; pos = newPos; ctx = ctx; pattern = state.pattern; text = state.text }
+
+internal function withYear(ctx: FormatContext, year: Int32): FormatContext =
+    ctx with year = Some(year)
+internal function withMonth(ctx: FormatContext, month: Int32): FormatContext =
+    ctx with month = Some(month)
+internal function setMonth(ctx: FormatContext, month: Int32): FormatContext = withMonth(ctx, month)
+internal function withDay(ctx: FormatContext, day: Int32): FormatContext =
+    ctx with day = Some(day)
+internal function setDay(ctx: FormatContext, day: Int32): FormatContext = withDay(ctx, day)
+internal function setDayOfYear(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with dayOfYear = Some(n)
+internal function setQuarter(ctx: FormatContext, n: Int32): FormatContext =
+    // Quarter doesn't have a dedicated context slot; derived from month at
+    // format time and discarded on parse.
+    let _ = n
+    ctx
+internal function setWeekOfYear(ctx: FormatContext, n: Int32): FormatContext =
+    let _ = n
+    ctx
+internal function withDayOfWeek(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with dayOfWeek = Some(n)
+internal function setHour(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with hour = Some(n)
+internal function setMinute(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with minute = Some(n)
+internal function setSecond(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with second = Some(n)
+internal function withNano(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with nano = Some(n)
+internal function withOffset(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with offsetSeconds = Some(n)
+internal function withZoneId(ctx: FormatContext, id: String): FormatContext =
+    ctx with zoneId = Some(id)
+internal function withZoneAbbrev(ctx: FormatContext, a: String): FormatContext =
+    ctx with zoneAbbrev = Some(a)
+
+// --- Parse helpers ---------------------------------------------------------
+
+/// Read `[minDigits, maxDigits]` decimal digits starting at `pos`. Returns
+/// `(value, newPos)` on success or `(_, -1)` on failure.
+internal function readDigits(bytes: Array<Uint8>, pos: Int32, minDigits: Int32, maxDigits: Int32): (Int32, Int32) =
+    let mutable p = pos
+    let mutable n = 0
+    let mutable count = 0
+    while p < bytes.length && count < maxDigits && isDigit(bytes.get(p)) do
+        n = n * 10 + (bytes.get(p).toInt32() - 48)
+        p = p + 1
+        count = count + 1
+    if count < minDigits then (0, -1) else (n, p)
+
+internal function isDigit(b: Uint8): Bool = b >= 48u8 && b <= 57u8
+
+internal function isWhitespace(b: Uint8): Bool =
+    b == 32u8 || b == 9u8 || b == 10u8 || b == 13u8
+
+internal function isAllWhitespace(bytes: Array<Uint8>): Bool =
+    let mutable all = true
+    let mutable i = 0
+    while all && i < bytes.length do
+        if !isWhitespace(bytes.get(i)) then all = false
+        i = i + 1
+    all && bytes.length > 0
+
+internal function prefixMatches(bytes: Array<Uint8>, pos: Int32, prefix: String): Bool =
+    let pb = prefix.bytes()
+    if pos + pb.length > bytes.length then false
+    else
+        let mutable i = 0
+        let mutable ok = true
+        while ok && i < pb.length do
+            if bytes.get(pos + i) != pb.get(i) then ok = false
+            i = i + 1
+        ok
+
+internal function parseErr(pattern: String, text: String, index: Int32, message: String): DateTimeParseError =
+    DateTimeParseError { pattern = pattern; text = text; index = index; message = message }
+
+// --- Assembly helpers ------------------------------------------------------
+
+internal function assembleLocalDate(ctx: FormatContext, pattern: String, text: String): Result<LocalDate, DateTimeParseError> =
+    match ctx.year with
+        case None => Error(parseErr(pattern, text, 0, "missing 'y' (year)"))
+        case Some(y) =>
+            match ctx.month with
+                case None => Error(parseErr(pattern, text, 0, "missing 'M' (month)"))
+                case Some(m) =>
+                    match ctx.day with
+                        case None => Error(parseErr(pattern, text, 0, "missing 'd' (day)"))
+                        case Some(d) =>
+                            if m < 1 || m > 12 then Error(parseErr(pattern, text, 0, "month out of range: " ++ m.format()))
+                            else if d < 1 || d > monthLengthInt(m, y) then
+                                Error(parseErr(pattern, text, 0, "day out of range for month: " ++ d.format()))
+                            else Ok(LocalDate.of(y, m, d))
+
+internal function assembleLocalTime(ctx: FormatContext, pattern: String, text: String): Result<LocalTime, DateTimeParseError> =
+    let h = match ctx.hour with
+        case Some(v) => v
+        case None => 0
+    let m = match ctx.minute with
+        case Some(v) => v
+        case None => 0
+    let s = match ctx.second with
+        case Some(v) => v
+        case None => 0
+    let n = match ctx.nano with
+        case Some(v) => v
+        case None => 0
+    let _ = pattern
+    let _ = text
+    Ok(LocalTime.ofNano(h, m, s, n))
+
+internal function resolveZone(ctx: FormatContext, pattern: String, text: String): Result<TimeZone, DateTimeParseError> =
+    // Priority: explicit IANA zone id (`V`) > explicit offset (`Z`/`X`/`x`)
+    // > abbreviation (`z`, best-effort).
+    match ctx.zoneId with
+        case Some(id) =>
+            match TimeZone.named(id) with
+                case Some(tz) => Ok(tz)
+                case None =>
+                    match ctx.offsetSeconds with
+                        case Some(off) => Ok(TimeZone.of(id, off))
+                        case None => Error(parseErr(pattern, text, 0, "unknown zone id '" ++ id ++ "'"))
+        case None =>
+            match ctx.offsetSeconds with
+                case Some(off) =>
+                    let id = if off == 0 then "UTC" else offsetIdString(off)
+                    Ok(TimeZone.of(id, off))
+                case None =>
+                    match ctx.zoneAbbrev with
+                        case Some(a) =>
+                            let _ = a
+                            // Abbreviation alone is ambiguous; treat as UTC.
+                            Ok(TimeZone.utc)
+                        case None => Error(parseErr(pattern, text, 0, "no zone information in pattern"))
+
+internal function offsetIdString(offsetSec: Int32): String =
+    let sign = if offsetSec < 0 then "-" else "+"
+    let abs = if offsetSec < 0 then -offsetSec else offsetSec
+    let h = abs / 3600
+    let m = (abs % 3600) / 60
+    "UTC" ++ sign ++ padDecimal(h, 2) ++ ":" ++ padDecimal(m, 2)
+
+// --- Pattern compilation smoke tests ---------------------------------------
+
+test "ofPattern: empty pattern compiles to empty parts" =
+    let f = DateTimeFormatter.ofPattern("")
+    assert f.parts.length == 0
+
+test "ofPattern: single literal" =
+    let f = DateTimeFormatter.ofPattern("-")
+    assert f.parts.length == 1
+    match f.parts.get(0) with
+        case FormatPart.Literal(s) => assert s == "-"
+        case _ => panic "expected literal"
+
+test "ofPattern: ISO date pattern" =
+    // yyyy-MM-dd → Field(y,4) Literal(-) Field(M,2) Literal(-) Field(d,2)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    assert f.parts.length == 5
+    match f.parts.get(0) with
+        case FormatPart.Field(c, w) =>
+            assert c == 'y'
+            assert w == 4
+        case _ => panic "expected field"
+    match f.parts.get(2) with
+        case FormatPart.Field(c, w) =>
+            assert c == 'M'
+            assert w == 2
+        case _ => panic "expected field"
+
+test "ofPattern: quoted literal" =
+    // yyyy'T'HH → Field(y,4) Literal(T) Field(H,2)
+    let f = DateTimeFormatter.ofPattern("yyyy'T'HH")
+    assert f.parts.length == 3
+    match f.parts.get(1) with
+        case FormatPart.Literal(s) => assert s == "T"
+        case _ => panic "expected literal"
+
+test "ofPattern: escaped quote inside quoted run" =
+    // 'it''s' → Literal(it's)
+    let f = DateTimeFormatter.ofPattern("'it''s'")
+    assert f.parts.length == 1
+    match f.parts.get(0) with
+        case FormatPart.Literal(s) => assert s == "it's"
+        case _ => panic "expected literal"
+
+// --- Format direction smoke tests ------------------------------------------
+
+test "format: LocalDate ISO" =
+    let d = LocalDate.of(2024, 3, 5)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    assert f.format(d) == "2024-03-05"
+
+test "format: LocalDate with day-of-week and month name" =
+    // 2024-07-15 is a Monday
+    let d = LocalDate.of(2024, 7, 15)
+    let f = DateTimeFormatter.ofPattern("EEE, d MMM yyyy")
+    assert f.format(d) == "Mon, 15 Jul 2024"
+
+test "format: LocalDate full names" =
+    let d = LocalDate.of(2024, 12, 25)
+    let f = DateTimeFormatter.ofPattern("EEEE, MMMM d, yyyy")
+    assert f.format(d) == "Wednesday, December 25, 2024"
+
+test "format: LocalDate compact widths" =
+    let d = LocalDate.of(2024, 3, 5)
+    let f = DateTimeFormatter.ofPattern("y/M/d")
+    assert f.format(d) == "2024/3/5"
+
+test "format: LocalDate narrow month and day" =
+    let d = LocalDate.of(2024, 7, 15)
+    let f = DateTimeFormatter.ofPattern("MMMMM/EEEEE")
+    assert f.format(d) == "J/M"
+
+test "format: LocalDate two-digit year" =
+    let d = LocalDate.of(2024, 3, 5)
+    let f = DateTimeFormatter.ofPattern("yy-MM-dd")
+    assert f.format(d) == "24-03-05"
+
+test "format: LocalDate day-of-year and quarter" =
+    let d = LocalDate.of(2024, 7, 15)
+    let f = DateTimeFormatter.ofPattern("D q")
+    // 2024 is leap → 31 (Jan) + 29 (Feb) + 31 (Mar) + 30 (Apr) + 31 (May) + 30 (Jun) + 15 = 197
+    assert f.format(d) == "197 3"
+
+test "format: LocalDate era" =
+    let d = LocalDate.of(2024, 3, 5)
+    let f = DateTimeFormatter.ofPattern("yyyy G")
+    assert f.format(d) == "2024 AD"
+
+test "format: LocalTime ISO" =
+    let t = LocalTime.of(9, 5, 3)
+    let f = DateTimeFormatter.ofPattern("HH:mm:ss")
+    assert f.format(t) == "09:05:03"
+
+test "format: LocalTime with AM/PM" =
+    let t = LocalTime.of(14, 30, 0)
+    let f = DateTimeFormatter.ofPattern("HH:mm a")
+    assert f.format(t) == "14:30 PM"
+
+test "format: LocalTime fractional seconds" =
+    let t = LocalTime.ofNano(12, 34, 56, 123456789)
+    let f = DateTimeFormatter.ofPattern("HH:mm:ss.SSS")
+    assert f.format(t) == "12:34:56.123"
+
+test "format: LocalTime nano-precision fractional seconds" =
+    let t = LocalTime.ofNano(12, 34, 56, 123456789)
+    let f = DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSSSSS")
+    assert f.format(t) == "12:34:56.123456789"
+
+test "format: LocalDateTime combined" =
+    let dt = LocalDateTime.ofParts(2024, 3, 5, 9, 5, 3)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+    assert f.format(dt) == "2024-03-05T09:05:03"
+
+test "format: ZonedDateTime with X offset" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 8, 0, 0)
+    let tz = TimeZone.of("EDT", -14400)
+    let zdt = ZonedDateTime.of(dt, tz)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+    assert f.format(zdt) == "2024-07-15T08:00:00-04:00"
+
+test "format: ZonedDateTime UTC X emits Z" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 12, 0, 0)
+    let zdt = ZonedDateTime.of(dt, TimeZone.utc)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+    assert f.format(zdt) == "2024-07-15T12:00:00Z"
+
+test "format: ZonedDateTime UTC x emits +00:00" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 12, 0, 0)
+    let zdt = ZonedDateTime.of(dt, TimeZone.utc)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssxxx")
+    assert f.format(zdt) == "2024-07-15T12:00:00+00:00"
+
+test "format: ZonedDateTime with Z width 1" =
+    let dt = LocalDateTime.ofParts(2024, 7, 15, 8, 0, 0)
+    let tz = TimeZone.of("EDT", -14400)
+    let zdt = ZonedDateTime.of(dt, tz)
+    let f = DateTimeFormatter.ofPattern("Z")
+    assert f.format(zdt) == "-0400"
+
+test "format: Instant in UTC" =
+    // 2024-07-15T12:00:00Z = 1721044800
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'")
+    assert f.format(i, TimeZone.utc) == "2024-07-15T12:00:00Z"
+
+test "format: Instant in NY summer (IANA)" =
+    // 2024-07-15T12:00:00Z = 1721044800 → 08:00 EDT
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX")
+    assert f.format(i, ny) == "2024-07-15T08:00:00-04:00"
+
+test "format: Instant zone abbreviation in NY" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss zzz")
+    assert f.format(i, ny) == "2024-07-15 08:00:00 EDT"
+
+test "format: Instant IANA zone id" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    let f = DateTimeFormatter.ofPattern("VV")
+    assert f.format(i, ny) == "America/New_York"
+
+test "format: YearMonth" =
+    let ym = YearMonth.of(2024, 7)
+    let f = DateTimeFormatter.ofPattern("MMM yyyy")
+    assert f.format(ym) == "Jul 2024"
+
+test "format: MonthDay" =
+    let md = MonthDay.of(7, 15)
+    let f = DateTimeFormatter.ofPattern("MMM d")
+    assert f.format(md) == "Jul 15"
+
+// --- Parse direction smoke tests -------------------------------------------
+
+test "parse: LocalDate ISO" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd").parseLocalDate("2024-03-05") with
+        case Ok(d) =>
+            assert d.year.value == 2024
+            assert d.month.value == 3
+            assert d.day.value == 5
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDate compact widths" =
+    match DateTimeFormatter.ofPattern("y/M/d").parseLocalDate("2024/3/5") with
+        case Ok(d) =>
+            assert d.year.value == 2024
+            assert d.month.value == 3
+            assert d.day.value == 5
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDate two-digit year (modern)" =
+    match DateTimeFormatter.ofPattern("yy-MM-dd").parseLocalDate("24-03-05") with
+        case Ok(d) => assert d.year.value == 2024
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDate two-digit year (legacy)" =
+    match DateTimeFormatter.ofPattern("yy-MM-dd").parseLocalDate("95-03-05") with
+        case Ok(d) => assert d.year.value == 1995
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDate with month short name" =
+    match DateTimeFormatter.ofPattern("d MMM yyyy").parseLocalDate("15 Jul 2024") with
+        case Ok(d) =>
+            assert d.year.value == 2024
+            assert d.month.value == 7
+            assert d.day.value == 15
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDate with full month name" =
+    match DateTimeFormatter.ofPattern("MMMM d, yyyy").parseLocalDate("December 25, 2024") with
+        case Ok(d) =>
+            assert d.year.value == 2024
+            assert d.month.value == 12
+            assert d.day.value == 25
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDate rejects out-of-range month" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd").parseLocalDate("2024-13-05") with
+        case Ok(_) => panic "should have rejected month 13"
+        case Error(e) => assert e.message.contains("month")
+
+test "parse: LocalDate rejects bad day for month" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd").parseLocalDate("2024-02-30") with
+        case Ok(_) => panic "should have rejected Feb 30"
+        case Error(e) => assert e.message.contains("day")
+
+test "parse: LocalTime ISO" =
+    match DateTimeFormatter.ofPattern("HH:mm:ss").parseLocalTime("09:05:03") with
+        case Ok(t) =>
+            assert t.hour == 9
+            assert t.minute == 5
+            assert t.second == 3
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalTime with fractional seconds" =
+    match DateTimeFormatter.ofPattern("HH:mm:ss.SSS").parseLocalTime("12:34:56.123") with
+        case Ok(t) =>
+            assert t.hour == 12
+            assert t.nano == 123000000
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: LocalDateTime ISO" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss").parseLocalDateTime("2024-03-05T09:05:03") with
+        case Ok(dt) =>
+            assert dt.date.year.value == 2024
+            assert dt.time.hour == 9
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: ZonedDateTime with X offset" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX").parseZonedDateTime("2024-07-15T08:00:00-04:00") with
+        case Ok(zdt) =>
+            assert zdt.dateTime.date.day.value == 15
+            assert zdt.zone.offsetSeconds == -14400
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: ZonedDateTime UTC with X (Z)" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssXXX").parseZonedDateTime("2024-07-15T12:00:00Z") with
+        case Ok(zdt) =>
+            assert zdt.zone.offsetSeconds == 0
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: Instant UTC" =
+    match DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss'Z'").parseInstant("2024-07-15T12:00:00Z") with
+        case Ok(i) => assert i.epochSecond == 1721044800i64
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: Instant in NY (IANA via V)" =
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss VV")
+    match f.parseInstant("2024-07-15T08:00:00 America/New_York") with
+        case Ok(i) => assert i.epochSecond == 1721044800i64
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: YearMonth" =
+    match DateTimeFormatter.ofPattern("MMM yyyy").parseYearMonth("Jul 2024") with
+        case Ok(ym) =>
+            assert ym.year.value == 2024
+            assert ym.month.value == 7
+        case Error(e) => panic "parse failed: " ++ e.message
+
+test "parse: MonthDay" =
+    match DateTimeFormatter.ofPattern("MMM d").parseMonthDay("Jul 15") with
+        case Ok(md) =>
+            assert md.month.value == 7
+            assert md.day.value == 15
+        case Error(e) => panic "parse failed: " ++ e.message
+
+// --- Round-trip tests ------------------------------------------------------
+
+test "round-trip: ISO local date" =
+    let d = LocalDate.of(2024, 7, 15)
+    let f = DateTimeFormatter.isoLocalDate
+    match f.parseLocalDate(f.format(d)) with
+        case Ok(d2) =>
+            assert d2.year.value == d.year.value
+            assert d2.month.value == d.month.value
+            assert d2.day.value == d.day.value
+        case Error(e) => panic "round-trip failed: " ++ e.message
+
+test "round-trip: ISO instant in NY summer" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let ny = TimeZone.named("America/New_York").require
+    let f = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss VV")
+    let s = f.format(i, ny)
+    match f.parseInstant(s) with
+        case Ok(i2) => assert i2.epochSecond == i.epochSecond
+        case Error(e) => panic "round-trip failed: " ++ e.message
+
+test "round-trip: RFC 1123 in UTC" =
+    let i = Instant.ofEpochSecond(1721044800i64)
+    let f = DateTimeFormatter.rfc1123
+    assert f.format(i, TimeZone.utc) == "Mon, 15 Jul 2024 12:00:00 UTC"
+
+test "round-trip: basicIsoDate" =
+    let d = LocalDate.of(2024, 7, 15)
+    let f = DateTimeFormatter.basicIsoDate
+    assert f.format(d) == "20240715"
+    match f.parseLocalDate("20240715") with
+        case Ok(d2) =>
+            assert d2.year.value == 2024
+            assert d2.month.value == 7
+            assert d2.day.value == 15
+        case Error(e) => panic "parse failed: " ++ e.message

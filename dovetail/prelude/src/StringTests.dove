@@ -1,0 +1,143 @@
+package standard.prelude
+
+test "String length" =
+    assert "hello".length == 5
+    assert "".length == 0
+    assert "a".length == 1
+
+test "String byteLength" =
+    assert "hello".byteLength == 5
+    assert "".byteLength == 0
+
+test "String getChar" =
+    assert "hello".getChar(0) == 'h'
+    assert "hello".getChar(4) == 'o'
+
+test "String fromChar" =
+    assert String.fromChar('a') == "a"
+    assert String.fromChar(' ') == " "
+
+test "String bytes and fromBytes roundtrip" =
+    let b = "hello".bytes()
+    assert b.length == 5
+    let s = String.fromBytes(b, 0, 5)
+    assert s == "hello"
+
+test "String fromBytes partial" =
+    let b = "hello".bytes()
+    let s = String.fromBytes(b, 1, 3)
+    assert s == "ell"
+
+test "String isAscii" =
+    assert "hello".isAscii == true
+    assert "abc123".isAscii == true
+    assert "".isAscii == true
+
+test "String isEmpty" =
+    assert "".isEmpty == true
+    assert "a".isEmpty == false
+
+test "String startsWith" =
+    assert "hello world".startsWith("hello") == true
+    assert "hello world".startsWith("world") == false
+    assert "hello".startsWith("hello") == true
+    assert "hi".startsWith("hello") == false
+
+test "String endsWith" =
+    assert "hello world".endsWith("world") == true
+    assert "hello world".endsWith("hello") == false
+    assert "hello".endsWith("hello") == true
+
+test "String contains" =
+    assert "hello world".contains("lo wo") == true
+    assert "hello world".contains("xyz") == false
+    assert "hello".contains("") == true
+
+test "String indexOf" =
+    let r1 = "hello world".indexOf("world")
+    assert r1.isSome
+    assert r1.require == 6
+    assert "hello world".indexOf("xyz").isNone
+    let r2 = "hello".indexOf("")
+    assert r2.isSome
+    assert r2.require == 0
+
+test "String lastIndexOf" =
+    let r1 = "abcabc".lastIndexOf("abc")
+    assert r1.isSome
+    assert r1.require == 3
+    assert "hello".lastIndexOf("xyz").isNone
+
+test "String replace" =
+    assert "hello world".replace("world", "there") == "hello there"
+    assert "hello".replace("xyz", "abc") == "hello"
+
+test "String replaceAll" =
+    assert "aabaa".replaceAll("aa", "x") == "xbx"
+
+test "String split" =
+    assert "a,b,c".split(",") == ["a", "b", "c"]
+    assert "abc".split("") == ["a", "b", "c"]
+    assert "".split("") == []
+    assert "a".split(",") == ["a"]
+
+test "String join" =
+    assert String.join(["a", "b", "c"], ", ") == "a, b, c"
+    assert String.join(["a"], ", ") == "a"
+    assert String.join([], ", ") == ""
+
+test "String trim" =
+    assert "  hello  ".trim() == "hello"
+    assert "hello".trim() == "hello"
+
+test "String trimStart" =
+    assert "  hello".trimStart() == "hello"
+
+test "String trimEnd" =
+    assert "hello  ".trimEnd() == "hello"
+
+test "String toUpperCase" =
+    assert "hello".toUpperCase() == "HELLO"
+    assert "Hello World".toUpperCase() == "HELLO WORLD"
+
+test "String toLowerCase" =
+    assert "HELLO".toLowerCase() == "hello"
+    assert "Hello World".toLowerCase() == "hello world"
+
+test "String repeat" =
+    assert "ab".repeat(3) == "ababab"
+    assert "x".repeat(0) == ""
+    assert "x".repeat(-2) == ""
+    assert "ab".repeat(1) == "ab"
+    assert "".repeat(5) == ""
+    // Multi-byte, so a per-byte-length mistake shows up as mojibake.
+    assert "é".repeat(3) == "ééé"
+    // Large enough that the old append-per-iteration version copied ~2 GB.
+    let big = "abcdefgh".repeat(8192)
+    assert big.byteLength == 65536i32
+    assert big.startsWith("abcdefgh")
+    assert big.endsWith("abcdefgh")
+
+test "String padStart" =
+    assert "42".padStart(5, '0') == "00042"
+    assert "hello".padStart(3, '0') == "hello"
+
+test "String padEnd" =
+    assert "42".padEnd(5, '0') == "42000"
+
+test "String take and skip" =
+    assert "hello".take(3) == "hel"
+    assert "hello".skip(3) == "lo"
+    assert "hello".take(0) == ""
+    assert "hello".skip(0) == "hello"
+
+test "String chars" =
+    let cs = "abc".chars()
+    assert cs.length == 3
+    assert cs.get(0) == 'a'
+    assert cs.get(1) == 'b'
+    assert cs.get(2) == 'c'
+
+test "String substring" =
+    assert "hello world".substring(0, 5) == "hello"
+    assert "hello world".substring(6, 11) == "world"

@@ -1,0 +1,9 @@
+[package]
+name = "p3-table-gen"
+version = "0.1.0"
+edition = "2024"
+description = "Generate dovetail/src/compiler/codegen/p3_imports.rs from the vendored WASI p3 WIT"
+
+[dependencies]
+dovetail = { package = "dovetail-lang", path = "../../dovetail" }
+wit-parser = "0.255"

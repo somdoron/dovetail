@@ -1,0 +1,54 @@
+package test
+
+import standard.io.Async
+import standard.io.Resource
+import standard.io.stream.Stream
+
+@timeout(5000)
+test "Stream fold: initial state is lazy and fresh for every execution" =
+    let mutable starts = 0
+    let initial = () =>
+        starts = starts + 1
+        10
+    let source = Stream<Int32, Never>.fromList([1, 2, 3]).rechunk(2)
+    let folded = source.fold(initial(), (state: Int32, value: Int32) => state * 10 + value)
+    assert starts == 0
+    let program: Async<Unit, Never> = async do
+        assert (await folded) == 10123
+        assert (await folded) == 10123
+        assert starts == 2
+        assert (await Stream<Int32, Never>.empty.fold(initial(), (state: Int32, value: Int32) => state + value)) == 10
+        assert starts == 3
+    program.run()
+
+@timeout(5000)
+test "Stream fold: byte elements keep their type and collection preserves order" =
+    let source = Stream<Uint8, Never>.fromChunk([| 1u8, 2u8, 3u8 |].readonly)
+    let program: Async<Unit, Never> = async do
+        assert (await source.fold(0, (state: Int32, value: Uint8) => state + value.toInt32())) == 6
+        assert (await source.runCollect()) == [1u8, 2u8, 3u8]
+    program.run()
+
+@timeout(5000)
+test "Stream fold: source failures release resources and stop accumulation" =
+    let mutable released = 0
+    let mutable visits = 0
+    let resource: Resource<Int32, String> = Resource.make(
+        () => Async.succeed(1),
+        (_: Int32) => Async.thunk(() => released = released + 1)
+    )
+    let source = Stream<Int32, String>.fromResource(resource)
+        .concat(Stream<Int32, String>.fail("failed"))
+        .concat(Stream<Int32, String>.succeed(2))
+    let folded = source.fold(0, (state: Int32, value: Int32) =>
+        visits = visits + 1
+        state + value
+    )
+    let program: Async<Unit, Never> = async do
+        let result = await folded.catchAll((error: String) =>
+            assert error == "failed"
+            Async<Int32, Never>.succeed(-1)
+        )
+        assert result == -1
+        assert visits == 1 && released == 1
+    program.run()

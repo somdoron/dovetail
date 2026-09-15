@@ -1,0 +1,38 @@
+package standard.io.http
+
+import standard.uri.Uri
+import standard.http.Headers
+import standard.json.Json
+import standard.json.JsonError
+import standard.json.JsonDecoder
+
+/// Application-level HTTP request. Flat — body is always raw bytes,
+/// regardless of direction. Typed decoding happens at handler write-sites
+/// via `bodyAsString` / `jsonBody<T>()` (or by reaching into `body`
+/// directly), not by parameterising the record.
+///
+/// Same shape on the client (when emitting a request), inside a server
+/// handler (after the wire frame is parsed), and inside proxy / forwarding
+/// code (which can rewrite `uri` and ship as-is).
+public record Request =
+    method: Method
+    uri: Uri
+    headers: Headers
+    body: Array<Uint8>
+
+module Request =
+    /// Decode the body as UTF-8 text. v1 doesn't sniff `Content-Type`;
+    /// caller is responsible for picking the right helper.
+    public function bodyAsString(self): String =
+        String.fromBytes(self.body, 0, self.body.length)
+
+    /// Parse the body as JSON and decode into `T`. Returns
+    /// `BodyDecodeError.InvalidJson` for parse failures or type mismatches.
+    public function jsonBody<T>(self): Result<T, BodyDecodeError> where T: JsonDecoder =
+        let text = String.fromBytes(self.body, 0, self.body.length)
+        match Json.parse(text) with
+            case Error(e) => Error(BodyDecodeError.InvalidJson(e))
+            case Ok(j) =>
+                match T.fromJson(j) with
+                    case Error(e) => Error(BodyDecodeError.InvalidJson(e))
+                    case Ok(v) => Ok(v)

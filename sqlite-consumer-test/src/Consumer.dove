@@ -1,0 +1,17 @@
+package consumer.sqlite
+
+/// Minimal source so this project has a root package. Its reason to exist is
+/// the `test/` package: this project depends on `standard-sqlite` but declares
+/// none of the manifest entries that dependency does, so it exercises every way
+/// a registration reaches a dependent —
+///
+///   * `[[project.component]]` — the sqlite component must be composed in
+///     transitively (transitiveComponentTest.dove)
+///   * `[[project.literal]]` — `sql"..."` must resolve here
+///     (inheritedRegistrationsTest.dove)
+///   * `[[project.macro]]` — `@derive(ToSqlValue)` and friends must resolve here
+///     (inheritedRegistrationsTest.dove)
+///
+/// The three travel by three different mechanisms in the pipeline, so each
+/// needs its own guard.
+public function marker(): Unit = ()

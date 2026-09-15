@@ -1,0 +1,85 @@
+package standard.sqlite
+
+import standard.collection.ArrayList
+import standard.collection.StringBuilder
+
+// =============================================================================
+// The type the compiler's `sql"..."` lowering targets.
+//
+// `sql"SELECT * FROM t WHERE id = $id"` lowers to
+// `SqlBuilder.empty().literal("SELECT * FROM t WHERE id = ").value(id).build()`.
+// The compiler knows only those five method names and the three part shapes;
+// every trait bound comes from the signatures below, which is how
+// `T: ToSqlValue` is enforced at each interpolation without the compiler
+// knowing what `ToSqlValue` is.
+//
+// The record is deliberately non-generic — only `value` and `spread` are — so
+// monomorphization instantiates one copy of each per interpolated type rather
+// than re-instantiating the builder at every step of the chain. Its two fields
+// are mutable class handles, so a chain of N parts costs O(total bytes) instead
+// of O(N^2) string concatenation.
+// =============================================================================
+
+/// The name of the `sql"..."` literal.
+///
+/// A prefixed literal's prefix is an ordinary imported name, so `sql"..."` is
+/// available exactly where this alias is: `import standard.sqlite.sql`. That
+/// also means two drivers can both export a `sql` without colliding — a file
+/// imports the one it wants, and `import other.sql as pg` renames the literal
+/// to `pg"..."`.
+///
+/// The marker sits on a lowercase alias rather than on `SqlBuilder` itself so
+/// the builder keeps its descriptive name while the prefix reads as SQL.
+@stringLiteral
+public type sql = SqlBuilder
+
+/// Accumulator for a `sql"..."` literal. Not meant to be written by hand: use
+/// the literal, and compose fragments with `Query.append` / `Query.whenSome`.
+public record SqlBuilder =
+    text: StringBuilder
+    params: ArrayList<SqlValue>
+
+module SqlBuilder =
+    /// A fresh builder. The lowering starts every chain here.
+    public function empty(): SqlBuilder =
+        SqlBuilder { text = StringBuilder.new(); params = ArrayList<SqlValue>.new() }
+
+    /// Append literal SQL text. This text comes from the literal itself and
+    /// never from a value, so it cannot carry user input. Avoid writing a bare
+    /// `?` in it: placeholders are positional, and a stray one desynchronizes
+    /// every parameter after it.
+    public function literal(self, chunk: String): SqlBuilder =
+        self.text.append(chunk)
+        self
+
+    /// Append one bound parameter as an anonymous `?`.
+    public function value<T>(self, item: T): SqlBuilder where T: ToSqlValue =
+        self.text.append("?")
+        self.params.add(item.toSqlValue())
+        self
+
+    /// Append one `?` per element, comma-separated, for an `IN (...)` clause.
+    ///
+    /// An empty array renders the single token `NULL`, so `id IN ($..xs)`
+    /// becomes `id IN (NULL)` — valid SQL that matches no rows — rather than
+    /// the syntax error `IN ()`. Note the standard SQL gotcha on the negated
+    /// form: `id NOT IN (NULL)` also matches nothing, because every comparison
+    /// against NULL is unknown. When "not in an empty set matches everything"
+    /// is what you mean, guard the fragment with `Query.whenSome` instead of
+    /// spreading an empty array.
+    public function spread<T>(self, items: List<T>): SqlBuilder where T: ToSqlValue =
+        if items.isEmpty then self.text.append("NULL")
+        else
+            // A separator that starts empty, rather than an index compared to 0.
+            let mutable separator = ""
+            for item in items do
+                self.text.append(separator)
+                self.text.append("?")
+                self.params.add(item.toSqlValue())
+                separator = ", "
+            self.text
+        self
+
+    /// Freeze the accumulated text and parameters into a `Query`.
+    public function build(self): Query =
+        Query { text = self.text.toString(); params = self.params.toArray() }

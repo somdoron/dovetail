@@ -1,0 +1,854 @@
+package standard.io
+
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.EndingLedger
+import standard.wasi.EventPayload
+import standard.wasi.OpenFlag
+import standard.wasi.Waitable
+import standard.wasi.noteCopyProgress
+import standard.wasi.CopyResult
+import standard.wasi.IoError
+import standard.text.Charset
+
+/// Async, Resource-aware output stream over a byte transport. `WasiOutputStream`
+/// drives a p3 `stream<u8>` write; other subclasses (a TLS stream, say) encrypt
+/// bytes before pushing them to an underlying stream. The fs, socket, stdout and
+/// TLS libraries hand this out.
+///
+/// THE CONTRACT, in the same order as `AsyncInputStream`'s, which states the
+/// shared rules in full. Only the differences are written out here, and each is a
+/// difference in the transport rather than in taste.
+///
+/// (1) THERE IS NO END OF STREAM TO REPORT, so the rule that empty means EOF has
+///     no twin here. A write is accepted or it fails; there is no third answer
+///     and no short write — `write` returns `Unit`, so a partial one has nowhere
+///     to be reported and is retried until the whole buffer is gone.
+///
+/// (2) NO OPERATION ANSWERS A STREAM THAT CANNOT SEND WITH CLEAN SUCCESS,
+///     including the empty write, through the same `checkAlive` hook. Two
+///     differences from the read side, both real. A FINISHED write stream FAILS
+///     where a finished read stream answers empty, because a stream that has
+///     ended can never accept another byte while an ended read stream has a
+///     legitimate answer to give. And there is no (3) to defer to, so nothing
+///     here goes to the transport before asking.
+///
+///     `flush` and `close` are not these operations. They ask what became of what
+///     was already sent rather than whether more could be, they answer from
+///     `recordedFailure`, and a stream that ended cleanly answers `Ok(())`.
+///
+/// (3) A PAYLOAD TRANSFERRED IS A PAYLOAD DELIVERED reads differently here but is
+///     not absent. The bytes a partial copy accepted are already the transport's
+///     and the caller only learns whether ALL of them got there, so there is no
+///     half-answer to hand back. What survives is that the count on a copy is
+///     believed whatever else that copy reported: a `Dropped` copy that took the
+///     last of the buffer wrote the buffer, and a cancelled one that took half of
+///     it left a hole the stream has to be fenced against.
+///
+/// (4) CANCELLED IS THIS OPERATION, not the transport — identical to the read
+///     side. It fails with the stream's `canceledError` and records NO ending,
+///     because the runtime reads the one-shot result future only when a copy
+///     reports the stream `Dropped`; a cancel recorded as the ending would make
+///     the wrapper skip the read a late host error is waiting in.
+///
+///     A cancel that transferred nothing also leaves the stream OPEN, which is
+///     the read side's rule verbatim. A write that got PART of a buffer out does
+///     not: the byte stream now has a hole that no later write could see, so the
+///     stream is fenced as `Torn` — unusable, but not ended, and its result
+///     future still owed a read.
+///
+///     THE HOLE IS NOT MADE BY ANY ONE COPY, which is why the fence is not in an
+///     arm. A write of n bytes is a sequence of copies, and the buffer is left half
+///     out whenever that sequence stops early — most often at an INTERRUPT, which
+///     reaches no arm at all, because the fiber is failed where it parked. So the
+///     fence is on the way out of `writeBytes`, where every abnormal exit passes,
+///     and the arms only decide what to report. See `fenceIncomplete`.
+///
+/// (5)/(6) NO LENGTHS TO GET WRONG: a write is handed a buffer rather than a
+///     count, so there is no negative length to reject and nothing to split into
+///     families — it stops when the buffer is gone. The read side's (6) says why
+///     the mirror image (a read that stops on a count the caller named) is not
+///     that class's business either.
+///
+/// (7) THE EXTENSION POINTS ARE `protected` AND THE PUBLIC API IS `final`, as on
+///     the read side.
+///
+/// (8) WHAT A SUBCLASS OWES THE BASE: that `writeBytes` writes ALL of the bytes
+///     it is handed or fails, and that `checkAlive` and `recordedFailure` answer
+///     honestly.
+public abstract class AsyncOutputStream<E> where E : IoError =
+    /// Write all bytes, honoring whatever backpressure protocol the transport
+    /// requires.
+    ///
+    /// An EMPTY buffer is not a no-op: nothing is written, but the stream is still
+    /// asked whether it could have taken bytes, so a dead or finished stream
+    /// reports itself instead of answering with the clean `Ok(())` that a caller
+    /// reads as "written". This is the write-side twin of `read(0)`, and the
+    /// health check comes FIRST here where it comes second there — there, a dead
+    /// transport may still be holding bytes that are the caller's; here, a dead
+    /// transport has nothing to hand back.
+    ///
+    /// It is not a BARRIER. `flush` is the operation that means "wait for what is
+    /// already posted" and the only one that promises it; a zero-length write
+    /// does no transport work at all, so that a caller who wants to know whether
+    /// the stream is alive need not pay a network round trip to find out.
+    public final async function write(self, bytes: ReadonlySlice<Uint8>): Async<Unit, E> =
+        await self.checkAlive()
+        if bytes.length == 0 then () else await self.writeBytes(bytes)
+
+    /// Write every byte of a non-empty view, or fail. The health check above has
+    /// already run, but it does NOT stand in for re-checking between copies: this
+    /// method awaits, and a sibling fiber can close the stream while it is parked.
+    protected abstract function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, E>
+
+    /// Fail with the transport failure this stream recorded, or with the reason it
+    /// can no longer accept bytes.
+    ///
+    /// Abstract for the reason its read twin is: the only available default is
+    /// "nothing ever goes wrong here", which is false for every transport that can
+    /// fail, and a default is an answer given on a subclass's behalf.
+    protected abstract function checkAlive(self): Async<Unit, E>
+
+    /// Wait until every write already issued on this stream has been accepted by
+    /// the transport, then report any failure the stream has recorded.
+    ///
+    /// The contract stops at *accepted*, deliberately. Under a completion model a
+    /// `write` resolves only once the host has taken its bytes, so there is no
+    /// buffer here to push; what flush adds is the wait for a write still in
+    /// flight — a concurrent writer's, or one this fiber posted and did not await.
+    /// It does NOT promise the bytes reached the disk or the peer, and it cannot:
+    /// the only report of a late failure is the transport's one-shot result
+    /// future, which resolves once the write end is gone. `close` is the
+    /// durability point — it ends the stream and then reads that future.
+    ///
+    /// The wait comes first and the report second, which is the opposite order
+    /// from every other operation: what flush reports is the outcome of work that
+    /// was already posted when it was called, so reporting first would answer from
+    /// before the very writes it exists to wait for.
+    public final async function flush(self): Async<Unit, E> =
+        await self.flushPending()
+        await Async.fromResult(self.recordedFailure())
+
+    /// Wait for the writes already in flight on this stream. Reporting is the
+    /// base's job — see `flush`.
+    protected abstract function flushPending(self): Async<Unit, E>
+
+    /// What became of what was already written: the failure this stream has
+    /// RECORDED, and nothing about whether it could take more.
+    ///
+    /// The question `flush` and `close` both ask, which is why it is here and
+    /// abstract rather than each subclass's private business — they must answer it
+    /// alike, or a stream that ended cleanly with every byte delivered tells one
+    /// of them it is fine and the other that it is closed.
+    ///
+    /// Distinct from `checkAlive`, which answers "could I send more" and must fail
+    /// on a finished stream (2). Nothing that only reports on bytes already
+    /// accepted goes through that hook.
+    protected abstract function recordedFailure(self): Result<Unit, E>
+
+    /// End this stream now and report what the transport made of it.
+    ///
+    /// Optional, and symmetric with `AsyncInputStream.close`. The `Resource` that
+    /// handed this stream out ENDS it on release whether or not this was called —
+    /// its finalizer runs `dropHandles`, which drops the write end and reads the
+    /// transport's verdict but CANCELS nothing and REPORTS nothing (a finalizer
+    /// has nowhere to put an error, so it latches the verdict and leaves it). It
+    /// can skip the cancel because by release time the scope has already unwound
+    /// every fiber that could be mid-write: the guarantee that nothing is left in
+    /// flight comes from that unwinding, not from the finalizer doing the
+    /// cancelling. What calling `close` here adds is *when* (now, not at the end of
+    /// the scope), *what came of it* (the verdict the finalizer would swallow), and
+    /// the cancel of any write still in flight. Using the stream afterwards is
+    /// undefined.
+    ///
+    /// On the write side "what came of it" is the whole point: a late host error —
+    /// a disk that filled after the bytes were accepted, a connection reset after
+    /// the last write — arrives only on the transport's one-shot result future,
+    /// and that future resolves only once the write end is gone. So nothing short
+    /// of ending the stream can observe it, and a finalizer, which cannot fail,
+    /// has nowhere to report it. Call this when that error matters.
+    ///
+    /// A write in flight on this stream, in this fiber or another, is CANCELLED
+    /// rather than waited for: a write blocked on a peer that never drains would
+    /// never complete, so there is no in-flight operation that closing could
+    /// promise to outlive. Those fibers fail with the origin's `Canceled`.
+    public abstract function close(self): Async<Unit, E>
+
+    /// UTF-8-encode the string and write all its bytes. v1 only supports UTF-8.
+    public final async function writeString(self, string: String, charset: Charset): Async<Unit, E> =
+        match charset with
+        case Charset.Utf8 => await self.write(string.bytes().readonly)
+        case _ => panic "unsupported charset"
+
+/// What a stream owes the byte stream when a write stops with part of its buffer
+/// already on the transport.
+///
+/// A buffer is one thing to the caller and a prefix to the transport, so a write
+/// that stops half way leaves a HOLE nothing downstream can see. The question
+/// this answers is not who owns the stream or how long it lives — that was the
+/// old answer and it is the wrong question. It is whether a LATER write can be
+/// told apart from a continuation of the torn one. Where it cannot, the damage is
+/// silent, and a stream that goes on accepting writes goes on quietly producing
+/// output that reads as correct.
+public enum TornWrite =
+    /// Retire the stream. Nothing more may be written to it and the write that
+    /// tore it says why.
+    ///
+    /// For everything whose framing lives ABOVE the byte stream — a protocol on a
+    /// socket, a record in a file — because nothing this layer could emit would
+    /// mark the hole, and because the caller has somewhere to go: a stream handed
+    /// out through a `Resource` is bounded by the scope that holds it, so losing
+    /// one means reconnecting or reopening, which is a thing programs know how to
+    /// do.
+    Fence
+    /// Keep the stream and make the hole VISIBLE instead: the next write is
+    /// preceded by `separator`, so a consumer that frames on that byte sees a
+    /// truncated record followed by a fresh one rather than the two spliced into
+    /// each other.
+    ///
+    /// For the streams nothing can reopen — process stdio above all, which is made
+    /// once, shared by every fiber and never released. Fencing one would let a
+    /// single interrupted `writeLine` silence the component for the rest of its
+    /// life; not fencing it, and doing nothing else, merges the next line onto the
+    /// torn one and reports nothing to anybody. A visible loss is worth more than
+    /// either: a component that cannot print is a component nobody can diagnose,
+    /// and a log line that is obviously broken is one nobody misreads.
+    Reframe(Uint8)
+
+/// A p3-stream-backed output stream.
+///
+/// `sink` describes the whole host operation — which writable end, how to post a
+/// copy, and the result future that says why the stream ended. The runtime drives
+/// it. What is left here is what the stream's type cannot say: that a partial
+/// write must be retried, that a vanished reader is a failure rather than an
+/// ending, and which error to raise when the host recorded no reason.
+///
+/// INTERNAL, like its read twin: it owns host handles and is only handed out
+/// attached to the `Resource` that releases them. See `resource`.
+internal class WasiOutputStream<E>(
+    public sink: ComponentStreamWrite<E>,
+    // The bit behind `sink.stillOpen` — the record above was rebuilt with a
+    // probe over this flag (`withStillOpen`, in `resource`). Flipped entering
+    // `Closing` and entering `Released`: the two transitions a fiber other
+    // than the write-lock holder can make, and the ones after which a posted
+    // copy would chase a dropped handle. `Ended` and `Torn` are latched by the
+    // lock holder itself, which never posts past them, and the handle is still
+    // owned there. See `OpenFlag`.
+    openFlag: OpenFlag,
+    // Error to raise when the host drops the stream mid-write and the result
+    // future reports no failure. Origin-specific (a connection-closed
+    // `NetworkError`, an I/O `FileSystemError`). A dropped write can never make
+    // progress, so it must fail rather than report zero bytes and spin.
+    // Kept distinct from the stream's `canceledError` (on the `ComponentStreamWrite`):
+    // this one says "the transport is gone", that one says "somebody closed this
+    // under you", and only the caller can tell which of those it wanted to retry.
+    public closedError: E,
+    // Writes post only in `Open`. See `StreamState` — the write side is what its
+    // `Ended`/`Closing` split is for: the result future is one-shot, and those two
+    // states are precisely "the runtime already read it" and "nobody has, and
+    // `close` is about to".
+    mutable state: StreamState,
+    mutable finishError: Option<E>,
+    // What this stream owes the byte stream when a write leaves the buffer half
+    // out. See `TornWrite` and `fenceIncomplete`; the answer is a property of what
+    // reads the far end, so whoever builds the stream decides it.
+    tornWrite: TornWrite,
+    // Whether a tear left a separator owed to the next write. Only ever set under
+    // `TornWrite.Reframe`.
+    public mutable owedSeparator: Bool,
+    // How much of the buffer the write in progress has got out. A field rather than
+    // a local because the fence that reads it runs on the way OUT of the write,
+    // including the way out an interrupt takes, where a local is gone.
+    // Single-writer by construction: only the holder of `writeLock` touches it,
+    // and it is reset when that lock is taken.
+    public mutable written: Int32,
+    // Held across a whole `write`, which the runtime's per-copy lock cannot do —
+    // see `writeBytes`. Non-reentrant on purpose: `write` and `flush` are the only
+    // holders and neither is reachable from inside the other, so an acquire that
+    // finds this fiber already holding it is a bug in this file.
+    writeLock: Mutex
+) extends AsyncOutputStream<E>() where E : IoError =
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, E> =
+        // The runtime serializes each individual copy on this stream end, because
+        // p3 permits only one outstanding write per end. But a partial write is a
+        // LOOP of copies, and a second fiber slipping between two of them would
+        // interleave its bytes into the middle of this buffer. That is not an ABI
+        // invariant — it is this stream's promise about what `write` means — so it
+        // is ours to keep, with a mutex held across the whole retry loop.
+        //
+        // `orPanicWith`: the only way this acquire can fail is this fiber already
+        // holding the lock, which nothing here does. An invariant of this class
+        // rather than a condition a caller could recover from, so `MutexError`
+        // stays out of `write`'s signature.
+        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "WasiOutputStream.write re-entered its own write lock")
+        await self.writeReframed(bytes)
+
+    /// Pay off the separator a torn write left owed, then write the caller's
+    /// buffer. Only `TornWrite.Reframe` ever owes one — a fenced stream takes no
+    /// further writes, so it has nobody to mark the hole for.
+    ///
+    /// The separator goes out as a write of its own rather than being spliced onto
+    /// the front of `bytes`, which would copy the caller's whole buffer to prepend
+    /// one byte. A ONE-BYTE write cannot itself tear: it either gets its byte out
+    /// and succeeds, or gets nothing out, and nothing out is not a hole — so the
+    /// debt survives to the next write instead of compounding.
+    ///
+    /// EACH PHASE FENCES ITSELF, against its own buffer. The tear accounting for
+    /// a write is measured against that write and no other: one `fenceIncomplete`
+    /// wrapped around both phases judged `written` — which still counted the
+    /// separator's byte — against the CALLER's length, so an interrupt landing
+    /// after the separator went out but before the debt was cleared re-armed a
+    /// debt that was already paid, and the next console write opened with a
+    /// phantom blank line. A debt is paid exactly when its byte went out
+    /// (`written >= 1` — a raced cancel that took the byte counts it), and a
+    /// paid debt stays paid on every exit path.
+    ///
+    /// The accounting runs inside the `foldCause` handlers, which the
+    /// interpreter invokes in the same step that settles the inner write — so
+    /// there is no boundary between learning the outcome and recording it that
+    /// another fiber, or an interrupt, could land in.
+    ///
+    /// The handlers are named rather than written inline because a multi-line
+    /// lambda argument swallows the comma that follows it — the layout rules
+    /// put it inside the lambda's own block. `foldCause` and not `catchAll`:
+    /// an interruption is not a typed failure, and it is the case this exists
+    /// for. Every other abnormal exit passes through here too and needs
+    /// nothing from it: a transport failure or a vanished reader has already
+    /// recorded an ending, and `tear` only fences a stream that is still
+    /// `Open`.
+    async function writeReframed(self, bytes: ReadonlySlice<Uint8>): Async<Unit, E> =
+        match self.tornWrite with
+            case TornWrite.Reframe(separator) =>
+                if self.owedSeparator then
+                    self.written = 0i32
+                    let paidOnCause: (Cause<E>) => Async<Unit, E> = (cause: Cause<E>) =>
+                        if self.written >= 1i32 then
+                            self.owedSeparator = false
+                        Async<Unit, E>.fromCause(cause)
+                    let paidOnWritten: (Unit) => Async<Unit, E> = (_: Unit) =>
+                        self.owedSeparator = false
+                        Async.succeed(())
+                    await self.writeLocked([|separator|].readonly).foldCause<Unit, E>(paidOnCause, paidOnWritten)
+            case TornWrite.Fence => ()
+        self.written = 0i32
+        let onCause: (Cause<E>) => Async<Unit, E> = (cause: Cause<E>) =>
+            self.fenceIncomplete(bytes.length)
+            Async<Unit, E>.fromCause(cause)
+        let onWritten: (Unit) => Async<Unit, E> = (written: Unit) => Async.succeed(written)
+        await self.writeLocked(bytes).foldCause<Unit, E>(onCause, onWritten)
+
+    async function writeLocked(self, bytes: ReadonlySlice<Uint8>): Async<Unit, E> =
+        let mutable remaining = bytes
+        let mutable emptyCopies = 0
+        let mutable posting = true
+        let mutable stillOpen = true
+        while posting do
+            // DONE IS ASKED FIRST, before the stream is asked whether it is still
+            // alive: the buffer is on the transport already, and what becomes of
+            // the stream after that is the next operation's news. The other order
+            // reports a write that delivered every byte as a failure whenever a
+            // sibling closes the stream while the last copy is in flight.
+            if remaining.isEmpty() then
+                posting = false
+            else
+                // The state check is INSIDE the loop. A partial write is a
+                // sequence of copies with a suspension between each pair, and a
+                // sibling `close` landing in one of those windows drops the
+                // handle — after which the host reuses the index and the next copy
+                // goes to an unrelated stream, without failing.
+                //
+                // Validated-since-the-last-suspension is NOT the whole rule,
+                // because this check and the post are separate interpreter
+                // steps and the fairness budget can run the sibling `close`
+                // between them. The last word is the sink's `stillOpen` probe —
+                // a view of this object's own state, consulted by the runtime
+                // INSIDE the copy-posting step — which fails the write with
+                // `canceledError` exactly as the close would have, had it found
+                // this fiber parked. This check stays for the common case: it
+                // answers from the latch without a failure, and keeps the
+                // probe's `false` arm the rarity it should be.
+                match self.state with
+                    case StreamState.Open =>
+                        // Advancing the view does not copy the remaining bytes.
+                        //
+                        // No `catchAll`, which is the point of the triple: a
+                        // failure out of this operation means one thing only —
+                        // this fiber was detached from the handle by somebody's
+                        // `close` — and a detached fiber has learnt nothing about
+                        // the stream to record.
+                        let copied = await Async<Unit, E>
+                            .streamWrite(self.sink, remaining)
+                        // Counted before it is judged, and for every result. A
+                        // cancelled or dropped copy still reports what the host
+                        // took, and what the host took is the difference between a
+                        // write that failed and a byte stream with a hole in it.
+                        // On the cancel path the runtime hands this count over for
+                        // that reason alone — see `settleCancelledRead`.
+                        self.written = self.written + copied._1
+                        remaining = remaining[|copied._1..|]
+                        if copied._0 == CopyResult.Dropped then
+                            // The stream ended under this write. This is the only
+                            // arm the runtime consults the one-shot result future
+                            // for, so it is the only place an ending is recorded.
+                            //
+                            // WHICH reason is three cases and they are not the
+                            // same fact. The host's own is recorded whatever else
+                            // happened: it is the truth about the stream and
+                            // `close` exists to report it. With no reason given, a
+                            // copy that left bytes behind is the origin's generic
+                            // "the transport is gone" — and one that took
+                            // everything left is not a failure at all. `write`
+                            // promises the bytes were accepted and they were, so
+                            // the ending is still recorded (nothing may post
+                            // again, and the spent future must not be read twice)
+                            // but with nothing in it: `close` answers `Ok` and the
+                            // next WRITE reports the stream is over.
+                            match copied._2 with
+                                case Some(reason) =>
+                                    self.latchEnding(Some(reason))
+                                    if self.written < bytes.length then
+                                        await Async.fail(reason)
+                                    else
+                                        posting = false
+                                case None =>
+                                    if self.written < bytes.length then
+                                        self.latchEnding(Some(self.closedError))
+                                        await Async.fail(self.closedError)
+                                    else
+                                        let noReason: Option<E> = None
+                                        self.latchEnding(noReason)
+                                        posting = false
+                        else if copied._0 == CopyResult.Cancelled then
+                            // This WRITE was cancelled, which says nothing about
+                            // the stream: somebody force-closed the handle under
+                            // this fiber, or this fiber is being interrupted. So
+                            // it reports the stream's `canceledError` rather than
+                            // the origin's "the transport is gone", and records no
+                            // ending (4).
+                            //
+                            // Whether it left a hole is the fence's question, asked
+                            // on the way out of the write as a whole. Here there is
+                            // only what to report, and a cancel that took the last
+                            // of the buffer has nothing to report: the bytes are the
+                            // transport's, so the loop goes round and stops on
+                            // `done`.
+                            if remaining.isEmpty() then
+                                ()
+                            else
+                                await Async.fail(self.sink.canceledError)
+                        else
+                            // A completed copy that moved no bytes makes no
+                            // progress, and this loop's exit condition is progress.
+                            // The bound is shared with the library's other copy
+                            // loops — see `emptyCopyLimit`.
+                            emptyCopies = noteCopyProgress(emptyCopies, copied._1, "output stream: a host copy accepted no bytes and did not end the stream")
+                    case _ =>
+                        stillOpen = false
+                        posting = false
+        if !stillOpen then
+            await Async.fromResult(self.closedResult())
+        else
+            ()
+
+    /// Record that a copy observed the stream ending, and the transport's reason
+    /// if it gave one. The result future is one-shot and the runtime has already
+    /// consumed it by the time anything gets here, so every later write answers
+    /// from the latch — and so does `close`, which is why the reason is recorded
+    /// and not merely the ending. An ending with nothing in it reads as "no
+    /// complaints".
+    ///
+    /// That the future has been spent is NOT recorded here, and used to be. It is
+    /// a fact about a handle rather than about this stream, and recording it here
+    /// meant recording it a fiber-step after the runtime did the reading — a gap
+    /// an interrupt fits inside. It lives on the handle now; see `EndingLedger`.
+    ///
+    /// The STATE and the reason are recorded only from `Open`, which is what keeps
+    /// `close` honest: a write that `close` cancelled fails with the stream's
+    /// `canceledError` and would otherwise be recorded as how the stream ended, so
+    /// `close` would report back the cancellation it caused instead of the late
+    /// host error it exists to surface. The same guard stops an `Ended` being
+    /// written over a close's `Released`, which would make `dropHandles` release
+    /// host handles twice. And the first writer to discover an ending records it —
+    /// a straggler is reporting a consequence, not the cause.
+    function latchEnding(self, reason: Option<E>): Unit =
+        match self.state with
+            case StreamState.Open =>
+                self.state = StreamState.Ended
+                self.finishError = reason
+            case _ => ()
+
+    /// Fence a stream that has half of a buffer on the transport and no way to
+    /// finish it. Not an ending: see `StreamState.Torn`, and `fenceIncomplete`
+    /// for who asks.
+    function tear(self, error: E): Unit =
+        match self.state with
+            case StreamState.Open =>
+                self.state = StreamState.Torn
+                self.finishError = Some(error)
+            case _ => ()
+
+    /// Fence the stream if the write that is unwinding left the buffer half out.
+    ///
+    /// Called on every failed exit from a write, which is the only place that
+    /// covers every way of leaving one: an interrupt reaches no arm, and the arms
+    /// cannot see how many copies came before them anyway.
+    ///
+    /// The two edges are the two halves of (4). NOTHING out is the ordinary
+    /// cancelled write: no hole, and the stream stays open, exactly as a cancelled
+    /// read leaves its stream readable. EVERYTHING out is not a failure at all as
+    /// far as the byte stream is concerned — the buffer is whole on the transport —
+    /// so it is not fenced either, even when the operation itself then failed.
+    ///
+    /// `canceledError` and not `closedError`: nothing has gone wrong with the
+    /// transport, an operation on it was taken away mid-buffer, and only one of
+    /// those means "reconnect".
+    ///
+    /// WHAT IS OWED for a hole is `TornWrite`'s question and not this one's, and
+    /// it is answered by whoever built the stream, because it is a fact about what
+    /// reads the far end rather than about the write. Here there is only whether a
+    /// hole was made.
+    public function fenceIncomplete(self, total: Int32): Unit =
+        if self.written > 0i32 && self.written < total then
+            match self.tornWrite with
+                case TornWrite.Fence => self.tear(self.sink.canceledError)
+                case TornWrite.Reframe(_) => self.owedSeparator = true
+        else
+            ()
+
+    /// Why this stream can no longer take a byte, if it cannot. The single
+    /// statement of that rule; `checkAlive` and `closedResult` are two spellings
+    /// of it.
+    ///
+    /// A recorded failure — a transport error, a vanished reader, a torn write —
+    /// is reported as itself. A stream somebody CLOSED reports `canceledError`
+    /// rather than the origin's "the transport is gone", for the reason the read
+    /// side reports it (invariant (9) there): that is the error the runtime raised
+    /// in whichever fibers were on the handle when the close cancelled them, and a
+    /// fiber arriving an instant later is owed the same answer rather than a
+    /// differently-worded one chosen by the scheduler.
+    public function unusable(self): Option<E> =
+        match self.finishError with
+            case Some(e) => Some(e)
+            case None =>
+                match self.state with
+                    case StreamState.Open => None
+                    case StreamState.Closing => Some(self.sink.canceledError)
+                    case StreamState.Released => Some(self.sink.canceledError)
+                    case _ => Some(self.closedError)
+
+    /// The failure every write gives once the stream is finished or closed. There
+    /// is no clean answer here, per (2): a write that cannot happen has nothing to
+    /// report but why.
+    function closedResult(self): Result<Unit, E> =
+        match self.unusable() with
+            case Some(e) => Error(e)
+            case None => Error(self.closedError)
+
+    protected override async function flushPending(self): Async<Unit, E> =
+        // Taking the write lock IS the wait for outstanding writes: `write` holds
+        // it across its whole start→completion window, so it cannot be granted
+        // while any write on this end is still in flight. Once it is granted there
+        // is nothing buffered left to push — a `write` only resolves after the
+        // host has accepted its bytes — so all that remains is the failure the
+        // stream has recorded, which the base reports.
+        //
+        // It deliberately does NOT poll the result future. That future is
+        // one-shot, and reading it while the write end is still open cannot tell
+        // "not resolved yet" from "resolved cleanly", so a poll would spend the
+        // single read that a real, later error needs. `close` is the definitive
+        // check: it ends the stream first, which is what makes the future resolve.
+        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "WasiOutputStream.flush re-entered the write lock")
+        ()
+
+    /// Whether this stream could still take a byte, and why not if it could not.
+    ///
+    /// A finished write stream FAILS here where a finished read stream succeeds:
+    /// there is no such thing as a write that legitimately transfers nothing, so
+    /// there is no answer for a caller but the reason the stream is gone — the
+    /// transport failure if one was recorded, and the origin's "closed" otherwise.
+    protected override function checkAlive(self): Async<Unit, E> =
+        match self.unusable() with
+            case Some(e) => Async.fail(e)
+            case None => Async.succeed(())
+
+    /// The failure the stream has already recorded, if any — and, failing that,
+    /// the fact that somebody CLOSED this stream, which is a thing that became of
+    /// what was written and is not the same as nothing having gone wrong.
+    ///
+    /// Both states matter and neither is the closer's own. `Closing` is a sibling
+    /// close between its cancel and its drop; `Released` is one that finished. A
+    /// fiber whose `flush` was queued behind that close is asking what became of
+    /// writes the close took away, and `Ok(())` says they were fine. It is the
+    /// same answer invariant (9) gives a read that arrives after a close, and for
+    /// the same reason: which side of the close the scheduler put you on must not
+    /// decide whether you are told.
+    ///
+    /// `close` mostly does NOT come through here, and that is the difference
+    /// between the two questions: it asks what the transport made of the stream,
+    /// which a finished close has an answer to whoever asks. This hook is `flush`'s
+    /// question — what became of the writes I am waiting on — and a close is a
+    /// complete answer to it.
+    protected override function recordedFailure(self): Result<Unit, E> =
+        match self.endingFailure() with
+            case Error(e) => Error(e)
+            case Ok(_) =>
+                match self.state with
+                    case StreamState.Closing => Error(self.sink.canceledError)
+                    case StreamState.Released => Error(self.sink.canceledError)
+                    case _ => Ok(())
+
+    /// What the TRANSPORT made of this stream, with nothing about who closed it.
+    /// The answer `close` reports for the close it performed itself.
+    function endingFailure(self): Result<Unit, E> =
+        match self.finishError with
+            case Some(e) => Error(e)
+            case None => Ok(())
+
+    /// End the stream and drop the host handles it owns, silently and without
+    /// cancelling anything: drop the write end, read what the host made of it,
+    /// then drop the result future. The read comes second because that future
+    /// resolves only once the host sees end-of-stream, and is skipped entirely
+    /// when a copy already reported the ending, because the runtime consumed the
+    /// future there.
+    ///
+    /// The *finalizer's* close, called by the `Resource` built alongside this
+    /// object and by nobody else — which is why it is not `close` and not part of
+    /// `AsyncOutputStream`. It needs no cancel: a finalizer runs only after its
+    /// scope has unwound every fiber it owns, and interrupting a fiber both
+    /// cancels that fiber's copy and gives up its place in the handle's lock
+    /// queue, so by the time this runs nothing is posted and nothing is queued.
+    /// `close` below has no such guarantee and does the cancelling itself.
+    ///
+    /// Silent because a finalizer has nowhere to put an error — it latches the
+    /// failure into `finishError` and leaves it there, which is what makes an
+    /// explicit `close` the only way to see it. Idempotent because `close` drops
+    /// these handles early and the Resource then releases over the top.
+    public function dropHandles(self): Unit =
+        match self.state with
+            case StreamState.Released => ()
+            case _ =>
+                self.state = StreamState.Released
+                // The handles are about to go, so the record's probe must say
+                // so before they do — the finalizer path enters here straight
+                // from `Open`, without passing `close`.
+                self.openFlag.open = false
+                // Drop the writable FIRST: the future resolves when the host sees
+                // end-of-stream, so reading it before that would spend the single
+                // read on "not resolved yet".
+                self.sink.dropWritable()
+                // `spendEnding` and not `ending`: a copy may already have consulted
+                // this future, and reading a spent one-shot future traps. Whether it
+                // has is recorded on the handle rather than here, because the fiber
+                // that received such a copy's outcome may have been interrupted
+                // before it could record anything — see `EndingLedger`. Asking a
+                // second time is then free and still yields the reason the first
+                // read found, which is what makes an interrupted writer cost this
+                // stream nothing.
+                match self.sink.spendEnding() with
+                    case Error(e) => self.finishError = Some(e)
+                    case Ok(_) => ()
+                self.sink.dropResult()
+
+    /// Detach every fiber from this stream's writable end, end the stream, and
+    /// report what the host made of it. This is the only path on which a late
+    /// write failure is observable.
+    ///
+    /// THREE STEPS, in this order, for every state that still owns the handle —
+    /// `Open`, `Ended` and `Torn` alike, since what used to separate them is
+    /// recorded elsewhere: whether the result future has been spent is the
+    /// handle's `EndingLedger`, not the state.
+    ///
+    /// LEAVE the current state for `Closing` first, synchronously, before anything
+    /// can yield. It is not bookkeeping: it is what a concurrent close sees, and
+    /// the `Closing` arm is that close deciding to leave this one alone.
+    ///
+    /// CANCEL second, covering the queue as well as the operation in flight:
+    /// dropping a busy p3 stream traps, and a fiber left queued for a dropped
+    /// handle would post its write onto whatever stream the host gives that index
+    /// to next. Needed even on a stream that has ended, because a writer that
+    /// reached the runtime's per-handle lock queue is still waiting there and
+    /// would be granted the lock — and post — the moment the holder lets go.
+    ///
+    /// DROP last.
+    ///
+    /// `Released` is the state where none of this may happen: the handle is gone
+    /// and its index reused, so a cancel from here would be aimed at whatever
+    /// stream the host has since put in its place. `Closing` does nothing at all:
+    /// a concurrent close is between its cancel and its drop, and dropping the
+    /// handles from here would pull them out from under it. The window is small
+    /// and real; making one close wait on another would be a promise not worth its
+    /// cost.
+    ///
+    /// WHAT IS REPORTED is the transport's verdict on the stream — `endingFailure`
+    /// — on both arms that have one, and `Ok(())` is a legitimate verdict: a
+    /// stream ended cleanly with every byte delivered has nothing to complain
+    /// about, however many times it is asked. Idempotent in the ANSWER as well as
+    /// the effect, which real callers depend on: a TLS connection closes its
+    /// underlying write half from `closeSend` and again when its `Resource` is
+    /// released, and a second close that invented a failure would fail the
+    /// release.
+    ///
+    /// `Closing` is the one arm with no verdict to give, and it does not invent
+    /// one. Another close is between its cancel and its drop, so it has not
+    /// finished reading what the transport made of the stream; what this caller
+    /// knows for certain is that its stream was taken away mid-flight, and
+    /// `recordedFailure` is where that is written down. `flush` answers from that
+    /// hook throughout, because it is asking the other question — what became of
+    /// MY writes — and writes a close cancelled were not accepted.
+    public override async function close(self): Async<Unit, E> =
+        match self.state with
+            case StreamState.Closing => await Async.fromResult(self.recordedFailure())
+            case StreamState.Released => await Async.fromResult(self.endingFailure())
+            case _ =>
+                await self.detachAndDrop().uninterruptible()
+                await Async.fromResult(self.endingFailure())
+
+    /// The LATCH → CANCEL → DROP sequence, run as ONE uninterruptible unit — the
+    /// write twin of `WasiInputStream.detachAndDrop`, and for the same reason.
+    ///
+    /// Once `state` is latched to `Closing` and the probe flipped, the cancel and
+    /// drop MUST both run: an interrupt landing between the latch and the
+    /// `CancelStream` node — reachable when the close straddles the fairness
+    /// budget's boundary — would discard `detachFibersFrom` (which drains the
+    /// writable end's lock queue so a queued writer never posts onto a reused
+    /// index) and `dropHandles`, stranding a waiter and leaking the handle.
+    /// Masking makes the three atomic; the interrupt is deferred to the mask's
+    /// pop, as a bracket release defers one. `endingFailure` stays OUTSIDE the
+    /// mask: reporting the verdict is interruptible, only the teardown is not.
+    async function detachAndDrop(self): Async<Unit, E> =
+        self.state = StreamState.Closing
+        // Flip the probe in the same synchronous breath as the state: from here
+        // to the drop, a copy-posting step anywhere else must see `stillOpen`
+        // false, or it posts on a handle this close is about to take away.
+        self.openFlag.open = false
+        await Async<Unit, E>.cancelStreamWrite(self.sink)
+        self.dropHandles()
+
+module WasiOutputStream<E> =
+    /// A p3 write stream as a `Resource`: acquiring opens it, releasing ends it
+    /// and drops the handles it owns. The read twin's rationale applies verbatim —
+    /// see `WasiInputStream.resource`.
+    ///
+    /// `closedError` stays a parameter rather than joining the record: it is not an
+    /// ABI fact about the stream end but a policy about what a vanished reader
+    /// should be called, and the record deliberately decides nothing.
+    ///
+    /// The write lock is made inside `acquire`, which is an `Async`, so
+    /// `Mutex.make` can be the effect it is.
+    ///
+    /// `tornWrite` is a PARAMETER and has no default, which is the point: what a
+    /// stream owes a half-written buffer depends on what reads the far end, and
+    /// only the origin knows that. It was decided here once, for every stream in
+    /// the tree, and the decision was wrong for some of them.
+    public function resource<E2>(closedError: E, tornWrite: TornWrite, open: () => Async<ComponentStreamWrite<E>, E2>): Resource<AsyncOutputStream<E>, E2> where E : IoError =
+        let acquire: () => Async<WasiOutputStream<E>, E2> = async () =>
+            let raw = await open()
+            // Flag first, probe over it, record rebuilt, then the stream that
+            // flips the flag — see `OpenFlag` for the construction-order knot.
+            let openFlag = OpenFlag(true)
+            let sink = raw.withStillOpen(() => openFlag.open)
+            let writeLock = await Mutex.make()
+            let noError: Option<E> = None
+            WasiOutputStream<E>(sink, openFlag, closedError, StreamState.Open, noError, tornWrite, false, 0i32, writeLock)
+        let held: Resource<WasiOutputStream<E>, E2> =
+            Resource.make(acquire, (s: WasiOutputStream<E>) => Async.thunk(() => s.dropHandles()))
+        held.map<AsyncOutputStream<E>>((s: WasiOutputStream<E>) => s)
+
+// --- what a torn write owes, per stream ---------------------------------------
+//
+// A write of n bytes that stops after k leaves a HOLE, and the hole is invisible:
+// there is nothing on the transport to say a message was cut short, so the next
+// write is spliced onto the truncated prefix and read as one message. The socket
+// test in `standard-io-net` drives the whole of that end to end, interrupt and
+// all. What is checked here is the DECISION — which stream owes what — because
+// that is what was wrong: it was taken from how long a stream lives, and lifetime
+// is not what makes a hole visible.
+//
+// White-box, reaching straight for `written` and `fenceIncomplete`, because the
+// only way to tear a stream honestly is to interrupt a write parked against a
+// peer that will not drain, and that needs a peer. Those four members are
+// `public` on a class that is itself `internal`, so the reach stops at this
+// package — the same latitude `sink` and `dropHandles` already take.
+
+enum FenceProbeError =
+    Broken
+
+implement IoError for FenceProbeError
+
+/// A stream end that is never posted to: these tests set `written` by hand.
+function fenceProbeSink(): ComponentStreamWrite<FenceProbeError> =
+    ComponentStreamWrite<FenceProbeError> {
+        writable = Waitable(0i32)
+        ending = () => Ok(())
+        ledger = EndingLedger.fresh()
+        start = (bytes: ReadonlySlice<Uint8>) => panic "the fence probe posts no copies"
+        cancel = () => EventPayload(0i32)
+        canceledError = FenceProbeError.Broken
+        stillOpen = () => true
+        dropWritable = () => ()
+        dropResult = () => ()
+    }
+
+function fenceProbe(policy: TornWrite): WasiOutputStream<FenceProbeError> =
+    let noError: Option<FenceProbeError> = None
+    // The same wiring `resource` does: flag first, probe over it, record
+    // rebuilt, then the stream that flips the flag.
+    let openFlag = OpenFlag(true)
+    WasiOutputStream<FenceProbeError>(
+        fenceProbeSink().withStillOpen(() => openFlag.open), openFlag,
+        FenceProbeError.Broken, StreamState.Open, noError,
+        policy, false, 0i32, Mutex.makeProcessWide()
+    )
+
+test "a torn write retires a stream that owes a fence" =
+    let stream = fenceProbe(TornWrite.Fence)
+    stream.written = 3i32
+    stream.fenceIncomplete(5i32)
+    // Retired: nothing may be written to it again, and the reason is the one that
+    // means "an operation was taken away from you" rather than "the transport is
+    // gone" — the transport is fine, which is exactly why nothing else reports it.
+    assert stream.unusable().isSome
+    assert !stream.owedSeparator
+
+test "a torn write re-frames a stream that cannot be retired" =
+    let stream = fenceProbe(TornWrite.Reframe(10u8))
+    stream.written = 3i32
+    stream.fenceIncomplete(5i32)
+    // Still writable, because there is nothing to reopen it with: this is the
+    // policy `Console`'s stdout and stderr ask for, and fencing one would let a
+    // single interrupted `writeLine` silence the component for good.
+    assert stream.unusable().isNone
+    // …and the hole is not left unmarked either, which is what "not fencing" used
+    // to mean on its own: the next write pays off a separator first, so a
+    // line-framed consumer sees a truncated record and a fresh one instead of the
+    // two spliced together.
+    assert stream.owedSeparator
+
+test "a close is visible to the runtime's posting step through the probe" =
+    // The write-side wiring of the check→post fix, asked directly: the record's
+    // `stillOpen` — the thing the runtime consults INSIDE the copy-posting step
+    // — must go false the moment `close` commits, not when some later state
+    // check happens to run. The read side's end-to-end version is the close
+    // sweep in `scheduler_window_test`; this pins the wiring the two sides
+    // share. White-box like every test here: `sink` is public on an internal
+    // class, so the reach stops at this package.
+    let stream = fenceProbe(TornWrite.Fence)
+    assert stream.sink.stillOpen()
+    probeCloseProgram(stream).run()
+    assert !stream.sink.stillOpen()
+
+async function probeCloseProgram(stream: WasiOutputStream<FenceProbeError>): Async<Unit, Never> =
+    await stream.close().catchAll<Never>((_: FenceProbeError) => Async.succeed(()))
+
+test "a write with nothing out, or everything out, owes nothing either way" =
+    // The two edges, and they are the same under both policies. NOTHING out is
+    // the ordinary cancelled write: no hole. EVERYTHING out is not a failure as
+    // far as the byte stream is concerned — the buffer is whole on the transport —
+    // even when the operation itself then failed.
+    let untouched = fenceProbe(TornWrite.Reframe(10u8))
+    untouched.written = 0i32
+    untouched.fenceIncomplete(5i32)
+    assert !untouched.owedSeparator
+    let complete = fenceProbe(TornWrite.Fence)
+    complete.written = 5i32
+    complete.fenceIncomplete(5i32)
+    assert complete.unusable().isNone

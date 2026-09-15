@@ -1,0 +1,118 @@
+package standard.json
+
+/// Trait for types that can be serialized to a Json value.
+public trait JsonEncoder =
+    /// Converts this value into its Json representation.
+    function toJson(self): Json
+
+/// Encodes a Bool as a Json.Boolean value.
+implement JsonEncoder for Bool =
+    public function toJson(self: Bool): Json = Json.Boolean(self)
+
+/// Encodes an Int32 as a Json.Number value.
+implement JsonEncoder for Int32 =
+    public function toJson(self: Int32): Json = Json.Number(self.toFloat64())
+
+/// Encodes an Int64 as a Json.Number value.
+implement JsonEncoder for Int64 =
+    public function toJson(self: Int64): Json = Json.Number(self.toFloat64())
+
+/// Encodes a Float64 as a Json.Number value.
+implement JsonEncoder for Float64 =
+    public function toJson(self: Float64): Json = Json.Number(self)
+
+/// Encodes a String as a Json.Str value.
+implement JsonEncoder for String =
+    public function toJson(self: String): Json = Json.Str(self)
+
+/// Encodes an `Array<T>` as a `Json.Array` of element-wise encodings.
+implement <T> JsonEncoder for Array<T> where T: JsonEncoder =
+    public function toJson(self: Array<T>): Json =
+        Json.Array(self.toList().map(item => item.toJson()))
+
+/// Encodes a `List<T>` as a `Json.Array` of element-wise encodings.
+implement <T> JsonEncoder for List<T> where T: JsonEncoder =
+    public function toJson(self: List<T>): Json =
+        Json.Array(self.map(item => item.toJson()))
+
+/// Encodes a 2-tuple as a `Json.Array` of length 2.
+implement <A, B> JsonEncoder for (A, B) where A: JsonEncoder, B: JsonEncoder =
+    public function toJson(self: (A, B)): Json =
+        Json.Array([self._0.toJson(), self._1.toJson()])
+
+/// Encodes a 3-tuple as a `Json.Array` of length 3.
+implement <A, B, C> JsonEncoder for (A, B, C) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder =
+    public function toJson(self: (A, B, C)): Json =
+        Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson()])
+
+/// Encodes a 4-tuple as a `Json.Array` of length 4.
+implement <A, B, C, D> JsonEncoder for (A, B, C, D) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder, D: JsonEncoder =
+    public function toJson(self: (A, B, C, D)): Json =
+        Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson(), self._3.toJson()])
+
+/// Encodes a 5-tuple as a `Json.Array` of length 5.
+implement <A, B, C, D, E> JsonEncoder for (A, B, C, D, E) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder, D: JsonEncoder, E: JsonEncoder =
+    public function toJson(self: (A, B, C, D, E)): Json =
+        Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson(), self._3.toJson(), self._4.toJson()])
+
+/// Encodes a 6-tuple as a `Json.Array` of length 6.
+implement <A, B, C, D, E, F> JsonEncoder for (A, B, C, D, E, F) where A: JsonEncoder, B: JsonEncoder, C: JsonEncoder, D: JsonEncoder, E: JsonEncoder, F: JsonEncoder =
+    public function toJson(self: (A, B, C, D, E, F)): Json =
+        Json.Array([self._0.toJson(), self._1.toJson(), self._2.toJson(), self._3.toJson(), self._4.toJson(), self._5.toJson()])
+
+test "JsonEncoder for Bool" =
+    match true.toJson() with
+        case Json.Boolean(b) => assert b
+        case _ => assert false
+    match false.toJson() with
+        case Json.Boolean(b) => assert b == false
+        case _ => assert false
+
+test "JsonEncoder for Int32" =
+    match 42.toJson() with
+        case Json.Number(n) => assert n == 42.0
+        case _ => assert false
+
+test "JsonEncoder for Int64" =
+    match 7i64.toJson() with
+        case Json.Number(n) => assert n == 7.0
+        case _ => assert false
+
+test "JsonEncoder for Float64" =
+    match 3.14.toJson() with
+        case Json.Number(n) => assert n == 3.14
+        case _ => assert false
+
+test "JsonEncoder for String" =
+    match "hello".toJson() with
+        case Json.Str(s) => assert s == "hello"
+        case _ => assert false
+
+test "JsonEncoder for Array<Int32>" =
+    let arr = Array.fill(3, 0)
+    arr.set(0, 1)
+    arr.set(1, 2)
+    arr.set(2, 3)
+    assert arr.toJson().encode() == "[1,2,3]"
+
+test "JsonEncoder for empty Array" =
+    let empty: Array<Int32> = Array.empty()
+    assert empty.toJson().encode() == "[]"
+
+test "JsonEncoder for Array<String>" =
+    let arr = Array.fill(2, "")
+    arr.set(0, "hi")
+    arr.set(1, "world")
+    assert arr.toJson().encode() == "[\"hi\",\"world\"]"
+
+test "JsonEncoder for 2-tuple" =
+    let t: (Int32, String) = (5, "hi")
+    assert t.toJson().encode() == "[5,\"hi\"]"
+
+test "JsonEncoder for 3-tuple" =
+    let t: (Int32, String, Bool) = (1, "a", true)
+    assert t.toJson().encode() == "[1,\"a\",true]"
+
+test "JsonEncoder for 6-tuple" =
+    let t: (Int32, Int32, Int32, Int32, Int32, Int32) = (1, 2, 3, 4, 5, 6)
+    assert t.toJson().encode() == "[1,2,3,4,5,6]"

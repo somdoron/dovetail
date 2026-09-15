@@ -1,0 +1,16 @@
+module standard.io.Random
+
+import standard.wasi.random.Random as WasiRandom
+
+/// Secure randomness from the host, modelled as an async effect. The WASI call
+/// (`get-random-bytes`) is synchronous, but randomness is an I/O effect, so it
+/// is wrapped in a `thunk`: the host is queried when the resulting `Async` is
+/// run, not when it is constructed. Crypto key/nonce generation builds on this
+/// (`standard.io.crypto`).
+/// `len` cryptographically-secure random bytes.
+public function bytes(len: Int32): Async<Array<Uint8>, Never> =
+    Async.thunk(() => WasiRandom.bytes(len.toInt64()))
+
+/// A cryptographically-secure random 64-bit integer.
+public function int64(): Async<Int64, Never> =
+    Async.thunk(() => WasiRandom.int64())

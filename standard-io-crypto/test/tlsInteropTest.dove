@@ -1,0 +1,974 @@
+package test
+
+import standard.prelude.Array
+import standard.prelude.String
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Queue
+import standard.io.Promise
+
+import standard.wasi.net.NetworkError
+
+import standard.io.crypto.TlsClientStream
+import standard.io.crypto.TlsServerStream
+import standard.io.crypto.TlsIoError
+
+import standard.tls.TlsClientConfig
+import standard.tls.TlsServerConfig
+import standard.tls.CipherSuite
+import standard.tls.KeyExchangeGroup
+import standard.tls.SignatureScheme
+import standard.tls.TicketStore
+import standard.tls.NegotiatedParams
+import standard.tls.alpnHttp2
+
+import standard.crypto.SecretKey
+import standard.crypto.Ed25519
+import standard.crypto.X509
+import standard.crypto.X509Certificate
+import standard.time.Instant
+
+/// End-to-end test for the async TLS adapter: drive a real `TlsClientStream`
+/// and `TlsServerStream` against each other over an in-memory full-duplex pair
+/// (two `Queue`s wired crosswise) and round-trip application data — exercising
+/// the abstract-stream subclasses, the handshake pump, and the Resource release.
+
+// --- in-memory socket streams (queue-backed; blocking take/offer) ----------
+
+// A queue never fails and never ends, so `checkAlive` is the one-line "I cannot
+// die" that the abstract hook makes an author write out rather than inherit.
+
+/// Hand back at most `bytesLength` bytes, keeping the rest for the next read.
+///
+/// Not politeness: invariant (8) on `AsyncInputStream` says a subclass never
+/// returns more than it was asked for, and the final `read` PANICS on one that
+/// does. A queue-backed double that hands back whole records whatever the ask is
+/// exactly that bug — invisible here only because every caller in these tests
+/// happens to ask for more than a TLS record, which is the sort of coincidence
+/// that stops being true the day someone reads a length-prefixed header. A
+/// double that breaks the contract it stands in for is testing the wrong
+/// library.
+function splitAt(bytes: Array<Uint8>, bytesLength: Int64): (Array<Uint8>, Array<Uint8>) =
+    let availWide = bytes.length.toInt64()
+    let want = if bytesLength > availWide then availWide else bytesLength
+    let take = want.toInt32()
+    (sliceBytes(bytes, 0i32, take), sliceBytes(bytes, take, bytes.length))
+
+function sliceBytes(source: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
+    let count = if end > start then end - start else 0i32
+    if count == 0i32 then
+        Array<Uint8>.empty()
+    else
+        let result = Array<Uint8>.fill(count, 0u8)
+        source.copy(start, result, 0i32, count)
+        result
+
+class MemInputStream(queue: Queue<Array<Uint8>>, mutable pending: Array<Uint8>) extends AsyncInputStream<NetworkError>() =
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, NetworkError> =
+        if self.pending.length == 0 then
+            self.pending = await self.queue.take()
+        else
+            ()
+        let split = splitAt(self.pending, bytesLength)
+        self.pending = split._1
+        split._0
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+class MemOutputStream(queue: Queue<Array<Uint8>>) extends AsyncOutputStream<NetworkError>() =
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    // A queue cannot fail, so there is nothing to have recorded — the same
+    // one-line answer `checkAlive` gives, to the other question.
+    protected override function recordedFailure(self): Result<Unit, NetworkError> = Ok(())
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, NetworkError> =
+        await self.queue.offer(bytes.toArray())
+    protected override async function flushPending(self): Async<Unit, NetworkError> = ()
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+// --- self-signed Ed25519 certificate fixture (mirrors the X509/TLS tests) ---
+
+function derLen(n: Int32): Array<Uint8> =
+    if n < 128 then [|n.toUint8()|]
+    else if n < 256 then [|0x81u8, n.toUint8()|]
+    else [|0x82u8, (n / 256).toUint8(), (n % 256).toUint8()|]
+
+function tlv(tag: Uint8, content: Array<Uint8>): Array<Uint8> =
+    [|tag|].concat(derLen(content.length)).concat(content)
+
+function makeSelfSignedEd25519Cert(secret: SecretKey): Array<Uint8> =
+    let pub = Ed25519.derivePublicKey(secret).value
+    let edAlg = tlv(0x30u8, tlv(0x06u8, [|0x2bu8, 0x65u8, 0x70u8|]))
+    let cnAttr = tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x04u8, 0x03u8|]).concat(tlv(0x0cu8, "CA".bytes())))
+    let name = tlv(0x30u8, tlv(0x31u8, cnAttr))
+    let version = tlv(0xa0u8, tlv(0x02u8, [|0x02u8|]))
+    let serial = tlv(0x02u8, [|0x2au8|])
+    let validity = tlv(0x30u8,
+        tlv(0x17u8, "200101000000Z".bytes()).concat(tlv(0x17u8, "300101000000Z".bytes())))
+    let spki = tlv(0x30u8, edAlg.concat(tlv(0x03u8, [|0x00u8|].concat(pub))))
+    // subjectAltName { dNSName "example.com" } so hostname verification passes.
+    let san = tlv(0x30u8, tlv(0x06u8, [|0x55u8, 0x1du8, 0x11u8|]).concat(tlv(0x04u8, tlv(0x30u8, tlv(0x82u8, "example.com".bytes())))))
+    let exts = tlv(0xa3u8, tlv(0x30u8, san))
+    let tbs = tlv(0x30u8,
+        version.concat(serial).concat(edAlg).concat(name).concat(validity).concat(name).concat(spki).concat(exts))
+    let sig = Ed25519.sign(secret, tbs)
+    tlv(0x30u8, tbs.concat(edAlg).concat(tlv(0x03u8, [|0x00u8|].concat(sig))))
+
+function clientConfigFor(cert: X509Certificate, now: Instant): TlsClientConfig =
+    TlsClientConfig {
+        serverName = "example.com"
+        cipherSuites = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384, CipherSuite.ChaCha20Poly1305Sha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519]
+        signatureAlgorithms = [SignatureScheme.Ed25519, SignatureScheme.EcdsaSecp256r1Sha256]
+        trustAnchors = [cert]
+        alpnProtocols = [alpnHttp2]
+        currentTime = now
+        randomSeed = Array<Uint8>.fill(160, 0x01u8)
+        resumptionTicket = None
+    }
+
+function serverConfigFor(cert: X509Certificate, secret: SecretKey, now: Instant): TlsServerConfig =
+    TlsServerConfig {
+        certificateChain = [cert]
+        privateKey = secret
+        signatureScheme = SignatureScheme.Ed25519
+        cipherSuites = [CipherSuite.Aes128GcmSha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519]
+        alpnProtocols = [alpnHttp2]
+        currentTime = now
+        randomSeed = Array<Uint8>.fill(160, 0x02u8)
+        ticketStore = TicketStore.make()
+    }
+
+/// The configuration pair every test in this file runs against.
+record TestConfigs =
+    client: TlsClientConfig
+    server: TlsServerConfig
+
+/// One self-signed Ed25519 certificate, trusted by the client and presented by
+/// the server, at one fixed `currentTime` inside its validity window — the same
+/// fixture in every test, and fixed rather than `Instant.now()` so a passing run
+/// stays a passing run.
+function testConfigs(): TestConfigs =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x42u8))
+    let certDer = makeSelfSignedEd25519Cert(secret)
+    let cert = X509.parseCertificate(certDer).require
+    let now = Instant.ofEpochSecond(1748736000i64)
+    TestConfigs { client = clientConfigFor(cert, now); server = serverConfigFor(cert, secret, now) }
+
+// --- the interop drivers ---------------------------------------------------
+
+/// Server: accept TLS, read one app-data message, echo it back.
+async function serverEcho(
+    config: TlsServerConfig,
+    serverInput: AsyncInputStream<NetworkError>,
+    serverOutput: AsyncOutputStream<NetworkError>
+): Async<Unit, TlsIoError> =
+    let serverTls = use TlsServerStream.accept(config, serverInput, serverOutput)
+    let data = await serverTls.input.read(4096i64)
+    await serverTls.output.write(data.readonly)
+    ()
+
+/// Client: connect TLS, send a message, read the echo, record success.
+async function clientRoundTrip(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    result: Array<Bool>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // Await the handshake explicitly and check the negotiated params.
+    let params = await clientTls.params()
+    if params.serverName == "example.com" then
+        result.set(1, true)
+    await clientTls.output.write("ping".bytes().readonly)
+    let echo = await clientTls.input.read(4096i64)
+    if String.fromBytes(echo, 0, echo.length) == "ping" then
+        result.set(0, true)
+    ()
+
+/// Wire a TLS client to a TLS server over a pair of in-memory queues, run both
+/// to completion, and swallow their TLS errors.
+///
+/// Every test here wants the same scaffolding — two unbounded queues, the four
+/// `Mem*Stream` ends crossed over, the server on a background fiber and the
+/// client on this one — and differs only in the two programs, which capture
+/// their configs and their observation arrays. Swallowing the errors is part of
+/// the shape: a failure then shows up as a missing observation in the array the
+/// test asserts on, rather than as an aborted fiber with nothing to compare.
+///
+/// The two tests whose client input stream is itself the subject
+/// (`CorruptingInputStream`, `CoalescingCorruptStream`) keep their own wiring:
+/// they hand the client a stream this helper cannot build, and they interrupt
+/// the server instead of joining it, because it is still parked on a read the
+/// poisoned connection will never satisfy.
+async function runClientServer(
+    client: (AsyncInputStream<NetworkError>, AsyncOutputStream<NetworkError>) => Async<Unit, TlsIoError>,
+    server: (AsyncInputStream<NetworkError>, AsyncOutputStream<NetworkError>) => Async<Unit, TlsIoError>
+): Async<Unit, Never> =
+    let clientToServer = await Queue<Array<Uint8>>.makeUnbounded()
+    let serverToClient = await Queue<Array<Uint8>>.makeUnbounded()
+    let clientIn: AsyncInputStream<NetworkError> = MemInputStream(serverToClient, Array<Uint8>.empty())
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(clientToServer)
+    let serverIn: AsyncInputStream<NetworkError> = MemInputStream(clientToServer, Array<Uint8>.empty())
+    let serverOut: AsyncOutputStream<NetworkError> = MemOutputStream(serverToClient)
+
+    let serverProgram: Async<Unit, Never> =
+        server(serverIn, serverOut).catchAll((_: TlsIoError) => Async.succeed(()))
+    let serverFiber = await serverProgram.forkBackground()
+    let clientProgram: Async<Unit, Never> =
+        client(clientIn, clientOut).catchAll((_: TlsIoError) => Async.succeed(()))
+    await clientProgram
+    await serverFiber.join()
+
+test "tls client<->server interop over in-memory streams round-trips app data" =
+    let configs = testConfigs()
+    let result = Array<Bool>.fill(2, false)
+    runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientRoundTrip(configs.client, clientInput, clientOutput, result),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverEcho(configs.server, serverInput, serverOutput)
+    ).run()
+    assert result.get(0)
+    assert result.get(1)
+
+// --- two fibers reading one TLS stream -------------------------------------
+//
+// The per-handle lock on the underlying socket makes each ciphertext READ
+// atomic and stops there. Feeding the engine happens after that lock is
+// released, so two readers could each finish their read and then feed their
+// chunk in the wrong order — to a TLS engine that is records out of sequence, a
+// MAC/AEAD failure that kills the connection. `TlsConnection.readLock` now
+// covers the read, the feed, and the plaintext take as one unit.
+//
+// This test does not reproduce the race on its own: a completion wakes exactly
+// one fiber into an otherwise-empty run queue, so a reader is never preempted
+// between its read returning and its feed unless its step budget happens to
+// expire there. What it does pin is that the serialization is correct and does
+// not deadlock — each reader gets one whole record rather than the two sharing
+// or splitting one. Which reader gets which is up to the scheduler.
+
+async function serverTwoMessages(
+    config: TlsServerConfig,
+    serverInput: AsyncInputStream<NetworkError>,
+    serverOutput: AsyncOutputStream<NetworkError>
+): Async<Unit, TlsIoError> =
+    let serverTls = use TlsServerStream.accept(config, serverInput, serverOutput)
+    // Two separate writes, so two separate TLS records with consecutive
+    // sequence numbers — the ordering the readers must not scramble.
+    await serverTls.output.write("alpha".bytes().readonly)
+    await serverTls.output.write("bravo".bytes().readonly)
+    // Hold the connection open until the client has read both.
+    await serverTls.input.read(4096i64)
+    ()
+
+/// Run one read and record how it ended, in the slot the test asserts on: the
+/// plaintext it produced, `"eof"` for a zero-length read (which a caller takes
+/// for a clean close), `"protocol"` for a TLS failure, `"other"` for anything
+/// else. Every test here asks some part of that question — what came back,
+/// whether a truncation was reported as a close, whether the failure survived —
+/// so they share one recorder, with the read length a parameter because one of
+/// them is about the read length.
+async function readInto(
+    stream: AsyncInputStream<TlsIoError>,
+    bytesLength: Int64,
+    into: Array<String>,
+    slot: Int32
+): Async<Unit, Never> =
+    let onFailure: (TlsIoError) => Async<String, Never> = (e: TlsIoError) =>
+        match e with
+            case TlsIoError.Protocol(_) => Async.succeed("protocol")
+            case _ => Async.succeed("other")
+    let onSuccess: (Array<Uint8>) => Async<String, Never> = (bytes: Array<Uint8>) =>
+        if bytes.length == 0 then Async.succeed("eof") else Async.succeed(String.fromBytes(bytes, 0, bytes.length))
+    let outcome = await stream.read(bytesLength).fold<String, Never>(onFailure, onSuccess)
+    into.set(slot, outcome)
+
+async function clientTwoReaders(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    let first = await readInto(clientTls.input, 4096i64, seen, 0i32).fork()
+    let second = await readInto(clientTls.input, 4096i64, seen, 1i32).fork()
+    await first.join()
+    await second.join()
+    // Let the server's trailing read finish so its scope can close.
+    await clientTls.output.write("done".bytes().readonly)
+
+@timeout(20000)
+test "two fibers reading one TLS stream each get a whole record" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientTwoReaders(configs.client, clientInput, clientOutput, seen),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverTwoMessages(configs.server, serverInput, serverOutput)
+    ).run()
+    // Whichever fiber won the lock read "alpha"; the other read "bravo".
+    // A decrypt failure would leave "protocol" in one of them.
+    // Which fiber wins the lock is a scheduling detail, so the assertion is on
+    // the pair: each reader got one WHOLE record, decrypted, and no record was
+    // split between them or lost. A feed out of sequence leaves "protocol".
+    let first = seen.get(0)
+    let second = seen.get(1)
+    assert (first == "alpha" && second == "bravo") || (first == "bravo" && second == "alpha")
+
+// --- a huge read length must not corrupt the plaintext cursor --------------
+//
+// `bytesLength` is the caller's number: a content length past 2GiB, or an
+// `Int64.max` standing for "everything you have". Narrowing it to Int32 before
+// clamping against what is buffered turns both into a NEGATIVE count — the read
+// comes back empty, which a reader takes for a clean end of stream, and the
+// cursor is left negative so the authenticated plaintext behind it is never
+// delivered again. Both halves are pinned here: the first read gets its whole
+// record, and the SECOND read still works afterwards.
+
+async function clientHugeReads(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // Int64.max: "everything available".
+    await readInto(clientTls.input, 9223372036854775807i64, seen, 0i32)
+    // 4GiB exactly — the truncation that lands on ZERO rather than on a
+    // negative, which the old code turned into a permanent empty read.
+    await readInto(clientTls.input, 4294967296i64, seen, 1i32)
+    await clientTls.output.write("done".bytes().readonly)
+
+@timeout(20000)
+test "a read length past Int32 delivers the buffered plaintext, and the next read still works" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientHugeReads(configs.client, clientInput, clientOutput, seen),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverTwoMessages(configs.server, serverInput, serverOutput)
+    ).run()
+    // Unclamped, the first read is "eof" — a truncation reported as a clean
+    // close — and the second never recovers, because the cursor went negative.
+    assert seen.get(0) == "alpha"
+    assert seen.get(1) == "bravo"
+
+// --- a poisoned record reaches every reader --------------------------------
+//
+// The engine reports a protocol `Error` EXACTLY ONCE and then latches itself
+// closed. Without the connection latching it too, the first reader gets the real
+// failure and the SECOND gets a clean end of stream: it finds nothing buffered,
+// feeds a dead engine that emits nothing, spins the socket to EOF, and reports a
+// truncation as a successful close. A TLS library reporting an authentication
+// failure as a clean close is the one rounding-down that matters.
+//
+// Deterministic: the corruption is switched on between two application records,
+// after the handshake has already succeeded, and both readers are serialized by
+// `readLock`.
+
+/// A copy of `chunk` with its last byte flipped — one damaged record.
+///
+/// Shared by the two corrupting streams below, which assert on the same
+/// `"protocol"` label and must therefore damage a record the same way. An empty
+/// chunk has no last byte to flip and comes back unchanged: the guard lives here
+/// rather than at the call sites so that neither of them can forget it, and one
+/// of them had (a zero-length write, or a close pushed as an empty array, would
+/// have indexed out of bounds and taken the whole suite down with it).
+function corruptLastByte(chunk: Array<Uint8>): Array<Uint8> =
+    if chunk.length == 0 then
+        chunk
+    else
+        let damaged = Array<Uint8>.fill(chunk.length, 0u8)
+        chunk.copy(0i32, damaged, 0i32, chunk.length)
+        let last = damaged.get(chunk.length - 1)
+        damaged.set(chunk.length - 1, if last == 0u8 then 1u8 else 0u8)
+        damaged
+
+class CorruptingInputStream(queue: Queue<Array<Uint8>>, public mutable corrupt: Bool, mutable pending: Array<Uint8>) extends AsyncInputStream<NetworkError>() =
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, NetworkError> =
+        if self.pending.length == 0 then
+            let chunk = await self.queue.take()
+            self.pending = if self.corrupt then corruptLastByte(chunk) else chunk
+        else
+            ()
+        let split = splitAt(self.pending, bytesLength)
+        self.pending = split._1
+        split._0
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+async function serverTwoPhase(
+    config: TlsServerConfig,
+    serverInput: AsyncInputStream<NetworkError>,
+    serverOutput: AsyncOutputStream<NetworkError>,
+    sendSecond: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let serverTls = use TlsServerStream.accept(config, serverInput, serverOutput)
+    await serverTls.output.write("alpha".bytes().readonly)
+    await sendSecond.awaitPromise()
+    await serverTls.output.write("bravo".bytes().readonly)
+    await serverTls.input.read(4096i64)
+    ()
+
+async function clientPoisoned(
+    config: TlsClientConfig,
+    clientInput: CorruptingInputStream,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>,
+    sendSecond: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // The handshake and one clean record first, so the corruption below can only
+    // be an application-data authentication failure.
+    await clientTls.input.read(4096i64)
+    clientInput.corrupt = true
+    await sendSecond.complete(())
+    let first = await readInto(clientTls.input, 4096i64, seen, 0i32).fork()
+    let second = await readInto(clientTls.input, 4096i64, seen, 1i32).fork()
+    await first.join()
+    await second.join()
+
+/// The poisoning scaffolding, with the client program left open: the corrupting
+/// stream and the two-phase server are the fixture, and what a reader asks of a
+/// connection that has been killed is the variable — this test asks with 4096,
+/// the zero-length one below asks with 0.
+async function runPoisonedWith(
+    configs: TestConfigs,
+    client: (CorruptingInputStream, AsyncOutputStream<NetworkError>, Promise<Unit, Never>) => Async<Unit, TlsIoError>
+): Async<Unit, Never> =
+    let clientToServer = await Queue<Array<Uint8>>.makeUnbounded()
+    let serverToClient = await Queue<Array<Uint8>>.makeUnbounded()
+    let sendSecond: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let clientIn = CorruptingInputStream(serverToClient, false, Array<Uint8>.empty())
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(clientToServer)
+    let serverIn: AsyncInputStream<NetworkError> = MemInputStream(clientToServer, Array<Uint8>.empty())
+    let serverOut: AsyncOutputStream<NetworkError> = MemOutputStream(serverToClient)
+
+    let serverProgram: Async<Unit, Never> =
+        serverTwoPhase(configs.server, serverIn, serverOut, sendSecond)
+            .catchAll((_: TlsIoError) => Async.succeed(()))
+    let serverFiber = await serverProgram.forkBackground()
+    let clientProgram: Async<Unit, Never> =
+        client(clientIn, clientOut, sendSecond)
+            .catchAll((_: TlsIoError) => Async.succeed(()))
+    await clientProgram
+    await serverFiber.interrupt()
+
+async function runPoisoned(
+    configs: TestConfigs,
+    seen: Array<String>
+): Async<Unit, Never> =
+    await runPoisonedWith(
+        configs,
+        (clientInput: CorruptingInputStream, clientOutput: AsyncOutputStream<NetworkError>, sendSecond: Promise<Unit, Never>) =>
+            clientPoisoned(configs.client, clientInput, clientOutput, seen, sendSecond)
+    )
+
+@timeout(20000)
+test "a poisoned TLS record fails every reader instead of looking like a clean close" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    runPoisoned(configs, seen).run()
+    // Before the connection latched its failure, the second reader read "eof".
+    assert seen.get(0) == "protocol"
+    assert seen.get(1) == "protocol"
+
+// --- one chunk carrying a good record and then a corrupt one ---------------
+
+/// Hands the reader TWO of the peer's writes as ONE chunk, damaging the second.
+///
+/// The point is the SINGLE socket read: `TlsInputStream.read` asks for 16KiB and
+/// gets back a valid application-data record followed by a corrupt one, so one
+/// `pumpStep` both buffers authenticated plaintext and kills the engine. A
+/// per-write stream cannot produce that; the two records have to arrive together.
+class CoalescingCorruptStream(queue: Queue<Array<Uint8>>, public mutable armed: Bool, mutable pending: Array<Uint8>) extends AsyncInputStream<NetworkError>() =
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, NetworkError> =
+        if self.pending.length == 0 then
+            if !self.armed then
+                self.pending = await self.queue.take()
+            else
+                self.armed = false
+                let good = await self.queue.take()
+                let bad = await self.queue.take()
+                self.pending = good.concat(corruptLastByte(bad))
+        else
+            ()
+        let split = splitAt(self.pending, bytesLength)
+        self.pending = split._1
+        split._0
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+async function serverThreeRecords(
+    config: TlsServerConfig,
+    serverInput: AsyncInputStream<NetworkError>,
+    serverOutput: AsyncOutputStream<NetworkError>,
+    sendPair: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let serverTls = use TlsServerStream.accept(config, serverInput, serverOutput)
+    // One clean record first, so the client can finish its handshake and drain
+    // the queue before arming the coalescer.
+    await serverTls.output.write("hello".bytes().readonly)
+    await sendPair.awaitPromise()
+    await serverTls.output.write("good".bytes().readonly)
+    await serverTls.output.write("bad".bytes().readonly)
+    await serverTls.input.read(4096i64)
+    ()
+
+async function clientCoalesced(
+    config: TlsClientConfig,
+    clientInput: CoalescingCorruptStream,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>,
+    sendPair: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    await readInto(clientTls.input, 4096i64, seen, 0i32)
+    clientInput.armed = true
+    await sendPair.complete(())
+    // Both records arrive in one read. The plaintext of the first was
+    // authenticated before the second one killed the engine, so it is the
+    // caller's; the failure is the NEXT read's answer.
+    await readInto(clientTls.input, 4096i64, seen, 1i32)
+    await readInto(clientTls.input, 4096i64, seen, 2i32)
+
+async function runCoalesced(
+    configs: TestConfigs,
+    seen: Array<String>
+): Async<Unit, Never> =
+    let clientToServer = await Queue<Array<Uint8>>.makeUnbounded()
+    let serverToClient = await Queue<Array<Uint8>>.makeUnbounded()
+    let sendPair: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let clientIn = CoalescingCorruptStream(serverToClient, false, Array<Uint8>.empty())
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(clientToServer)
+    let serverIn: AsyncInputStream<NetworkError> = MemInputStream(clientToServer, Array<Uint8>.empty())
+    let serverOut: AsyncOutputStream<NetworkError> = MemOutputStream(serverToClient)
+
+    let serverProgram: Async<Unit, Never> =
+        serverThreeRecords(configs.server, serverIn, serverOut, sendPair)
+            .catchAll((_: TlsIoError) => Async.succeed(()))
+    let serverFiber = await serverProgram.forkBackground()
+    let clientProgram: Async<Unit, Never> =
+        clientCoalesced(configs.client, clientIn, clientOut, seen, sendPair)
+            .catchAll((_: TlsIoError) => Async.succeed(()))
+    await clientProgram
+    await serverFiber.interrupt()
+
+@timeout(20000)
+test "plaintext decrypted before a corrupt record is still the caller's" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(3, "")
+    runCoalesced(configs, seen).run()
+    assert seen.get(0) == "hello"
+    // The good record's plaintext, NOT the failure that arrived with it. Losing
+    // this is a truncation the caller never hears about.
+    assert seen.get(1) == "good"
+    // And only then the failure, from the latch.
+    assert seen.get(2) == "protocol"
+
+// --- the two edge read lengths on a TLS stream ------------------------------
+//
+// `AsyncInputStream.read` documents what every length means, and the two edges
+// are the ones an encrypted stream gets wrong by accident: zero is easy to
+// implement as "pump until something arrives and then take none of it", and a
+// negative falls through the plaintext cursor's clamp and comes back as an empty
+// array — an end of stream synthesized out of the caller's arithmetic. A
+// documented invariant that one of the two implementations in this tree violates
+// is worse than none.
+
+/// Server: handshake, then say NOTHING until released. A `read(0)` that pumps
+/// the connection has nothing to come back with, and the fiber that would
+/// release this server is the one parked in it.
+async function serverSilentUntilReleased(
+    config: TlsServerConfig,
+    serverInput: AsyncInputStream<NetworkError>,
+    serverOutput: AsyncOutputStream<NetworkError>,
+    release: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let serverTls = use TlsServerStream.accept(config, serverInput, serverOutput)
+    await release.awaitPromise()
+    await serverTls.output.write("alpha".bytes().readonly)
+    await serverTls.input.read(4096i64)
+    ()
+
+async function clientZeroLengthRead(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>,
+    release: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // The handshake explicitly, so the read below is the only thing left that
+    // could be waiting on the peer.
+    await clientTls.params()
+    await readInto(clientTls.input, 0i64, seen, 0i32)
+    await release.complete(())
+    // The connection is where it was: the record the server sends now is
+    // delivered whole, not half-taken by the zero-length read.
+    await readInto(clientTls.input, 4096i64, seen, 1i32)
+    await clientTls.output.write("done".bytes().readonly)
+
+async function runZeroLengthRead(configs: TestConfigs, seen: Array<String>): Async<Unit, Never> =
+    let release: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    await runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientZeroLengthRead(configs.client, clientInput, clientOutput, seen, release),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverSilentUntilReleased(configs.server, serverInput, serverOutput, release)
+    )
+
+@timeout(20000)
+test "a zero-length TLS read is answered without pumping the connection" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    runZeroLengthRead(configs, seen).run()
+    // `readInto`'s label for an empty array, which is what a caller asking for
+    // nothing is owed. A zero-length read that pumps the socket instead parks
+    // until the peer sends something — and the peer is waiting on this same
+    // fiber to release it, so that is a deadlock and this test times out here.
+    assert seen.get(0) == "eof"
+    assert seen.get(1) == "alpha"
+
+/// Poison the connection, then ask it for nothing.
+async function clientPoisonedZeroLengthRead(
+    config: TlsClientConfig,
+    clientInput: CorruptingInputStream,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>,
+    sendSecond: Promise<Unit, Never>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    await clientTls.input.read(4096i64)
+    clientInput.corrupt = true
+    await sendSecond.complete(())
+    await readInto(clientTls.input, 4096i64, seen, 0i32)
+    await readInto(clientTls.input, 0i64, seen, 1i32)
+
+async function runPoisonedZeroLengthRead(configs: TestConfigs, seen: Array<String>): Async<Unit, Never> =
+    await runPoisonedWith(
+        configs,
+        (clientInput: CorruptingInputStream, clientOutput: AsyncOutputStream<NetworkError>, sendSecond: Promise<Unit, Never>) =>
+            clientPoisonedZeroLengthRead(configs.client, clientInput, clientOutput, seen, sendSecond)
+    )
+
+@timeout(20000)
+test "a zero-length read on a failed TLS connection reports the failure" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    runPoisonedZeroLengthRead(configs, seen).run()
+    assert seen.get(0) == "protocol"
+    // The ordering, and the reason the zero-length shortcut sits BEHIND the
+    // failure latch rather than in front of it: `Ok(empty)` here would throw
+    // away an authentication failure and hand back the one answer every reader
+    // in this library takes for a clean close.
+    assert seen.get(1) == "protocol"
+
+async function clientNegativeLengthRead(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // One whole exchange first, so the echo server's fiber finishes and the
+    // negative read below is the ONLY thing that can end this program abruptly.
+    // Without it a clamp-to-zero read returns, the client leaves the server
+    // parked on a message that will never come, and the scope's own
+    // never-finishes panic passes this test for the wrong reason.
+    await clientTls.output.write("ping".bytes().readonly)
+    let echo = await clientTls.input.read(4096i64)
+    // `contentLength - alreadyRead` against a peer that oversent. `takeBuffered`
+    // clamps it to a take of zero, so without the guard in `read` this comes
+    // back as an empty array: a clean end of stream manufactured out of a
+    // caller's bug.
+    let ignored = await clientTls.input.read(-1i64)
+    ()
+
+@panics
+test "a negative TLS read length panics instead of reporting a clean end of stream" =
+    let configs = testConfigs()
+    runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientNegativeLengthRead(configs.client, clientInput, clientOutput),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverEcho(configs.server, serverInput, serverOutput)
+    ).run()
+
+// --- a connection whose HANDSHAKE failed is dead too -------------------------
+//
+// A handshake failure lives in the handshake fiber's result, and `ensureHandshake`
+// is the only thing that looks at it. Every read of one byte or more goes through
+// there and gets the failure; a zero-length read must not, because waiting for a
+// handshake is a network round trip and the contract says a zero-length read does
+// no transport work. That left exactly one hole, and it was the worst-shaped one
+// available: `read(0)` on a connection killed during negotiation answered with an
+// empty array, which this library defines as a clean end of stream. The fix is
+// that the handshake latches its own failure onto the connection, so "is this
+// connection dead" is one question with one answer whoever asks.
+
+/// A client that trusts a DIFFERENT self-signed certificate than the one the
+/// server presents. The transport works perfectly and the negotiation is what
+/// fails — the shape that used to leave a dead connection looking alive.
+function distrustfulClientConfig(now: Instant): TlsClientConfig =
+    let strangerSecret = SecretKey(Array<Uint8>.fill(32, 0x77u8))
+    let strangerCert = X509.parseCertificate(makeSelfSignedEd25519Cert(strangerSecret)).require
+    clientConfigFor(strangerCert, now)
+
+async function clientHandshakeFailureThenZeroRead(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // Joined here so the failure has definitely happened before the read below:
+    // the point of the test is what a dead connection answers, not how quickly
+    // it dies.
+    let handshake = await clientTls.params().fold<String, Never>(
+        (failure: TlsIoError) => Async.succeed("failed"),
+        (params: NegotiatedParams) => Async.succeed("negotiated")
+    )
+    seen.set(0, handshake)
+    await readInto(clientTls.input, 0i64, seen, 1i32)
+
+async function runHandshakeFailure(configs: TestConfigs, seen: Array<String>): Async<Unit, Never> =
+    let clientToServer = await Queue<Array<Uint8>>.makeUnbounded()
+    let serverToClient = await Queue<Array<Uint8>>.makeUnbounded()
+    let clientIn: AsyncInputStream<NetworkError> = MemInputStream(serverToClient, Array<Uint8>.empty())
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(clientToServer)
+    let serverIn: AsyncInputStream<NetworkError> = MemInputStream(clientToServer, Array<Uint8>.empty())
+    let serverOut: AsyncOutputStream<NetworkError> = MemOutputStream(serverToClient)
+
+    let serverProgram: Async<Unit, Never> =
+        serverEcho(configs.server, serverIn, serverOut).catchAll((_: TlsIoError) => Async.succeed(()))
+    let serverFiber = await serverProgram.forkBackground()
+    let clientProgram: Async<Unit, Never> =
+        clientHandshakeFailureThenZeroRead(distrustfulClientConfig(Instant.ofEpochSecond(1748736000i64)), clientIn, clientOut, seen)
+            .catchAll((_: TlsIoError) => Async.succeed(()))
+    await clientProgram
+    // Interrupted rather than joined: the server is parked on a read the client
+    // will never satisfy, exactly as in the poisoned-record tests.
+    await serverFiber.interrupt()
+
+/// Already at end of stream: the peer hung up before the handshake could
+/// finish. No server fiber and no queue on the read side — an EOF is the whole
+/// behaviour, and it is what the transport hands back when a peer connects and
+/// disappears.
+class HungUpInputStream(unused: Bool) extends AsyncInputStream<NetworkError>() =
+    // At end of stream is not dead: an EOF is a legitimate answer, so this
+    // reports no failure and `readAvailable` says the rest with an empty array.
+    protected override function checkAlive(self): Async<Unit, NetworkError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, NetworkError> =
+        Array<Uint8>.empty()
+    public override async function close(self): Async<Unit, NetworkError> = ()
+
+async function clientPeerHangsUpThenZeroRead(
+    config: TlsClientConfig,
+    seen: Array<String>
+): Async<Unit, TlsIoError> =
+    let discarded = await Queue<Array<Uint8>>.makeUnbounded()
+    let clientIn: AsyncInputStream<NetworkError> = HungUpInputStream(true)
+    let clientOut: AsyncOutputStream<NetworkError> = MemOutputStream(discarded)
+    let clientTls = use TlsClientStream.connect(config, clientIn, clientOut)
+    let handshake = await clientTls.params().fold<String, Never>(
+        (failure: TlsIoError) => Async.succeed("failed"),
+        (params: NegotiatedParams) => Async.succeed("negotiated")
+    )
+    seen.set(0, handshake)
+    await readInto(clientTls.input, 0i64, seen, 1i32)
+
+@timeout(20000)
+test "a zero-length read on a connection whose peer hung up mid-handshake reports the failure" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    clientPeerHangsUpThenZeroRead(configs.client, seen)
+        .catchAll((_: TlsIoError) => Async.succeed(()))
+        .run()
+    assert seen.get(0) == "failed"
+    // The failure mode the engine never sees: nothing was corrupt and no alert
+    // was sent, the peer simply stopped, so `driveHandshake` ends with
+    // `TlsIoError.Closed` and NOTHING latches it unless the fork does. Without
+    // that latch this read answers `Ok(empty)` — a clean end of stream on a
+    // connection that never negotiated.
+    assert seen.get(1) != "eof"
+
+@timeout(20000)
+test "a zero-length read on a connection whose handshake failed reports the failure" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(2, "")
+    runHandshakeFailure(configs, seen).run()
+    // Weaker than the hang-up test above, and worth saying so: a certificate
+    // that fails validation is reported by the ENGINE, and an engine failure is
+    // already latched where it happens (`TlsConnection.poison`), so this one
+    // passes with or without the handshake fiber latching its own result. It
+    // still earns its place — it fails if a zero-length read ever stops
+    // consulting the latch — but the fiber-result hole is the test above.
+    //
+    // The premise: the handshake really did fail, so the assertion below is
+    // about a dead connection rather than a live one.
+    assert seen.get(0) == "failed"
+    // The invariant, stated as what it forbids rather than as an error variant:
+    // `readInto` labels an empty array "eof", and a connection that never
+    // completed a handshake has no end of stream to report.
+    assert seen.get(1) != "eof"
+
+// --- the write half after close_notify ---------------------------------------
+//
+// The read and write halves of a TLS connection end independently, and only the
+// read half has an answer to give once it has: an ended read stream reports
+// end-of-stream, which is a legitimate thing for a caller to be told. An ended
+// WRITE half has nothing — the record layer is finished and another record can
+// never go out — so `Ok(())` there tells a caller its bytes were taken by a
+// direction that no longer exists.
+//
+// It is the EMPTY write that this is about. A non-empty one is caught anyway,
+// one layer down, when the underlying stream refuses it; an empty one never
+// gets that far, because a zero-length operation deliberately does no transport
+// work. So the write half's health check was the only thing standing between a
+// caller and a silent success on a closed connection, and it was answering from
+// the connection's failure latch alone — which a clean close never sets.
+
+/// Record how a write ended, in the slot the test asserts on.
+async function writeInto(
+    stream: AsyncOutputStream<TlsIoError>,
+    bytes: Array<Uint8>,
+    into: Array<String>,
+    slot: Int32
+): Async<Unit, Never> =
+    let onFailure: (TlsIoError) => Async<String, Never> = (e: TlsIoError) =>
+        match e with
+            case TlsIoError.Closed => Async.succeed("closed")
+            case _ => Async.succeed("other")
+    let onSuccess: (Unit) => Async<String, Never> = (_: Unit) => Async.succeed("written")
+    let outcome = await stream.write(bytes.readonly).fold<String, Never>(onFailure, onSuccess)
+    into.set(slot, outcome)
+
+async function clientWriteAfterClose(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // A real exchange first, so the connection under test is one that WORKED
+    // and was then closed — not one that was broken all along, which the latch
+    // would have caught without any of this.
+    await clientTls.output.write("ping".bytes().readonly)
+    await clientTls.input.read(4096i64)
+    await writeInto(clientTls.output, Array<Uint8>.empty(), seen, 0i32)
+    await clientTls.output.close()
+    await writeInto(clientTls.output, Array<Uint8>.empty(), seen, 1i32)
+    await writeInto(clientTls.output, "late".bytes(), seen, 2i32)
+
+async function runWriteAfterClose(configs: TestConfigs, seen: Array<String>): Async<Unit, Never> =
+    await runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientWriteAfterClose(configs.client, clientInput, clientOutput, seen),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverEcho(configs.server, serverInput, serverOutput)
+    )
+
+@timeout(20000)
+test "a write on a TLS connection whose write half has closed reports the close" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(3, "")
+    runWriteAfterClose(configs, seen).run()
+    // The premise: an empty write on a LIVE connection succeeds, so the
+    // assertions below are about the close and not about empty writes.
+    assert seen.get(0) == "written"
+    // The invariant, and the case it exists for.
+    assert seen.get(1) == "closed"
+    // The non-empty write, which was already failing one layer down — as the
+    // control that says the empty one is not being singled out.
+    assert seen.get(2) != "written"
+
+// --- the doubles keep the contract they stand in for --------------------------
+//
+// `AsyncInputStream.read` panics on a subclass that hands back more than it was
+// asked for (invariant (8)), so a queue-backed double that returns whole records
+// whatever the ask is a live hazard rather than a harmless liberty: it takes a
+// test that would have caught a real bug and turns it into a panic in the
+// double. This reads a queued chunk one byte at a time, which is the shape no
+// caller in these tests happens to use — and is exactly why nobody noticed.
+
+test "an in-memory stream double never hands back more than it was asked for" =
+    let seen = Array<Int32>.fill(5, -1i32)
+    byteAtATime(seen).run()
+    assert seen.get(0) == 1i32
+    assert seen.get(1) == 1i32
+    assert seen.get(2) == 1i32
+    assert seen.get(3) == 1i32
+    // The fifth read has nothing pending, so it blocks on the queue — which is
+    // what the fifth chunk offered below is for. Its own single byte.
+    assert seen.get(4) == 1i32
+
+async function byteAtATime(seen: Array<Int32>): Async<Unit, Never> =
+    let queue = await Queue<Array<Uint8>>.makeUnbounded()
+    await queue.offer([|1u8, 2u8, 3u8, 4u8|])
+    await queue.offer([|5u8|])
+    let stream: AsyncInputStream<NetworkError> = MemInputStream(queue, Array<Uint8>.empty())
+    let mutable i = 0i32
+    while i < 5i32 do
+        let chunk = await stream.read(1i64).catchAll<Never>((_: NetworkError) => Async.succeed(Array<Uint8>.empty()))
+        seen.set(i, chunk.length)
+        i = i + 1i32
+
+// --- closing the read half of a TLS connection --------------------------------
+//
+// `AsyncInputStream.close` promises that no read afterwards answers with the
+// empty array that means end of stream — invariant (9): a stream somebody closed
+// is not a stream that ended. This subclass used to promise nothing at all: it
+// owns no handles, so `close` was `()`, and a caller that closed a response body
+// it had finished with was told on the next read that the peer had finished
+// cleanly. The distinction it erases is the one between a complete message and a
+// truncated one.
+//
+// What it still cannot do is detach a reader already parked on the socket, which
+// is shared with the write direction's close_notify and with the connection
+// `Resource`. That reader finishes its record and is refused on the way out.
+
+async function readOutcomeInto(
+    stream: AsyncInputStream<TlsIoError>,
+    bytesLength: Int64,
+    into: Array<String>,
+    slot: Int32
+): Async<Unit, Never> =
+    let onFailure: (TlsIoError) => Async<String, Never> = (e: TlsIoError) =>
+        match e with
+            case TlsIoError.Closed => Async.succeed("closed")
+            case _ => Async.succeed("other")
+    let onSuccess: (Array<Uint8>) => Async<String, Never> = (bytes: Array<Uint8>) =>
+        if bytes.length == 0 then Async.succeed("eof") else Async.succeed("bytes")
+    into.set(slot, await stream.read(bytesLength).fold<String, Never>(onFailure, onSuccess))
+
+async function clientReadAfterClose(
+    config: TlsClientConfig,
+    clientInput: AsyncInputStream<NetworkError>,
+    clientOutput: AsyncOutputStream<NetworkError>,
+    seen: Array<String>
+): Async<Unit, TlsIoError> =
+    let clientTls = use TlsClientStream.connect(config, clientInput, clientOutput)
+    // A real exchange first, so the connection under test is one that WORKED.
+    await clientTls.output.write("ping".bytes().readonly)
+    await clientTls.input.read(4096i64)
+    // A zero-length read does no transport work, so on a live connection it is
+    // the empty array and nothing else — the premise for the two below.
+    await readOutcomeInto(clientTls.input, 0i64, seen, 0i32)
+    await clientTls.input.close()
+    await readOutcomeInto(clientTls.input, 0i64, seen, 1i32)
+    await readOutcomeInto(clientTls.input, 4096i64, seen, 2i32)
+
+async function runReadAfterClose(configs: TestConfigs, seen: Array<String>): Async<Unit, Never> =
+    await runClientServer(
+        (clientInput: AsyncInputStream<NetworkError>, clientOutput: AsyncOutputStream<NetworkError>) => clientReadAfterClose(configs.client, clientInput, clientOutput, seen),
+        (serverInput: AsyncInputStream<NetworkError>, serverOutput: AsyncOutputStream<NetworkError>) => serverEcho(configs.server, serverInput, serverOutput)
+    )
+
+@timeout(20000)
+test "a read on a TLS connection whose read half has closed reports the close" =
+    let configs = testConfigs()
+    let seen = Array<String>.fill(3, "")
+    runReadAfterClose(configs, seen).run()
+    // The premise: on a live connection, zero means "nothing asked for", not
+    // "nothing left".
+    assert seen.get(0) == "eof"
+    // The invariant. `eof` here is the bug, and the reason it is worth a test on
+    // a subclass that owns nothing: a caller cannot tell it from the peer having
+    // finished.
+    assert seen.get(1) == "closed"
+    // And a real read agrees with the zero-length one, because they answer from
+    // the same rule.
+    assert seen.get(2) == "closed"

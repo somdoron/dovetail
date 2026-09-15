@@ -1,0 +1,62 @@
+package standard.io
+
+import standard.io.UuidRandom
+import standard.io.TimeExtension
+import standard.prelude.Array
+import standard.prelude.Uuid
+import standard.time.Instant
+
+/// `UuidRandom` — generate version-4 and version-7 UUIDs (RFC 9562). Both random
+/// bytes and the wall clock are I/O effects, so the generators are async,
+/// drawing from `standard.io.Random` and `Instant.now`.
+extension UuidRandom for Uuid =
+    /// A random version-4 UUID (RFC 9562 §5.4): 122 random bits.
+    public async function generateV4(): Async<Uuid, Never> =
+        let bytes = await Random.bytes(16)
+        setVersionVariant(bytes, 0x40)
+        Uuid.fromBytes(bytes).require
+
+    /// A version-7 UUID (RFC 9562 §5.7): a 48-bit Unix-millisecond timestamp in
+    /// the high bits followed by random bits, so values sort in creation order.
+    public async function generateV7(): Async<Uuid, Never> =
+        let now = await Instant.now
+        let ms = now.epochSecond * 1000i64 + (now.nano / 1000000).toInt64()
+        let bytes = await Random.bytes(16)
+        // 48-bit big-endian timestamp into bytes[0..5].
+        let mutable t = ms
+        let mutable i = 5
+        while i >= 0 do
+            bytes.set(i, (t % 256i64).toInt32().toUint8())
+            t = t / 256i64
+            i = i - 1
+        setVersionVariant(bytes, 0x70)
+        Uuid.fromBytes(bytes).require
+
+// Set the 4-bit version (high nibble of byte 6) and the RFC 9562 variant (top
+// two bits of byte 8 = 0b10).
+private function setVersionVariant(bytes: Array<Uint8>, version: Int32): Unit =
+    bytes.set(6, ((bytes.get(6).toInt32() & 0x0f) | version).toUint8())
+    bytes.set(8, ((bytes.get(8).toInt32() & 0x3f) | 0x80).toUint8())
+
+test "generateV4 sets version 4 and produces distinct values" =
+    let program: Async<Unit, Never> =
+        Uuid.generateV4().andThen((a: Uuid) =>
+            Uuid.generateV4().map((b: Uuid) =>
+                assert a.version == 4
+                assert b.version == 4
+                assert (a == b) == false
+            )
+        )
+    program.run()
+
+test "generateV7 sets version 7 and a monotonic timestamp prefix" =
+    let program: Async<Unit, Never> =
+        Uuid.generateV7().andThen((a: Uuid) =>
+            Uuid.generateV7().map((b: Uuid) =>
+                assert a.version == 7
+                assert b.version == 7
+                // The high 48 bits are the millisecond timestamp; the later one is >=.
+                assert (a.high / 65536i64) <= (b.high / 65536i64)
+            )
+        )
+    program.run()

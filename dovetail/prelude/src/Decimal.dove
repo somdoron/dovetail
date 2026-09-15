@@ -1,0 +1,120 @@
+package standard.prelude
+
+/// Exact decimal: unscaled / 10^scale. Constructors normalize fractional zeros.
+public record Decimal =
+    unscaled: BigInt
+    scale: Int32
+
+module Decimal =
+    /// Constructs unscaled / 10^scale, removing insignificant fractional zeros.
+    /// Panics if scale is negative. Zero always has scale zero.
+    public function of(unscaled: BigInt, scale: Int32): Decimal =
+        if scale < 0 then panic "Decimal scale must be nonnegative"
+        decimalNormalize(unscaled, scale)
+
+    public function fromInt32(n: Int32): Decimal = Decimal.of(BigInt.fromInt32(n), 0)
+    public function fromInt64(n: Int64): Decimal = Decimal.of(BigInt.fromInt64(n), 0)
+    public function zero(): Decimal = Decimal.of(BigInt.zero(), 0)
+    public function one(): Decimal = Decimal.of(BigInt.one(), 0)
+
+    public function add(self, other: Decimal): Decimal =
+        let (a, b, scale) = decimalAlignScales(self, other)
+        Decimal.of(a.add(b), scale)
+
+    public function subtract(self, other: Decimal): Decimal =
+        let (a, b, scale) = decimalAlignScales(self, other)
+        Decimal.of(a.subtract(b), scale)
+
+    /// Multiplies exactly; panics if the sum of operand scales exceeds Int32.
+    public function multiply(self, other: Decimal): Decimal =
+        if self.scale < 0 || other.scale < 0 then panic "Decimal scale must be nonnegative"
+        let scale = self.scale.toInt64() + other.scale.toInt64()
+        if scale > 2147483647i64 then panic "Decimal scale overflow"
+        Decimal.of(self.unscaled.multiply(other.unscaled), scale.toInt32())
+
+    public property isZero(self): Bool = self.unscaled.isZero
+    public property isNegative(self): Bool = self.unscaled.isNegative
+    public function negate(self): Decimal = Decimal.of(self.unscaled.negate(), self.scale)
+    public function abs(self): Decimal = Decimal.of(self.unscaled.abs(), self.scale)
+
+implement Equatable for Decimal =
+    public function equals(self: Decimal, other: Decimal): Bool =
+        let (a, b, _) = decimalAlignScales(self, other)
+        a == b
+
+implement Comparable for Decimal =
+    public function compare(self: Decimal, other: Decimal): Ordering =
+        let (a, b, _) = decimalAlignScales(self, other)
+        a.compare(b)
+
+implement Hashable for Decimal =
+    public function hash(self: Decimal): Int64 =
+        let normalized = Decimal.of(self.unscaled, self.scale)
+        bigintHashCombine(normalized.unscaled.hash(), normalized.scale.toInt64())
+
+implement Display for Decimal =
+    public function format(self: Decimal): String =
+        let normalized = Decimal.of(self.unscaled, self.scale)
+        let digits = normalized.unscaled.abs().format()
+        let scale = normalized.scale
+        let text = if scale == 0 then digits
+            else if scale >= digits.length then
+                let mutable result = "0."
+                let mutable i = digits.length
+                while i < scale do
+                    result = result ++ "0"
+                    i = i + 1
+                result ++ digits
+            else digits.take(digits.length - scale) ++ "." ++ digits.skip(digits.length - scale)
+        if normalized.isNegative then "-" ++ text else text
+
+implement Add<Decimal> for Decimal =
+    type Output = Decimal
+    public function add(self: Decimal, rhs: Decimal): Decimal = self.add(rhs)
+
+implement Sub<Decimal> for Decimal =
+    type Output = Decimal
+    public function sub(self: Decimal, rhs: Decimal): Decimal = self.subtract(rhs)
+
+implement Mul<Decimal> for Decimal =
+    type Output = Decimal
+    public function mul(self: Decimal, rhs: Decimal): Decimal = self.multiply(rhs)
+
+implement Neg for Decimal =
+    public function negate(self: Decimal): Decimal = self.negate()
+
+function decimalNormalize(unscaled: BigInt, scale: Int32): Decimal =
+    if unscaled.isZero then Decimal { unscaled = BigInt.zero(); scale = 0 }
+    else
+        let mutable magnitude = unscaled.magnitude
+        let mutable remaining = scale
+        while remaining > 0 && magnitude.get(0) % 10 == 0 do
+            let divided = Array.fill(magnitude.length, 0)
+            let mutable carry = 0i64
+            let mutable i = magnitude.length - 1
+            while i >= 0 do
+                let value = carry * 1000000000i64 + magnitude.get(i).toInt64()
+                divided.set(i, (value / 10i64).toInt32())
+                carry = value % 10i64
+                i = i - 1
+            magnitude = bigintNormalize(divided)
+            remaining = remaining - 1
+        Decimal { unscaled = BigInt { sign = unscaled.sign; magnitude = magnitude }; scale = remaining }
+
+function decimalAlignScales(a: Decimal, b: Decimal): (BigInt, BigInt, Int32) =
+    if a.scale < 0 || b.scale < 0 then panic "Decimal scale must be nonnegative"
+    if a.scale == b.scale then (a.unscaled, b.unscaled, a.scale)
+    else if a.scale > b.scale then
+        (a.unscaled, b.unscaled.multiply(decimalScaleFactor(a.scale - b.scale)), a.scale)
+    else
+        (a.unscaled.multiply(decimalScaleFactor(b.scale - a.scale)), b.unscaled, b.scale)
+
+function decimalScaleFactor(scale: Int32): BigInt =
+    let magnitude = Array.fill(scale / 9 + 1, 0)
+    let mutable leading = 1
+    let mutable i = 0
+    while i < scale % 9 do
+        leading = leading * 10
+        i = i + 1
+    magnitude.set(scale / 9, leading)
+    BigInt { sign = true; magnitude = magnitude }

@@ -1,0 +1,58 @@
+package test
+
+import standard.io.Async
+
+test "yieldNow many times completes" =
+    let program: Async<Unit, Never> = yieldProgram()
+    program.run()
+
+async function yieldProgram(): Async<Unit, Never> =
+    let mutable i = 0
+    while i < 5000 do
+        await Async.yieldNow()
+        i = i + 1
+    ()
+
+// Shared worker: yield-then-append three times, so every append happens INSIDE
+// the fiber (a statement before the first `await` would instead run at
+// construction time) and each append is preceded by a yield point.
+async function taggedWorker(tag: String, append: (String) => Unit): Async<Unit, Never> =
+    await Async.yieldNow()
+    append(tag)
+    await Async.yieldNow()
+    append(tag)
+    await Async.yieldNow()
+    append(tag)
+
+// `yieldNow` must actually hand control to another ready fiber, not just
+// complete. Each fiber's three steps are far under the 1024-step fairness
+// budget, so WITHOUT a real handoff the first-forked fiber would run to
+// completion and the log would be "AAABBB". A working yield re-enqueues the
+// running fiber behind the other after each append, interleaving into "ABABAB".
+test "yieldNow interleaves ready fibers" =
+    let mutable log = ""
+    interleaveProgram((s: String) => log = log ++ s).run()
+    assert log == "ABABAB"
+
+async function interleaveProgram(append: (String) => Unit): Async<Unit, Never> =
+    let fa = await taggedWorker("A", append).fork()
+    let fb = await taggedWorker("B", append).fork()
+    await fa.join()
+    await fb.join()
+
+// Inside `uninterruptible`, `yieldNow` must be a NO-OP: honoring it would let a
+// sibling run mid-mask and set `interruptPending`, and the mask-pop would then
+// clobber the critical section's result with `Interrupted`. Fiber A's whole
+// body is masked, so its yields do not hand off — it runs its three appends
+// atomically before B gets a turn ("AAABBB"). Were the yield honored in the
+// mask, this would interleave to "ABABAB".
+test "yieldNow is a no-op inside uninterruptible" =
+    let mutable log = ""
+    maskedProgram((s: String) => log = log ++ s).run()
+    assert log == "AAABBB"
+
+async function maskedProgram(append: (String) => Unit): Async<Unit, Never> =
+    let fa = await taggedWorker("A", append).uninterruptible().fork()
+    let fb = await taggedWorker("B", append).fork()
+    await fa.join()
+    await fb.join()

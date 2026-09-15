@@ -1,0 +1,63 @@
+package standard.io.log
+
+import standard.io.Async
+import standard.io.Console
+import standard.io.ConsoleError
+import standard.io.Resource
+
+/// A `LogSink` that writes formatted records to the console, one line per
+/// record, flushing after every write so log output is immediately visible.
+///
+/// Routing follows convention for command-line programs: records at
+/// `Warn` or `Error` go to **stderr**, everything else (`Trace`, `Debug`,
+/// `Info`) goes to **stdout**. Pipelines that consume stdout (`prog | jq`,
+/// `prog | tee`) thus see only the informational stream, while diagnostic
+/// output remains visible in the terminal.
+///
+/// Construct via `ConsoleSink.make()` (logfmt) or
+/// `ConsoleSink.withFormatter(fmt)` for a caller-supplied formatter. The
+/// returned `Resource<LogSink, Never>` exists for uniformity with file-backed
+/// sinks; its release is a no-op (writes are already flushed per-line).
+public class ConsoleSink(format: (LogRecord) => String) implements LogSink =
+    public function emit(self, event: LogRecord): Async<Unit, Never> =
+        let line = self.format(event)
+        let written =
+            if event.level.isAtLeast(LogLevel.Warn) then Console.errorWriteLine(line)
+            else Console.writeLine(line)
+        // A log sink must not fail the program it is logging for — but silence is
+        // not the same thing as infallibility. Every record routed to a stream
+        // that is failing for any other reason (a bad descriptor, an encoding
+        // fault) would otherwise vanish with no operator signal at all, which is
+        // the failure mode a log is supposed to rule out.
+        written.catchAll((e: ConsoleError) => diagnoseConsole(e))
+
+/// Say once, on stderr, that a log record did not make it. Quiet on a broken
+/// pipe: `prog | head` is the ordinary case, the operator asked for it, and
+/// there is nowhere left to report it — the console is what just failed.
+///
+/// Best-effort, like the file sink's equivalent: if stderr is gone too, there is
+/// nothing left to say it to.
+function diagnoseConsole(error: ConsoleError): Async<Unit, Never> =
+    match error with
+        case ConsoleError.PipeBroken => Async.succeed(())
+        case _ =>
+            Console.errorWriteLine("[log-sink: console] write failed: " ++ error.format())
+                .catchAll((_: ConsoleError) => Async.succeed(()))
+
+module ConsoleSink =
+    /// Console sink using the logfmt formatter, routing Warn/Error to stderr
+    /// and everything below to stdout.
+    public function make(): Resource<LogSink, Never> =
+        Resource.make(
+            () => Async.succeed(ConsoleSink(Formatter.logfmt) as LogSink),
+            (_: LogSink) => Async.succeed(())
+        )
+
+    /// Console sink with a caller-supplied formatter. Same level-based stream
+    /// routing as `make`.
+    public function withFormatter(format: (LogRecord) => String): Resource<LogSink, Never> =
+        Resource.make(
+            () => Async.succeed(ConsoleSink(format) as LogSink),
+            (_: LogSink) => Async.succeed(())
+        )
+

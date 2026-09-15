@@ -1,0 +1,10 @@
+module standard.io.Fiber<T, E>
+
+public function join(self): Async<T, E> =
+    let erased: Fiber<Any, Any> = self
+    Join<T, E>(erased)
+
+public function interrupt(self): Async<Unit, Never> =
+    let erased: Fiber<Any, Any> = self
+    Interrupt(erased)
+

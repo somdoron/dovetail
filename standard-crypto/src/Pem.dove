@@ -1,0 +1,192 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.String
+import standard.prelude.Result
+
+/// PEM (RFC 7468) — Base64-armored DER. Used to load/store certificates and
+/// keys. Self-contained (its own Base64) to keep the crypto package's
+/// dependencies minimal.
+module Pem =
+    private function b64Char(v: Int32): Uint8 =
+        if v < 26 then (65 + v).toUint8()
+        else if v < 52 then (97 + v - 26).toUint8()
+        else if v < 62 then (48 + v - 52).toUint8()
+        else if v == 62 then 43u8
+        else 47u8
+
+    private function b64Val(c: Uint8): Int32 =
+        let x = c.toInt32()
+        if (x >= 65) && (x <= 90) then x - 65
+        else if (x >= 97) && (x <= 122) then x - 97 + 26
+        else if (x >= 48) && (x <= 57) then x - 48 + 52
+        else if x == 43 then 62
+        else if x == 47 then 63
+        else -1
+
+    /// Standard Base64 encoding of `data` (no line breaks).
+    private function base64Encode(data: Array<Uint8>): Array<Uint8> =
+        let n = data.length
+        let outLen = ((n + 2) / 3) * 4
+        let res = Array<Uint8>.fill(outLen, 0u8)
+        let mutable i = 0
+        let mutable o = 0
+        while i < n do
+            let b0 = data.get(i).toInt32()
+            let b1 = if i + 1 < n then data.get(i + 1).toInt32() else 0
+            let b2 = if i + 2 < n then data.get(i + 2).toInt32() else 0
+            res.set(o, b64Char(b0 >> 2))
+            res.set(o + 1, b64Char(((b0 & 3) << 4) | (b1 >> 4)))
+            res.set(o + 2, if i + 1 < n then b64Char(((b1 & 15) << 2) | (b2 >> 6)) else 61u8)
+            res.set(o + 3, if i + 2 < n then b64Char(b2 & 63) else 61u8)
+            i = i + 3
+            o = o + 4
+        res
+
+    /// Does `pat` occur in `bytes` starting exactly at `pos`?
+    private function matchesAt(bytes: Array<Uint8>, pos: Int32, pat: Array<Uint8>): Bool =
+        if pos + pat.length > bytes.length then
+            false
+        else
+            let mutable eq = true
+            let mutable i = 0
+            while i < pat.length do
+                if bytes.get(pos + i) != pat.get(i) then eq = false
+                i = i + 1
+            eq
+
+    /// Index of the first occurrence of `pat` at or after `start`, or -1.
+    private function find(bytes: Array<Uint8>, pat: Array<Uint8>, start: Int32): Int32 =
+        let mutable result = -1
+        let mutable i = start
+        while (i <= bytes.length - pat.length) && (result < 0) do
+            if matchesAt(bytes, i, pat) then result = i
+            i = i + 1
+        result
+
+    /// Base64-decode the region `[start, end)`, skipping whitespace and stopping
+    /// at padding.
+    private function decodeRegion(bytes: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
+        // count significant base64 chars
+        let mutable count = 0
+        let mutable i = start
+        while i < end do
+            if b64Val(bytes.get(i)) >= 0 then count = count + 1
+            i = i + 1
+        let res = Array<Uint8>.fill(count * 6 / 8, 0u8)
+        let mutable acc = 0
+        let mutable nbits = 0
+        let mutable o = 0
+        i = start
+        while i < end do
+            let v = b64Val(bytes.get(i))
+            if v >= 0 then
+                acc = (acc << 6) | v
+                nbits = nbits + 6
+                if nbits >= 8 then
+                    nbits = nbits - 8
+                    res.set(o, ((acc >> nbits) & 0xff).toUint8())
+                    o = o + 1
+            i = i + 1
+        res
+
+    /// Decode the first PEM block in `pem` to DER.
+    public function decode(pem: Array<Uint8>): Result<Array<Uint8>, X509Error> =
+        let beginMark = "-----BEGIN".bytes()
+        let endMark = "-----END".bytes()
+        let bi = find(pem, beginMark, 0)
+        if bi < 0 then
+            Error(X509Error.MalformedCertificate("no PEM BEGIN marker"))
+        else
+            // data starts after the end of the BEGIN line (its terminating '-----').
+            let dashAfter = find(pem, "-----".bytes(), bi + 10)
+            if dashAfter < 0 then
+                Error(X509Error.MalformedCertificate("malformed BEGIN line"))
+            else
+                let dataStart = dashAfter + 5
+                let ei = find(pem, endMark, dataStart)
+                if ei < 0 then
+                    Error(X509Error.MalformedCertificate("no PEM END marker"))
+                else
+                    Ok(decodeRegion(pem, dataStart, ei))
+
+    /// Decode the first PEM block of a PEM-text string to DER.
+    public function decode(pem: String): Result<Array<Uint8>, X509Error> =
+        decode(pem.bytes())
+
+    /// Decode every PEM block (e.g. a certificate bundle), in order.
+    ///
+    /// The outer sequence is a list — blocks are accumulated one at a time, and
+    /// appending to an array copied every block decoded so far. Each decoded
+    /// block stays `Array<Uint8>`.
+    public function decodeAll(pem: Array<Uint8>): List<Array<Uint8>> =
+        let beginMark = "-----BEGIN".bytes()
+        let endMark = "-----END".bytes()
+        let mutable blocks: List<Array<Uint8>> = List.empty
+        let mutable pos = 0
+        let mutable more = true
+        while more do
+            let bi = find(pem, beginMark, pos)
+            if bi < 0 then
+                more = false
+            else
+                let dashAfter = find(pem, "-----".bytes(), bi + 10)
+                let ei = find(pem, endMark, dashAfter + 5)
+                if (dashAfter < 0) || (ei < 0) then
+                    more = false
+                else
+                    blocks = blocks.prepend(decodeRegion(pem, dashAfter + 5, ei))
+                    pos = ei + endMark.length
+        blocks.reverse()
+
+    /// Decode every PEM block of a PEM-text string, in order.
+    public function decodeAll(pem: String): List<Array<Uint8>> =
+        decodeAll(pem.bytes())
+
+    /// Encode `der` as a PEM block with the given label, wrapping Base64 at 64
+    /// characters per line.
+    public function encode(der: Array<Uint8>, label: String): Array<Uint8> =
+        let b64 = base64Encode(der)
+        let nl = "\n".bytes()
+        let mutable res = ("-----BEGIN " ++ label ++ "-----").bytes().concat(nl)
+        let mutable i = 0
+        while i < b64.length do
+            let lineLen = if b64.length - i < 64 then b64.length - i else 64
+            let line = Array<Uint8>.fill(lineLen, 0u8)
+            b64.copy(i, line, 0, lineLen)
+            res = res.concat(line).concat(nl)
+            i = i + 64
+        res.concat(("-----END " ++ label ++ "-----").bytes()).concat(nl)
+
+test "Pem decodes a known block" =
+    // base64("Man") == "TWFu"; pass the PEM as a String (String variant).
+    let der = Pem.decode("-----BEGIN TEST-----\nTWFu\n-----END TEST-----\n")
+    assert der.isOk
+    let d = der.require
+    assert d.length == 3
+    assert d.get(0) == 0x4du8
+    assert d.get(1) == 0x61u8
+    assert d.get(2) == 0x6eu8
+
+test "Pem encode/decode roundtrip" =
+    let data = Array<Uint8>.fill(130, 0u8)
+    let mutable i = 0
+    while i < 130 do
+        data.set(i, (i * 7 + 3).toUint8())
+        i = i + 1
+    let pem = Pem.encode(data, "CERTIFICATE")
+    let back = Pem.decode(pem)
+    assert back.isOk
+    assert ConstantTime.equal(back.require, data)
+
+test "Pem decodeAll on a two-cert bundle" =
+    let one = Pem.encode([|0x01u8, 0x02u8, 0x03u8|], "CERTIFICATE")
+    let two = Pem.encode([|0xaau8, 0xbbu8|], "CERTIFICATE")
+    let bundle = one.concat(two)
+    match Pem.decodeAll(bundle) with
+        case [first, second] =>
+            assert first.length == 3
+            assert first.get(0) == 0x01u8
+            assert second.length == 2
+            assert second.get(1) == 0xbbu8
+        case _ => assert false

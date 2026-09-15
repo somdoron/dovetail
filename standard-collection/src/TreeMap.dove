@@ -1,0 +1,608 @@
+package standard.collection
+
+import standard.prelude.Comparable
+import standard.prelude.Equatable
+import standard.prelude.Option
+import standard.prelude.Ordering
+
+enum RBColor =
+    Red
+    Black
+
+enum RBNode<K, V> =
+    Leaf
+    Node(RBColor, RBNode<K, V>, K, V, RBNode<K, V>)
+
+function rbIsRed<K, V>(node: RBNode<K, V>): Bool =
+    match node with
+        case RBNode.Node(color, _, _, _, _) =>
+            match color with
+                case RBColor.Red => true
+                case RBColor.Black => false
+        case RBNode.Leaf => false
+
+function rbIsLeaf<K, V>(node: RBNode<K, V>): Bool =
+    match node with
+        case RBNode.Leaf => true
+        case _ => false
+
+function rbLeftIsRed<K, V>(node: RBNode<K, V>): Bool =
+    match node with
+        case RBNode.Node(_, left, _, _, _) => rbIsRed(left)
+        case RBNode.Leaf => false
+
+function rbFlipColor(color: RBColor): RBColor =
+    match color with
+        case RBColor.Red => RBColor.Black
+        case RBColor.Black => RBColor.Red
+
+function rbRotateLeft<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    match node with
+        case RBNode.Node(color, left, k, v, right) =>
+            match right with
+                case RBNode.Node(_, rl, rk, rv, rr) =>
+                    RBNode.Node(color, RBNode.Node(RBColor.Red, left, k, v, rl), rk, rv, rr)
+                case _ => node
+        case _ => node
+
+function rbRotateRight<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    match node with
+        case RBNode.Node(color, left, k, v, right) =>
+            match left with
+                case RBNode.Node(_, ll, lk, lv, lr) =>
+                    RBNode.Node(color, ll, lk, lv, RBNode.Node(RBColor.Red, lr, k, v, right))
+                case _ => node
+        case _ => node
+
+function rbFlipColors<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    match node with
+        case RBNode.Node(color, left, k, v, right) =>
+            let newColor = rbFlipColor(color)
+            let newLeft: RBNode<K, V> = match left with
+                case RBNode.Node(lc, ll, lk, lv, lr) =>
+                    RBNode.Node(rbFlipColor(lc), ll, lk, lv, lr)
+                case _ => left
+            let newRight: RBNode<K, V> = match right with
+                case RBNode.Node(rc, rl, rk, rv, rr) =>
+                    RBNode.Node(rbFlipColor(rc), rl, rk, rv, rr)
+                case _ => right
+            RBNode.Node(newColor, newLeft, k, v, newRight)
+        case _ => node
+
+function rbFixUp<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    let n1: RBNode<K, V> = match node with
+        case RBNode.Node(_, left, _, _, right) =>
+            if rbIsRed(right) && !rbIsRed(left) then rbRotateLeft(node)
+            else node
+        case _ => node
+    let n2: RBNode<K, V> = match n1 with
+        case RBNode.Node(_, left, _, _, _) =>
+            if rbIsRed(left) && rbLeftIsRed(left) then rbRotateRight(n1)
+            else n1
+        case _ => n1
+    match n2 with
+        case RBNode.Node(_, left, _, _, right) =>
+            if rbIsRed(left) && rbIsRed(right) then rbFlipColors(n2)
+            else n2
+        case _ => n2
+
+function rbInsert<K, V>(node: RBNode<K, V>, key: K, value: V): RBNode<K, V> where K: Comparable =
+    match node with
+        case RBNode.Leaf => RBNode.Node(RBColor.Red, node, key, value, node)
+        case RBNode.Node(color, left, k, v, right) =>
+            let inserted: RBNode<K, V> = match key.compare(k) with
+                case Ordering.Less =>
+                    RBNode.Node(color, rbInsert(left, key, value), k, v, right)
+                case Ordering.Greater =>
+                    RBNode.Node(color, left, k, v, rbInsert(right, key, value))
+                case _ =>
+                    RBNode.Node(color, left, key, value, right)
+            rbFixUp(inserted)
+
+function rbGet<K, V>(node: RBNode<K, V>, key: K): Option<V> where K: Comparable =
+    match node with
+        case RBNode.Leaf => None
+        case RBNode.Node(_, left, k, v, right) =>
+            match key.compare(k) with
+                case Ordering.Equal => Some(v)
+                case Ordering.Less => rbGet(left, key)
+                case _ => rbGet(right, key)
+
+function rbContains<K, V>(node: RBNode<K, V>, key: K): Bool where K: Comparable =
+    rbGet(node, key).isSome
+
+function rbMin<K, V>(node: RBNode<K, V>): Option<(K, V)> =
+    match node with
+        case RBNode.Leaf => None
+        case RBNode.Node(_, left, k, v, _) =>
+            match left with
+                case RBNode.Leaf => Some((k, v))
+                case _ => rbMin(left)
+
+function rbMax<K, V>(node: RBNode<K, V>): Option<(K, V)> =
+    match node with
+        case RBNode.Leaf => None
+        case RBNode.Node(_, _, k, v, right) =>
+            match right with
+                case RBNode.Leaf => Some((k, v))
+                case _ => rbMax(right)
+
+function rbMinKey<K, V>(node: RBNode<K, V>): Option<K> =
+    match node with
+        case RBNode.Leaf => None
+        case RBNode.Node(_, left, k, _, _) =>
+            match left with
+                case RBNode.Leaf => Some(k)
+                case _ => rbMinKey(left)
+
+function rbMaxKey<K, V>(node: RBNode<K, V>): Option<K> =
+    match node with
+        case RBNode.Leaf => None
+        case RBNode.Node(_, _, k, _, right) =>
+            match right with
+                case RBNode.Leaf => Some(k)
+                case _ => rbMaxKey(right)
+
+function rbMakeBlack<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    match node with
+        case RBNode.Node(_, left, k, v, right) =>
+            RBNode.Node(RBColor.Black, left, k, v, right)
+        case _ => node
+
+function rbMoveRedLeft<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    let h = rbFlipColors(node)
+    match h with
+        case RBNode.Node(color, left, k, v, right) =>
+            match right with
+                case RBNode.Node(_, rl, _, _, _) =>
+                    if rbIsRed(rl) then
+                        let rotated: RBNode<K, V> = RBNode.Node(color, left, k, v, rbRotateRight(right))
+                        rbFlipColors(rbRotateLeft(rotated))
+                    else h
+                case _ => h
+        case _ => h
+
+function rbMoveRedRight<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    let h = rbFlipColors(node)
+    match h with
+        case RBNode.Node(_, left, _, _, _) =>
+            if rbLeftIsRed(left) then rbFlipColors(rbRotateRight(h))
+            else h
+        case _ => h
+
+function rbDeleteMin<K, V>(node: RBNode<K, V>): RBNode<K, V> =
+    match node with
+        case RBNode.Node(_, left, _, _, _) =>
+            match left with
+                case RBNode.Leaf => left
+                case _ =>
+                    let h: RBNode<K, V> = if !rbIsRed(left) && !rbLeftIsRed(left) then rbMoveRedLeft(node)
+                            else node
+                    match h with
+                        case RBNode.Node(hc, hl, hk, hv, hr) =>
+                            let deleted: RBNode<K, V> = RBNode.Node(hc, rbDeleteMin(hl), hk, hv, hr)
+                            rbFixUp(deleted)
+                        case _ => h
+        case _ => node
+
+function rbDelete<K, V>(node: RBNode<K, V>, key: K): RBNode<K, V> where K: Comparable =
+    match node with
+        case RBNode.Node(color, left, k, v, right) =>
+            match key.compare(k) with
+                case Ordering.Less =>
+                    let h: RBNode<K, V> = if !rbIsRed(left) && !rbLeftIsRed(left) then rbMoveRedLeft(node)
+                            else node
+                    match h with
+                        case RBNode.Node(hc, hl, hk, hv, hr) =>
+                            let deleted: RBNode<K, V> = RBNode.Node(hc, rbDelete(hl, key), hk, hv, hr)
+                            rbFixUp(deleted)
+                        case _ => h
+                case _ =>
+                    let h1: RBNode<K, V> = if rbIsRed(left) then rbRotateRight(node) else node
+                    match h1 with
+                        case RBNode.Node(c1, l1, k1, v1, r1) =>
+                            let isEqual = match key.compare(k1) with
+                                case Ordering.Equal => true
+                                case _ => false
+                            if isEqual && rbIsLeaf(r1) then r1
+                            else
+                                let h2: RBNode<K, V> = if !rbIsRed(r1) && !rbLeftIsRed(r1) then rbMoveRedRight(h1)
+                                         else h1
+                                match h2 with
+                                    case RBNode.Node(c2, l2, k2, v2, r2) =>
+                                        let isEqual2 = match key.compare(k2) with
+                                            case Ordering.Equal => true
+                                            case _ => false
+                                        if isEqual2 then
+                                            let minPair = rbMin(r2).require
+                                            let replaced: RBNode<K, V> = RBNode.Node(c2, l2, minPair._0, minPair._1, rbDeleteMin(r2))
+                                            rbFixUp(replaced)
+                                        else
+                                            let descended: RBNode<K, V> = RBNode.Node(c2, l2, k2, v2, rbDelete(r2, key))
+                                            rbFixUp(descended)
+                                    case _ => h2
+                        case _ => h1
+        case _ => node
+
+function rbCount<K, V>(node: RBNode<K, V>): Int32 =
+    match node with
+        case RBNode.Leaf => 0
+        case RBNode.Node(_, left, _, _, right) => 1 + rbCount(left) + rbCount(right)
+
+function rbPushLeftSpine<K, V>(node: RBNode<K, V>, stack: List<RBNode<K, V>>): List<RBNode<K, V>> =
+    match node with
+        case RBNode.Leaf => stack
+        case RBNode.Node(_, left, _, _, _) =>
+            rbPushLeftSpine(left, List.Cons(node, stack))
+
+class RBTreeIterator<K, V>(mutable stack: List<RBNode<K, V>>) implements Iterator<(K, V)> =
+    public function next(self): Option<(K, V)> =
+        match self.stack with
+            case Nil => None
+            case Cons(top, rest) =>
+                match top with
+                    case RBNode.Node(_, _, k, v, right) =>
+                        self.stack = rbPushLeftSpine(right, rest)
+                        Some((k, v))
+                    case _ =>
+                        self.stack = rest
+                        None
+
+/// An immutable sorted map from keys to values, backed by a left-leaning red-black tree.
+/// Keys must implement Comparable. All mutating operations return a new TreeMap.
+public record TreeMap<K, V> =
+    root: RBNode<K, V>
+    count: Int32
+
+module TreeMap<K, V> =
+    public function empty(): TreeMap<K, V> where K: Comparable =
+        let leaf: RBNode<K, V> = RBNode.Leaf
+        TreeMap { root = leaf; count = 0 }
+
+    public function put(self, key: K, value: V): TreeMap<K, V> where K: Comparable =
+        let newRoot = rbMakeBlack(rbInsert(self.root, key, value))
+        let newCount = if rbContains(self.root, key) then self.count else self.count + 1
+        TreeMap { root = newRoot; count = newCount }
+
+    public function get(self, key: K): Option<V> where K: Comparable =
+        rbGet(self.root, key)
+
+    public function contains(self, key: K): Bool where K: Comparable =
+        rbGet(self.root, key).isSome
+
+    public function remove(self, key: K): TreeMap<K, V> where K: Comparable =
+        if !self.contains(key) then self
+        else
+            let newRoot = rbMakeBlack(rbDelete(self.root, key))
+            TreeMap { root = newRoot; count = self.count - 1 }
+
+    public function min(self): Option<(K, V)> where K: Comparable =
+        rbMin(self.root)
+
+    public function max(self): Option<(K, V)> where K: Comparable =
+        rbMax(self.root)
+
+    public property length(self): Int32 = self.count
+    public property isEmpty(self): Bool = self.count == 0
+
+implement <K, V> Iterable<(K, V)> for TreeMap<K, V> where K: Comparable =
+    public function iterator(self): Iterator<(K, V)> =
+        let stack: List<RBNode<K, V>> = List.empty
+        RBTreeIterator(rbPushLeftSpine(self.root, stack))
+
+test "TreeMap empty" =
+    let m: TreeMap<String, Int32> = TreeMap.empty()
+    assert m.isEmpty == true
+    assert m.length == 0
+
+test "TreeMap put and get" =
+    let m: TreeMap<String, Int32> = TreeMap.empty()
+    let m2 = m.put("b", 2).put("a", 1).put("c", 3)
+    let ra = m2.get("a")
+    assert ra.isSome
+    assert ra.require == 1
+    let rb = m2.get("b")
+    assert rb.isSome
+    assert rb.require == 2
+    let rc = m2.get("c")
+    assert rc.isSome
+    assert rc.require == 3
+    assert m2.length == 3
+
+test "TreeMap get missing" =
+    let m: TreeMap<String, Int32> = TreeMap.empty()
+    assert m.get("x").isNone
+
+test "TreeMap put overwrites" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("a", 1).put("a", 99)
+    let ra = m.get("a")
+    assert ra.isSome
+    assert ra.require == 99
+    assert m.length == 1
+
+test "TreeMap contains" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("x", 10)
+    assert m.contains("x") == true
+    assert m.contains("y") == false
+
+test "TreeMap remove" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("a", 1).put("b", 2).put("c", 3)
+    let m2 = m.remove("b")
+    assert m2.contains("b") == false
+    assert m2.contains("a") == true
+    assert m2.contains("c") == true
+    assert m2.length == 2
+
+test "TreeMap remove missing" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("a", 1)
+    let m2 = m.remove("z")
+    assert m2.length == 1
+
+test "TreeMap min" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("c", 3).put("a", 1).put("b", 2)
+    let r = m.min()
+    assert r.isSome
+    let pair = r.require
+    assert pair._0 == "a"
+    assert pair._1 == 1
+
+test "TreeMap max" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("a", 1).put("c", 3).put("b", 2)
+    let r = m.max()
+    assert r.isSome
+    let pair = r.require
+    assert pair._0 == "c"
+    assert pair._1 == 3
+
+test "TreeMap min max empty" =
+    let m: TreeMap<String, Int32> = TreeMap.empty()
+    assert m.min().isNone
+    assert m.max().isNone
+
+test "TreeMap immutability" =
+    let m1: TreeMap<String, Int32> = TreeMap.empty().put("a", 1)
+    let m2 = m1.put("b", 2)
+    assert m1.length == 1
+    assert m2.length == 2
+
+test "TreeMap sorted order" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("d", 4).put("b", 2).put("a", 1).put("c", 3)
+    let rmin = m.min()
+    assert rmin.isSome
+    let pmin = rmin.require
+    assert pmin._0 == "a"
+    assert pmin._1 == 1
+    let rmax = m.max()
+    assert rmax.isSome
+    let pmax = rmax.require
+    assert pmax._0 == "d"
+    assert pmax._1 == 4
+
+/// A mutable sorted map from keys to values, backed by a red-black tree.
+/// Keys must implement Comparable.
+public class MutableTreeMap<K, V>(mutable root: RBNode<K, V>, mutable count: Int32) implements Iterable<(K, V)> where K: Comparable =
+    /// Creates a new empty MutableTreeMap.
+    public function new(): MutableTreeMap<K, V> =
+        let leaf: RBNode<K, V> = RBNode.Leaf
+        MutableTreeMap(leaf, 0)
+
+    /// Inserts or updates a key-value pair. Mutates in place.
+    public function put(self, key: K, value: V): Unit =
+        let existed = rbContains(self.root, key)
+        self.root = rbMakeBlack(rbInsert(self.root, key, value))
+        if !existed then self.count = self.count + 1
+
+    /// Returns the value for the given key, or None if not found.
+    public function get(self, key: K): Option<V> =
+        rbGet(self.root, key)
+
+    /// Returns true if the map contains the given key.
+    public function contains(self, key: K): Bool =
+        rbContains(self.root, key)
+
+    /// Removes a key from the map. Does nothing if the key is not present.
+    public function remove(self, key: K): Unit =
+        if rbContains(self.root, key) then
+            self.root = rbMakeBlack(rbDelete(self.root, key))
+            self.count = self.count - 1
+
+    /// Returns the smallest key-value pair, or None if empty.
+    public function min(self): Option<(K, V)> =
+        rbMin(self.root)
+
+    /// Returns the largest key-value pair, or None if empty.
+    public function max(self): Option<(K, V)> =
+        rbMax(self.root)
+
+    /// Returns the smallest key, or None if empty.
+    public function minKey(self): Option<K> =
+        rbMinKey(self.root)
+
+    /// Returns the largest key, or None if empty.
+    public function maxKey(self): Option<K> =
+        rbMaxKey(self.root)
+
+    /// Removes all entries from the map.
+    public function clear(self): Unit =
+        let leaf: RBNode<K, V> = RBNode.Leaf
+        self.root = leaf
+        self.count = 0
+
+    /// The number of key-value pairs in the map.
+    public property length(self): Int32 = self.count
+
+    /// True if the map contains no entries.
+    public property isEmpty(self): Bool = self.count == 0
+
+    /// Returns an iterator over the key-value pairs in sorted key order.
+    public function iterator(self): Iterator<(K, V)> =
+        let stack: List<RBNode<K, V>> = List.empty
+        RBTreeIterator(rbPushLeftSpine(self.root, stack))
+
+test "MutableTreeMap new is empty" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    assert m.isEmpty == true
+    assert m.length == 0
+
+test "MutableTreeMap put and get" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("b", 2)
+    m.put("a", 1)
+    m.put("c", 3)
+    let ra = m.get("a")
+    assert ra.isSome
+    assert ra.require == 1
+    let rb = m.get("b")
+    assert rb.isSome
+    assert rb.require == 2
+    let rc = m.get("c")
+    assert rc.isSome
+    assert rc.require == 3
+    assert m.length == 3
+
+test "MutableTreeMap put overwrites" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("a", 1)
+    m.put("a", 99)
+    let ra = m.get("a")
+    assert ra.isSome
+    assert ra.require == 99
+    assert m.length == 1
+
+test "MutableTreeMap get missing" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    assert m.get("x").isNone
+
+test "MutableTreeMap contains" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("x", 10)
+    assert m.contains("x") == true
+    assert m.contains("y") == false
+
+test "MutableTreeMap remove" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.put("c", 3)
+    m.remove("b")
+    assert m.contains("b") == false
+    assert m.contains("a") == true
+    assert m.contains("c") == true
+    assert m.length == 2
+
+test "MutableTreeMap remove missing" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("a", 1)
+    m.remove("z")
+    assert m.length == 1
+
+test "MutableTreeMap min" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("c", 3)
+    m.put("a", 1)
+    m.put("b", 2)
+    let r = m.min()
+    assert r.isSome
+    let pair = r.require
+    assert pair._0 == "a"
+    assert pair._1 == 1
+
+test "MutableTreeMap max" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("a", 1)
+    m.put("c", 3)
+    m.put("b", 2)
+    let r = m.max()
+    assert r.isSome
+    let pair = r.require
+    assert pair._0 == "c"
+    assert pair._1 == 3
+
+test "MutableTreeMap min max empty" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    assert m.min().isNone
+    assert m.max().isNone
+
+test "MutableTreeMap clear" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("a", 1)
+    m.put("b", 2)
+    m.put("c", 3)
+    m.clear()
+    assert m.isEmpty == true
+    assert m.length == 0
+    assert m.get("a").isNone
+
+test "MutableTreeMap many entries" =
+    let m: MutableTreeMap<Int32, Int32> = MutableTreeMap.new()
+    let mutable i = 0
+    while i < 100 do
+        m.put(i, i * 10)
+        i = i + 1
+    assert m.length == 100
+    assert m.get(0).require == 0
+    assert m.get(25).require == 250
+    assert m.get(50).require == 500
+    assert m.get(99).require == 990
+    assert m.contains(42) == true
+    assert m.contains(100) == false
+
+test "MutableTreeMap sorted order" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("d", 4)
+    m.put("b", 2)
+    m.put("e", 5)
+    m.put("a", 1)
+    m.put("c", 3)
+    let rmin = m.min()
+    assert rmin.isSome
+    let pmin = rmin.require
+    assert pmin._0 == "a"
+    assert pmin._1 == 1
+    let rmax = m.max()
+    assert rmax.isSome
+    let pmax = rmax.require
+    assert pmax._0 == "e"
+    assert pmax._1 == 5
+
+test "MutableTreeMap mutability" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("a", 1)
+    assert m.length == 1
+    m.put("b", 2)
+    assert m.length == 2
+    m.remove("a")
+    assert m.length == 1
+    assert m.contains("a") == false
+    assert m.contains("b") == true
+
+test "TreeMap iterator sorted" =
+    let m: TreeMap<String, Int32> = TreeMap.empty().put("c", 3).put("a", 1).put("b", 2)
+    let mutable result = ""
+    for entry in m do
+        result = result ++ entry._0
+    assert result == "abc"
+
+test "TreeMap iterator empty" =
+    let m: TreeMap<String, Int32> = TreeMap.empty()
+    let mutable count = 0
+    for entry in m do
+        count = count + 1
+    assert count == 0
+
+test "MutableTreeMap iterator sorted" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    m.put("c", 3)
+    m.put("a", 1)
+    m.put("b", 2)
+    let mutable result = ""
+    for entry in m do
+        result = result ++ entry._0
+    assert result == "abc"
+
+test "MutableTreeMap iterator empty" =
+    let m: MutableTreeMap<String, Int32> = MutableTreeMap.new()
+    let mutable count = 0
+    for entry in m do
+        count = count + 1
+    assert count == 0

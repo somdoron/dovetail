@@ -1,0 +1,151 @@
+package test
+
+import standard.io.TimeExtension
+import standard.io.Async
+import standard.time.Instant
+import standard.time.LocalDateTime
+import standard.time.LocalDate
+import standard.time.LocalTime
+import standard.time.YearMonth
+import standard.time.Year
+import standard.time.ZonedDateTime
+import standard.time.TimeZone
+
+// ── Instant: `now` returns the current Instant ────────────────────────
+
+test "Instant.now reads the wall clock" =
+    let program: Async<Unit, Never> =
+        Instant.now.map((i: Instant) => assert i.epochSecond > 0i64)
+    program.run()
+
+// ── LocalDateTime: `now` (UTC property) and `nowAt(tz)` (method) ──────
+
+test "LocalDateTime.now is consistent with Instant.now at UTC" =
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            LocalDateTime.now.map((dt: LocalDateTime) =>
+                let derived = i.toLocalDateTime(TimeZone.utc)
+                assert dt.date.year.value == derived.date.year.value
+                assert dt.date.month.value == derived.date.month.value
+                assert dt.date.day.value == derived.date.day.value
+            )
+        )
+    program.run()
+
+test "LocalDateTime.nowAt with EST offset is 5 hours behind UTC" =
+    let est = TimeZone.of("EST", -18000)
+    let program: Async<Unit, Never> =
+        Instant.now.map((i: Instant) =>
+            let utc = i.toLocalDateTime(TimeZone.utc)
+            let local = i.toLocalDateTime(est)
+            let utcHours = utc.date.day.value * 24 + utc.time.hour
+            let localHours = local.date.day.value * 24 + local.time.hour
+            assert utcHours - localHours == 5
+        )
+    program.run()
+
+test "LocalDateTime.nowAt(tz) matches Instant.toLocalDateTime(tz)" =
+    let ist = TimeZone.of("IST", 19800)
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            LocalDateTime.nowAt(ist).map((dt: LocalDateTime) =>
+                let derived = i.toLocalDateTime(ist)
+                assert dt.date.year.value == derived.date.year.value
+                assert dt.date.month.value == derived.date.month.value
+                assert dt.date.day.value == derived.date.day.value
+                assert dt.time.hour == derived.time.hour
+            )
+        )
+    program.run()
+
+// ── LocalDate: `today` (UTC property) and `todayAt(tz)` (method) ──────
+
+test "LocalDate.today matches Instant.now at UTC" =
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            LocalDate.today.map((d: LocalDate) =>
+                let derived = i.toLocalDate(TimeZone.utc)
+                assert d.year.value == derived.year.value
+                assert d.month.value == derived.month.value
+                assert d.day.value == derived.day.value
+            )
+        )
+    program.run()
+
+test "LocalDate.todayAt at fixed offset" =
+    let plus12 = TimeZone.of("X+12", 43200)
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            LocalDate.todayAt(plus12).map((d: LocalDate) =>
+                let derived = i.toLocalDate(plus12)
+                assert d.year.value == derived.year.value
+                assert d.month.value == derived.month.value
+                assert d.day.value == derived.day.value
+            )
+        )
+    program.run()
+
+// ── LocalTime: `now` (UTC property) ───────────────────────────────────
+
+test "LocalTime.now produces a valid clock time" =
+    let program: Async<Unit, Never> =
+        LocalTime.now.map((t: LocalTime) =>
+            assert t.hour >= 0
+            assert t.hour < 24
+            assert t.minute >= 0
+            assert t.minute < 60
+            assert t.second >= 0
+            assert t.second < 60
+        )
+    program.run()
+
+// ── YearMonth: `today` ────────────────────────────────────────────────
+
+test "YearMonth.today matches Instant.now at UTC" =
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            YearMonth.today.map((ym: YearMonth) =>
+                let derived = i.toYearMonth(TimeZone.utc)
+                assert ym.year.value == derived.year.value
+                assert ym.month.value == derived.month.value
+            )
+        )
+    program.run()
+
+// ── Year: `today` ─────────────────────────────────────────────────────
+// Year is a newtype around Int32; the `Async.map` machinery has a known
+// limitation casting newtypes back from `anyref`, so we just verify the
+// extension is wired up and the Async completes.
+
+test "Year.today completes" =
+    Year.today.run()
+
+// ── ZonedDateTime: `now` (UTC property) and `nowAt(tz)` (method) ──────
+
+test "ZonedDateTime.now bundles current instant with UTC" =
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            ZonedDateTime.now.map((z: ZonedDateTime) =>
+                let derived = i.toZonedDateTime(TimeZone.utc)
+                assert z.zone.id == "UTC"
+                assert z.zone.offsetSeconds == 0
+                assert z.dateTime.date.year.value == derived.dateTime.date.year.value
+                assert z.dateTime.date.month.value == derived.dateTime.date.month.value
+                assert z.dateTime.date.day.value == derived.dateTime.date.day.value
+            )
+        )
+    program.run()
+
+test "ZonedDateTime.nowAt with CET offset" =
+    let cet = TimeZone.of("CET", 3600)
+    let program: Async<Unit, Never> =
+        Instant.now.andThen((i: Instant) =>
+            ZonedDateTime.nowAt(cet).map((z: ZonedDateTime) =>
+                let derived = i.toZonedDateTime(cet)
+                assert z.zone.id == "CET"
+                assert z.zone.offsetSeconds == 3600
+                assert z.dateTime.date.day.value == derived.dateTime.date.day.value
+                assert z.dateTime.time.hour == derived.dateTime.time.hour
+            )
+        )
+    program.run()

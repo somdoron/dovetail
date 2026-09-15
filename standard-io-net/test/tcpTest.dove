@@ -1,0 +1,92 @@
+package test
+
+import standard.io.net.Tcp
+import standard.io.net.TcpListener
+import standard.io.net.NetError
+import standard.io.net.TcpStream
+import standard.io.Async
+import standard.io.Fiber
+import standard.io.Promise
+import standard.time.Duration
+
+@timeout(5000)
+test "Tcp.bind on 127.0.0.1:0 produces a listener with a discoverable address" =
+    let mutable address: String = ""
+    let program: Async<Unit, NetError> = bindProgram((s: String) => address = s)
+    program.run()
+    // OS-assigned port; address should be "127.0.0.1:N" with N > 0.
+    assert address.startsWith("127.0.0.1:")
+    assert address.length > 10i32
+
+async function bindProgram(setter: (String) => Unit): Async<Unit, NetError> =
+    let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
+    let local = await listener.localAddress()
+    setter(local)
+
+// The socket-option surface. Every knob here is optional in wasi:sockets — a
+// host may answer `NotSupported` for any of them — so the test asserts the
+// round trip only where the option is actually supported, and asserts that
+// asking never traps or hangs. Ported from the P2-era `test_tcp_socket_options`,
+// which was deleted along with the P2 intrinsics.
+
+@timeout(10000)
+test "TcpStream: keep-alive and buffer-size options round-trip" =
+    let mutable keepAliveOn = false
+    let mutable receiveBuffer = 0i64
+    let mutable sendBuffer = 0i64
+    let mutable countAfterSet = 0i32
+    let mutable hop = 0i32
+    optionsProgram(
+        (b: Bool) => keepAliveOn = b,
+        (n: Int64) => receiveBuffer = n,
+        (n: Int64) => sendBuffer = n,
+        (n: Int32) => countAfterSet = n,
+        (n: Int32) => hop = n
+    ).run()
+    // Set to true above, so a supporting host must report it back.
+    assert keepAliveOn
+    // Kernel buffers are always positive once a connection exists.
+    assert receiveBuffer > 0i64
+    assert sendBuffer > 0i64
+    assert countAfterSet == 5i32
+    // -1 = the host does not implement hop-limit; anything else must be a real
+    // TTL. Zero would mean the u8 payload was decoded from the wrong offset.
+    assert hop != 0i32
+
+async function optionsProgram(
+    setKeepAlive: (Bool) => Unit,
+    setReceive: (Int64) => Unit,
+    setSend: (Int64) => Unit,
+    setCount: (Int32) => Unit,
+    setHop: (Int32) => Unit
+): Async<Unit, NetError> =
+    let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
+    let address = await listener.localAddress()
+    let accepted: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
+    let _server: Fiber<Unit, NetError> = await acceptAndHold(listener, accepted).forkBackground()
+    let client: TcpStream = use Tcp.connect("127.0.0.1", streamPort(address))
+    await client.setKeepAliveEnabled(true)
+    setKeepAlive(await client.keepAliveEnabled())
+    await client.setKeepAliveCount(5i32)
+    setCount(await client.keepAliveCount())
+    // Reading these back after a set is not portable — hosts round the values —
+    // so the assertion is only that the calls succeed.
+    await client.setKeepAliveIdleTime(Duration.ofSeconds(30i64))
+    await client.setKeepAliveInterval(Duration.ofSeconds(10i64))
+    // hop-limit is a `u8` payload — a different retptr offset from the u64
+    // sizes below — and is the one option a host may plausibly not implement.
+    let hopLimit = await client.hopLimit().fold<Int32, Never>(
+        (_: NetError) => Async.succeed(0 - 1i32),
+        (n: Int32) => Async.succeed(n)
+    )
+    setHop(hopLimit)
+    setReceive(await client.receiveBufferSize())
+    setSend(await client.sendBufferSize())
+    // The listener half of the surface.
+    assert await listener.isListening()
+
+async function acceptAndHold(listener: TcpListener, accepted: Promise<Int32, Never>): Async<Unit, NetError> =
+    let stream: TcpStream = use listener.accept()
+    await accepted.complete(1i32)
+    await stream.input.read(1i64).mapError(toNetError)
+    ()

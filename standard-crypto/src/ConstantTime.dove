@@ -1,0 +1,41 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// Constant-time utilities. These avoid data-dependent branches and memory
+/// access so that secret-dependent timing cannot leak to an observer.
+module ConstantTime =
+    /// Compare two byte arrays in time independent of their contents. Returns
+    /// `false` immediately on a length mismatch (lengths are not secret), but
+    /// for equal-length inputs the running time does not depend on where — or
+    /// whether — the arrays differ. Always use this instead of comparing
+    /// `finalize()` output directly when checking MAC or AEAD tags.
+    public function equal(a: Array<Uint8>, b: Array<Uint8>): Bool =
+        if a.length != b.length then false
+        else
+            let mutable diff = 0u8
+            let mutable i = 0
+            while i < a.length do
+                diff = diff | (a.get(i) ^ b.get(i))
+                i = i + 1
+            diff == 0u8
+
+test "ConstantTime.equal: equal arrays" =
+    let a = [|1u8, 2u8, 3u8, 4u8|]
+    let b = [|1u8, 2u8, 3u8, 4u8|]
+    assert ConstantTime.equal(a, b)
+
+test "ConstantTime.equal: differing arrays" =
+    let a = [|1u8, 2u8, 3u8, 4u8|]
+    let b = [|1u8, 2u8, 3u8, 5u8|]
+    assert ConstantTime.equal(a, b) == false
+
+test "ConstantTime.equal: different lengths" =
+    let a = [|1u8, 2u8, 3u8|]
+    let b = [|1u8, 2u8, 3u8, 4u8|]
+    assert ConstantTime.equal(a, b) == false
+
+test "ConstantTime.equal: empty arrays" =
+    let a: Array<Uint8> = [||]
+    let b: Array<Uint8> = [||]
+    assert ConstantTime.equal(a, b)

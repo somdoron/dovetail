@@ -1,0 +1,330 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// Curve25519 field arithmetic (RFC 7748) and the X25519 Montgomery-ladder
+/// scalar multiplication, shared by `X25519` and `Ed25519`.
+///
+/// A field element is five `Uint64` limbs of ~51 bits each (radix 2^51), with
+/// limb products accumulated in `Uint128` via the widening multiply (the
+/// curve25519-donna-c64 approach).
+module Curve25519 =
+    private function mask51(): Uint64 = 0x7ffffffffffffu64
+
+    /// out = a + b (limbwise; limbs grow by ~1 bit, reduced by the next mul).
+    function fadd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        [|
+            a.get(0) + b.get(0), a.get(1) + b.get(1), a.get(2) + b.get(2),
+            a.get(3) + b.get(3), a.get(4) + b.get(4),
+        |]
+
+    /// out = a - b (mod p), biased by 2p to stay non-negative.
+    function fsub(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let two54m152 = (1u64 << 54u64) - 152u64
+        let two54m8 = (1u64 << 54u64) - 8u64
+        [|
+            a.get(0) + two54m152 - b.get(0),
+            a.get(1) + two54m8 - b.get(1),
+            a.get(2) + two54m8 - b.get(2),
+            a.get(3) + two54m8 - b.get(3),
+            a.get(4) + two54m8 - b.get(4),
+        |]
+
+    /// out = a * b (mod 2^255 - 19), radix 2^51, products in Uint128.
+    function fmul(f: Array<Uint64>, g: Array<Uint64>): Array<Uint64> =
+        let m = mask51()
+        let r0 = f.get(0)
+        let r1 = f.get(1)
+        let r2 = f.get(2)
+        let r3 = f.get(3)
+        let r4 = f.get(4)
+        let s0 = g.get(0)
+        let s1 = g.get(1)
+        let s2 = g.get(2)
+        let s3 = g.get(3)
+        let s4 = g.get(4)
+        let r1_19 = r1 * 19u64
+        let r2_19 = r2 * 19u64
+        let r3_19 = r3 * 19u64
+        let r4_19 = r4 * 19u64
+        let t0 = Uint128.multiply(r0, s0) + Uint128.multiply(r4_19, s1) + Uint128.multiply(r3_19, s2) + Uint128.multiply(r2_19, s3) + Uint128.multiply(r1_19, s4)
+        let t1 = Uint128.multiply(r0, s1) + Uint128.multiply(r1, s0) + Uint128.multiply(r4_19, s2) + Uint128.multiply(r3_19, s3) + Uint128.multiply(r2_19, s4)
+        let t2 = Uint128.multiply(r0, s2) + Uint128.multiply(r1, s1) + Uint128.multiply(r2, s0) + Uint128.multiply(r4_19, s3) + Uint128.multiply(r3_19, s4)
+        let t3 = Uint128.multiply(r0, s3) + Uint128.multiply(r1, s2) + Uint128.multiply(r2, s1) + Uint128.multiply(r3, s0) + Uint128.multiply(r4_19, s4)
+        let t4 = Uint128.multiply(r0, s4) + Uint128.multiply(r1, s3) + Uint128.multiply(r2, s2) + Uint128.multiply(r3, s1) + Uint128.multiply(r4, s0)
+        let c0 = t0 >> 51u128
+        let v0 = t0.low & m
+        let t1b = t1 + c0
+        let c1 = t1b >> 51u128
+        let v1 = t1b.low & m
+        let t2b = t2 + c1
+        let c2 = t2b >> 51u128
+        let v2 = t2b.low & m
+        let t3b = t3 + c2
+        let c3 = t3b >> 51u128
+        let v3 = t3b.low & m
+        let t4b = t4 + c3
+        let c4 = t4b >> 51u128
+        let v4 = t4b.low & m
+        let o0 = v0 + 19u64 * c4.low
+        let d0 = o0 >> 51u64
+        let o1 = v1 + d0
+        let d1 = o1 >> 51u64
+        let o2 = v2 + d1
+        [|o0 & m, o1 & m, o2, v3, v4|]
+
+    function fsquare(a: Array<Uint64>): Array<Uint64> = fmul(a, a)
+
+    /// Multiplicative inverse z^(p-2) via the standard addition chain.
+    function finvert(z: Array<Uint64>): Array<Uint64> =
+        let z2 = fsquare(z)
+        let z4 = fsquare(z2)
+        let z8 = fsquare(z4)
+        let z9 = fmul(z8, z)
+        let z11 = fmul(z9, z2)
+        let z22 = fsquare(z11)
+        let z2_5_0 = fmul(z22, z9)
+        let mutable a = fsquare(z2_5_0)
+        let mutable i = 1
+        while i < 5 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_10_0 = fmul(a, z2_5_0)
+        a = fsquare(z2_10_0)
+        i = 1
+        while i < 10 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_20_0 = fmul(a, z2_10_0)
+        a = fsquare(z2_20_0)
+        i = 1
+        while i < 20 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_40_0 = fmul(a, z2_20_0)
+        a = fsquare(z2_40_0)
+        i = 1
+        while i < 10 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_50_0 = fmul(a, z2_10_0)
+        a = fsquare(z2_50_0)
+        i = 1
+        while i < 50 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_100_0 = fmul(a, z2_50_0)
+        a = fsquare(z2_100_0)
+        i = 1
+        while i < 100 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_200_0 = fmul(a, z2_100_0)
+        a = fsquare(z2_200_0)
+        i = 1
+        while i < 50 do
+            a = fsquare(a)
+            i = i + 1
+        let z2_250_0 = fmul(a, z2_50_0)
+        a = fsquare(z2_250_0)
+        i = 1
+        while i < 5 do
+            a = fsquare(a)
+            i = i + 1
+        fmul(a, z11)
+
+    /// Constant-time conditional swap of two field elements when `swap` is 1.
+    private function cswap(swap: Uint64, a: Array<Uint64>, b: Array<Uint64>): Unit =
+        let mask = 0u64 - swap
+        let mutable i = 0
+        while i < 5 do
+            let t = mask & (a.get(i) ^ b.get(i))
+            a.set(i, a.get(i) ^ t)
+            b.set(i, b.get(i) ^ t)
+            i = i + 1
+
+    /// Decode 32 little-endian bytes into field limbs (ignores bit 255).
+    function frombytes(inp: Array<Uint8>): Array<Uint64> =
+        let t = Array<Uint64>.fill(5, 0u64)
+        let mutable k = 0
+        while k < 255 do
+            let byteVal = inp.get(k / 8).toUint64()
+            let bit = (byteVal >> (k % 8).toUint64()) & 1u64
+            let limb = k / 51
+            t.set(limb, t.get(limb) | (bit << (k % 51).toUint64()))
+            k = k + 1
+        t
+
+    /// Fully reduce field limbs mod p to canonical form (each limb < 2^51,
+    /// value < p), via two carry rounds and a conditional subtraction of p.
+    private function contract(input: Array<Uint64>): Array<Uint64> =
+        let m = mask51()
+        let t = input.clone()
+        carryRound(t)
+        carryRound(t)
+        t.set(0, t.get(0) + 19u64)
+        carryRound(t)
+        t.set(0, t.get(0) + (0x8000000000000u64 - 19u64))
+        t.set(1, t.get(1) + (0x8000000000000u64 - 1u64))
+        t.set(2, t.get(2) + (0x8000000000000u64 - 1u64))
+        t.set(3, t.get(3) + (0x8000000000000u64 - 1u64))
+        t.set(4, t.get(4) + (0x8000000000000u64 - 1u64))
+        t.set(1, t.get(1) + (t.get(0) >> 51u64))
+        t.set(0, t.get(0) & m)
+        t.set(2, t.get(2) + (t.get(1) >> 51u64))
+        t.set(1, t.get(1) & m)
+        t.set(3, t.get(3) + (t.get(2) >> 51u64))
+        t.set(2, t.get(2) & m)
+        t.set(4, t.get(4) + (t.get(3) >> 51u64))
+        t.set(3, t.get(3) & m)
+        t.set(4, t.get(4) & m)
+        t
+
+    /// One carry round with the 2^255 = 19 wrap.
+    private function carryRound(t: Array<Uint64>): Unit =
+        let m = mask51()
+        t.set(1, t.get(1) + (t.get(0) >> 51u64))
+        t.set(0, t.get(0) & m)
+        t.set(2, t.get(2) + (t.get(1) >> 51u64))
+        t.set(1, t.get(1) & m)
+        t.set(3, t.get(3) + (t.get(2) >> 51u64))
+        t.set(2, t.get(2) & m)
+        t.set(4, t.get(4) + (t.get(3) >> 51u64))
+        t.set(3, t.get(3) & m)
+        t.set(0, t.get(0) + 19u64 * (t.get(4) >> 51u64))
+        t.set(4, t.get(4) & m)
+
+    /// Encode field limbs into 32 little-endian bytes (canonical).
+    function tobytes(input: Array<Uint64>): Array<Uint8> =
+        let t = contract(input)
+        let res = Array<Uint8>.fill(32, 0u8)
+        let mutable k = 0
+        while k < 255 do
+            let limb = k / 51
+            let bit = (t.get(limb) >> (k % 51).toUint64()) & 1u64
+            let bytej = k / 8
+            res.set(bytej, res.get(bytej) | (bit.toUint8() << (k % 8).toUint8()))
+            k = k + 1
+        res
+
+    // --- Field helpers shared with Ed25519 (twisted Edwards over the same field) ---
+
+    /// The field element [c, 0, 0, 0, 0].
+    function feConst(c: Uint64): Array<Uint64> = [|c, 0u64, 0u64, 0u64, 0u64|]
+
+    function feZero(): Array<Uint64> = feConst(0u64)
+    function feOne(): Array<Uint64> = feConst(1u64)
+
+    /// Reduce a field element to loosely-canonical form (limbs < 2^51). `fmul`
+    /// carries fully, so multiplying by 1 normalises the limbs.
+    function freduce(a: Array<Uint64>): Array<Uint64> = fmul(a, feOne())
+
+    /// Negation: -a (mod p). `fsub`'s bias only absorbs loosely-reduced limbs,
+    /// so `a` is reduced first — this makes `fneg` correct for operands of any
+    /// magnitude (e.g. raw `fsub` outputs whose limbs are ~2^54).
+    function fneg(a: Array<Uint64>): Array<Uint64> = fsub(feZero(), freduce(a))
+
+    /// Low bit of the canonical encoding (x is "negative" iff this is 1).
+    function feParity(a: Array<Uint64>): Uint8 = tobytes(a).get(0) & 1u8
+
+    /// Canonical equality.
+    function feEqual(a: Array<Uint64>, b: Array<Uint64>): Bool =
+        let ab = tobytes(a)
+        let bb = tobytes(b)
+        let mutable diff = 0u8
+        let mutable i = 0
+        while i < 32 do
+            diff = diff | (ab.get(i) ^ bb.get(i))
+            i = i + 1
+        diff == 0u8
+
+    /// a^((p-5)/8) = a^(2^252 - 3), used for square roots in decompression.
+    function fpow22523(z: Array<Uint64>): Array<Uint64> =
+        let t0a = fsquare(z)
+        let mutable t1 = fsquare(fsquare(t0a))
+        t1 = fmul(z, t1)
+        let mutable t0 = fmul(t0a, t1)
+        t0 = fsquare(t0)
+        t0 = fmul(t1, t0)
+        t1 = fsquare(t0)
+        let mutable i = 1
+        while i < 5 do
+            t1 = fsquare(t1)
+            i = i + 1
+        t0 = fmul(t1, t0)
+        t1 = fsquare(t0)
+        i = 1
+        while i < 10 do
+            t1 = fsquare(t1)
+            i = i + 1
+        t1 = fmul(t1, t0)
+        let mutable t2 = fsquare(t1)
+        i = 1
+        while i < 20 do
+            t2 = fsquare(t2)
+            i = i + 1
+        t1 = fmul(t2, t1)
+        t1 = fsquare(t1)
+        i = 1
+        while i < 10 do
+            t1 = fsquare(t1)
+            i = i + 1
+        t0 = fmul(t1, t0)
+        t1 = fsquare(t0)
+        i = 1
+        while i < 50 do
+            t1 = fsquare(t1)
+            i = i + 1
+        t1 = fmul(t1, t0)
+        t2 = fsquare(t1)
+        i = 1
+        while i < 100 do
+            t2 = fsquare(t2)
+            i = i + 1
+        t1 = fmul(t2, t1)
+        t1 = fsquare(t1)
+        i = 1
+        while i < 50 do
+            t1 = fsquare(t1)
+            i = i + 1
+        t0 = fmul(t1, t0)
+        t0 = fsquare(fsquare(t0))
+        fmul(t0, z)
+
+    /// X25519 scalar multiplication: clamp `scalarBytes`, multiply the point
+    /// `uBytes` by it, return the 32-byte u-coordinate of the result.
+    function scalarMult(scalarBytes: Array<Uint8>, uBytes: Array<Uint8>): Array<Uint8> =
+        let k = scalarBytes.clone()
+        k.set(0, k.get(0) & 248u8)
+        k.set(31, (k.get(31) & 127u8) | 64u8)
+        let x1 = frombytes(uBytes)
+        let a24 = [|121665u64, 0u64, 0u64, 0u64, 0u64|]
+        let mutable x2: Array<Uint64> = [|1u64, 0u64, 0u64, 0u64, 0u64|]
+        let mutable z2: Array<Uint64> = [|0u64, 0u64, 0u64, 0u64, 0u64|]
+        let mutable x3 = x1.clone()
+        let mutable z3: Array<Uint64> = [|1u64, 0u64, 0u64, 0u64, 0u64|]
+        let mutable swap = 0u64
+        let mutable t = 254
+        while t >= 0 do
+            let kt = ((k.get(t / 8) >> (t % 8).toUint8()) & 1u8).toUint64()
+            swap = swap ^ kt
+            cswap(swap, x2, x3)
+            cswap(swap, z2, z3)
+            swap = kt
+            let av = fadd(x2, z2)
+            let aa = fsquare(av)
+            let bv = fsub(x2, z2)
+            let bb = fsquare(bv)
+            let e = fsub(aa, bb)
+            let cv = fadd(x3, z3)
+            let dv = fsub(x3, z3)
+            let da = fmul(dv, av)
+            let cb = fmul(cv, bv)
+            x3 = fsquare(fadd(da, cb))
+            z3 = fmul(x1, fsquare(fsub(da, cb)))
+            x2 = fmul(aa, bb)
+            z2 = fmul(e, fadd(aa, fmul(a24, e)))
+            t = t - 1
+        cswap(swap, x2, x3)
+        cswap(swap, z2, z3)
+        tobytes(fmul(x2, finvert(z2)))

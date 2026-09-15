@@ -1,0 +1,185 @@
+module standard.io.Queue<T>
+
+import standard.collection.MutableQueue
+
+public function make(capacity: Int32): Async<Queue<T>, Never> =
+    Async.thunk(() => Queue<T>(Waiter.make(), Waiter.make(), MutableQueue.new(), Some(capacity)))
+
+public function makeUnbounded(): Async<Queue<T>, Never> =
+    Async.thunk(() => Queue<T>(Waiter.make(), Waiter.make(), MutableQueue.new(), None))
+
+// A buffer mutation and the wake it owes are separate interpreter steps, so —
+// exactly as `Promise.complete` masks its claim-then-wake — every
+// mutate-then-wake pair below runs UNINTERRUPTIBLE. An interrupt landing
+// between the two left the state changed and the sibling it affects parked
+// forever: an enqueued value with its taker never woken, a freed capacity
+// slot with its offerer never woken. The mask never covers a park — the
+// checks and the direct paths only thunk and wake — so it defers an interrupt
+// by a few steps at most.
+
+public async function offer(self, value: T): Async<Unit, Never> =
+    match self.capacity with
+    case None =>
+        let enqueueAndWake: Async<Unit, Never> = Async<Bool, Never>.thunk(() =>
+            let empty = self.buffer.isEmpty
+            self.buffer.enqueue(value)
+            empty
+        ).andThen<Unit>((wasEmpty: Bool) =>
+            if wasEmpty then
+                Async.wake(self.takeWaiter)
+            else
+                Async.succeed(())
+        )
+        await enqueueAndWake.uninterruptible()
+    case Some(cap) =>
+        let check: Async<Option<Any>, Any> = Async<Option<Bool>, Never>.thunk(() =>
+            if self.buffer.length < cap then
+                let wasEmpty = self.buffer.isEmpty
+                self.buffer.enqueue(value)
+                Some(wasEmpty)
+            else None
+        ).andThen<Option<Any>>((result: Option<Bool>) =>
+            match result with
+            case Some(wasEmpty) =>
+                let u: Any = ()
+                if wasEmpty then
+                    Async.wake(self.takeWaiter).map((_: Unit) => Some(u))
+                else
+                    Async.succeed(Some(u))
+            case None =>
+                let none: Option<Any> = None
+                Async.succeed(none)
+        )
+        await Async<Unit, Never>.awaitCheck(self.offerWaiter, check.uninterruptible())
+
+public async function take(self): Async<T, Never> =
+    let taken: Option<T> = await Async<Option<(T, Bool)>, Never>.thunk(() =>
+        match self.buffer.dequeue() with
+        case Some(value) =>
+            let wasFull = match self.capacity with
+                case Some(cap) => self.buffer.length == cap - 1
+                case None => false
+            Some((value, wasFull))
+        case None => None
+    ).andThen<Option<T>>((result: Option<(T, Bool)>) =>
+        match result with
+        case Some((value, wasFull)) =>
+            if wasFull then
+                Async.wake(self.offerWaiter).map<Option<T>>((_: Unit) => Some(value))
+            else
+                let some: Option<T> = Some(value)
+                Async.succeed(some)
+        case None =>
+            let none: Option<T> = None
+            Async.succeed(none)
+    ).uninterruptible()
+    match taken with
+    case Some(value) => value
+    case None =>
+        let check = Async.thunk(() =>
+            match self.buffer.dequeue() with
+            case Some(value) =>
+                let wasFull = match self.capacity with
+                    case Some(cap) => self.buffer.length == cap - 1
+                    case None => false
+                Some((value, wasFull))
+            case None => None
+        ).andThen(async d =>
+            match d with
+            case Some((value, wasFull)) =>
+                let any: Any = value
+                if wasFull then
+                    await Async.wake(self.offerWaiter)
+                    await Async.succeed(Some(any))
+                else
+                    await Async.succeed(Some(any))
+            case None =>
+                let none: Option<Any> = None
+                await Async.succeed(none)
+        )
+        await Async<T, Never>.awaitCheck(self.takeWaiter, check.uninterruptible())
+
+public property size(self): Int32 = self.buffer.length
+
+public property isEmpty(self): Bool = self.buffer.isEmpty
+
+
+// --- Tests ---
+
+test "unbounded queue offer and take" =
+    let program: Async<Unit, Never> =
+        let makeQ: Async<Queue<Int32>, Never> = Queue.makeUnbounded()
+        makeQ.andThen((q: Queue<Int32>) =>
+            q.offer(42).andThen((_: Unit) =>
+                q.take().map((v: Int32) => assert v == 42)
+            )
+        )
+    program.run()
+
+test "unbounded queue take before offer" =
+    let program: Async<Unit, Never> =
+        let makeQ: Async<Queue<Int32>, Never> = Queue.makeUnbounded()
+        makeQ.andThen((q: Queue<Int32>) =>
+            let taker: Async<Fiber<Int32, Never>, Never> = q.take().fork()
+            taker.andThen((f: Fiber<Int32, Never>) =>
+                q.offer(42).andThen((_: Unit) =>
+                    f.join().map((v: Int32) => assert v == 42)
+                )
+            )
+        )
+    program.run()
+
+test "unbounded queue FIFO order" =
+    let program: Async<Unit, Never> =
+        let makeQ: Async<Queue<Int32>, Never> = Queue.makeUnbounded()
+        makeQ.andThen((q: Queue<Int32>) =>
+            q.offer(1).andThen((_: Unit) =>
+                q.offer(2).andThen((_: Unit) =>
+                    q.take().andThen((v1: Int32) =>
+                        q.take().map((v2: Int32) =>
+                            assert v1 == 1
+                            assert v2 == 2
+                        )
+                    )
+                )
+            )
+        )
+    program.run()
+
+test "bounded queue offer blocks when full" =
+    let program: Async<Unit, Never> =
+        let makeQ: Async<Queue<Int32>, Never> = Queue.make(1)
+        makeQ.andThen((q: Queue<Int32>) =>
+            q.offer(1).andThen((_: Unit) =>
+                let offerer: Async<Fiber<Unit, Never>, Never> = q.offer(2).fork()
+                offerer.andThen((f: Fiber<Unit, Never>) =>
+                    q.take().andThen((v1: Int32) =>
+                        assert v1 == 1
+                        f.join().andThen((_: Unit) =>
+                            q.take().map((v2: Int32) => assert v2 == 2)
+                        )
+                    )
+                )
+            )
+        )
+    program.run()
+
+
+test "queue size" =
+    let program: Async<Unit, Never> =
+        let makeQ: Async<Queue<Int32>, Never> = Queue.makeUnbounded()
+        makeQ.andThen((q: Queue<Int32>) =>
+            assert q.size == 0
+            assert q.isEmpty
+            q.offer(1).andThen((_: Unit) =>
+                q.offer(2).andThen((_: Unit) =>
+                    assert q.size == 2
+                    assert !q.isEmpty
+                    q.take().map((v: Int32) =>
+                        assert v == 1
+                        assert q.size == 1
+                    )
+                )
+            )
+        )
+    program.run()

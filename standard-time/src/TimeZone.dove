@@ -1,0 +1,129 @@
+package standard.time
+
+/// A time-zone identifier plus a representative UTC offset.
+///
+/// Two shapes:
+/// - **Fixed** (`isIana = false`): the zone behaves as a constant offset
+///   from UTC. Construct via `TimeZone.utc`, `TimeZone.of`, etc.
+/// - **IANA** (`isIana = true`): the zone is a named entry in the
+///   embedded IANA tz database (`tzdata2026b` at the time of writing).
+///   `offsetSeconds` is set to the *standard* (non-DST) offset for
+///   reference; the actual offset for a given instant is obtained via
+///   `TimeZone.offsetAt`, which consults the full transition table.
+///   Construct via `TimeZone.named("America/New_York")`.
+public record TimeZone =
+    /// The time-zone identifier (e.g. `"UTC"`, `"America/New_York"`).
+    id: String
+    /// Reference offset from UTC in seconds. For Fixed zones this is the
+    /// constant offset; for IANA zones it's the standard-time offset
+    /// captured at construction (use `offsetAt` for instant-specific
+    /// resolution).
+    offsetSeconds: Int32
+    /// True when this is an IANA-named zone backed by the embedded
+    /// transition table; conversions consult `TzData`.
+    isIana: Bool
+
+/// Factory methods and operations for TimeZone.
+module TimeZone =
+    /// The UTC time-zone with zero offset.
+    public property utc: TimeZone =
+        TimeZone { id = "UTC"; offsetSeconds = 0; isIana = false }
+
+    /// Creates a fixed-offset TimeZone with the given identifier and
+    /// offset. The `id` is purely a label — even if it matches an IANA
+    /// name (e.g. `"America/New_York"`), no transitions are consulted.
+    /// Use `TimeZone.named` for IANA behavior.
+    public function of(id: String, offsetSeconds: Int32): TimeZone =
+        TimeZone { id = id; offsetSeconds = offsetSeconds; isIana = false }
+
+    /// Look up an IANA zone by name (e.g. `"America/New_York"`,
+    /// `"Europe/London"`, `"Asia/Kolkata"`). Returns `None` for unknown
+    /// names. The resulting `TimeZone` consults the full IANA tz
+    /// database for `offsetAt` / conversion operations, so DST and
+    /// historical transitions are honored automatically.
+    public function named(id: String): Option<TimeZone> =
+        match TzData.findZone(id) with
+            case Some(zone) =>
+                // Pick a "standard" reference offset: the offset at
+                // 2000-01-01T00:00:00Z. For zones that observe DST this
+                // is winter (standard time); for fixed-offset zones it's
+                // the offset itself.
+                let off = zone.offsetAt(946684800i64)
+                Some(TimeZone { id = id; offsetSeconds = off.offsetSeconds; isIana = true })
+            case None => None
+
+    /// Active UTC offset (seconds) for `epochSecond` in this zone.
+    /// For Fixed zones this is the constant `offsetSeconds`; for IANA
+    /// zones it walks the transition table (O(log n)).
+    public function offsetAt(self, epochSecond: Int64): Int32 =
+        if !self.isIana then self.offsetSeconds
+        else
+            match TzData.findZone(self.id) with
+                case Some(zone) => zone.offsetAt(epochSecond).offsetSeconds
+                case None => self.offsetSeconds
+
+    /// Active zone abbreviation for `epochSecond` (e.g. `"EST"`, `"EDT"`,
+    /// `"BST"`). For Fixed zones this is just the zone id.
+    public function abbreviationAt(self, epochSecond: Int64): String =
+        if !self.isIana then self.id
+        else
+            match TzData.findZone(self.id) with
+                case Some(zone) => zone.offsetAt(epochSecond).abbrev
+                case None => self.id
+
+    /// Returns the whole-hour component of the UTC offset.
+    public function offsetHours(self): Int32 =
+        self.offsetSeconds / 3600
+
+    /// Returns the remaining minutes component of the UTC offset after removing whole hours.
+    public function offsetMinutes(self): Int32 =
+        (self.offsetSeconds % 3600) / 60
+
+implement Equatable for TimeZone =
+    /// Returns true if both time-zones have the same id and offset.
+    public function equals(self: TimeZone, other: TimeZone): Bool =
+        if self.id == other.id then self.offsetSeconds == other.offsetSeconds
+        else false
+
+implement Display for TimeZone =
+    /// Formats this time-zone as "id (offset Ns)".
+    public function format(self: TimeZone): String =
+        self.id ++ " (offset " ++ self.offsetSeconds.format() ++ "s)"
+
+test "TimeZone utc" =
+    let tz = TimeZone.utc
+    assert tz.id == "UTC"
+    assert tz.offsetSeconds == 0
+
+test "TimeZone of" =
+    let tz = TimeZone.of("EST", -18000)
+    assert tz.id == "EST"
+    assert tz.offsetSeconds == -18000
+
+test "TimeZone offsetHours" =
+    let tz = TimeZone.of("CET", 3600)
+    assert tz.offsetHours() == 1
+
+test "TimeZone offsetHours negative" =
+    let tz = TimeZone.of("EST", -18000)
+    assert tz.offsetHours() == -5
+
+test "TimeZone offsetMinutes" =
+    let tz = TimeZone.of("IST", 19800)
+    assert tz.offsetHours() == 5
+    assert tz.offsetMinutes() == 30
+
+test "TimeZone equals" =
+    let a = TimeZone.utc
+    let b = TimeZone.utc
+    let c = TimeZone.of("CET", 3600)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "TimeZone display" =
+    let tz = TimeZone.utc
+    assert tz.format() == "UTC (offset 0s)"
+
+test "TimeZone display with offset" =
+    let tz = TimeZone.of("CET", 3600)
+    assert tz.format() == "CET (offset 3600s)"

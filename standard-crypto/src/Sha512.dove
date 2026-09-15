@@ -1,0 +1,252 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.String
+
+/// Shared 64-bit SHA-2 core for SHA-512 and SHA-384 (FIPS 180-4). The two
+/// algorithms differ only in their initial hash value and output truncation;
+/// the block compression is identical.
+module Sha2Big =
+    /// Rotate a 64-bit word right by `n` bits (1 <= n <= 63).
+    private function rotr(x: Uint64, n: Uint64): Uint64 =
+        (x >> n) | (x << (64u64 - n))
+
+    /// Round constants K[0..79] — first 64 bits of the fractional parts of the
+    /// cube roots of the first 80 primes.
+    private function roundConstants(): Array<Uint64> =
+        [|
+            0x428a2f98d728ae22u64, 0x7137449123ef65cdu64, 0xb5c0fbcfec4d3b2fu64, 0xe9b5dba58189dbbcu64,
+            0x3956c25bf348b538u64, 0x59f111f1b605d019u64, 0x923f82a4af194f9bu64, 0xab1c5ed5da6d8118u64,
+            0xd807aa98a3030242u64, 0x12835b0145706fbeu64, 0x243185be4ee4b28cu64, 0x550c7dc3d5ffb4e2u64,
+            0x72be5d74f27b896fu64, 0x80deb1fe3b1696b1u64, 0x9bdc06a725c71235u64, 0xc19bf174cf692694u64,
+            0xe49b69c19ef14ad2u64, 0xefbe4786384f25e3u64, 0x0fc19dc68b8cd5b5u64, 0x240ca1cc77ac9c65u64,
+            0x2de92c6f592b0275u64, 0x4a7484aa6ea6e483u64, 0x5cb0a9dcbd41fbd4u64, 0x76f988da831153b5u64,
+            0x983e5152ee66dfabu64, 0xa831c66d2db43210u64, 0xb00327c898fb213fu64, 0xbf597fc7beef0ee4u64,
+            0xc6e00bf33da88fc2u64, 0xd5a79147930aa725u64, 0x06ca6351e003826fu64, 0x142929670a0e6e70u64,
+            0x27b70a8546d22ffcu64, 0x2e1b21385c26c926u64, 0x4d2c6dfc5ac42aedu64, 0x53380d139d95b3dfu64,
+            0x650a73548baf63deu64, 0x766a0abb3c77b2a8u64, 0x81c2c92e47edaee6u64, 0x92722c851482353bu64,
+            0xa2bfe8a14cf10364u64, 0xa81a664bbc423001u64, 0xc24b8b70d0f89791u64, 0xc76c51a30654be30u64,
+            0xd192e819d6ef5218u64, 0xd69906245565a910u64, 0xf40e35855771202au64, 0x106aa07032bbd1b8u64,
+            0x19a4c116b8d2d0c8u64, 0x1e376c085141ab53u64, 0x2748774cdf8eeb99u64, 0x34b0bcb5e19b48a8u64,
+            0x391c0cb3c5c95a63u64, 0x4ed8aa4ae3418acbu64, 0x5b9cca4f7763e373u64, 0x682e6ff3d6b2b8a3u64,
+            0x748f82ee5defb2fcu64, 0x78a5636f43172f60u64, 0x84c87814a1f0ab72u64, 0x8cc702081a6439ecu64,
+            0x90befffa23631e28u64, 0xa4506cebde82bde9u64, 0xbef9a3f7b2c67915u64, 0xc67178f2e372532bu64,
+            0xca273eceea26619cu64, 0xd186b8c721c0c207u64, 0xeada7dd6cde0eb1eu64, 0xf57d4f7fee6ed178u64,
+            0x06f067aa72176fbau64, 0x0a637dc5a2c898a6u64, 0x113f9804bef90daeu64, 0x1b710b35131c471bu64,
+            0x28db77f523047d84u64, 0x32caab7b40c72493u64, 0x3c9ebe0a15c9bebcu64, 0x431d67c49c100d4cu64,
+            0x4cc5d4becb3e42b6u64, 0x597f299cfc657e2au64, 0x5fcb6fab3ad6faecu64, 0x6c44198c4a475817u64,
+        |]
+
+    /// Compress the padded message into the 8-word state, starting from `iv`.
+    /// Returns the final 8 state words. `iv` must have length 8.
+    function digest(data: Array<Uint8>, iv: Array<Uint64>, outLen: Int32): Array<Uint8> =
+        let k = roundConstants()
+        let msgLen = data.length
+        // Padded length: message + 0x80 + 16-byte length, rounded up to 128.
+        let paddedLen = ((msgLen + 144) / 128) * 128
+        let buf = Array<Uint8>.fill(paddedLen, 0u8)
+        data.copy(buf, 0)
+        buf.set(msgLen, 0x80u8)
+        // Only the low 64 bits of the 128-bit bit-length are written; messages
+        // long enough to need the high word are not representable here anyway.
+        let bitLen = msgLen.toInt64().toUint64() * 8u64
+        let mutable bi = 0
+        while bi < 8 do
+            let shift = ((7 - bi) * 8).toUint64()
+            buf.set(paddedLen - 8 + bi, (bitLen >> shift).toUint8())
+            bi = bi + 1
+
+        let mutable h0 = iv.get(0)
+        let mutable h1 = iv.get(1)
+        let mutable h2 = iv.get(2)
+        let mutable h3 = iv.get(3)
+        let mutable h4 = iv.get(4)
+        let mutable h5 = iv.get(5)
+        let mutable h6 = iv.get(6)
+        let mutable h7 = iv.get(7)
+
+        let numBlocks = paddedLen / 128
+        let mutable blk = 0
+        while blk < numBlocks do
+            let base = blk * 128
+            let w = Array<Uint64>.fill(80, 0u64)
+            let mutable t = 0
+            while t < 16 do
+                let j = base + t * 8
+                let mutable word = 0u64
+                let mutable bb = 0
+                while bb < 8 do
+                    word = (word << 8u64) | buf.get(j + bb).toUint64()
+                    bb = bb + 1
+                w.set(t, word)
+                t = t + 1
+            t = 16
+            while t < 80 do
+                let x15 = w.get(t - 15)
+                let x2 = w.get(t - 2)
+                let s0 = rotr(x15, 1u64) ^ rotr(x15, 8u64) ^ (x15 >> 7u64)
+                let s1 = rotr(x2, 19u64) ^ rotr(x2, 61u64) ^ (x2 >> 6u64)
+                w.set(t, w.get(t - 16) + s0 + w.get(t - 7) + s1)
+                t = t + 1
+
+            let mutable a = h0
+            let mutable b = h1
+            let mutable c = h2
+            let mutable d = h3
+            let mutable e = h4
+            let mutable f = h5
+            let mutable g = h6
+            let mutable h = h7
+            t = 0
+            while t < 80 do
+                let bigS1 = rotr(e, 14u64) ^ rotr(e, 18u64) ^ rotr(e, 41u64)
+                let ch = (e & f) ^ ((~e) & g)
+                let temp1 = h + bigS1 + ch + k.get(t) + w.get(t)
+                let bigS0 = rotr(a, 28u64) ^ rotr(a, 34u64) ^ rotr(a, 39u64)
+                let maj = (a & b) ^ (a & c) ^ (b & c)
+                let temp2 = bigS0 + maj
+                h = g
+                g = f
+                f = e
+                e = d + temp1
+                d = c
+                c = b
+                b = a
+                a = temp1 + temp2
+                t = t + 1
+
+            h0 = h0 + a
+            h1 = h1 + b
+            h2 = h2 + c
+            h3 = h3 + d
+            h4 = h4 + e
+            h5 = h5 + f
+            h6 = h6 + g
+            h7 = h7 + h
+            blk = blk + 1
+
+        let state = [|h0, h1, h2, h3, h4, h5, h6, h7|]
+        let digest = Array<Uint8>.fill(outLen, 0u8)
+        let mutable wi = 0
+        while wi * 8 < outLen do
+            let word = state.get(wi)
+            let mutable k2 = 0
+            while k2 < 8 do
+                let off = wi * 8 + k2
+                if off < outLen then
+                    let shift = ((7 - k2) * 8).toUint64()
+                    digest.set(off, (word >> shift).toUint8())
+                k2 = k2 + 1
+            wi = wi + 1
+        digest
+
+/// SHA-512 one-shot core (FIPS 180-4): 64-byte digest.
+module Sha512Core =
+    private function iv(): Array<Uint64> =
+        [|
+            0x6a09e667f3bcc908u64, 0xbb67ae8584caa73bu64, 0x3c6ef372fe94f82bu64, 0xa54ff53a5f1d36f1u64,
+            0x510e527fade682d1u64, 0x9b05688c2b3e6c1fu64, 0x1f83d9abfb41bd6bu64, 0x5be0cd19137e2179u64,
+        |]
+
+    function digest(data: Array<Uint8>): Array<Uint8> =
+        Sha2Big.digest(data, iv(), 64)
+
+/// SHA-384 one-shot core (FIPS 180-4): 48-byte digest, same compression as
+/// SHA-512 with a distinct IV.
+module Sha384Core =
+    private function iv(): Array<Uint64> =
+        [|
+            0xcbbb9d5dc1059ed8u64, 0x629a292a367cd507u64, 0x9159015a3070dd17u64, 0x152fecd8f70e5939u64,
+            0x67332667ffc00b31u64, 0x8eb44a8768581511u64, 0xdb0c2e0d64f98fa7u64, 0x47b5481dbefa4fa4u64,
+        |]
+
+    function digest(data: Array<Uint8>): Array<Uint8> =
+        Sha2Big.digest(data, iv(), 48)
+
+class Sha512Hasher(mutable buffer: Array<Uint8>) implements Hasher =
+    public function update(self, data: Array<Uint8>): Unit =
+        self.buffer = self.buffer.concat(data)
+    public function finalize(self): Array<Uint8> = Sha512Core.digest(self.buffer)
+    public function reset(self): Unit = self.buffer = Array<Uint8>.empty()
+
+class Sha512Algorithm() implements HashAlgorithm =
+    public property digestSize(self): Int32 = 64
+    public property blockSize(self): Int32 = 128
+    public function hasher(self): Hasher = Sha512Hasher(Array<Uint8>.empty())
+    public function hash(self, data: Array<Uint8>): Array<Uint8> = Sha512Core.digest(data)
+
+/// The SHA-512 algorithm.
+public let Sha512: HashAlgorithm = Sha512Algorithm()
+
+class Sha384Hasher(mutable buffer: Array<Uint8>) implements Hasher =
+    public function update(self, data: Array<Uint8>): Unit =
+        self.buffer = self.buffer.concat(data)
+    public function finalize(self): Array<Uint8> = Sha384Core.digest(self.buffer)
+    public function reset(self): Unit = self.buffer = Array<Uint8>.empty()
+
+class Sha384Algorithm() implements HashAlgorithm =
+    public property digestSize(self): Int32 = 48
+    public property blockSize(self): Int32 = 128
+    public function hasher(self): Hasher = Sha384Hasher(Array<Uint8>.empty())
+    public function hash(self, data: Array<Uint8>): Array<Uint8> = Sha384Core.digest(data)
+
+/// The SHA-384 algorithm.
+public let Sha384: HashAlgorithm = Sha384Algorithm()
+
+test "SHA-512 abc" =
+    let digest = Sha512.hash("abc".bytes())
+    let expected = [|
+        0xddu8, 0xafu8, 0x35u8, 0xa1u8, 0x93u8, 0x61u8, 0x7au8, 0xbau8,
+        0xccu8, 0x41u8, 0x73u8, 0x49u8, 0xaeu8, 0x20u8, 0x41u8, 0x31u8,
+        0x12u8, 0xe6u8, 0xfau8, 0x4eu8, 0x89u8, 0xa9u8, 0x7eu8, 0xa2u8,
+        0x0au8, 0x9eu8, 0xeeu8, 0xe6u8, 0x4bu8, 0x55u8, 0xd3u8, 0x9au8,
+        0x21u8, 0x92u8, 0x99u8, 0x2au8, 0x27u8, 0x4fu8, 0xc1u8, 0xa8u8,
+        0x36u8, 0xbau8, 0x3cu8, 0x23u8, 0xa3u8, 0xfeu8, 0xebu8, 0xbdu8,
+        0x45u8, 0x4du8, 0x44u8, 0x23u8, 0x64u8, 0x3cu8, 0xe8u8, 0x0eu8,
+        0x2au8, 0x9au8, 0xc9u8, 0x4fu8, 0xa5u8, 0x4cu8, 0xa4u8, 0x9fu8,
+    |]
+    assert digest.length == 64
+    let mutable i = 0
+    let mutable ok = true
+    while i < 64 do
+        if digest.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "SHA-512 empty string" =
+    let digest = Sha512.hash("".bytes())
+    let expected = [|
+        0xcfu8, 0x83u8, 0xe1u8, 0x35u8, 0x7eu8, 0xefu8, 0xb8u8, 0xbdu8,
+        0xf1u8, 0x54u8, 0x28u8, 0x50u8, 0xd6u8, 0x6du8, 0x80u8, 0x07u8,
+        0xd6u8, 0x20u8, 0xe4u8, 0x05u8, 0x0bu8, 0x57u8, 0x15u8, 0xdcu8,
+        0x83u8, 0xf4u8, 0xa9u8, 0x21u8, 0xd3u8, 0x6cu8, 0xe9u8, 0xceu8,
+        0x47u8, 0xd0u8, 0xd1u8, 0x3cu8, 0x5du8, 0x85u8, 0xf2u8, 0xb0u8,
+        0xffu8, 0x83u8, 0x18u8, 0xd2u8, 0x87u8, 0x7eu8, 0xecu8, 0x2fu8,
+        0x63u8, 0xb9u8, 0x31u8, 0xbdu8, 0x47u8, 0x41u8, 0x7au8, 0x81u8,
+        0xa5u8, 0x38u8, 0x32u8, 0x7au8, 0xf9u8, 0x27u8, 0xdau8, 0x3eu8,
+    |]
+    assert digest.length == 64
+    let mutable i = 0
+    let mutable ok = true
+    while i < 64 do
+        if digest.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "SHA-384 abc" =
+    let digest = Sha384.hash("abc".bytes())
+    let expected = [|
+        0xcbu8, 0x00u8, 0x75u8, 0x3fu8, 0x45u8, 0xa3u8, 0x5eu8, 0x8bu8,
+        0xb5u8, 0xa0u8, 0x3du8, 0x69u8, 0x9au8, 0xc6u8, 0x50u8, 0x07u8,
+        0x27u8, 0x2cu8, 0x32u8, 0xabu8, 0x0eu8, 0xdeu8, 0xd1u8, 0x63u8,
+        0x1au8, 0x8bu8, 0x60u8, 0x5au8, 0x43u8, 0xffu8, 0x5bu8, 0xedu8,
+        0x80u8, 0x86u8, 0x07u8, 0x2bu8, 0xa1u8, 0xe7u8, 0xccu8, 0x23u8,
+        0x58u8, 0xbau8, 0xecu8, 0xa1u8, 0x34u8, 0xc8u8, 0x25u8, 0xa7u8,
+    |]
+    assert digest.length == 48
+    let mutable i = 0
+    let mutable ok = true
+    while i < 48 do
+        if digest.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok

@@ -1,0 +1,180 @@
+package standard.prelude
+
+public trait Display =
+    function format(self: Self): String
+
+function formatInt32(value: Int32): String =
+    if value == 0 then "0"
+    else
+        let buf = Array.fill(11, 0u8)
+        let mutable pos = 10
+        let negative = value < 0
+        let mutable n = if negative then value else 0 - value
+        while n < 0 do
+            buf.set(pos, (48 - n % 10).toUint8())
+            pos = pos - 1
+            n = n / 10
+        if negative then
+            buf.set(pos, 45u8)
+            pos = pos - 1
+        String.fromBytes(buf, pos + 1, 10 - pos)
+
+function formatInt64(value: Int64): String =
+    if value == 0i64 then "0"
+    else
+        let buf = Array.fill(20, 0u8)
+        let mutable pos = 19
+        let negative = value < 0i64
+        let mutable n = if negative then value else 0i64 - value
+        while n < 0i64 do
+            buf.set(pos, (48i64 - n % 10i64).toInt32().toUint8())
+            pos = pos - 1
+            n = n / 10i64
+        if negative then
+            buf.set(pos, 45u8)
+            pos = pos - 1
+        String.fromBytes(buf, pos + 1, 19 - pos)
+
+implement Display for String =
+    public function format(self: String): String = self
+
+implement Display for Bool =
+    public function format(self: Bool): String = if self then "true" else "false"
+
+implement Display for Int8 =
+    public function format(self: Int8): String = formatInt32(self.toInt32())
+
+implement Display for Int16 =
+    public function format(self: Int16): String = formatInt32(self.toInt32())
+
+implement Display for Int32 =
+    public function format(self: Int32): String = formatInt32(self)
+
+implement Display for Int64 =
+    public function format(self: Int64): String = formatInt64(self)
+
+implement Display for Uint8 =
+    public function format(self: Uint8): String = formatInt32(self.toInt32())
+
+implement Display for Uint16 =
+    public function format(self: Uint16): String = formatInt32(self.toInt32())
+
+implement Display for Uint32 =
+    public function format(self: Uint32): String = formatInt64(self.toInt64())
+
+implement Display for Uint64 =
+    public function format(self: Uint64): String =
+        if self == 0u64 then "0"
+        else
+            let buf = Array.fill(20, 0u8)
+            let mutable pos = 19
+            let mutable n = self
+            while n > 0u64 do
+                buf.set(pos, (n % 10u64).toInt32().toUint8() + 48u8)
+                pos = pos - 1
+                n = n / 10u64
+            String.fromBytes(buf, pos + 1, 19 - pos)
+
+implement Display for Float32 =
+    public function format(self: Float32): String = formatFloat64(self.toFloat64())
+
+implement Display for Float64 =
+    public function format(self: Float64): String = formatFloat64(self)
+
+implement Display for Char =
+    public function format(self: Char): String = String.fromChar(self)
+
+/// Renders already-formatted `elemStrings` comma-separated between `open` and
+/// `close`, sizing the output buffer up front so the join stays linear.
+/// Shared by the `Array` and `List` renderings, which differ only in brackets.
+private function joinBracketed(
+    elemStrings: Array<Array<Uint8>>,
+    open: String,
+    close: String
+): String =
+    let openBytes = open.bytes()
+    let closeBytes = close.bytes()
+    let comma = ",".bytes()
+    let commaLength = comma.length
+    let n = elemStrings.length
+
+    if n == 0 then open ++ close
+    else
+        // TODO: compiler should be able to infer acc without the explicit type
+        let totalLen = elemStrings.foldLeft(
+            openBytes.length + closeBytes.length,
+            (acc: Int32, fs) => acc + fs.length + commaLength
+        ) - commaLength
+
+        let bytes = Array.fill(totalLen, 0u8)
+        let mutable idx = 0
+        openBytes.copy(bytes, idx)
+        idx = idx + openBytes.length
+        let mutable i = 0
+        while i < n do
+            let bs = elemStrings.get(i)
+            bs.copy(bytes, idx)
+            idx = idx + bs.length
+            comma.copy(bytes, idx)
+            idx = idx + commaLength
+            i = i + 1
+
+        idx = idx - commaLength
+        closeBytes.copy(bytes, idx)
+        idx = idx + closeBytes.length
+        assert idx == totalLen
+        String.fromBytes(bytes, 0, totalLen)
+
+implement <T> Display for Array<T> where T: Display =
+    public function format(self: Array<T>): String =
+        joinBracketed(self.map(a => a.format().bytes()), "[|", "|]")
+
+implement <T> Display for List<T> where T: Display =
+    public function format(self: List<T>): String =
+        joinBracketed(self.toArray().map(a => a.format().bytes()), "[", "]")
+
+test "Display Array<Int32>" =
+    let arr = [|1, 42, 3|]
+    assert arr.format() == "[|1,42,3|]"
+
+test "Display empty Array<Int32>" =
+    let arr: Array<Int32> = [||]
+    assert arr.format() == "[||]"
+
+test "Display Array<String>" =
+    let arr = [|"a", "b", "c"|]
+    assert arr.format() == "[|a,b,c|]"
+
+test "Display List<Int32>" =
+    assert [1, 42, 3].format() == "[1,42,3]"
+
+test "Display empty List<Int32>" =
+    let xs: List<Int32> = []
+    assert xs.format() == "[]"
+    
+implement Display for Never =
+    public function format(self: Never): String = panic "unreachable"
+
+test "Display Int32" =
+    assert 42i32.format() == "42"
+    assert 0i32.format() == "0"
+
+test "Display Bool" =
+    assert true.format() == "true"
+    assert false.format() == "false"
+
+test "Display String" =
+    assert "hello".format() == "hello"
+
+
+/// Extract the outer element text of a tuple, preserving nested delimiters.
+/// Tuple Display always supplies the outer parentheses removed here.
+function tupleElements<T>(value: T): String where T: Tuple, T: Display =
+    let formatted = value.format()
+    formatted.substring(1, formatted.length - 1)
+
+implement <A, B> Display for (A, B) where A: Display, B: Display =
+    public function format(self: (A, B)): String = "(" ++ self.init.format() ++ ", " ++ self.last.format() ++ ")"
+
+implement <T, U> Display for T ~ U where T: Tuple, T: Display, U: Display =
+    public function format(self: T ~ U): String = "(" ++ tupleElements(self.init) ++ ", " ++ self.last.format() ++ ")"

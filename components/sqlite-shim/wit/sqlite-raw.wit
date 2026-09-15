@@ -1,0 +1,57 @@
+package dovetail:sqlite-raw@0.1.0;
+
+/// Low-level 1:1 projection of the SQLite C API. No API design here:
+/// all s32 returns are raw SQLite result codes (0=SQLITE_OK, 100=SQLITE_ROW,
+/// 101=SQLITE_DONE, ...). Interpretation, error handling, and ergonomics
+/// live in the Domain-side wrapper (standard-sqlite).
+///
+/// Every function is `async` so the guest export is lifted async-stackful:
+/// SQLite's synchronous, potentially-blocking p2 filesystem I/O then runs on
+/// the export's own fiber and suspends there (like a real async subtask),
+/// instead of stalling the caller's store. `database`/`statement` are passed
+/// as opaque `u64` handles (raw pointers) rather than component resources, so
+/// the hand-written shim needs no resource canonical-ABI intrinsics.
+interface raw {
+  /// sqlite3_open_v2. open-flags is the SQLITE_OPEN_* bitmask. Ok = db handle.
+  open: async func(path: string, open-flags: u32) -> result<u64, s32>;
+  /// sqlite3_prepare_v2. Ok = statement handle.
+  prepare: async func(db: u64, sql: string) -> result<u64, s32>;
+  /// sqlite3_errmsg.
+  errmsg: async func(db: u64) -> string;
+  /// sqlite3_extended_errcode.
+  extended-errcode: async func(db: u64) -> s32;
+  /// sqlite3_last_insert_rowid.
+  last-insert-rowid: async func(db: u64) -> s64;
+  /// sqlite3_changes64.
+  changes: async func(db: u64) -> s64;
+  /// sqlite3_busy_timeout.
+  busy-timeout: async func(db: u64, ms: s32) -> s32;
+  /// sqlite3_close_v2. Frees the handle.
+  db-close: async func(db: u64);
+
+  /// sqlite3_step: SQLITE_ROW, SQLITE_DONE, or an error code.
+  step: async func(stmt: u64) -> s32;
+  reset: async func(stmt: u64) -> s32;
+  clear-bindings: async func(stmt: u64) -> s32;
+  /// Bind parameter indexes are 1-based, as in the C API.
+  bind-null: async func(stmt: u64, index: s32) -> s32;
+  bind-int64: async func(stmt: u64, index: s32, value: s64) -> s32;
+  bind-double: async func(stmt: u64, index: s32, value: f64) -> s32;
+  bind-text: async func(stmt: u64, index: s32, value: string) -> s32;
+  bind-blob: async func(stmt: u64, index: s32, value: list<u8>) -> s32;
+  /// Column indexes are 0-based, as in the C API.
+  column-count: async func(stmt: u64) -> s32;
+  /// SQLITE_INTEGER=1, SQLITE_FLOAT=2, SQLITE_TEXT=3, SQLITE_BLOB=4, SQLITE_NULL=5.
+  column-type: async func(stmt: u64, index: s32) -> s32;
+  column-int64: async func(stmt: u64, index: s32) -> s64;
+  column-double: async func(stmt: u64, index: s32) -> f64;
+  column-text: async func(stmt: u64, index: s32) -> string;
+  column-blob: async func(stmt: u64, index: s32) -> list<u8>;
+  column-name: async func(stmt: u64, index: s32) -> string;
+  /// sqlite3_finalize. Frees the handle.
+  stmt-finalize: async func(stmt: u64);
+}
+
+world sqlite {
+  export raw;
+}

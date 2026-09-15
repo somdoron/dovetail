@@ -1,0 +1,76 @@
+package standard.time
+
+/// Represents a date-time without a time-zone, combining a LocalDate and a LocalTime.
+@derive(Equatable)
+public record LocalDateTime =
+    /// The date part of this date-time.
+    date: LocalDate
+    /// The time part of this date-time.
+    time: LocalTime
+
+/// Factory methods and operations for LocalDateTime.
+module LocalDateTime =
+    /// Creates a LocalDateTime from a LocalDate and a LocalTime.
+    public function of(date: LocalDate, time: LocalTime): LocalDateTime =
+        LocalDateTime { date = date; time = time }
+
+    /// Creates a LocalDateTime from individual year, month, day, hour, minute, and second values.
+    public function ofParts(year: Int32, month: Int32, day: Int32, hour: Int32, minute: Int32, second: Int32): LocalDateTime =
+        let d = LocalDate.of(year, month, day)
+        let t = LocalTime.of(hour, minute, second)
+        LocalDateTime { date = d; time = t }
+
+implement Comparable for LocalDateTime =
+    /// Compares two date-times chronologically, first by date then by time.
+    public function compare(self: LocalDateTime, other: LocalDateTime): Ordering =
+        match self.date.compare(other.date) with
+            case Ordering.Equal => self.time.compare(other.time)
+            case o => o
+
+implement Display for LocalDateTime =
+    /// Formats this date-time in ISO-8601 format (yyyy-MM-ddTHH:mm:ss).
+    public function format(self: LocalDateTime): String =
+        self.date.format() ++ "T" ++ self.time.format()
+
+test "LocalDateTime of" =
+    let d = LocalDate.of(2024, 6, 15)
+    let t = LocalTime.of(14, 30, 0)
+    let dt = LocalDateTime.of(d, t)
+    assert dt.date.equals(d)
+    assert dt.time.equals(t)
+
+test "LocalDateTime ofParts" =
+    let dt = LocalDateTime.ofParts(2024, 3, 15, 10, 30, 45)
+    assert dt.date.year.value == 2024
+    assert dt.date.month.value == 3
+    assert dt.date.day.value == 15
+    assert dt.time.hour == 10
+    assert dt.time.minute == 30
+    assert dt.time.second == 45
+
+test "LocalDateTime equals" =
+    let a = LocalDateTime.ofParts(2024, 1, 1, 12, 0, 0)
+    let b = LocalDateTime.ofParts(2024, 1, 1, 12, 0, 0)
+    let c = LocalDateTime.ofParts(2024, 1, 1, 13, 0, 0)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "LocalDateTime compare" =
+    let a = LocalDateTime.ofParts(2024, 1, 1, 10, 0, 0)
+    let b = LocalDateTime.ofParts(2024, 1, 1, 14, 0, 0)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "LocalDateTime compare by date" =
+    let a = LocalDateTime.ofParts(2024, 1, 1, 23, 59, 59)
+    let b = LocalDateTime.ofParts(2024, 1, 2, 0, 0, 0)
+    assert a.compare(b) == Ordering.Less
+
+test "LocalDateTime display" =
+    let dt = LocalDateTime.ofParts(2024, 3, 5, 9, 5, 3)
+    assert dt.format() == "2024-03-05T09:05:03"
+
+test "LocalDateTime display full" =
+    let dt = LocalDateTime.ofParts(2024, 12, 25, 14, 30, 59)
+    assert dt.format() == "2024-12-25T14:30:59"

@@ -1,0 +1,67 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// Best-effort wiping of in-memory key material. Implementing `clear()` lets the
+/// async layer manage a secret as a resource that is zeroized on every
+/// scope-exit path (see the crypto design doc §5.5).
+///
+/// Honest WASMGC limit: `clear()` overwrites the long-lived buffer we hold. It
+/// cannot reach secret-derived temporaries scattered across the GC heap (HMAC
+/// pads, key schedules, field-element limbs); WASMGC does not zero freed
+/// objects. The guarantee is "long-lived key buffers are wiped", not "no secret
+/// byte remains anywhere" — the same posture as Java/Go/.NET.
+public trait HasSensitiveData =
+    /// Overwrite the backing bytes with zeros.
+    function clear(self): Unit
+
+private function zeroize(bytes: Array<Uint8>): Unit =
+    let mutable i = 0
+    while i < bytes.length do
+        bytes.set(i, 0u8)
+        i = i + 1
+
+implement HasSensitiveData for SymmetricKey =
+    public function clear(self): Unit = zeroize(self.value)
+
+implement HasSensitiveData for SecretKey =
+    public function clear(self): Unit = zeroize(self.value)
+
+implement HasSensitiveData for Nonce =
+    public function clear(self): Unit = zeroize(self.value)
+
+// A certificate's backing buffers may have been read from a file that also held
+// secret key material (a PEM bundle with a PRIVATE KEY block, a PKCS#12 store,
+// …). `clear()` scrubs every byte field so a loaded certificate can be managed
+// as a zeroizing resource.
+implement HasSensitiveData for X509Certificate =
+    public function clear(self): Unit =
+        zeroize(self.tbsBytes)
+        zeroize(self.serialNumber)
+        zeroize(self.issuerRaw)
+        zeroize(self.subjectRaw)
+        zeroize(self.publicKeyAlgorithm)
+        zeroize(self.publicKeyCurve)
+        zeroize(self.publicKey)
+        zeroize(self.signatureAlgorithm)
+        zeroize(self.signatureValue)
+
+test "clear zeroes a SymmetricKey's bytes" =
+    let k = SymmetricKey([|1u8, 2u8, 3u8, 4u8|])
+    k.clear()
+    let mutable i = 0
+    let mutable allZero = true
+    while i < k.value.length do
+        if k.value.get(i) != 0u8 then allZero = false
+        i = i + 1
+    assert allZero
+
+test "clear zeroes SecretKey and Nonce" =
+    let s = SecretKey([|0xaau8, 0xbbu8, 0xccu8|])
+    let n = Nonce([|0xffu8, 0x11u8|])
+    s.clear()
+    n.clear()
+    assert s.value.get(0) == 0u8
+    assert s.value.get(2) == 0u8
+    assert n.value.get(0) == 0u8
+    assert n.value.get(1) == 0u8

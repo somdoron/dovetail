@@ -1,0 +1,53 @@
+package test
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.Fiber
+import standard.io.WasiInputStream
+import standard.time.Duration
+
+// `close` is a COMMITTED UNIT: once it latches `Closing` it must run its cancel
+// and its drop, whatever else is going on. The runtime enforces that by making
+// the latch → cancel → drop sequence uninterruptible (`WasiInputStream`/
+// `WasiOutputStream.detachAndDrop`), so an interrupt landing between the latch
+// and the detach — reachable only when a close straddles the fairness budget's
+// boundary — is deferred to the sequence's end instead of discarding the detach
+// (which drains the handle's lock queue) and the drop (which releases the
+// handle). Strict red→green for that window would have to interrupt a close
+// mid-flight, which on a runtime WITHOUT the mask strands a reader on a handle
+// the event loop then blocks on forever — not a signal a test can wait on. What
+// is pinned here instead is that the refactored, now-masked path still does the
+// whole of close's job: it detaches a parked reader, drops the handle exactly
+// once, and stays idempotent on the second call.
+//
+// Reuses `droppableSource`/`burnThenReadOne` from `scheduler_window_test` and
+// `CarriedError` from `interrupt_payload_test` (same package).
+
+async function closeDetachesAndDropsProgram(dropped: Array<Int32>, landed: Array<String>): Async<Unit, Never> =
+    let waitable = idleWaitable()
+    let stream: AsyncInputStream<CarriedError> =
+        use WasiInputStream<CarriedError>.resource<Never>(() => Async.succeed(droppableSource(waitable, dropped)))
+    // A reader parked on the handle, holding the runtime's per-handle lock.
+    let reader: Fiber<Unit, Never> = await burnThenReadOne(stream, 0i32, landed).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    // The masked close: it must detach the parked reader (failing it with
+    // `canceledError`) and drop the handle.
+    await stream.close().catchAll<Never>((_: CarriedError) => Async.succeed(()))
+    await reader.join()
+    // A second close on the now-`Released` stream is a no-op — it must not drop
+    // the already-gone handle a second time (which would trap) nor detach on a
+    // reused index.
+    await stream.close().catchAll<Never>((_: CarriedError) => Async.succeed(()))
+
+@timeout(10000)
+test "close detaches a parked reader and drops the handle exactly once" =
+    let dropped = Array<Int32>.fill(1, 0i32)
+    let landed = Array<String>.fill(1, "")
+    closeDetachesAndDropsProgram(dropped, landed).run()
+    // The reader was detached by the close, not left on a handle the run would
+    // then block on: it is told the stream was taken away.
+    assert landed.get(0) == "failed"
+    // The handle was dropped, and the idempotent second close did not touch it
+    // again — `dropEnd` is what sets this, and `droppableSource.start` panics if
+    // anything posts after it, so a stray re-open would have failed loudly.
+    assert dropped.get(0) == 1i32

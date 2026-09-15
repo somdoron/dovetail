@@ -1,0 +1,324 @@
+package standard.io
+
+// =============================================================================
+// `Resource<T, E>` is a newtype over `Async<(T, Finalizer), E>` (declared in
+// types.dove). Running the underlying `Async` acquires the resource and
+// returns its value paired with a `Finalizer` — a thunk that already captured
+// the value and knows how to release it.
+//
+// Because acquisition and release both live inside one `Async`, the
+// combinators are trivial: `map` maps the value half of the pair and keeps the
+// finalizer; `andThen`/`zip` thread the inner finalizer *before* the outer one
+// (LIFO). `use` is a single `Async.bracket` whose release invokes the
+// finalizer. No interpreter, no free-monad tree.
+//
+// That bracket is also a FIBER SCOPE: fibers forked inside the `use` block are
+// finalized before the finalizer runs, so a resource is never released under a
+// fiber still using it. See `Async.fork` for the per-mode rules.
+//
+// The finalizer itself runs UNINTERRUPTIBLY (the interpreter masks it), so one
+// with its own suspension points — a flushing close, a TLS `close_notify` —
+// cannot be abandoned half-done. An interrupt arriving during it is deferred
+// until it finishes. Keep release paths bounded: a finalizer that blocks
+// forever now blocks its fiber forever.
+// =============================================================================
+
+module Resource<T, E> =
+    /// Delay construction and acquisition, preserving the produced finalizer.
+    internal function defer(body: ByName<Resource<T, E>>, trace: SourceLocation): Resource<T, E> =
+        let suspended: Async<Async<(T, Finalizer), E>, E> = Async.thunk(() => body.get.value)
+        let acquired: Async<(T, Finalizer), E> =
+            suspended.andThen<(T, Finalizer)>((program: Async<(T, Finalizer), E>) => program, trace)
+        Resource(acquired)
+
+    /// Build a `Resource` from explicit acquire / release thunks. `acquire`
+    /// runs when the resource is used; the resulting finalizer captures the
+    /// acquired value and calls `release(value)` on scope exit.
+    public function make(acquire: () => Async<T, E>, release: (T) => Async<Unit, Never>): Resource<T, E> =
+        let acquired: Async<(T, Finalizer), E> =
+            acquire().map<(T, Finalizer)>((value: T) =>
+                let finalizer: Finalizer = () => release(value)
+                (value, finalizer)
+            )
+        Resource(acquired)
+
+    /// Acquire this resource and hand its release to the fiber's INNERMOST OPEN
+    /// SCOPE, which runs it when it closes. Returns the acquired value.
+    ///
+    ///     let file = await File.openInputStream(path).attachToScope()
+    ///
+    /// The other half of `use`. A `use` opens a scope AND attaches the resource
+    /// to it in one expression, which is what you want when the resource's
+    /// lifetime is the rest of the block. `attachToScope` only attaches — for
+    /// when the scope already exists and the acquisition should not swallow the
+    /// rest of the block as its continuation: a resource acquired in one arm of
+    /// an `if`, a helper acquiring on its caller's behalf, a loop acquiring a
+    /// number of resources known only at runtime.
+    ///
+    /// The scope it attaches to is whichever is innermost when it runs — the
+    /// rule `fork` follows, for the same reason. A scope is never a value here,
+    /// so there is nothing to pass and nothing to pass wrongly. It may be an
+    /// `Async.scope()`, or an ordinary `use` block's (a `use` bracket is a
+    /// perfectly good attach target — innermost wins, whatever opened it), or,
+    /// if neither is open, the fiber's own root scope, in which case the
+    /// resource is released when the fiber ends.
+    ///
+    /// A scope runs its attachments in reverse order of attachment, after its
+    /// forked fibers have drained and before the resource its own `use`
+    /// acquired — that one was attached first, when the scope opened. So
+    ///
+    ///     let socket = use Tcp.connect(host, port)
+    ///     let file = await File.openInputStream(path).attachToScope()
+    ///
+    /// closes the file, then the socket: the same LIFO a second `use` gives.
+    ///
+    /// Acquisition is UNINTERRUPTIBLE, as it is for `use` and `Async.bracket`
+    /// (and as it is for ZIO's `acquireRelease`): an interrupt landing anywhere
+    /// inside the acquire is deferred to its end, so the resource either reaches
+    /// the scope that owns it or was never acquired at all. Nothing can strand
+    /// one in between. The cost is that an acquisition which parks indefinitely
+    /// cannot be cut short, so keep them bounded. The release is masked too.
+    ///
+    /// Spelled with the `Async` variant constructors, like `forkAndUse` and the
+    /// `Usable` impl below, retaining the result type on each node. The
+    /// pair is split HERE rather than in the runtime: the interpreter only ever
+    /// calls `finalizerOf` and passes the acquired value through, so it needs no
+    /// erased-tuple handling of its own.
+    public function attachToScope(self): Async<T, E> =
+        let node: Async<Any, Any> = Attach<Any, Any>(
+            self.value,
+            (pair: Any) => (pair as (T, Finalizer))._1
+        )
+        let loc = SourceLocation { file = ""; line = 0; column = 0; functionName = "" }
+        let projected: Async<T, E> =
+            Map<T, E>(node, (pair: Any) => (pair as (T, Finalizer))._0, loc)
+        projected
+
+    /// Internal: project the underlying acquisition `Async` (`(value, finalizer)`
+    /// pair). Same-package code that needs the raw acquisition — e.g.
+    /// `Switchable` — goes through here rather than the private inner.
+    internal function acquire(resource: Resource<T, E>): Async<(T, Finalizer), E> =
+        resource.value
+
+    /// Pure value as a `Resource` — acquire returns the value, finalizer is a
+    /// no-op. Identity for `andThen` and a base case in resource composition.
+    public function succeed(value: T): Resource<T, E> =
+        let noop: Finalizer = () => Async.succeed(())
+        let acquired: Async<(T, Finalizer), E> = Async.succeed((value, noop))
+        Resource(acquired)
+
+    /// Treat an acquisition failure as a DEFECT rather than an error: it is
+    /// re-raised as `Cause.Panicked`, and the resulting `Resource` has no error
+    /// channel left for a caller to handle.
+    ///
+    /// For invariants, not for I/O. Use it where a typed failure is unreachable by
+    /// construction and the type system has no way to say so — `Mutex.acquire` in
+    /// a critical section that provably does not nest, say. Reaching for it to
+    /// quieten a real error is how a transport failure becomes a crash.
+    ///
+    /// A defect unwinds past `catchAll` and is caught only by `foldCause`, which
+    /// is the point: nobody should be writing a recovery path for something that
+    /// cannot happen. What it buys over swallowing the error is that the day the
+    /// invariant IS broken, it says so instead of proceeding.
+    ///
+    /// This is `Async.orPanic` lifted to the acquisition — the whole of a
+    /// `Resource` is one `Async`, so there is nothing else to do to it. The
+    /// finalizer is untouched: a resource that fails to acquire has none.
+    public function orPanic(self): Resource<T, Never> where E : Display =
+        Resource(self.value.orPanic())
+
+    /// `orPanic` with the message supplied by the caller — for an `E` with no
+    /// `Display`, or where the call site can name the broken invariant more
+    /// usefully than the error names itself.
+    public function orPanicWith(self, message: (E) => String): Resource<T, Never> =
+        Resource(self.value.orPanicWith(message))
+
+    /// Transform the value visible to consumers. The finalizer is carried
+    /// through unchanged — `f` is a pure projection over the live value.
+    public function map<U>(self, f: (T) => U): Resource<U, E> =
+        let mapped: Async<(U, Finalizer), E> =
+            self.value.map<(U, Finalizer)>((pair: (T, Finalizer)) =>
+                (f(pair._0), pair._1)
+            )
+        Resource(mapped)
+
+    /// Chain a dependent resource: outer acquires `T`, `f(t)` constructs the
+    /// inner `Resource<U, E>`. The combined finalizer releases the inner
+    /// resource first, then the outer — LIFO.
+    public function andThen<U>(self, f: (T) => Resource<U, E>): Resource<U, E> =
+        let chained: Async<(U, Finalizer), E> =
+            self.value.andThen<(U, Finalizer)>((outer: (T, Finalizer)) =>
+                f(outer._0).value.foldCause<(U, Finalizer), E>(
+                    // If the dependent (inner) acquire FAILS, the outer resource is already
+                    // live — release it before re-raising, or its finalizer (the only thing
+                    // that frees the underlying handle) is dropped and the resource leaks.
+                    // Without this, a failed `Tcp.connect`/`bind` leaks the socket it created
+                    // (a `use` only brackets the whole composite acquire, which never yielded).
+                    // The compensating release runs UNINTERRUPTIBLY — a `use` under a
+                    // `.timeout` can be interrupted mid-compensation, and a finalizer with
+                    // suspension points (a flushing close, a TLS close_notify) must not be cut
+                    // in half, exactly as a normal bracket release is masked.
+                    (cause: Cause<E>) => outer._1().uninterruptible().andThen<(U, Finalizer)>((_: Unit) => Async.fromCause(cause)),
+                    (inner: (U, Finalizer)) =>
+                        let combined: Finalizer = () =>
+                            inner._1().andThen<Unit>((_: Unit) => outer._1())
+                        Async.succeed((inner._0, combined))
+                )
+            )
+        Resource(chained)
+
+    /// Pair two independent resources into a single `Resource<(T, U), E>`.
+    /// Both acquired (self first, then other); release is LIFO.
+    public function zip<U>(self, other: Resource<U, E>): Resource<(T, U), E> =
+        let zipped: Async<((T, U), Finalizer), E> =
+            self.value.andThen<((T, U), Finalizer)>((left: (T, Finalizer)) =>
+                other.value.foldCause<((T, U), Finalizer), E>(
+                    // Release the already-acquired left resource if the right acquire fails,
+                    // so its finalizer is not dropped (see `andThen`); uninterruptibly, so an
+                    // interrupt mid-compensation cannot leave the release half-done.
+                    (cause: Cause<E>) => left._1().uninterruptible().andThen<((T, U), Finalizer)>((_: Unit) => Async.fromCause(cause)),
+                    (right: (U, Finalizer)) =>
+                        let combined: Finalizer = () =>
+                            right._1().andThen<Unit>((_: Unit) => left._1())
+                        Async.succeed(((left._0, right._0), combined))
+                )
+            )
+        Resource(zipped)
+
+    /// Run `body` while `cond` evaluates to true, sequencing each iteration's
+    /// resource lifecycle. The `cond` is re-evaluated each iteration; release of
+    /// each body's resource happens before the next iteration starts.
+    ///
+    /// Each turn acquires AND releases its own resource within that turn (a bracket
+    /// per iteration), so the loop holds at most one live resource at a time. The
+    /// earlier `andThen`-chain form combined every iteration's finalizer into one,
+    /// releasing them all only at scope exit — for a long-lived loop, an unbounded
+    /// accumulation. The loop as a whole is a resource with a no-op finalizer.
+    public function whileLoop(cond: () => Bool, body: () => Resource<Unit, E>): Resource<Unit, E> =
+        Resource<Unit, E>.make(
+            () => Resource<Unit, E>.runWhileLoop(cond, body),
+            (_: Unit) => Async.succeed(()))
+
+    internal async function runWhileLoop(cond: () => Bool, body: () => Resource<Unit, E>): Async<Unit, E> =
+        while cond() do
+            let emptyBody: ((Unit, Finalizer)) => Async<Unit, E> = (pair: (Unit, Finalizer)) =>
+                let noop: Async<Unit, E> = Async.succeed(())
+                noop
+            await Async<Unit, E>.bracket<(Unit, Finalizer)>(
+                Resource<Unit, E>.acquire(body()),
+                (pair: (Unit, Finalizer)) => pair._1(),
+                emptyBody)
+        ()
+
+    /// Acquire this resource in the **current** fiber — so acquisition is
+    /// serialized with the caller — then run `body` on the acquired value in a
+    /// freshly forked fiber that releases the resource when `body` finishes
+    /// (success, failure, or interruption). Returns the forked `Fiber`.
+    ///
+    /// The fork is structural, so the forked fiber belongs to whatever scope the
+    /// caller is in: that scope waits for it when it ends normally and cancels it
+    /// when it ends by failure or interruption. Ownership of *this* resource is
+    /// the forked fiber's alone, though — the caller's scope does not release it.
+    ///
+    /// Use when a resource must be acquired one-at-a-time but each acquired
+    /// value is then handled concurrently. The motivating case is a p3
+    /// accept-stream, which permits only a single outstanding accept: the accept
+    /// loop `forkAndUse`s each connection so the `acceptStart` happens serially
+    /// in the loop while the per-connection handler runs in its own fiber and
+    /// owns closing the connection.
+    /// The forked body is a real `Bracket`, not a hand-rolled `foldCause`. A
+    /// `Bracket` is a FIBER SCOPE: fibers forked inside `body` are finalized
+    /// BEFORE the resource's finalizer runs, so a body-forked background fiber can
+    /// never keep using the resource after it was released. (A `foldCause`-release
+    /// runs inside the child fiber's own program, before its root scope drains, so
+    /// it would release the resource out from under such a fiber.) The `Bracket`
+    /// also masks the release for free — an interrupt mid-finalizer cannot cut the
+    /// close in half. Spelled with the `Bracket`/`Succeed` constructors (like `use`
+    /// below) with the body's concrete result types.
+    public function forkAndUse<T2, E2>(self, body: (T) => Async<T2, E2>): Async<Fiber<T2, E2>, E> =
+        self.value.andThen<Fiber<T2, E2>>((pair: (T, Finalizer)) =>
+            let scoped: Async<T2, E2> = Bracket<T2, E2>(
+                Succeed(pair),
+                (p: Any, _: Result<Any, Cause<Any>>) => (p as (T, Finalizer))._1(),
+                (p: Any) => body((p as (T, Finalizer))._0)
+            )
+            scoped.fork()
+        )
+
+    /// Wrap `initial` in a `Switchable` whose currently-held resource can be
+    /// swapped at any point during the outer scope. Acquires `initial`
+    /// eagerly; the outer Resource's finalizer releases whatever resource is
+    /// current at scope exit. Modeled on ZIO's `ZManaged.switchable`.
+    public function switchable(initial: Resource<T, E>): Resource<Switchable<T, E>, E> =
+        let acquired: Async<(Switchable<T, E>, Finalizer), E> =
+            initial.value.map<(Switchable<T, E>, Finalizer)>((pair: (T, Finalizer)) =>
+                let switch = Switchable<T, E>(pair._0, pair._1)
+                // The switch's own finalizer defers to whatever finalizer is
+                // current at release time (after any number of `replace`s).
+                let finalizer: Finalizer = () => switch.currentFinalizer()
+                (switch, finalizer)
+            )
+        Resource(acquired)
+
+/// Module attached to `Switchable<T, E>` (declared in `types.dove`).
+/// Provides the `value` accessor and `replace` operation.
+module Switchable<T, E> =
+    /// The currently-held value.
+    public function value(self): T = self.currentValue
+
+    /// Acquire `newResource`, swap into the held value, then run the
+    /// previously-held finalizer. If `newResource`'s acquire fails, the
+    /// previous resource is left in place.
+    ///
+    /// The swap runs uninterruptibly: an interrupt landing between acquiring
+    /// the new resource and recording its finalizer would leak it, and one
+    /// landing before the old finalizer runs would skip cleanup. Mirrors ZIO's
+    /// `uninterruptibleMask` around the swap in `ZManaged.switchable`.
+    public function replace(self, newResource: Resource<T, E>): Async<T, E> =
+        self.swap(newResource).uninterruptible()
+
+    async function swap(self, newResource: Resource<T, E>): Async<T, E> =
+        let oldFinalizer = self.currentFinalizer
+        let pair = await Resource.acquire(newResource)
+        self.currentValue = pair._0
+        self.currentFinalizer = pair._1
+        await oldFinalizer()
+        self.currentValue
+
+/// Implementing `Usable<T, E>` for `Resource<T, E>` lets `use resource` inside
+/// any function desugar to a single `Async.bracket`: acquire the
+/// `(value, finalizer)` pair, run the body on the value, and run the finalizer
+/// on exit (success or failure).
+///
+/// The body is built directly from the `Async` variant *constructors*
+/// (`FoldCause`, `FailCause`, `Bracket`, `Succeed`) rather than calling the
+/// `Async` combinator methods. A trait-impl method body is monomorphized by
+/// type substitution, which rewrites constructor (`ClassNew`) names and `as`
+/// casts but does NOT re-resolve the mangled names of generic *method* calls —
+/// so a `self.value.mapError(...)` / `Async.bracket(...)` here would be emitted
+/// with unsubstituted type params and fail codegen. Constructors and casts are
+/// substitution-safe, so we spell the bracket out with them.
+implement <T, E> Usable<T, E> for Resource<T, E> =
+    type Wrapped<U, E2> = Async<U, E2>
+    function use<U, E2>(self: Resource<T, E>, f: (T) => Async<U, E2>, errorF: (E) => E2): Async<U, E2> =
+        let acquired: Async<Any, Any> = Resource.acquire(self)
+        // mapError(errorF), inlined via FoldCause: lift acquire-failure `E` to `E2`.
+        let onCause: (Cause<Any>) => Async<Any, Any> = (cause: Cause<Any>) =>
+            match cause with
+                case Cause.Failed(error, trace) => FailCause<Any>(Cause.Failed(errorF(error as E), trace))
+                case Cause.Panicked(message, trace) => FailCause<Any>(Cause.Panicked(message, trace))
+                case Cause.Interrupted(trace) => FailCause<Any>(Cause.Interrupted(trace))
+        let acquiredE2: Async<Any, Any> =
+            FoldCause<Any, Any>(acquired, onCause, (value: Any) => Succeed(value))
+        // Acquire the pair; run the finalizer on release, the body on the value.
+        // Keep the result instantiation on the bracket's runtime identity.
+        // The `pair as (T, Finalizer)` casts are substituted to
+        // the concrete tuple type, so they match the value at runtime.
+        // The `use` block is a fiber scope, so fibers forked inside it are
+        // finalized before the finalizer runs.
+        let bracket: Async<U, E2> = Bracket<U, E2>(
+            acquiredE2,
+            (pair: Any, _: Result<Any, Cause<Any>>) => (pair as (T, Finalizer))._1(),
+            (pair: Any) => f((pair as (T, Finalizer))._0)
+        )
+        bracket

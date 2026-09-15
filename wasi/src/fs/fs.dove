@@ -1,0 +1,333 @@
+package standard.wasi.fs
+
+import standard.time.Instant
+import standard.wasi.AsyncCall
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.EndingLedger
+import standard.wasi.CopyOperation
+import standard.wasi.EventPayload
+import standard.wasi.Stream
+import standard.wasi.Waitable
+import standard.wasi.IoError
+
+/// p3 wasi:filesystem/types error-code.
+///
+/// `Canceled` is the one variant the host never produces: it is raised locally
+/// when an explicit `close` aborts an operation that was still in flight, so
+/// that "somebody closed this under me" is distinguishable from any I/O
+/// failure. Nothing lifts a wire code into it.
+public enum FileSystemError =
+    Access
+    Already
+    BadDescriptor
+    Busy
+    Deadlock
+    Quota
+    Exist
+    FileTooLarge
+    IllegalByteSequence
+    InProgress
+    Interrupted
+    Invalid
+    Io
+    IsDirectory
+    Loop
+    TooManyLinks
+    MessageSize
+    NameTooLong
+    NoDevice
+    NoEntry
+    NoLock
+    InsufficientMemory
+    InsufficientSpace
+    NotDirectory
+    NotEmpty
+    NotRecoverable
+    Unsupported
+    NoTty
+    NoSuchDevice
+    Overflow
+    NotPermitted
+    Pipe
+    ReadOnly
+    InvalidSeek
+    TextFileBusy
+    CrossDevice
+    Canceled
+    Other
+
+implement IoError for FileSystemError
+
+public enum DescriptorType =
+    BlockDevice
+    CharacterDevice
+    Directory
+    Fifo
+    SymbolicLink
+    RegularFile
+    Socket
+    Other
+
+public record FileFlags =
+    read: Bool
+    write: Bool
+    fileIntegritySync: Bool
+    dataIntegritySync: Bool
+    requestedWriteSync: Bool
+    mutateDirectory: Bool
+
+public record PathFlags =
+    symlinkFollow: Bool
+
+public record OpenFlags =
+    create: Bool
+    directory: Bool
+    exclusive: Bool
+    truncate: Bool
+
+public record MetadataHash =
+    lower: Int64
+    upper: Int64
+
+public enum FileAdvice =
+    Normal
+    Sequential
+    Random
+    WillNeed
+    DontNeed
+    NoReuse
+
+public record FileStat =
+    descriptorType: DescriptorType
+    linkCount: Int64
+    size: Int64
+    dataAccessTimestamp: Option<Instant>
+    dataModificationTimestamp: Option<Instant>
+    statusChangeTimestamp: Option<Instant>
+
+public record DirectoryEntry =
+    entryType: DescriptorType
+    name: String
+
+public enum NewTimestamp =
+    NoChange
+    Now
+    At(Instant)
+
+/// A filesystem descriptor (file or directory handle).
+public newtype FileDescriptor = Int32
+
+/// A byte stream tied to a file: the guest-held stream end plus the future
+/// resolving to the operation's final result when the stream ends.
+public record FsStream =
+    stream: Int32
+    resultFuture: Int32
+
+module FsStream =
+    /// This read stream as the component-model operation the runtime drives.
+    ///
+    /// Everything here is mechanical — which import posts the copy, how to lift
+    /// the bytes, which future says why the stream ended. Nothing decides what an
+    /// ending MEANS; that is `standard.io`'s job. Which is also why a WIT binding
+    /// generator could emit this: it knows the types, and the types are all it
+    /// needs.
+    public function componentRead(self): ComponentStreamRead<Array<Uint8>, FileSystemError> =
+        ComponentStreamRead<Array<Uint8>, FileSystemError> {
+            readable = Waitable(self.stream)
+            ending = () => FsStreamOps.readReadResult(self.resultFuture)
+            start = (capacity: Int32) => FsStreamOps.readStart(self.stream, capacity)
+            cancel = () => EventPayload(FsStreamOps.cancelRead(self.stream))
+            canceledError = FileSystemError.Canceled
+            // Constant on every raw record: the wrapper that makes this end
+            // closable replaces the probe (`withStillOpen`).
+            stillOpen = () => true
+            dropEnd = () =>
+                FsStreamOps.dropReadable(self.stream)
+                FsStreamOps.dropReadResult(self.resultFuture)
+            // Bytes: nothing owned to close, so the release is the buffer's.
+            discardElements = (copy: CopyOperation, count: Int32) => Stream.discard(copy)
+            lift = (copy: CopyOperation, count: Int32) => Stream.readFinish(copy, count)
+        }
+
+    /// This write stream as the component-model operation the runtime drives.
+    ///
+    /// Serves BOTH `writeViaStream` and `appendViaStream` FsStreams. The two
+    /// methods differ only in how the writable end is opened (at an offset, or
+    /// at the file's end); the end itself is the same `stream<u8>`, and its
+    /// lifecycle built-ins — `stream.write` (`writeStart`), `stream.cancel-write`
+    /// (`cancelWrite`), `stream.drop-writable` (`dropWritable`) — plus the
+    /// `future<result<_, error-code>>` result are keyed by type, not by the
+    /// method that produced the handle. So an append stream drives correctly
+    /// through the write-flavoured ops here; the append-flavoured `FsStreamOps`
+    /// (`appendWriteStart`/`readAppendResult`/`dropAppendResult`) resolve to the
+    /// very same canonical built-ins and exist only because wit-component emits
+    /// one lowering per method name.
+    public function componentWrite(self): ComponentStreamWrite<FileSystemError> =
+        ComponentStreamWrite<FileSystemError> {
+            writable = Waitable(self.stream)
+            ending = () => FsStreamOps.readWriteResult(self.resultFuture)
+            ledger = EndingLedger.fresh()
+            start = (bytes: ReadonlySlice<Uint8>) => FsStreamOps.writeStart(self.stream, bytes)
+            cancel = () => EventPayload(FsStreamOps.cancelWrite(self.stream))
+            canceledError = FileSystemError.Canceled
+            stillOpen = () => true
+            dropWritable = () => FsStreamOps.dropWritable(self.stream)
+            dropResult = () => FsStreamOps.dropWriteResult(self.resultFuture)
+        }
+
+    /// The directory-entry listing as a component-model read. One entry at a
+    /// time, so `lift` yields `None` at a count of zero — a listing that ended
+    /// has no entry to hand back — and the "did anything arrive" question lives
+    /// in the Option instead of a second hook.
+    ///
+    /// `read-directory` pairs a `future<result<_, error-code>>` like every other
+    /// p3 stream, and it is the listing's ONLY error channel — a host that gives
+    /// up half way through a directory ends the stream, which without reading
+    /// that future is indistinguishable from having listed the whole thing. So a
+    /// short listing would be reported as a complete one.
+    public function componentEntryRead(self): ComponentStreamRead<Option<DirectoryEntry>, FileSystemError> =
+        ComponentStreamRead<Option<DirectoryEntry>, FileSystemError> {
+            readable = Waitable(self.stream)
+            ending = () => FsStreamOps.readEntryResult(self.resultFuture)
+            start = (_: Int32) => FsStreamOps.entryReadStart(self.stream)
+            cancel = () => EventPayload(FsStreamOps.cancelEntryRead(self.stream))
+            canceledError = FileSystemError.Canceled
+            stillOpen = () => true
+            dropEnd = () =>
+                FsStreamOps.dropEntryReadable(self.stream)
+                FsStreamOps.dropEntryResult(self.resultFuture)
+            // An entry is plain data — nothing owned to close — but it is lifted
+            // through the finish intrinsic rather than `Stream.discard`ed,
+            // because only the intrinsic knows the pinned block's layout well
+            // enough to release everything the lowered entry hangs onto.
+            discardElements = (copy: CopyOperation, count: Int32) =>
+                liftDirectoryEntry(copy, count)
+                ()
+            lift = (copy: CopyOperation, count: Int32) => liftDirectoryEntry(copy, count)
+        }
+
+function liftDirectoryEntry(copy: CopyOperation, count: Int32): Option<DirectoryEntry> =
+    if count > 0 then
+        Some(FsStreamOps.entryReadFinish(copy))
+    else
+        Stream.discard(copy)
+        None
+
+module FileDescriptor =
+    // ── async methods (start/finish; await via AsyncCall + WaitableSet) ──
+
+    /// Start `open-at`. Finish with `openAtFinish` after completion.
+    public function openAtStart(self, pathFlags: PathFlags, path: String, openFlags: OpenFlags, flags: FileFlags): AsyncCall = intrinsic
+    public function openAtFinish(call: AsyncCall): Result<FileDescriptor, FileSystemError> = intrinsic
+
+    /// Start `stat`. Finish with `statFinish` after completion.
+    public function statStart(self): AsyncCall = intrinsic
+    public function statFinish(call: AsyncCall): Result<FileStat, FileSystemError> = intrinsic
+
+    /// Start `stat-at`. Finish with `statFinish` after completion.
+    public function statAtStart(self, pathFlags: PathFlags, path: String): AsyncCall = intrinsic
+
+    public function setSizeStart(self, size: Int64): AsyncCall = intrinsic
+    public function syncStart(self): AsyncCall = intrinsic
+    public function syncDataStart(self): AsyncCall = intrinsic
+    public function adviseStart(self, offset: Int64, length: Int64, advice: FileAdvice): AsyncCall = intrinsic
+
+    public function getFlagsStart(self): AsyncCall = intrinsic
+    public function getFlagsFinish(call: AsyncCall): Result<FileFlags, FileSystemError> = intrinsic
+    public function getTypeStart(self): AsyncCall = intrinsic
+    public function getTypeFinish(call: AsyncCall): Result<DescriptorType, FileSystemError> = intrinsic
+
+    public function isSameObjectStart(self, other: FileDescriptor): AsyncCall = intrinsic
+    public function isSameObjectFinish(call: AsyncCall): Bool = intrinsic
+
+    public function metadataHashStart(self): AsyncCall = intrinsic
+    public function metadataHashAtStart(self, pathFlags: PathFlags, path: String): AsyncCall = intrinsic
+    public function metadataHashFinish(call: AsyncCall): Result<MetadataHash, FileSystemError> = intrinsic
+
+    public function linkAtStart(self, oldPathFlags: PathFlags, oldPath: String, newDescriptor: FileDescriptor, newPath: String): AsyncCall = intrinsic
+    public function symlinkAtStart(self, oldPath: String, newPath: String): AsyncCall = intrinsic
+    public function renameAtStart(self, oldPath: String, newDescriptor: FileDescriptor, newPath: String): AsyncCall = intrinsic
+
+    public function readlinkAtStart(self, path: String): AsyncCall = intrinsic
+    public function readlinkAtFinish(call: AsyncCall): Result<String, FileSystemError> = intrinsic
+
+    public function setTimesStart(self, dataAccess: NewTimestamp, dataModification: NewTimestamp): AsyncCall = intrinsic
+    public function setTimesAtStart(self, pathFlags: PathFlags, path: String, dataAccess: NewTimestamp, dataModification: NewTimestamp): AsyncCall = intrinsic
+
+    /// Open a directory-entry stream: returns the readable end + result future.
+    public function readDirectory(self): FsStream = intrinsic
+
+    public function createDirectoryAtStart(self, path: String): AsyncCall = intrinsic
+    public function unlinkFileAtStart(self, path: String): AsyncCall = intrinsic
+    public function removeDirectoryAtStart(self, path: String): AsyncCall = intrinsic
+    /// Finish for async methods returning `result<_, error-code>`.
+    public function unitFinish(call: AsyncCall): Result<Unit, FileSystemError> = intrinsic
+
+    // ── streams ──
+
+    /// Open a read stream at `offset`: returns the readable end + result future.
+    public function readViaStream(self, offset: Int64): FsStream = intrinsic
+    /// Open a write stream at `offset`: returns the writable end + result future.
+    public function writeViaStream(self, offset: Int64): FsStream = intrinsic
+    /// Open an append stream: returns the writable end + result future.
+    public function appendViaStream(self): FsStream = intrinsic
+
+    public function close(self): Unit = intrinsic
+
+    /// The preopened directories granted to this program.
+    public function preopens(): Array<(FileDescriptor, String)> = intrinsic
+
+/// Posted stream operations on file streams.
+module FsStreamOps =
+    /// Post an async read of up to `capacity` bytes (from a `readViaStream` stream).
+    public function readStart(stream: Int32, capacity: Int32): CopyOperation = intrinsic
+    /// Post an async write of the bounded byte view to a `writeViaStream` stream.
+    public function writeStart(stream: Int32, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+    /// Post an async write of the bounded byte view (to an `appendViaStream` stream).
+    public function appendWriteStart(stream: Int32, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+    /// Cancel an in-flight read; returns the raw cancel status
+    /// (`code | count << 4`) so a raced completion's bytes are not lost.
+    public function cancelRead(stream: Int32): Int32 = intrinsic
+    /// Cancel an in-flight write on a write/append stream (before dropping the writable).
+    public function cancelWrite(stream: Int32): Int32 = intrinsic
+    /// Cancel an in-flight directory-entry read (before dropping the readable).
+    public function cancelEntryRead(stream: Int32): Int32 = intrinsic
+    /// Drop the readable end of a read stream.
+    public function dropReadable(stream: Int32): Unit = intrinsic
+    /// Drop the writable end of a write/append stream (signals end of data).
+    public function dropWritable(stream: Int32): Unit = intrinsic
+    /// Read the read stream's result future to learn how the stream ended:
+    /// `Ok` = clean EOF, `Error` = an I/O failure. Reads synchronously (the
+    /// future is resolved once the stream is dropped); reports `Ok` if not ready.
+    public function readReadResult(future: Int32): Result<Unit, FileSystemError> = intrinsic
+    /// Read the write stream's result future to learn why a write was dropped:
+    /// `Ok` = clean close, `Error` = an I/O failure. Same synchronous,
+    /// cancel-if-blocked shape as `readReadResult`.
+    public function readWriteResult(future: Int32): Result<Unit, FileSystemError> = intrinsic
+    /// Read the append stream's result future to learn why an append was
+    /// dropped: `Ok` = clean close, `Error` = an I/O failure. Same synchronous,
+    /// cancel-if-blocked shape as `readReadResult`. `append-via-stream` pairs
+    /// the SAME `future<result<_, error-code>>` type as `write-via-stream`, so
+    /// this resolves to the same canonical `future.read` built-in as
+    /// `readWriteResult` — a separate import in name only (wit-component emits
+    /// one lowering per method), and freely interchangeable with it.
+    public function readAppendResult(future: Int32): Result<Unit, FileSystemError> = intrinsic
+    /// Read the directory-entry stream's result future to learn how the listing
+    /// ended: `Ok` = the whole directory was listed, `Error` = the host gave up
+    /// part-way. Same synchronous, cancel-if-blocked shape as `readReadResult`.
+    public function readEntryResult(future: Int32): Result<Unit, FileSystemError> = intrinsic
+    /// Drop a read stream's result future without reading it.
+    public function dropReadResult(future: Int32): Unit = intrinsic
+    /// Drop a write stream's result future without reading it.
+    public function dropWriteResult(future: Int32): Unit = intrinsic
+    /// Drop an append stream's result future without reading it.
+    public function dropAppendResult(future: Int32): Unit = intrinsic
+    /// Post an async read of ONE directory entry (from `readDirectory`).
+    public function entryReadStart(stream: Int32): CopyOperation = intrinsic
+    /// Lift the completed entry read (count must be 1) and free its buffers.
+    public function entryReadFinish(op: CopyOperation): DirectoryEntry = intrinsic
+    /// Drop the readable end of a directory-entry stream.
+    public function dropEntryReadable(stream: Int32): Unit = intrinsic
+    /// Drop a directory stream's result future without reading it.
+    public function dropEntryResult(future: Int32): Unit = intrinsic

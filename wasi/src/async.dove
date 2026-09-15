@@ -1,0 +1,309 @@
+package standard.wasi
+
+/// Marker trait for the error type of an I/O stream. Concrete host areas
+/// (cli, filesystem, sockets) each define an error newtype implementing it.
+public trait IoError
+
+/// A component-model waitable-set: the primitive for waiting on completion
+/// events (subtask returns, stream read/write completions). One event loop
+/// (or one blocking wait site) owns a set and joins waitables into it.
+public newtype WaitableSet = Int32
+
+/// A component-model waitable handle: a subtask or a stream/future end that
+/// can be joined into a `WaitableSet` and whose completion is delivered as a
+/// `WaitableEvent`. An opaque Int32 the host assigns; it may be reused after
+/// the waitable is dropped, so never key long-lived state on its raw value
+/// across a drop.
+public newtype Waitable = Int32
+
+implement Default for Waitable =
+    public property default: Waitable = Waitable(0)
+
+implement Hashable for Waitable =
+    function hash(self): Int64 = self.value.toInt64()
+
+implement Equatable for Waitable =
+    function equals(self, other: Waitable): Bool = self.value == other.value
+
+/// How a copy ended. The component model calls what `stream.read`, `stream.write`
+/// and their `future` counterparts do a *copy*, and gives the outcome these three
+/// cases (canonical ABI `CopyResult`).
+///
+/// `Dropped` is not by itself a failure: the other end is gone, which for a reader
+/// is end-of-input and for a writer is a vanished reader. Either way it can still
+/// carry a non-zero count — whatever it counts was copied before the end went away.
+public enum CopyResult =
+    Completed
+    Dropped
+    Cancelled
+
+module CopyResult =
+    /// Decode the canonical ABI's low four bits.
+    public function ofCode(code: Int32): CopyResult =
+        if code == 0 then CopyResult.Completed
+        else if code == 1 then CopyResult.Dropped
+        else if code == 2 then CopyResult.Cancelled
+        // Codes 3..15 are undefined. Fail loudly on an ABI violation rather than reporting
+        // a phantom successful copy — a silent `Completed` would feed the empty-copy retry
+        // loop or deliver bytes as if all were well (matches `deliver`'s unknown-event panic).
+        else panic "CopyResult.ofCode: invalid canonical-ABI copy status code"
+
+    public property code(self): Int32 =
+        match self with
+            case CopyResult.Completed => 0
+            case CopyResult.Dropped => 1
+            case CopyResult.Cancelled => 2
+
+implement Equatable for CopyResult =
+    function equals(self, other: CopyResult): Bool = self.code == other.code
+
+/// The payload of one completion event: a single packed word whose meaning is
+/// decided by the event code, not by the value.
+///
+/// Two encodings share this one slot, because one parking primitive serves both
+/// kinds of completion:
+///   * subtask events (code 1) carry the subtask state — 2 = returned;
+///   * stream and future read/write events (codes 2-5) pack
+///     `CopyResult | count << 4`.
+///
+/// So the accessors below are named for the encoding they decode rather than
+/// offered as plain `result`/`count`: reading `copyCount` off a subtask payload
+/// is nonsense, and the name is the only thing that says so.
+public newtype EventPayload = Int32
+
+module EventPayload =
+    /// Pack a stream completion exactly as the host delivers one, so an op that
+    /// completed synchronously and one delivered through the event loop are the
+    /// same value and can go down one code path. See `CopyOperation.packed`.
+    public function ofCopy(result: CopyResult, count: Int32): EventPayload =
+        EventPayload((count << 4) | result.code)
+
+    /// How the copy ended (stream and future read/write events).
+    public property copyResult(self): CopyResult = CopyResult.ofCode(self.value & 15)
+
+    /// Elements copied. Meaningful on a `Dropped` completion too — a stream that
+    /// ended mid-copy still reports what it transferred before ending.
+    ///
+    /// Masked, because the count occupies the packed word's top 28 bits and
+    /// `>>` is an arithmetic shift: a count of 2²⁷ or more (a 128MiB byte copy)
+    /// sets bit 31 and would otherwise decode as a negative length.
+    public property copyCount(self): Int32 = (self.value >> 4) & 0x0FFFFFFFi32
+
+    /// SubtaskHandle state (event 1): 2 = the call returned.
+    public property subtaskState(self): Int32 = self.value
+
+/// One event delivered by `WaitableSet.wait`: the event code, the waitable
+/// that fired, and its packed payload.
+///
+/// Event codes: 1 = subtask state change, 2 = stream read completion,
+/// 3 = stream write completion, 4 = future read completion, 5 = future write
+/// completion, 6 = cancelled. See `EventPayload` for how the payload is encoded
+/// for each. Futures get their own two codes rather than reusing the stream
+/// pair, so a completion tells you which end space the waitable belongs to.
+public record WaitableEvent =
+    event: Int32
+    index: Waitable
+    payload: EventPayload
+
+module WaitableEvent =
+    /// Component-model event codes.
+    public property isSubtask(self): Bool = self.event == 1
+    public property isStreamRead(self): Bool = self.event == 2
+    public property isStreamWrite(self): Bool = self.event == 3
+    public property isFutureRead(self): Bool = self.event == 4
+    public property isFutureWrite(self): Bool = self.event == 5
+    public property isCancelled(self): Bool = self.event == 6
+    /// How the copy ended, from a stream/future read/write event payload.
+    public property copyResult(self): CopyResult = self.payload.copyResult
+    /// Elements copied, from a stream/future read/write event payload.
+    public property copyCount(self): Int32 = self.payload.copyCount
+
+module WaitableSet =
+    public function make(): WaitableSet = intrinsic
+    /// Add a waitable (subtask or stream end) to this set. A waitable
+    /// belongs to at most one set; joining moves it.
+    public function join(self, waitable: Waitable): Unit = intrinsic
+    /// Remove a waitable from whatever set it is in. A set must be empty
+    /// before `close`.
+    public function remove(waitable: Waitable): Unit = intrinsic
+    /// Block until an event arrives for a member of this set. Blocking is
+    /// legal anywhere in Dovetail code: every export is async-typed, so the
+    /// host parks this task and keeps running others.
+    public function wait(self): WaitableEvent = intrinsic
+    /// Give host tasks a scheduling turn without waiting for a specific event.
+    public function yieldToHost(): Unit = intrinsic
+    /// Check for one ready event without waiting for a future completion.
+    public function poll(self): Option<WaitableEvent> =
+        let event = self.pollEvent()
+        if event.event == 0 then None else Some(event)
+    function pollEvent(self): WaitableEvent = intrinsic
+    public function close(self): Unit = intrinsic
+
+/// An in-flight async call (component-model subtask handle).
+public newtype SubtaskHandle = Int32
+
+module SubtaskHandle =
+    /// This subtask as a waitable handle (to join into a `WaitableSet`).
+    public property waitable(self): Waitable = Waitable(self.value)
+
+    /// Release a finished subtask. Must be called exactly once after the
+    /// terminal event was received (or after `cancel` resolved).
+    public function drop(self): Unit = intrinsic
+    /// Cancel an in-flight subtask. Returns the resolution state: 2 if the
+    /// call had already returned (its result remains valid), 4 if it was
+    /// cancelled before returning. Traps if the terminal event was already
+    /// delivered — never cancel after receiving the subtask's event.
+    public function cancel(self): Int32 = intrinsic
+
+/// A started async import call, packing the canonical ABI result and the
+/// pinned result buffer: high 32 bits = `state | subtask << 4`
+/// (state 1 = started, 2 = returned), low 32 bits = the pinned retptr
+/// (0 when the import returns nothing).
+public newtype AsyncCall = Int64
+
+module AsyncCall =
+    /// The canonical ABI state (low 4 bits of the packed result):
+    /// 2 means the call completed synchronously and the result is ready.
+    public property state(self): Int32 =
+        (self.value >> 32i64).toInt32() & 15
+
+    /// The subtask handle (only meaningful when `state` is 1 = started).
+    ///
+    /// Masked like the copy counts: the handle is the status word's top 28
+    /// bits, so an index of 2²⁷ or more sets bit 63 of the packed value and the
+    /// arithmetic shift would carry sign bits down into it. Unreachable in
+    /// practice — that many live subtasks would exhaust memory long first — but
+    /// the decode should not depend on the magnitude of a host-assigned index.
+    public property subtask(self): SubtaskHandle =
+        SubtaskHandle((self.value >> 36i64).toInt32() & 0x0FFFFFFFi32)
+
+    /// The pinned result-buffer pointer (0 = no result).
+    public property retptr(self): Int32 =
+        self.value.toInt32()
+
+    /// Did the call complete synchronously?
+    public property returned(self): Bool = self.state == 2
+
+    /// Is the call still in flight (subtask started)?
+    public property started(self): Bool = self.state == 1
+
+    /// Free the call's pinned result block without reading it. Needed when a
+    /// parked fiber is interrupted: the matching `*Finish` — which is what
+    /// normally frees the block — never runs on that path. A no-op for imports
+    /// that carry no result buffer (`retptr` 0).
+    public function discard(self): Unit = intrinsic
+
+/// One posted copy — a `stream.read`, `stream.write`, or the `future`
+/// equivalents — packing the raw canonical ABI result in the high 32 bits
+/// (-1 = the `BLOCKED` sentinel, else `CopyResult | count << 4`) and the pinned
+/// buffer in the low 32 bits.
+public newtype CopyOperation = Int64
+
+module CopyOperation =
+    /// Did the copy return the `BLOCKED` sentinel — will it execute
+    /// concurrently? Its completion then arrives as a waitable event.
+    public property blocked(self): Bool =
+        (self.value >> 32i64).toInt32() == -1
+
+    /// How the copy ended. Only valid when not blocked.
+    public property result(self): CopyResult =
+        CopyResult.ofCode((self.value >> 32i64).toInt32() & 15)
+
+    /// Elements copied. Only valid when not blocked.
+    ///
+    /// Masked for the same reason as `EventPayload.copyCount`: the count is the
+    /// top 28 bits of the status word, and an arithmetic shift would decode a
+    /// count of 2²⁷ or more as negative.
+    public property count(self): Int32 =
+        ((self.value >> 32i64).toInt32() >> 4) & 0x0FFFFFFFi32
+
+    /// This completion as the `EventPayload` the event loop would have
+    /// delivered, so a synchronous completion and a delivered one are the same
+    /// value and go down one code path. Only valid when not blocked.
+    public property packed(self): EventPayload =
+        EventPayload.ofCopy(self.result, self.count)
+
+    /// The pinned buffer this copy reads into or writes out of.
+    public property buffer(self): Int32 =
+        self.value.toInt32()
+
+/// Area-independent helpers for pinned stream buffers.
+module Stream =
+    /// Copy `count` bytes out of a read op's pinned buffer into a fresh
+    /// array and free the buffer.
+    public function readFinish(op: CopyOperation, count: Int32): Array<Uint8> = intrinsic
+    /// Free a posted op's pinned buffer without copying (dropped/cancelled).
+    public function discard(op: CopyOperation): Unit = intrinsic
+
+// --- Tests ---
+
+test "CopyResult: the canonical ABI codes round-trip" =
+    assert CopyResult.ofCode(0i32) == CopyResult.Completed
+    assert CopyResult.ofCode(1i32) == CopyResult.Dropped
+    assert CopyResult.ofCode(2i32) == CopyResult.Cancelled
+    assert CopyResult.Completed.code == 0i32
+    assert CopyResult.Dropped.code == 1i32
+    assert CopyResult.Cancelled.code == 2i32
+
+test "EventPayload: a copy completion round-trips its result and count" =
+    let completion = EventPayload.ofCopy(CopyResult.Completed, 4096i32)
+    assert completion.copyResult == CopyResult.Completed
+    assert completion.copyCount == 4096i32
+
+test "EventPayload: a Dropped completion still carries its count" =
+    // The invariant every completion handler depends on: a stream that ended
+    // mid-copy reports how much it transferred before ending, and those elements
+    // have already moved. Reading the result without the count silently truncates
+    // the last chunk into a clean end-of-stream.
+    let completion = EventPayload.ofCopy(CopyResult.Dropped, 17i32)
+    assert completion.copyResult == CopyResult.Dropped
+    assert completion.copyCount == 17i32
+
+test "CopyOperation: a synchronous completion equals the delivered one" =
+    // `CopyOperation.packed` exists so a copy that completed synchronously and one
+    // delivered through the event loop are the same value. Pins that they really
+    // are: raw ABI result in the high word, pinned buffer in the low.
+    let raw = ((3i32 << 4) | 1i32).toInt64()
+    let operation = CopyOperation((raw << 32i64) | 512i64)
+    assert !operation.blocked
+    assert operation.buffer == 512i32
+    assert operation.result == CopyResult.Dropped
+    assert operation.count == 3i32
+    assert operation.packed.value == EventPayload.ofCopy(operation.result, operation.count).value
+
+test "EventPayload: a count that reaches into the sign bit stays positive" =
+    // The count is the packed word's top 28 bits, so 2²⁷ elements — a 128MiB
+    // byte copy, which a single `readAll` on a large file reaches — sets bit 31.
+    // Decoded with a bare arithmetic shift it comes back negative: the read side
+    // then lifts an array of negative length (a trap), and the write side's
+    // retry loop moves its offset backwards and posts a length past the end of
+    // the array on the next round.
+    let big = EventPayload.ofCopy(CopyResult.Completed, 134217728i32)
+    assert big.copyResult == CopyResult.Completed
+    assert big.copyCount == 134217728i32
+    // The widest count the encoding can carry.
+    let widest = EventPayload.ofCopy(CopyResult.Dropped, 268435455i32)
+    assert widest.copyResult == CopyResult.Dropped
+    assert widest.copyCount == 268435455i32
+
+test "CopyOperation: a synchronous count that reaches into the sign bit stays positive" =
+    // Same encoding, reached through the other door: a copy that completed
+    // without blocking reports its count in the status word's top 28 bits.
+    let big = CopyOperation((((134217728i32 << 4) | 0i32).toInt64() << 32i64) | 256i64)
+    assert !big.blocked
+    assert big.result == CopyResult.Completed
+    assert big.count == 134217728i32
+    assert big.buffer == 256i32
+    let widest = CopyOperation((((268435455i32 << 4) | 1i32).toInt64() << 32i64) | 512i64)
+    assert !widest.blocked
+    assert widest.result == CopyResult.Dropped
+    assert widest.count == 268435455i32
+    assert widest.packed.copyCount == 268435455i32
+
+test "CopyOperation: the BLOCKED sentinel is not a result" =
+    let operation = CopyOperation((-1i64 << 32i64) | 64i64)
+    assert operation.blocked
+    assert operation.buffer == 64i32
+
+test "EventPayload: a subtask payload reads as its state" =
+    assert EventPayload(2i32).subtaskState == 2i32

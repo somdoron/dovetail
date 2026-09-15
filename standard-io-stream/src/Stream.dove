@@ -1,0 +1,233 @@
+module standard.io.stream.Stream<T, E>
+
+import standard.io.Async
+import standard.io.AsyncOutputStream
+import standard.io.AsyncInputStream
+import standard.wasi.IoError
+import standard.io.Queue
+import standard.io.Resource
+import standard.time.Duration
+
+public property empty: Stream<T, E> = StreamEmpty<T, E>()
+
+public function fromChunk(chunk: ByName<ReadonlySlice<T>>): Stream<T, E> =
+    StreamFromChunk<T, E>(Async.thunk(() => chunk.get))
+
+public function succeed(value: ByName<T>): Stream<T, E> = Stream<T, E>.fromChunk(Array.fill(1, value.get).readonly)
+
+public function fail(error: ByName<E>): Stream<T, E> = Stream<T, E>.fromAsync(Async.fail(error.get))
+
+public function fromList(values: ByName<List<T>>): Stream<T, E> =
+    let chunk: Async<ReadonlySlice<T>, Never> = async do
+        await Stream<T, E>.listChunk(values.get)
+    StreamFromChunk<T, E>(chunk)
+
+internal async function listChunk(values: List<T>): Async<ReadonlySlice<T>, Never> =
+    if values.isEmpty then Array<T>.empty().readonly
+    else
+        let length = values.length
+        let result = Array.fill(length, values.head)
+        let mutable remaining = values
+        let mutable index = 0
+        while index < length do
+            result[index] = remaining.head
+            remaining = remaining.tail
+            index = index + 1
+            if index % 256 == 0 then await Async.yieldNow()
+        result.readonly
+
+public function fromAsync(effect: ByName<Async<T, E>>): Stream<T, E> =
+    let chunk: Async<ReadonlySlice<T>, E> = async do
+        let value = await effect.get
+        Array.fill(1, value).readonly
+    StreamFromChunk<T, E>(chunk)
+
+/// Takes one item per pull, waiting when the queue is empty. The stream has no EOF.
+public function fromQueue(queue: ByName<Queue<T>>): Stream<T, E> where T: Default =
+    Stream<T, E>.unfoldChunkAsync(queue.get, async (current: Queue<T>) =>
+        let value = await current.take()
+        (Array.fill(1, value).readonly, current)
+    )
+
+public function fromResource(resource: ByName<Resource<T, E>>): Stream<T, E> = Stream<T, E>.fromAsync(resource.get.attachToScope())
+
+public function bracket(acquire: ByName<Async<T, E>>, release: (T) => Async<Unit, Never>): Stream<T, E> =
+    Stream<T, E>.fromResource(Resource.make(() => acquire.get, release))
+
+public function unfoldChunkAsync<S>(initial: ByName<S>, step: (S) => Async<(ReadonlySlice<T>, S), Option<E>>): Stream<T, E> =
+    let advance: (Any) => Async<(ReadonlySlice<T>, Any), Option<E>> = (state: Any) =>
+        step(state as S).map((pair: (ReadonlySlice<T>, S)) =>
+            let next: Any = pair._1
+            (pair._0, next)
+        )
+    StreamUnfold<T, S, E>(() => initial.get, advance)
+
+public function unfoldAsync<S>(initial: ByName<S>, step: (S) => Async<(T, S), Option<E>>): Stream<T, E> =
+    Stream<T, E>.unfoldChunkAsync(initial.get, async (state: S) =>
+        let (value, next) = await step(state)
+        (Array.fill(1, value).readonly, next)
+    )
+
+public function unfold<S>(initial: ByName<S>, step: (S) => Option<(T, S)>): Stream<T, E> =
+    Stream<T, E>.unfoldAsync(initial.get, async (state: S) =>
+        match step(state) with
+        case Some(result) => result
+        case None => await Async<(T, S), Option<E>>.fail(None)
+    )
+
+public function unfoldChunk<S>(initial: ByName<S>, step: (S) => Option<(ReadonlySlice<T>, S)>): Stream<T, E> =
+    Stream<T, E>.unfoldChunkAsync(initial.get, async (state: S) =>
+        match step(state) with
+        case Some(result) => result
+        case None => await Async<(ReadonlySlice<T>, S), Option<E>>.fail(None)
+    )
+
+public function repeatAsync(effect: ByName<Async<T, E>>): Stream<T, E> =
+    Stream<T, E>.repeatAsyncOption(effect.get.mapError((error: E) => Some(error)))
+
+public function repeatAsyncChunk(effect: ByName<Async<ReadonlySlice<T>, E>>): Stream<T, E> =
+    Stream<T, E>.repeatAsyncChunkOption(effect.get.mapError((error: E) => Some(error)))
+
+public function repeatAsyncOption(effect: ByName<Async<T, Option<E>>>): Stream<T, E> =
+    Stream<T, E>.unfoldAsync((), async (_: Unit) =>
+        let value = await effect.get
+        (value, ())
+    )
+
+public function repeatAsyncChunkOption(effect: ByName<Async<ReadonlySlice<T>, Option<E>>>): Stream<T, E> =
+    Stream<T, E>.unfoldChunkAsync((), async (_: Unit) =>
+        let chunk = await effect.get
+        (chunk, ())
+    )
+
+/// Runs immediately, then waits the interval before each subsequent repetition.
+public function repeatAsyncWithInterval(effect: ByName<Async<T, E>>, interval: Duration): Stream<T, E> =
+    Stream<T, E>.unfoldAsync(true, async (first: Bool) =>
+        if !first then await Async<Unit, Never>.sleep(interval)
+        let value = await effect.get.mapError((error: E) => Some(error))
+        (value, false)
+    )
+
+/// Waits the duration before every tick, including the first.
+public function tick(interval: Duration): Stream<Unit, E> =
+    Stream<Unit, E>.repeatAsync(Async<Unit, Never>.sleep(interval))
+
+public function mapChunks<U>(self, f: (ReadonlySlice<T>) => ReadonlySlice<U>): Stream<U, E> =
+    self.mapChunksAsync((chunk: ReadonlySlice<T>) => Async.thunk(() => f(chunk)))
+
+public function mapChunksAsync<U>(self, f: (ReadonlySlice<T>) => Async<ReadonlySlice<U>, E>): Stream<U, E> =
+    StreamTransform<T, U, E>(self, async (chunk: ReadonlySlice<Any>) =>
+        let input: Any = chunk
+        await f(input as ReadonlySlice<T>)
+    )
+
+public function map<U>(self, f: (T) => U): Stream<U, E> =
+    self.mapChunksAsync(async (chunk: ReadonlySlice<T>) =>
+        if chunk.isEmpty() then Array<U>.empty().readonly
+        else
+            let values = Array.fill(chunk.length, f(chunk[0]))
+            let mutable index = 1
+            while index < chunk.length do
+                if index % 256 == 0 then await Async.yieldNow()
+                values[index] = f(chunk[index])
+                index = index + 1
+            values.readonly
+    )
+
+public function filter(self, predicate: (T) => Bool): Stream<T, E> =
+    self.mapChunksAsync(async (chunk: ReadonlySlice<T>) =>
+        if chunk.isEmpty() then chunk
+        else
+            let values = Array.fill(chunk.length, chunk[0])
+            let mutable length = 0
+            let mutable index = 0
+            while index < chunk.length do
+                if index % 256 == 0 then await Async.yieldNow()
+                let value = chunk[index]
+                if predicate(value) then
+                    values[length] = value
+                    length = length + 1
+                index = index + 1
+            values.readonly.take(length)
+    )
+
+/// Processes one item per pull and emits singleton chunks.
+public function mapAsync<U>(self, f: (T) => Async<U, E>): Stream<U, E> =
+    StreamTransformItem<T, U, E>(self, (value: Any) => f(value as T).map((result: U) => Array.fill(1, result).readonly))
+
+public function filterAsync(self, predicate: (T) => Async<Bool, E>): Stream<T, E> =
+    StreamTransformItem<T, T, E>(self, (value: Any) => predicate(value as T).map((keep: Bool) =>
+        if keep then Array.fill(1, value as T).readonly else Array<T>.empty().readonly
+    ))
+
+public function take(self, count: Int32): Stream<T, E> =
+    if count <= 0 then Stream<T, E>.empty else StreamTake<T, E>(self, count)
+
+public function drop(self, count: Int32): Stream<T, E> =
+    if count <= 0 then self else StreamDrop<T, E>(self, count)
+
+public function concat(self, other: ByName<Stream<T, E>>): Stream<T, E> =
+    StreamConcat<T, E>(self, () => other.get)
+
+public function flatMap<U>(self, f: (T) => Stream<U, E>): Stream<U, E> =
+    StreamFlatMap<T, U, E>(self, (value: Any) => f(value as T))
+
+public function repeat(self): Stream<T, E> = StreamRepeat<T, E>(self)
+
+public function catchAll<E2>(self, f: (E) => Stream<T, E2>): Stream<T, E2> =
+    StreamRecover<T, E, E2>(self, (error: Any) => f(error as E))
+
+public function mapError<E2>(self, f: (E) => E2): Stream<T, E2> =
+    self.catchAll((error: E) => Stream<T, E2>.fail(f(error)))
+
+public function ensuring(self, finalizer: ByName<Async<Unit, Never>>): Stream<T, E> =
+    let resource: Resource<Unit, E> = Resource.make(() => Async.succeed(()), (_: Unit) => finalizer.get)
+    Stream<Unit, E>.fromResource(resource).flatMap((_: Unit) => self)
+
+public function rechunk(self, size: Int32): Stream<T, E> =
+    assert size > 0, "rechunk size must be positive"
+    StreamRechunk<T, E>(self, size, (items: List<Any>, count: Int32) => StreamExecution.assembleChunk<T>(items, count))
+
+public function merge(self, other: ByName<Stream<T, E>>): Stream<T, E> = Stream<T, E>.mergeAll([self, other.get])
+
+public function mergeAll(streams: ByName<List<Stream<T, E>>>): Stream<T, E> =
+    StreamMerge<T, E>(() => streams.get)
+
+public function foreachChunk(self, f: (ReadonlySlice<T>) => Async<Unit, E>): Async<Unit, E> =
+    let consume: (ReadonlySlice<Any>) => Async<Unit, Any> = async (chunk: ReadonlySlice<Any>) =>
+        let values: Any = chunk
+        await f(values as ReadonlySlice<T>)
+    StreamExecution.consume(self, consume).mapError((error: Any) => error as E)
+
+public function foreach(self, f: (T) => Async<Unit, E>): Async<Unit, E> =
+    self.foreachChunk(async (chunk: ReadonlySlice<T>) =>
+        let mutable index = 0
+        while index < chunk.length do
+            if index % 256 == 0 then await Async.yieldNow()
+            await f(chunk[index])
+            index = index + 1
+    )
+
+public function drain(self): Async<Unit, E> = self.foreachChunk((_: ReadonlySlice<T>) => Async.succeed(()))
+
+public function fold<S>(self, initial: ByName<S>, f: (S, T) => S): Async<S, E> =
+    StreamExecution.fold<S>(self, initial.get, (state: S, value: Any) => f(state, value as T))
+        .mapError((error: Any) => error as E)
+
+public async function runCollect(self): Async<List<T>, E> =
+    let result = await self.fold<List<T>>(List.empty, (values: List<T>, value: T) => List.Cons(value, values))
+    result.reverse()
+
+/// Borrow an input handle. The surrounding resource scope owns its lifetime.
+public function fromInputStream(input: AsyncInputStream<E>, chunkSize: Int64): Stream<Uint8, E> where E: IoError =
+    assert chunkSize > 0i64, "input stream chunk size must be positive"
+    Stream<Uint8, E>.repeatAsyncChunkOption(Stream<T, E>.readInputChunk(input, chunkSize))
+
+private async function readInputChunk(input: AsyncInputStream<E>, chunkSize: Int64): Async<ReadonlySlice<Uint8>, Option<E>> where E: IoError =
+    let bytes = await input.read(chunkSize).mapError((error: E) => Some(error))
+    if bytes.length == 0 then await Async<ReadonlySlice<Uint8>, Option<E>>.fail(None)
+    else bytes.readonly
+
+/// Await each chunk write. The caller decides when to flush or close.
+public function writeToOutputStream(self, output: AsyncOutputStream<E>): Async<Unit, E> where T: Uint8, E: IoError =
+    self.foreachChunk(async (chunk: ReadonlySlice<T>) => await output.write(chunk))

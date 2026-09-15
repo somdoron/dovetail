@@ -1,0 +1,4 @@
+package standard.prelude
+
+/// A compiler-provided shape constraint satisfied only by actual tuples.
+public trait Tuple

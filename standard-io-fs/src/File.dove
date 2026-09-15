@@ -1,0 +1,86 @@
+package standard.io.fs
+
+import standard.wasi.fs.FileSystemError
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Resource
+import standard.text.Charset
+
+// =============================================================================
+// `File` is a module-only namespace — there is no `File` type. Stream/FD
+// lifecycle is handled by the shared helpers in `intrinsics.dove`:
+// `openFileFdResource` (FD), `inputStreamResource`/`outputStreamResource`
+// (WASI stream), `parentResource` (for path-relative one-shot ops).
+// =============================================================================
+
+module File =
+
+    // --- Stream constructors -----------------------------------------------
+
+    /// Open `path` for reading. The returned `Resource` owns both the FD and
+    /// the WASI input stream — `use` it for guaranteed LIFO cleanup.
+    public function openInputStream(path: Path): Resource<AsyncInputStream<FileSystemError>, FileStreamError> =
+        openFileFdResource(path, openFlagsOpenExisting(), fileFlagsRead())
+            .andThen<AsyncInputStream<FileSystemError>>(fileDescriptor => inputStreamResource(fileDescriptor))
+
+    /// Open `path` for writing (create-or-truncate). The returned `Resource`
+    /// owns both the FD and the WASI output stream.
+    public function openOutputStream(path: Path): Resource<AsyncOutputStream<FileSystemError>, FileStreamError> =
+        openFileFdResource(path, openFlagsCreateOrTruncate(), fileFlagsWrite())
+            .andThen<AsyncOutputStream<FileSystemError>>(fileDescriptor => outputStreamResource(fileDescriptor))
+
+    // --- One-shot read helpers ---------------------------------------------
+
+    /// Read the entire file at `path`, decoding with the given charset.
+    /// Default charsets will be supported once Dovetail has default parameters;
+    /// for now callers pass `Charset.Utf8` explicitly.
+    public async function readString(path: Path, charset: Charset): Async<String, FileStreamError> =
+        let bytes = await File.readBytes(path)
+        match charset with
+            case Charset.Utf8 => String.fromBytes(bytes, 0, bytes.length)
+            case _ => await Async.fail(FileStreamError.InvalidEncoding)
+
+    public async function readBytes(path: Path): Async<Array<Uint8>, FileStreamError> =
+        let stream = use File.openInputStream(path)
+        await stream.readAll().mapError(mapWasiError)
+
+    // --- One-shot write helpers --------------------------------------------
+
+    /// Write `content` to `path` in the given charset. Default charsets will
+    /// be supported once Dovetail has default parameters; for now callers pass
+    /// `Charset.Utf8` explicitly.
+    public async function writeString(path: Path, content: String, charset: Charset): Async<Unit, FileStreamError> =
+        match charset with
+            case Charset.Utf8 => await File.writeBytes(path, content.bytes())
+            case _ => await Async.fail(FileStreamError.InvalidEncoding)
+
+    public async function writeBytes(path: Path, content: Array<Uint8>): Async<Unit, FileStreamError> =
+        let stream = use File.openOutputStream(path)
+        await stream.write(content.readonly).mapError(mapWasiError)
+        // `write` resolving only means the host accepted the bytes. A disk that
+        // fills while they are being flushed reports on the stream's result
+        // future, which `close` ends the stream to read — without it this returns
+        // Ok over a truncated file. The `use` above closes the stream either way;
+        // what closing it here adds is somewhere for that error to go.
+        await stream.close().mapError(mapWasiError)
+
+    // --- Misc --------------------------------------------------------------
+
+    /// Remove a regular file at `path`. Parent FD lifecycle handled by
+    /// `parentResource` (closed if walked, not closed if preopen).
+    public async function remove(path: Path): Async<Unit, FileStreamError> =
+        let pair = use parentResource(path)
+        let result = await unlinkFileAtAsync(pair._0, pair._1)
+        await Async.fromResult(result.mapError(mapWasiError))
+
+    /// True iff a regular file (not a directory) exists at `path`.
+    public async function exists(path: Path): Async<Bool, FileStreamError> =
+        let pair = use parentResource(path)
+        let statResult = await statAtAsync(pair._0, defaultPathFlagsFollow(), pair._1)
+        match statResult with
+            case Ok(s) =>
+                match descriptorTypeToEntryType(s.descriptorType) with
+                    case EntryType.File => true
+                    case _ => false
+            case Error(_) => false

@@ -1,0 +1,62 @@
+package standard.io
+
+import standard.collection.MutableStack
+import standard.collection.MutableSet
+
+/// Scheduler registrations for one condition. Entries remain weak fiber handles.
+public class Waiter private (internal suspended: MutableStack<FiberId>) =
+    internal function make(): Waiter = Waiter(MutableStack<FiberId>.new())
+
+// Shared filler for unused hash-table slots. Scheduler conditions always use
+// make() instead, so they never register fibers on this placeholder.
+let defaultWaiter: Waiter = Waiter.make()
+
+implement Default for Waiter =
+    public property default: Waiter = defaultWaiter
+
+implement Equatable for Waiter =
+    public function equals(self, other: Waiter): Bool = ClassIdentity.equals(self, other)
+
+implement Hashable for Waiter =
+    public function hash(self): Int64 = ClassIdentity.hash(self)
+
+test "Waiter identity: default is one shared empty placeholder" =
+    let first: Waiter = Waiter.default
+    let second: Waiter = Waiter.default
+    let actual = Waiter.make()
+    assert ClassIdentity.equals(first, second)
+    assert !ClassIdentity.equals(first, actual)
+    assert first.suspended.isEmpty
+    let hash = actual.hash()
+    actual.suspended.push(FiberId.zero)
+    assert actual.hash() == hash
+    assert first.suspended.isEmpty
+
+test "Waiter identity: mutable sets distinguish instances and ignore empty slots" =
+    let entries = MutableSet<Waiter>.new()
+    let other = MutableSet<Waiter>.new()
+    let placeholder: Waiter = Waiter.default
+    assert entries.isEmpty
+    assert !entries.contains(placeholder)
+    let mutable waiters: List<Waiter> = List.empty
+    let mutable i = 0
+    while i < 40 do
+        let waiter = Waiter.make()
+        waiters = waiters.prepend(waiter)
+        entries.add(waiter)
+        entries.add(waiter)
+        i = i + 1
+    assert entries.length == 40
+    assert other.isEmpty
+    for waiter in waiters do
+        assert entries.contains(waiter)
+        entries.remove(waiter)
+        assert !entries.contains(waiter)
+    assert entries.isEmpty
+    entries.add(placeholder)
+    assert entries.length == 1
+    assert entries.contains(placeholder)
+    entries.clear()
+    assert entries.isEmpty
+    assert !entries.contains(placeholder)
+    assert placeholder.suspended.isEmpty

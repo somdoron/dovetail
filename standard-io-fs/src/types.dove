@@ -1,0 +1,75 @@
+package standard.io.fs
+
+import standard.time.Instant
+
+/// The kind of a filesystem entry.
+public enum EntryType =
+    File
+    Directory
+    Symlink
+    Other
+
+/// A single entry in a directory listing: the basename plus its kind.
+public record DirEntry =
+    name: String
+    entryType: EntryType
+
+/// Compact stat-like metadata for a filesystem entry. WASI 0.2 doesn't surface
+/// POSIX mode bits, so they're omitted.
+public record Metadata =
+    size: Int64
+    entryType: EntryType
+    modified: Instant
+    /// None when the host doesn't track creation time (most non-macOS POSIX).
+    created: Option<Instant>
+
+/// Filesystem error type — used as the `E` parameter for `Async<T, E>`,
+/// `InputStream<E>`, `OutputStream<E>` produced by the fs library. Variants
+/// collapse the ~37 WASI `error-code` values into 17 user-facing buckets;
+/// anything not bucketed routes through `Other(code)`.
+public enum FileStreamError =
+    NotFound
+    AccessDenied
+    AlreadyExists
+    IsDirectory
+    NotDirectory
+    NotEmpty
+    InvalidPath
+    InvalidUtf8
+    Loop
+    NameTooLong
+    TooManyLinks
+    OutOfSpace
+    ReadOnly
+    Interrupted
+    PipeBroken
+    InvalidEncoding
+    Unsupported
+    /// An explicit `close` on the stream aborted this operation.
+    Canceled
+    /// Catch-all for WASI error codes without a clean mapping. The Int32
+    /// carries the original `FileSystemError` discriminant index (best-effort).
+    Other(Int32)
+
+implement Display for FileStreamError =
+    public function format(self: FileStreamError): String =
+        match self with
+            case FileStreamError.NotFound => "not found"
+            case FileStreamError.AccessDenied => "access denied"
+            case FileStreamError.AlreadyExists => "already exists"
+            case FileStreamError.IsDirectory => "is a directory"
+            case FileStreamError.NotDirectory => "not a directory"
+            case FileStreamError.Canceled => "canceled by close"
+            case FileStreamError.NotEmpty => "directory not empty"
+            case FileStreamError.InvalidPath => "invalid path"
+            case FileStreamError.InvalidUtf8 => "invalid UTF-8"
+            case FileStreamError.Loop => "symlink loop"
+            case FileStreamError.NameTooLong => "name too long"
+            case FileStreamError.TooManyLinks => "too many links"
+            case FileStreamError.OutOfSpace => "out of space"
+            case FileStreamError.ReadOnly => "read-only filesystem"
+            case FileStreamError.Interrupted => "interrupted"
+            case FileStreamError.PipeBroken => "pipe broken"
+            case FileStreamError.InvalidEncoding => "invalid encoding"
+            case FileStreamError.Unsupported => "unsupported operation"
+            case FileStreamError.Other(code) => "fs error code " ++ code.format()

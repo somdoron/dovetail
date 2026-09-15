@@ -1,0 +1,148 @@
+package standard.wasi.tcp
+
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.EndingLedger
+import standard.wasi.EventPayload
+import standard.wasi.Stream
+import standard.wasi.Waitable
+import standard.wasi.AsyncCall
+import standard.wasi.CopyOperation
+import standard.wasi.net.IpAddressFamily
+import standard.wasi.net.SocketAddress
+import standard.wasi.net.NetworkError
+
+/// A TCP socket resource handle.
+public newtype TcpSocket = Int32
+
+/// A byte stream attached to a TCP socket (send: guest-held writable end;
+/// receive: guest-held readable end) plus the operation's result future.
+public record TcpStream =
+    stream: Int32
+    resultFuture: Int32
+
+module TcpStream =
+    /// This socket's inbound byte stream as the component-model operation the
+    /// runtime drives.
+    public function componentReceive(self): ComponentStreamRead<Array<Uint8>, NetworkError> =
+        ComponentStreamRead<Array<Uint8>, NetworkError> {
+            readable = Waitable(self.stream)
+            ending = () => TcpSocket.readReceiveResult(self.resultFuture)
+            start = (capacity: Int32) => TcpSocket.receiveReadStart(self.stream, capacity)
+            cancel = () => EventPayload(TcpSocket.cancelReceiveRead(self.stream))
+            canceledError = NetworkError.Canceled
+            // Constant on every raw record: the wrapper that makes this end
+            // closable replaces the probe (`withStillOpen`).
+            stillOpen = () => true
+            dropEnd = () =>
+                TcpSocket.dropReceiveReadable(self.stream)
+                TcpSocket.dropReceiveResult(self.resultFuture)
+            // Bytes: nothing owned to close, so the release is the buffer's.
+            discardElements = (copy: CopyOperation, count: Int32) => Stream.discard(copy)
+            lift = (copy: CopyOperation, count: Int32) => Stream.readFinish(copy, count)
+        }
+
+    /// This socket's outbound byte stream, likewise.
+    public function componentSend(self): ComponentStreamWrite<NetworkError> =
+        ComponentStreamWrite<NetworkError> {
+            writable = Waitable(self.stream)
+            ending = () => TcpSocket.readSendResult(self.resultFuture)
+            ledger = EndingLedger.fresh()
+            start = (bytes: ReadonlySlice<Uint8>) => TcpSocket.sendWriteStart(self.stream, bytes)
+            cancel = () => EventPayload(TcpSocket.cancelSendWrite(self.stream))
+            canceledError = NetworkError.Canceled
+            stillOpen = () => true
+            dropWritable = () => TcpSocket.dropSendWritable(self.stream)
+            dropResult = () => TcpSocket.dropSendResult(self.resultFuture)
+        }
+
+
+module TcpSocket =
+    /// Create a new TCP socket for the given address family.
+    public function create(family: IpAddressFamily): Result<TcpSocket, NetworkError> = intrinsic
+
+    /// Bind to a local address (synchronous).
+    public function bind(self, address: SocketAddress): Result<Unit, NetworkError> = intrinsic
+
+    /// Start an async connect. Finish with `connectFinish` after completion.
+    public function connectStart(self, address: SocketAddress): AsyncCall = intrinsic
+    public function connectFinish(call: AsyncCall): Result<Unit, NetworkError> = intrinsic
+
+    /// Start listening; returns the accept stream (a stream of sockets).
+    public function listen(self): Result<Int32, NetworkError> = intrinsic
+    /// Post an async accept (reads one socket handle from the accept stream).
+    public function acceptStart(acceptStream: Int32): CopyOperation = intrinsic
+    /// Take the accepted socket from a completed accept read.
+    public function acceptFinish(op: CopyOperation): TcpSocket = intrinsic
+    /// Drop the accept stream (stop listening for new connections).
+    public function dropAcceptStream(acceptStream: Int32): Unit = intrinsic
+
+    /// Open the outbound byte stream: returns the writable end + result future.
+    public function send(self): TcpStream = intrinsic
+    /// Open the inbound byte stream: returns the readable end + result future.
+    public function receive(self): TcpStream = intrinsic
+    /// Post an async write of the bounded byte view to a send stream.
+    /// The compiler copies exactly this region into the pinned host buffer.
+    public function sendWriteStart(stream: Int32, bytes: ReadonlySlice<Uint8>): CopyOperation = intrinsic
+    /// Post an async read of up to `capacity` bytes from a receive stream.
+    public function receiveReadStart(stream: Int32, capacity: Int32): CopyOperation = intrinsic
+    public function dropSendWritable(stream: Int32): Unit = intrinsic
+    public function dropReceiveReadable(stream: Int32): Unit = intrinsic
+    public function dropSendResult(future: Int32): Unit = intrinsic
+    public function dropReceiveResult(future: Int32): Unit = intrinsic
+    /// Read the receive stream's result future to learn how the stream ended:
+    /// `Ok` = clean close (EOF), `Error` = a transport failure (e.g. reset).
+    /// Reads synchronously — the future is resolved by the time the stream is
+    /// dropped; if not yet ready this reports `Ok` (clean).
+    public function readReceiveResult(future: Int32): Result<Unit, NetworkError> = intrinsic
+    /// Read the send stream's result future to learn why a write was dropped:
+    /// `Ok` = the peer closed cleanly, `Error` = a transport failure. Same
+    /// synchronous, cancel-if-blocked shape as `readReceiveResult`.
+    public function readSendResult(future: Int32): Result<Unit, NetworkError> = intrinsic
+    /// Cancel an in-flight accept on the accept stream so it can be dropped.
+    /// Consumes any raced completion; safe to call only while a read is pending.
+    /// Returns the raw cancel status (`code | count << 4`): a `count` of 1 means
+    /// the cancel raced a completion that already transferred a socket handle
+    /// into the op's buffer, and the caller owns closing it.
+    public function cancelAcceptRead(acceptStream: Int32): Int32 = intrinsic
+    /// Cancel an in-flight write on a send stream (before dropping the writable).
+    public function cancelSendWrite(stream: Int32): Int32 = intrinsic
+    /// Cancel an in-flight read on a receive stream (before dropping the
+    /// readable). Returns the raw cancel status (`code | count << 4`): a cancel
+    /// can race a completion that already copied bytes into the op's buffer,
+    /// and `count` is the only way to learn that they are there.
+    public function cancelReceiveRead(stream: Int32): Int32 = intrinsic
+
+    public function localAddress(self): Result<SocketAddress, NetworkError> = intrinsic
+    public function remoteAddress(self): Result<SocketAddress, NetworkError> = intrinsic
+    /// True once `listen` has succeeded on this socket.
+    public function isListening(self): Bool = intrinsic
+    /// The address family this socket was created with.
+    public function addressFamily(self): IpAddressFamily = intrinsic
+    public function setListenBacklogSize(self, size: Int64): Result<Unit, NetworkError> = intrinsic
+
+    // --- Socket options -----------------------------------------------------
+    // All synchronous. The keep-alive timings are `duration` (nanoseconds) and
+    // the buffer sizes are `u64`, so both are `Int64` here; the count and hop
+    // limit are small unsigned integers widened to `Int32`. Every one of these
+    // may legitimately answer `NotSupported` — a host is not obliged to
+    // implement any of them.
+    public function keepAliveEnabled(self): Result<Bool, NetworkError> = intrinsic
+    public function setKeepAliveEnabled(self, value: Bool): Result<Unit, NetworkError> = intrinsic
+    /// Idle time before the first keep-alive probe, in nanoseconds.
+    public function keepAliveIdleTime(self): Result<Int64, NetworkError> = intrinsic
+    public function setKeepAliveIdleTime(self, value: Int64): Result<Unit, NetworkError> = intrinsic
+    /// Interval between keep-alive probes, in nanoseconds.
+    public function keepAliveInterval(self): Result<Int64, NetworkError> = intrinsic
+    public function setKeepAliveInterval(self, value: Int64): Result<Unit, NetworkError> = intrinsic
+    /// Number of unanswered probes before the connection is considered dead.
+    public function keepAliveCount(self): Result<Int32, NetworkError> = intrinsic
+    public function setKeepAliveCount(self, value: Int32): Result<Unit, NetworkError> = intrinsic
+    public function hopLimit(self): Result<Int32, NetworkError> = intrinsic
+    public function setHopLimit(self, value: Int32): Result<Unit, NetworkError> = intrinsic
+    public function receiveBufferSize(self): Result<Int64, NetworkError> = intrinsic
+    public function setReceiveBufferSize(self, value: Int64): Result<Unit, NetworkError> = intrinsic
+    public function sendBufferSize(self): Result<Int64, NetworkError> = intrinsic
+    public function setSendBufferSize(self, value: Int64): Result<Unit, NetworkError> = intrinsic
+
+    public function close(self): Unit = intrinsic

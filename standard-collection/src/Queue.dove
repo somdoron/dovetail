@@ -1,0 +1,146 @@
+package standard.collection
+
+import standard.prelude.Option
+
+/// An immutable FIFO (first-in, first-out) queue using the two-list approach.
+/// `front` is used for dequeue (head is the next element out),
+/// `rear` accumulates enqueued elements in reverse order.
+/// When `front` is exhausted, `rear` is reversed into `front`.
+public record Queue<T> =
+    front: List<T>
+    rear: List<T>
+    size: Int32
+
+module Queue<T> =
+    /// Creates an empty queue.
+    public function empty(): Queue<T> =
+        let nilList: List<T> = List.empty
+        Queue { front = nilList; rear = nilList; size = 0 }
+
+    /// Returns a new queue with the value added to the back.
+    public function enqueue(self, value: T): Queue<T> =
+        Queue { front = self.front; rear = self.rear.prepend(value); size = self.size + 1 }
+
+    /// Dequeues the front element, returning a tuple of the value and the remaining queue, or None if empty.
+    public function dequeue(self): Option<(T, Queue<T>)> =
+        if self.size == 0 then None
+        else
+            let q = ensureFront(self)
+            let value = q.front.head
+            let rest = Queue { front = q.front.tail; rear = q.rear; size = q.size - 1 }
+            Some((value, rest))
+
+    /// Returns the front element without removing it, or None if empty.
+    public property peek(self): Option<T> =
+        if self.size == 0 then None
+        else
+            let q = ensureFront(self)
+            Some(q.front.head)
+
+    /// The number of elements in the queue.
+    public property length(self): Int32 = self.size
+
+    /// True if the queue contains no elements.
+    public property isEmpty(self): Bool = self.size == 0
+
+class QueueIterator<T>(mutable front: List<T>, mutable rear: List<T>) implements Iterator<T> =
+    public function next(self): Option<T> =
+        match self.front with
+            case Cons(h, t) =>
+                self.front = t
+                Some(h)
+            case Nil =>
+                match self.rear with
+                    case Cons(h, t) =>
+                        self.rear = t
+                        Some(h)
+                    case Nil => None
+
+implement <T> Iterable<T> for Queue<T> =
+    public function iterator(self): Iterator<T> =
+        QueueIterator(self.front, self.rear.reverse())
+
+/// When front is empty, reverse rear into front.
+function ensureFront<T>(q: Queue<T>): Queue<T> =
+    if q.front.isEmpty then
+        let nilList: List<T> = List.empty
+        Queue { front = q.rear.reverse(); rear = nilList; size = q.size }
+    else q
+
+test "Queue empty" =
+    let q: Queue<Int32> = Queue.empty()
+    assert q.isEmpty == true
+    assert q.length == 0
+
+test "Queue enqueue" =
+    let q: Queue<Int32> = Queue.empty()
+    let q2 = q.enqueue(1).enqueue(2).enqueue(3)
+    assert q2.length == 3
+    assert q2.isEmpty == false
+
+test "Queue peek" =
+    let q0: Queue<Int32> = Queue.empty()
+    let q = q0.enqueue(10).enqueue(20)
+    assert q.peek.isSome
+    assert q.peek.require == 10
+
+test "Queue peek empty" =
+    let q: Queue<Int32> = Queue.empty()
+    assert q.peek.isNone
+
+test "Queue dequeue" =
+    let q0: Queue<Int32> = Queue.empty()
+    let q = q0.enqueue(10).enqueue(20).enqueue(30)
+    match q.dequeue() with
+        case Some((val, rest)) =>
+            assert val == 10
+            assert rest.length == 2
+        case None => assert false
+
+test "Queue dequeue empty" =
+    let q: Queue<Int32> = Queue.empty()
+    assert q.dequeue().isNone
+
+test "Queue FIFO order" =
+    let q0: Queue<Int32> = Queue.empty()
+    let q = q0.enqueue(1).enqueue(2).enqueue(3)
+    match q.dequeue() with
+        case Some((v1, q2)) =>
+            assert v1 == 1
+            match q2.dequeue() with
+                case Some((v2, q3)) =>
+                    assert v2 == 2
+                    match q3.dequeue() with
+                        case Some((v3, q4)) =>
+                            assert v3 == 3
+                            assert q4.isEmpty == true
+                        case None => assert false
+                case None => assert false
+        case None => assert false
+
+test "Queue immutability" =
+    let q0: Queue<Int32> = Queue.empty()
+    let q1 = q0.enqueue(1)
+    let q2 = q1.enqueue(2)
+    assert q1.length == 1
+    assert q2.length == 2
+
+test "Queue iterator FIFO order" =
+    let q: Queue<Int32> = Queue.empty().enqueue(10).enqueue(20).enqueue(30)
+    let mutable sum = 0
+    let mutable first = 0
+    let mutable count = 0
+    for x in q do
+        if count == 0 then first = x
+        sum = sum + x
+        count = count + 1
+    assert count == 3
+    assert first == 10
+    assert sum == 60
+
+test "Queue iterator empty" =
+    let q: Queue<Int32> = Queue.empty()
+    let mutable count = 0
+    for x in q do
+        count = count + 1
+    assert count == 0

@@ -1,0 +1,33 @@
+package test
+
+import standard.io.Async
+import standard.io.Promise
+import standard.io.Queue
+
+async function freshConstructors(): Async<Unit, Never> =
+    let makePromise: Async<Promise<Int32, Never>, Never> = Async.makePromise()
+    let firstPromise = await makePromise
+    let secondPromise = await makePromise
+    assert !ClassIdentity.equals(firstPromise, secondPromise)
+    let makeQueue: Async<Queue<Int32>, Never> = Queue.make(2)
+    let firstQueue = await makeQueue
+    let secondQueue = await makeQueue
+    assert !ClassIdentity.equals(firstQueue, secondQueue)
+    await firstQueue.offer(7)
+    assert (await firstQueue.take()) == 7
+    let firstHash = ClassIdentity.hash(firstQueue)
+    assert ClassIdentity.hash(firstQueue) == firstHash
+
+test "identity: reusable constructors allocate fresh state on every execution" =
+    let program = freshConstructors()
+    program.run()
+    program.run()
+
+async function freshPromises(): Async<Unit, Never> =
+    let make: Async<Promise<Int32, Never>, Never> = Async.makePromise()
+    let first = await make
+    let second = await make
+    assert !ClassIdentity.equals(first, second)
+
+test "identity: async allocation book example" =
+    freshPromises().run()

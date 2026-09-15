@@ -1,0 +1,19 @@
+package standard.prelude
+
+public trait EarlyReturn<T> =
+    type OnFailure
+    function unwrap(self: Self): Result<T, OnFailure>
+
+implement <T, E> EarlyReturn<T> for Result<T, E> =
+    type OnFailure = Result<Never, E>
+    public function unwrap(self: Result<T, E>): Result<T, Result<Never, E>> =
+        match self with
+        case Ok(x) => Ok(x)
+        case Error(e) => Error(Result.error(e))
+
+implement <T> EarlyReturn<T> for Option<T> =
+    type OnFailure = Option<Never>
+    public function unwrap(self: Option<T>): Result<T, Option<Never>> =
+        match self with
+        case Some(x) => Ok(x)
+        case None => Error(None)

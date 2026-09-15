@@ -1,0 +1,46 @@
+[package]
+name = "dovetail-lang"
+version = "0.1.0"
+edition = "2024"
+default-run = "dovetail"
+description = "The Dovetail programming language compiler"
+repository = "https://github.com/somdoron/dovetail"
+homepage = "https://dovetaillang.org"
+
+[lib]
+name = "dovetail"
+
+[[bin]]
+name = "dovetail"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+wasm-encoder = "0.255"
+wit-component = "0.255"
+wit-parser = "0.255"
+semver = "1.0"
+wasmtime = { version = "45", features = ["component-model", "component-model-async", "async", "gc"] }
+wasmtime-wasi = { version = "45", features = ["p3"] }
+wasmparser = "0.255"
+include_dir = "0.7.4"
+gimli = { version = "0.31", default-features = false, features = ["write", "std"] }
+tower-lsp = "0.20"
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+rhai = "1.21"
+smallvec = "1"
+wac-graph = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+wasmparser = "0.255"
+wat = "1"
+tower = "0.5"
+futures = "0.3.31"

@@ -1,0 +1,46 @@
+package interop.io
+
+import standard.io.Async
+import standard.io.Console
+import standard.io.ConsoleError
+import standard.io.Environment
+import standard.io.Fiber
+
+/// Host-behaviour fixture for `standard-io`, driven by the Rust integration
+/// tests. The in-process test runner inherits the real stdio, so anything that
+/// depends on how the HOST behaves — a stdin that fails part-way through, a
+/// stdout whose reader goes away — can only be exercised by a component the
+/// test starts with streams of its own making. This is that component.
+///
+/// Switches on the `MODE` env var:
+///   - `MODE=echo-lines` reads stdin line by line and writes `line: <text>` to
+///     stdout until end-of-input. A transport failure part-way through must
+///     fail the program rather than look like a clean end.
+///   - `MODE=two-readers` has two fibers each read one line from the one stdin.
+///     A single chunk carrying two complete lines has to satisfy both: the host
+///     sends nothing more, so a reader that posts a fresh host read instead of
+///     taking the line already buffered never returns.
+async function echoLines(): Async<Unit, ConsoleError> =
+    let mutable reading = true
+    while reading do
+        let line = await Console.readLine()
+        match line with
+            case Some(text) => await Console.writeLine("line: " ++ text)
+            case None => reading = false
+
+async function twoReaders(): Async<Unit, ConsoleError> =
+    let first: Fiber<Option<String>, ConsoleError> = await Console.readLine().fork()
+    let second: Fiber<Option<String>, ConsoleError> = await Console.readLine().fork()
+    let a = await first.join()
+    let b = await second.join()
+    await Console.writeLine("first: " ++ a.or("<none>"))
+    await Console.writeLine("second: " ++ b.or("<none>"))
+
+async function interopMain(): Async<Unit, ConsoleError> =
+    match Environment.get("MODE") with
+        case Some("echo-lines") => await echoLines()
+        case Some("two-readers") => await twoReaders()
+        case Some(mode) => await Async.failPanic("unknown MODE: " ++ mode)
+        case None => await Async.failPanic("missing MODE env var")
+
+function main(): Unit = interopMain().run()

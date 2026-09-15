@@ -1,0 +1,5 @@
+package standard.prelude
+
+/// Defines unary negation for library numeric types.
+public trait Neg =
+    function negate(self: Self): Self

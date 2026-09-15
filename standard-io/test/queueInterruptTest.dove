@@ -1,0 +1,58 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Fiber
+import standard.io.Queue
+
+// AN INTERRUPTED `take` NEVER LOSES ITS ELEMENT.
+//
+// `Queue.take` dequeues inside its own mask; the element leaves the mask as
+// the region's pending `Succeed`, consumed by the next frame one step later. If
+// the mask's pop is the last step of a fairness slice, the fiber sits in the
+// run queue for that one step interruptible and holding the element in a
+// pending value nothing owns — and an interrupt landing there clobbered it:
+// gone from the queue, never delivered. The pop now marks the fiber as carrying
+// the region's result, so an interrupt in that step defers to the safe point
+// where the element is owned.
+//
+// The window is one step wide, so this sweeps the fairness boundary across it
+// with `burnExactly` (bracket_test), the way the acquire sweeps do: for every
+// offset, offered == in the queue + delivered.
+
+async function takeAfter(steps: Int32, q: Queue<Int32>, delivered: Array<Int32>): Async<Unit, Never> =
+    await burnExactly(steps)
+    let _v = await q.take()
+    delivered.set(0, delivered.get(0) + 1i32)
+
+async function queueInterruptProgram(setter: (Int32) => Unit): Async<Unit, Never> =
+    let mutable lost = 0i32
+    let mutable steps = 980i32
+    let mutable round = 0i32
+    while round < 96i32 do
+        let q = await Queue<Int32>.makeUnbounded()
+        await q.offer(1i32)
+        let delivered = Array<Int32>.fill(1, 0i32)
+        let child: Fiber<Unit, Never> = await takeAfter(steps, q, delivered).forkBackground()
+        // Outlast the child's slice so this fiber is next in the queue when the
+        // child's expires, and interrupt it there — the only moment an interrupt
+        // can land on a Running fiber (see the bracket sweep).
+        await burnSteps(300i32)
+        await child.interrupt()
+        await child.join().foldCause<Unit, Never>(
+            (_: Cause<Never>) => Async.succeed(()),
+            (_: Unit) => Async.succeed(())
+        )
+        if q.size + delivered.get(0) != 1i32 then
+            lost = lost + 1i32
+        steps = steps + 1i32
+        round = round + 1i32
+    setter(lost)
+
+@timeout(120000)
+test "queue: an interrupt landing after a take's mask pops never loses the element" =
+    let mutable lost = -1i32
+    queueInterruptProgram((n: Int32) => lost = n).run()
+    // Every element offered across the sweep is either still queued or was
+    // delivered. A lost one is an element that left the queue and reached nobody.
+    assert lost == 0i32

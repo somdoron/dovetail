@@ -1,0 +1,185 @@
+package standard.io.crypto
+
+import standard.prelude.Array
+import standard.io.Async
+import standard.io.MutexError
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+
+/// Encrypted input stream over a shared `TlsConnection`. The handshake runs in
+/// the background (started at creation); `read` waits for it to finish, then
+/// decrypts application data — serving buffered plaintext immediately, otherwise
+/// pumping the underlying socket until a record is available.
+public class TlsInputStream(conn: TlsConnection) extends AsyncInputStream<TlsIoError>() =
+    /// How this connection died, if it has — and whether this direction is still
+    /// open at all.
+    ///
+    /// The latch, not the handshake: waiting for it would make a zero-length read
+    /// block on a network round trip, and the contract on `AsyncInputStream` is
+    /// explicit that zero does no transport work and is not a readiness probe.
+    /// What makes that sufficient is that the handshake records its own failure in
+    /// this same latch (`TlsConnection.startHandshake`), so a connection killed
+    /// during negotiation is dead HERE too, rather than only in the fiber whose
+    /// result nobody has joined.
+    ///
+    /// The second half is invariant (9): a direction somebody CLOSED is not a
+    /// direction that ended, so it does not answer with the empty array that means
+    /// end of stream. It mirrors the write side's `isSendClosed`.
+    protected override function checkAlive(self): Async<Unit, TlsIoError> =
+        match self.conn.latchedFailure() with
+            case Error(error) => Async.fail(error)
+            case Ok(_) => self.receiveOpen()
+
+    /// Refuse a read on a direction whose owner closed it. Split out from
+    /// `checkAlive` because the read path asks this one on the way IN — a closed
+    /// direction has no plaintext left to prefer to it — while the latch is asked
+    /// only once the buffer is empty, per invariant (3).
+    function receiveOpen(self): Async<Unit, TlsIoError> =
+        if self.conn.isReceiveClosed then Async.fail(TlsIoError.Closed) else Async.succeed(())
+
+    /// A read of one byte or more. `bytesLength` above what is buffered is
+    /// ordinary and means "everything available" — see `takeBuffered`, which
+    /// clamps in Int64 before anything narrows.
+    ///
+    /// The latch is NOT consulted on the way in, and that is the round-13 rule
+    /// (invariant 3): plaintext this connection authenticated before it died is
+    /// the caller's, and is handed over before the death is reported — which the
+    /// tail of this method does, once the buffer is empty.
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, TlsIoError> =
+        await self.receiveOpen()
+        // Outside the lock: the handshake fiber pumps under the same lock, so
+        // waiting for it while holding this would deadlock.
+        await self.conn.ensureHandshake()
+        // Re-asked on the far side of the handshake wait, as the write side
+        // re-asks its own question there: waiting for a handshake is waiting for
+        // another fiber, and a sibling can close this direction while this read is
+        // parked.
+        await self.receiveOpen()
+        // Pump-until-buffered and take, as one unit. The runtime's per-handle
+        // lock makes each ciphertext read atomic but stops there — two fibers
+        // could each return from their read and then feed the engine in the
+        // wrong order (a MAC/AEAD failure), or both pass the `hasBuffered` check
+        // and split one record's plaintext, leaving the loser an empty array it
+        // would read as EOF.
+        let _held = use self.conn.readLock.acquire().orPanicWith((_: MutexError) => "TlsInputStream.read re-entered the read lock")
+        // The pump's failure goes to the latch instead of out of this loop. One
+        // step can do both things: a 16KiB socket read can carry a valid record
+        // followed by a corrupt one, and `pumpStep` appends the first record's
+        // plaintext before the second one kills the engine. Raising from here
+        // would step straight past the buffered-first guard below and throw away
+        // bytes that were authenticated. Latching closes the connection, so the
+        // loop ends on the next condition check either way.
+        while !self.conn.hasBuffered && !self.conn.isClosed do
+            await self.conn.pumpStep().catchAll((e: TlsIoError) => self.conn.latchPumpFailure(e))
+        // Only with nothing buffered. Plaintext decrypted before the connection
+        // died was authenticated when it arrived and is the caller's to have;
+        // what must not happen is handing back the EMPTY array that a poisoned
+        // engine leaves behind, because to a reader that is a clean end of
+        // stream — a truncation attack reported as a successful close.
+        if !self.conn.hasBuffered then
+            await Async.fromResult(self.conn.latchedFailure())
+        // Last, because the pump above suspends and a close can land in any of
+        // those windows: whatever it discarded must not be re-delivered by the
+        // take below. Asked ATOMICALLY with the take — one thunk, one
+        // interpreter step — not as a separate await: the fairness budget can
+        // hand the scheduler to a sibling between any two steps, so a
+        // `closeReceive` landing between a checked-open and a take-in-the-next-
+        // step empties the buffer under this reader, and the empty array it
+        // then takes is the one that means end of stream — a truncation
+        // reported as a clean close, the exact miss this method exists to
+        // prevent. A read that would answer empty must know whether it is
+        // empty-because-closed in the same step as the take.
+        let taken: Result<Array<Uint8>, TlsIoError> =
+            await Async<Result<Array<Uint8>, TlsIoError>, Never>.thunk(() =>
+                if self.conn.isReceiveClosed then
+                    Error(TlsIoError.Closed)
+                else
+                    Ok(self.conn.takeBuffered(bytesLength))
+            )
+        await Async.fromResult(taken)
+
+    /// End the read direction of this connection: every later read fails with
+    /// `Closed`, and the plaintext already decrypted is dropped.
+    ///
+    /// It used to do nothing at all, on the grounds that this stream owns no
+    /// handles — which is true and is not what `close` promises. The base states
+    /// that a closed stream reports itself to whoever reads it next rather than
+    /// answering with the empty array that means end of stream, and a subclass
+    /// that quietly does not is worse than one that cannot: a caller closes the
+    /// body of a response it has finished with, and the next read of it reports a
+    /// clean end of connection.
+    ///
+    /// What it still does NOT do is detach a reader already parked on the socket,
+    /// and no version of this could: the socket is shared with the write
+    /// direction, which has a close_notify left to send, and with the connection
+    /// `Resource` that owns it. That reader finishes its record and is refused at
+    /// the check above. The transports that DO own their handle cancel in flight;
+    /// see `AsyncInputStream.close`, which says which half is universal.
+    public override async function close(self): Async<Unit, TlsIoError> =
+        self.conn.closeReceive()
+
+/// Encrypted output stream over a shared `TlsConnection`. `write` waits for the
+/// (background) handshake to finish, then hands plaintext to the engine and
+/// flushes the resulting ciphertext to the underlying socket.
+public class TlsOutputStream(conn: TlsConnection) extends AsyncOutputStream<TlsIoError>() =
+    /// How this connection died, if it has — the same latch the read side
+    /// consults, and the same one an in-flight handshake records into — and,
+    /// unlike the read side, whether this direction is still open at all.
+    ///
+    /// The two halves are asymmetric because the transport is. A read half that
+    /// has finished has an answer to give (invariant (1): empty is the end of the
+    /// stream), so nothing but a failure needs reporting. A write half that has
+    /// sent its close_notify has none: the record layer is finished, another
+    /// record can never go out, and answering `Ok(())` tells a caller its bytes
+    /// were taken by a direction that no longer exists. A non-empty write was
+    /// caught anyway, one layer down, when the underlying stream refused it; the
+    /// EMPTY write is the one this exists for, since it never gets that far.
+    protected override function checkAlive(self): Async<Unit, TlsIoError> =
+        match self.conn.latchedFailure() with
+            case Error(error) => Async.fail(error)
+            case Ok(_) =>
+                if self.conn.isSendClosed then Async.fail(TlsIoError.Closed) else Async.succeed(())
+
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, TlsIoError> =
+        await self.conn.ensureHandshake()
+        // Re-checked after the handshake await, not merely by the base before
+        // it: encrypting under a poisoned engine produces records the peer
+        // cannot authenticate, so the failure is reported here rather than on
+        // the wire. Waiting for a handshake is a wait for another fiber, and
+        // BOTH halves of the question can be answered differently on the far
+        // side of it — a sibling can close this direction while this write is
+        // parked, and a record written after the close_notify is a protocol
+        // violation, not merely a wasted one. So the whole check is re-asked,
+        // rather than the latch alone, which is what this used to ask.
+        await self.checkAlive()
+        self.conn.sendApp(bytes)
+        await self.conn.flushSend()
+
+    /// What became of what was already written — the connection's latch, and
+    /// deliberately not `isSendClosed`. A write half that has sent its
+    /// close_notify cannot take another byte (which is what `checkAlive` reports)
+    /// but everything handed to it before that went out, so `flush` and `close`
+    /// have nothing to complain about.
+    protected override function recordedFailure(self): Result<Unit, TlsIoError> =
+        self.conn.latchedFailure()
+
+    protected override async function flushPending(self): Async<Unit, TlsIoError> =
+        await self.conn.ensureHandshake()
+        await self.conn.flushUnderlying()
+
+    /// End the write direction: drain the engine (application data and the TLS
+    /// close_notify), end the underlying write half, and report what the
+    /// transport made of the stream.
+    ///
+    /// Not `flush`, which it used to be. `flush` deliberately never spends the
+    /// underlying stream's one-shot result future, so a connection reset arriving
+    /// after the last accepted write was invisible through this stream — an HTTPS
+    /// exchange would report a delivered response that never arrived. Ending the
+    /// stream is what makes that future resolve, and ending it is what `close`
+    /// means. See `TlsConnection.closeSend`.
+    ///
+    /// Idempotent, and composes with the connection Resource's release: the
+    /// close_notify is emitted once (`sendClosed`) and the underlying close is
+    /// idempotent in its own right.
+    public override async function close(self): Async<Unit, TlsIoError> =
+        await self.conn.closeSend()

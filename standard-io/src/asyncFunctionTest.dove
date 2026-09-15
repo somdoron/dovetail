@@ -1,0 +1,25 @@
+package standard.io
+
+async function reusableAsyncFunction(started: () => Unit): Async<Int32, Never> =
+    started()
+    let mutable count = 0
+    await Async.thunk(() => count = count + 1)
+    count
+
+async function deferredPureAsyncFunction(started: () => Unit): Async<Int32, Never> =
+    started()
+    42
+
+test "Async functions defer initialization and reuse fresh local state" =
+    let mutable executions = 0
+    let started = () => executions = executions + 1
+    let computation = reusableAsyncFunction(started)
+    let pure = deferredPureAsyncFunction(started)
+    assert executions == 0
+    let program: Async<Unit, Never> = async do
+        assert (await computation) == 1
+        assert (await computation) == 1
+        assert (await pure) == 42
+        assert (await pure) == 42
+        assert executions == 4
+    program.run()

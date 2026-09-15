@@ -1,0 +1,87 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Fiber
+import standard.io.Promise
+import standard.time.Duration
+
+// A PROMISE IS THE ORDERING PRIMITIVE, so every operation on it has to happen
+// where the program RUNS and not where it is DESCRIBED. `complete` used to flip
+// the state as the `Async` was built, which put the one event a promise exists
+// to order at the mercy of whoever constructed the description.
+//
+// The tests below are the three shapes that made visible: a description built
+// and discarded, a description handed to another fiber, and an awaiter of a
+// promise that fails.
+
+enum PromiseTestError =
+    Refused
+
+implement Display for PromiseTestError =
+    public function format(self: PromiseTestError): String = "refused"
+
+test "building a completion is not completing" =
+    let outcome = Array<Int32>.fill(2, -1i32)
+    buildThenCompleteProgram(outcome).run()
+    // 1 = this fiber's completion is the one that won. It could only lose to a
+    // description nobody ran.
+    assert outcome.get(0) == 1i32
+    // …and the value is the one that fiber chose, not the one the discarded
+    // description carried.
+    assert outcome.get(1) == 2i32
+
+async function buildThenCompleteProgram(outcome: Array<Int32>): Async<Unit, Never> =
+    let promise: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
+    // Built and thrown away. A description is not an effect.
+    let discarded: Async<Bool, Never> = promise.complete(1i32)
+    let won = await promise.complete(2i32)
+    outcome.set(0, if won then 1i32 else 0i32)
+    outcome.set(1, await promise.awaitPromise())
+
+test "a completion handed to a forked fiber fires from that fiber" =
+    let outcome = Array<Int32>.fill(1, -1i32)
+    forkThenCompleteProgram(outcome).run()
+    // The fork built a description; it did not run one. This fiber has not
+    // yielded since, so it is still the only thing that has run, and it wins.
+    //
+    // This is why every test in this package that cares where a fiber has got to
+    // used to wrap its forked body in a `deferred` thunk. Those wrappers are gone
+    // with the defect that needed them. What has NOT gone away, and is a separate
+    // hazard: an `async function` runs everything before its first `await` when
+    // it is CALLED, so a marker placed before one records the forking fiber.
+    assert outcome.get(0) == 1i32
+
+async function forkThenCompleteProgram(outcome: Array<Int32>): Async<Unit, Never> =
+    let promise: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
+    let forked: Fiber<Bool, Never> = await promise.complete(1i32).fork()
+    let won = await promise.complete(2i32)
+    outcome.set(0, if won then 1i32 else 0i32)
+    await forked.join()
+    ()
+
+@timeout(10000)
+test "awaiting a promise that fails reports the failure instead of waiting forever" =
+    let outcome = Array<String>.fill(1, "")
+    failedPromiseProgram(outcome).run()
+    // The awaiter parked first and was woken by the failure. Its check used to
+    // recognise only a COMPLETED-with-a-value promise, so a failed one woke it
+    // into a check that said "still pending" and it parked again — on a promise
+    // that had already settled, with nothing left to wake it. That is a deadlock,
+    // not a wrong answer.
+    assert outcome.get(0) == "failed"
+
+async function failedPromiseProgram(outcome: Array<String>): Async<Unit, Never> =
+    let promise: Promise<Int32, PromiseTestError> = await Async<Int32, PromiseTestError>.makePromise()
+    let waiter: Fiber<String, Never> = await awaitAndReport(promise).fork()
+    // Long enough that the waiter is parked ON the promise rather than about to
+    // read a settled one: the wake is the half under test.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    await promise.failWith(PromiseTestError.Refused)
+    outcome.set(0, await waiter.join())
+
+async function awaitAndReport(promise: Promise<Int32, PromiseTestError>): Async<String, Never> =
+    await promise.awaitPromise().fold<String, Never>(
+        (_: PromiseTestError) => Async.succeed("failed"),
+        (_: Int32) => Async.succeed("value")
+    )

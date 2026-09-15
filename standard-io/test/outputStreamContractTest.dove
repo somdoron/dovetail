@@ -1,0 +1,130 @@
+package test
+
+import standard.io.Async
+import standard.io.AsyncOutputStream
+import standard.wasi.IoError
+
+/// The error channel these sinks report. Local to the test for the reason the
+/// input-stream contract test keeps one: `Async.run` needs `Display` and
+/// `AsyncOutputStream` needs `IoError`, and nothing is served by depending on
+/// whichever library error type happens to have both.
+enum SinkError =
+    Broken
+
+implement IoError for SinkError
+
+implement Display for SinkError =
+    public function format(self: SinkError): String = "sink error"
+
+// The write side had never been examined the way the read side has, and it
+// carried the same defect shapes. What is pinned here is the half of the
+// contract the BASE owns, so the subjects are the most naive subclasses anyone
+// could write: the transport hook, the wait, the one-line answer to "can you
+// die", and no guards of their own.
+
+/// A sink that has died. `writeBytes` panics rather than answering: no write is
+/// entitled to reach the transport of a stream that has already failed, and the
+/// empty one is the write this is really about.
+class DeadSink(unused: Bool) extends AsyncOutputStream<SinkError>() =
+    protected override function checkAlive(self): Async<Unit, SinkError> = Async.fail(SinkError.Broken)
+    protected override function recordedFailure(self): Result<Unit, SinkError> = Error(SinkError.Broken)
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, SinkError> =
+        panic "DeadSink.writeBytes must not be reached"
+    protected override async function flushPending(self): Async<Unit, SinkError> = ()
+    public override async function close(self): Async<Unit, SinkError> = ()
+
+function sinkFailed(error: SinkError): Async<String, Never> = Async.succeed("failed")
+
+function sinkWrote(value: Unit): Async<String, Never> = Async.succeed("written")
+
+test "an empty write on a dead stream reports the failure" =
+    let outcomes = Array<String>.fill(2, "")
+    deadWriteProbe(outcomes).run()
+    // A write of no bytes is still an operation on the stream. Answering it with
+    // `Ok(())` is the write-side spelling of the false end-of-stream this
+    // library spent four rounds removing from the read side: the caller is told
+    // its bytes — all zero of them — were taken by a transport that is gone.
+    assert outcomes.get(0) == "failed"
+    // The non-empty write, which was never in doubt, as the control.
+    assert outcomes.get(1) == "failed"
+
+// Annotated with the ABSTRACT type deliberately, and restored after being
+// dropped: calling a `final` method of a generic base class through a receiver
+// typed as the SUBCLASS is the codegen bug being fixed elsewhere in this tree
+// right now, and a migration whose tests only pass on top of somebody else's
+// unlanded fix is a commit order nobody chose. The annotation costs a line and
+// this test is not the place that pins that bug — see the note in
+// `input_stream_contract_test`.
+async function deadWriteProbe(outcomes: Array<String>): Async<Unit, Never> =
+    let sink: AsyncOutputStream<SinkError> = DeadSink(true)
+    outcomes.set(0, await sink.write(Array<Uint8>.empty().readonly).fold<String, Never>(sinkFailed, sinkWrote))
+    outcomes.set(1, await sink.write([|1u8|].readonly).fold<String, Never>(sinkFailed, sinkWrote))
+
+/// Records that its wait ran, and reports a failure when asked afterwards — a
+/// sink whose in-flight write is what failed.
+class FlushThenFailSink(public mutable flushes: Int32) extends AsyncOutputStream<SinkError>() =
+    protected override function checkAlive(self): Async<Unit, SinkError> = Async.fail(SinkError.Broken)
+    // The failure this sink RECORDED, which is what `flush` reports now that it
+    // and `close` ask the same question. Both hooks answer `Broken` here, so the
+    // test below pins the ORDER — wait first, report second — rather than which
+    // of the two hooks flush happens to call.
+    protected override function recordedFailure(self): Result<Unit, SinkError> = Error(SinkError.Broken)
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, SinkError> = ()
+    protected override async function flushPending(self): Async<Unit, SinkError> =
+        self.flushes = self.flushes + 1
+    public override async function close(self): Async<Unit, SinkError> = ()
+
+test "flush waits first and reports afterwards" =
+    let sink = FlushThenFailSink(0)
+    let mutable outcome: String = ""
+    flushProbe(sink, (s: String) => outcome = s).run()
+    assert outcome == "failed"
+    // The ORDER, which is the opposite of every other operation's and is the
+    // point of this test: flush reports the outcome of work that was already
+    // posted when it was called, so a health check taken first would answer from
+    // before the very writes flush exists to wait for. A base that checked first
+    // leaves this at zero.
+    assert sink.flushes == 1
+
+async function flushProbe(sink: AsyncOutputStream<SinkError>, setter: (String) => Unit): Async<Unit, Never> =
+    setter(await sink.flush().fold<String, Never>(sinkFailed, sinkWrote))
+
+// --- flush and close ask the same question ------------------------------------
+//
+// They used to answer it differently, and only one of them could be right about
+// one stream at one moment: `close` reported the failure the stream had
+// RECORDED, while `flush` went through `checkAlive`, which is the "can I send
+// more" hook and fails on any finished stream. A stream that ended cleanly with
+// every byte delivered therefore told `close` it was fine and `flush` that it
+// was closed.
+//
+// This sink is the discriminating case and nothing else in the tree is one: it
+// cannot take another byte and has nothing to complain about. Real transports
+// reach that state (a `Dropped` copy that accepted the last of the array), but
+// only by an ordering no test in this tree can ask a host for.
+
+/// Finished, and undamaged: `checkAlive` refuses further writes, `recordedFailure`
+/// has nothing to report.
+class FinishedSink(unused: Bool) extends AsyncOutputStream<SinkError>() =
+    protected override function checkAlive(self): Async<Unit, SinkError> = Async.fail(SinkError.Broken)
+    protected override function recordedFailure(self): Result<Unit, SinkError> = Ok(())
+    protected override async function writeBytes(self, bytes: ReadonlySlice<Uint8>): Async<Unit, SinkError> =
+        panic "FinishedSink.writeBytes must not be reached"
+    protected override async function flushPending(self): Async<Unit, SinkError> = ()
+    public override async function close(self): Async<Unit, SinkError> = ()
+
+test "flush reports what was written, not whether more could be" =
+    let outcomes = Array<String>.fill(2, "")
+    finishedProbe(outcomes).run()
+    // Everything handed over was accepted and nothing went wrong with it, so
+    // there is nothing for flush to report — the same answer `close` gives, which
+    // is the point.
+    assert outcomes.get(0) == "written"
+    // And the control, in the same breath: a WRITE on the same stream still
+    // fails, because that is the other question and the answer to it is no.
+    assert outcomes.get(1) == "failed"
+
+async function finishedProbe(outcomes: Array<String>): Async<Unit, Never> =
+    let sink: AsyncOutputStream<SinkError> = FinishedSink(true)
+    outcomes.set(0, await sink.flush().fold<String, Never>(sinkFailed, sinkWrote))
+    outcomes.set(1, await sink.write([|1u8|].readonly).fold<String, Never>(sinkFailed, sinkWrote))

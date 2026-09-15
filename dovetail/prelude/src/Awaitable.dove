@@ -1,0 +1,14 @@
+package standard.prelude
+
+public trait Awaitable<T> =
+    type Rebind<U>
+    function succeed(x: T): Self
+    /// Store body without evaluating it. Each execution evaluates it afresh and
+    /// drives the returned computation; construction must not execute body.
+    function defer(body: ByName<Self>, trace: SourceLocation): Self
+    function map<U>(self: Self, f: (T) => U, trace: SourceLocation): Rebind<U>
+    function andThen<U>(self: Self, f: (T) => Rebind<U>, trace: SourceLocation): Rebind<U>
+    /// Re-evaluate `cond` before each iteration; runs `body` while `cond` returns
+    /// true. Each iteration's value is discarded; the loop yields `Rebind<Unit>`.
+    /// Used by the desugar pass as the lowering target for `await` inside `while`.
+    function whileLoop(cond: () => Bool, body: () => Rebind<Unit>, trace: SourceLocation): Rebind<Unit>

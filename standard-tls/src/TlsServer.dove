@@ -1,0 +1,618 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.Result
+import standard.prelude.String
+
+import standard.collection.MutableQueue
+
+import standard.crypto.PublicKey
+import standard.crypto.SecretKey
+import standard.crypto.SymmetricKey
+import standard.crypto.X509Certificate
+import standard.crypto.ConstantTime
+import standard.crypto.AeadAlgorithm
+
+/// The sans-I/O TLS 1.3 server (RFC 8446), symmetric to `TlsClient`. It accepts
+/// a ClientHello, negotiates the cipher suite / group / ALPN, and emits the full
+/// server flight (ServerHello, EncryptedExtensions, Certificate,
+/// CertificateVerify, Finished), then waits for the client's Finished.
+///
+/// Full 1-RTT only (no PSK, no client authentication, no HelloRetryRequest).
+
+public class TlsServer(
+    config: TlsServerConfig,
+    mutable state: ServerState,
+    recordLayer: RecordLayer,
+    mutable suite: Option<CipherSuite>,
+    mutable keySchedule: Option<KeySchedule>,
+    transcriptRaw: ByteWriter,
+    mutable group: Option<KeyExchangeGroup>,
+    inputBuffer: ChunkBuffer,
+    handshakeBuffer: ChunkBuffer,
+    mutable outputBuffer: Array<Uint8>,
+    events: MutableQueue<TlsEvent>,
+    mutable entropyOffset: Int32,
+    mutable negotiatedAlpn: Option<String>,
+    mutable clientServerName: String,
+    mutable writeAppSecret: Option<SymmetricKey>,
+    mutable readAppSecret: Option<SymmetricKey>,
+    mutable resuming: Bool,
+    mutable sawProtectedFromPeer: Bool,
+    // KeyUpdates received since the last application-data delivery (C4 flood cap).
+    mutable keyUpdatesReceived: Int32
+) =
+    /// Create a server waiting for a ClientHello.
+    public function make(config: TlsServerConfig): TlsServer =
+        TlsServer(
+            config, ServerState.WaitClientHello, RecordLayer.make(), None, None, ByteWriter.make(),
+            None, ChunkBuffer.make(), ChunkBuffer.make(), Array<Uint8>.empty(),
+            MutableQueue<TlsEvent>.new(), 0, None, "", None, None, false, false, 0)
+
+    /// Match an offered PSK against the ticket store and verify its binder
+    /// (RFC 8446 §4.2.11). Returns the resumable ticket, or `None` to fall back
+    /// to a full handshake.
+    /// Attempt PSK resumption. `Ok(None)` means "no usable PSK — do a full
+    /// handshake" (no offer, unknown identity, or a suite the client did not offer).
+    /// `Ok(Some(ticket))` means resume against that ticket. `Error` means the client
+    /// selected a PSK whose binder does not validate — RFC 8446 §4.2.11.2 requires
+    /// the server to ABORT in that case, not silently fall back.
+    function tryResumption(self, ch: ClientHelloMessage, msgBytes: Array<Uint8>): Result<Option<StoredTicket>, TlsError> =
+        if offersDheKe(ch.extensions) == false then
+            Ok(None)
+        else
+            match findPreSharedKey(ch.extensions) with
+                case None => Ok(None)
+                case Some(offer) =>
+                    let identities = offer._0
+                    let binders = offer._1
+                    match (identities, binders) with
+                        case (firstIdentity :: _, firstBinder :: _) =>
+                          match self.config.ticketStore.find(firstIdentity.identity) with
+                            case None => Ok(None)
+                            case Some(ticket) =>
+                                let hash = hashFor(ticket.cipherSuite)
+                                // Truncate by the FULL offered binder list, not one binder —
+                                // a client may offer several PSKs. Assuming a single binder
+                                // would hash the wrong transcript and, with the mandatory
+                                // abort on a binder mismatch (§4.2.11.2), reject a legitimate
+                                // multi-PSK client whose first identity matched.
+                                let overhead = bindersListLength(binders)
+                                if msgBytes.length < overhead then
+                                    Error(TlsError.DecodeError("ClientHello too short for a PSK binder"))
+                                else
+                                    let truncated = subArray(msgBytes, 0, msgBytes.length - overhead)
+                                    let expected = computeBinder(hash, ticket.psk, truncated)
+                                    if ConstantTime.equal(expected, firstBinder) == false then
+                                        // Selected PSK's binder failed: MUST abort (§4.2.11.2).
+                                        Error(TlsError.IllegalParameter("PSK binder does not validate"))
+                                    else if suiteOffered(ch.cipherSuites, ticket.cipherSuite) == false then
+                                        // Never negotiate a resumption cipher suite the client did
+                                        // not offer (§4.2.11) — fall back to a full handshake.
+                                        Ok(None)
+                                    else
+                                        // Binder validated and suite offered: resume. The ticket
+                                        // is consumed (single-use) by handleClientHello once the
+                                        // rest of the handshake is committed, not here — so a
+                                        // ClientHello that fails later (e.g. no common key_share)
+                                        // does not burn a still-usable ticket.
+                                        Ok(Some(ticket))
+                        case _ => Ok(None)
+
+    // --- public API -------------------------------------------------------
+
+    public function receiveData(self, data: Array<Uint8>): Unit =
+        self.inputBuffer.append(data)
+        self.processRecords()
+
+    /// Whether an incomplete ciphertext record is still buffered — i.e. the peer
+    /// stopped in the middle of a record. A socket EOF in this state is a
+    /// truncation (a mid-record cut), not a clean close at a record boundary.
+    public property hasPartialRecord(self): Bool = self.inputBuffer.pending > 0
+
+    public function dataToSend(self): Array<Uint8> =
+        let pending = self.outputBuffer
+        self.outputBuffer = Array<Uint8>.empty()
+        pending
+
+    public function nextEvent(self): Option<TlsEvent> =
+        self.events.dequeue()
+
+    public property isHandshakeComplete(self): Bool =
+        match self.state with
+            case ServerConnected => true
+            case _ => false
+
+    /// Whether this connection resumed a previous session via PSK.
+    public property isResumed(self): Bool = self.resuming
+
+    public function sendApplicationData(self, data: ReadonlySlice<Uint8>): Unit =
+        match self.state with
+            case ServerConnected =>
+                match self.recordLayer.sealRecord(ContentType.ApplicationData, data) with
+                    case Ok(bytes) => self.outputBuffer = self.outputBuffer.concat(bytes)
+                    case Error(e) => self.fail(e)
+            case _ => ()
+
+    // --- helpers ----------------------------------------------------------
+
+    function nextEntropy(self, n: Int32): Array<Uint8> =
+        let seed = self.config.randomSeed
+        let result = Array<Uint8>.fill(n, 0u8)
+        let mutable i = 0
+        while i < n do
+            let b = if seed.length > 0 then seed.get((self.entropyOffset + i) % seed.length) else 0u8
+            result.set(i, b)
+            i = i + 1
+        self.entropyOffset = self.entropyOffset + n
+        result
+
+    function transcriptHash(self): Array<Uint8> =
+        hashFor(self.suite.require).hash(self.transcriptRaw.toBytes())
+
+    function pushEvent(self, e: TlsEvent): Unit =
+        self.events.enqueue(e)
+
+    function fail(self, e: TlsError): Unit =
+        self.outputBuffer = self.outputBuffer.concat(Alert.fatalRecord(self.recordLayer, e))
+        self.events.enqueue(TlsEvent.Error(e))
+        self.state = ServerState.ServerClosed
+
+    /// Send a `close_notify` and stop.
+    public function initiateClose(self): Unit =
+        match self.state with
+            case ServerClosed => ()
+            case _ =>
+                self.outputBuffer = self.outputBuffer.concat(Alert.closeNotifyRecord(self.recordLayer))
+                self.state = ServerState.ServerClosed
+
+    /// Rotate our write traffic key and tell the peer (RFC 8446 §4.6.3).
+    public function sendKeyUpdate(self, requestUpdate: Bool): Unit =
+        match self.state with
+            case ServerConnected =>
+                let bytes = serializeHandshake(HandshakeMessage.KeyUpdate(requestUpdate))
+                match self.recordLayer.sealRecord(ContentType.Handshake, bytes.readonly) with
+                    case Error(e) => self.fail(e)
+                    case Ok(sealedBytes) =>
+                        self.outputBuffer = self.outputBuffer.concat(sealedBytes)
+                        self.rotateWriteKey()
+            case _ => ()
+
+    function rotateWriteKey(self): Unit =
+        let ks = self.keySchedule.require
+        let next = ks.updateTrafficSecret(self.writeAppSecret.require)
+        self.writeAppSecret = Some(next)
+        self.recordLayer.installWriteKeys(aeadFor(self.suite.require), ks.deriveTrafficKeys(next))
+
+    function rotateReadKey(self): Unit =
+        let ks = self.keySchedule.require
+        let next = ks.updateTrafficSecret(self.readAppSecret.require)
+        self.readAppSecret = Some(next)
+        self.recordLayer.installReadKeys(aeadFor(self.suite.require), ks.deriveTrafficKeys(next))
+
+    function handleKeyUpdate(self, requestUpdate: Bool): Result<Unit, TlsError> =
+        match self.state with
+            case ServerConnected =>
+                // C4 (RFC 8446 §4.6.3): rate-limit KeyUpdates to stop a flood. The
+                // counter resets whenever application data is delivered (see
+                // handleRecord), so a legitimate occasional rekey is unaffected while
+                // back-to-back KeyUpdates with no intervening progress are aborted.
+                self.keyUpdatesReceived = self.keyUpdatesReceived + 1
+                if keyUpdateWithinLimit(self.keyUpdatesReceived) == false then
+                    Error(TlsError.UnexpectedMessage("excessive KeyUpdate"))
+                else
+                    self.rotateReadKey()
+                    if requestUpdate then
+                        self.sendKeyUpdate(false)
+                    Ok(())
+            case _ => Error(TlsError.UnexpectedMessage("KeyUpdate before connected"))
+
+    function sendHandshakeEncrypted(self, msg: HandshakeMessage): Result<Unit, TlsError> =
+        let bytes = serializeHandshake(msg)
+        self.transcriptRaw.putBytes(bytes)
+        let sealedBytes = try self.recordLayer.sealRecord(ContentType.Handshake, bytes.readonly)
+        self.outputBuffer = self.outputBuffer.concat(sealedBytes)
+        Ok(())
+
+    // --- record / handshake processing ------------------------------------
+
+    function processRecords(self): Unit =
+        let buf = self.inputBuffer
+        let mutable stop = false
+        while stop == false && buf.pending >= 5 do
+            let length = (buf.byteAt(3).toInt32() << 8) | buf.byteAt(4).toInt32()
+            if length > maxCiphertext then
+                // A TLSCiphertext fragment longer than 2^14+256 is a record_overflow
+                // (RFC 8446 §5.2). Reject before buffering the rest of the fragment.
+                self.fail(TlsError.RecordOverflow)
+                stop = true
+            else if 5 + length > buf.pending then
+                stop = true                          // partial record: stays buffered
+            else
+                let contentType = buf.byteAt(0).toInt32()
+                let fragment = buf.slice(5, 5 + length)
+                buf.consume(5 + length)
+                match self.handleRecord(contentType, fragment) with
+                    case Ok(_) => ()
+                    case Error(e) =>
+                        self.fail(e)
+                        stop = true
+
+    function handleRecord(self, contentType: Int32, fragment: Array<Uint8>): Result<Unit, TlsError> =
+        // ChangeCipherSpec is a plaintext no-op in TLS 1.3 (middlebox compat) and is
+        // tolerated in any epoch. Everything else is dispatched by read epoch: once the
+        // record layer holds read keys, only protected records (outer type 23) are legal
+        // — a plaintext handshake (22) or alert (21) at that point is an injected packet
+        // an on-path attacker forges without the keys, so it must be rejected rather than
+        // fed to the transcript or allowed to tear the connection down (RFC 8446 §5).
+        if contentType == 20 then
+            // RFC 8446 §5: the compatibility change_cipher_spec must be a single 0x01
+            // byte and only appears mid-handshake. Reject a malformed or post-handshake
+            // one as unexpected_message rather than silently ignoring it.
+            if fragment.length == 1 && fragment.get(0) == 0x01u8 && self.isHandshakeComplete == false then
+                Ok(())
+            else
+                Error(TlsError.UnexpectedMessage("invalid change_cipher_spec"))
+        else if self.recordLayer.canReadProtected then
+            if contentType == 23 then
+                let rec = try self.recordLayer.openRecord(RawRecord { contentType = contentType; fragment = fragment })
+                // The client has now sent a protected record, so it has installed its
+                // write keys — every subsequent record from it must be protected.
+                self.sawProtectedFromPeer = true
+                match rec.contentType with
+                    case Handshake =>
+                        self.handshakeBuffer.appendSlice(rec.payload, 0, rec.contentLength)
+                        self.processHandshakeBuffer()
+                    case ApplicationData =>
+                        // Application data is valid only after the handshake completes; before
+                        // ServerConnected the client's Finished has not been verified, so
+                        // injected app data must never reach the application (RFC 8446 §5.1).
+                        // After a closure alert, late in-flight app data MUST be ignored
+                        // rather than answered with an alert (§6.1).
+                        if serverAppDataAllowed(self.state) then
+                            // Application progress resets the KeyUpdate flood counter (C4).
+                            self.keyUpdatesReceived = 0
+                            self.pushEvent(TlsEvent.ApplicationData(rec.payload, rec.contentLength))
+                            Ok(())
+                        else
+                            match self.state with
+                                case ServerClosed => Ok(())
+                                case _ => Error(TlsError.UnexpectedMessage("application data before handshake complete"))
+                    case Alert => self.handleAlert(rec.payload, rec.contentLength)
+                    // RFC 8446 §5: a change_cipher_spec inside a protected record is illegal.
+                    case ChangeCipherSpec => Error(TlsError.UnexpectedMessage("protected change_cipher_spec"))
+            else if contentType == 21 && self.sawProtectedFromPeer == false then
+                // The server installs read keys while processing the ClientHello, a full
+                // round-trip before the client can encrypt (the client derives its write
+                // keys only once it processes our ServerHello). Until the client's first
+                // protected record, a plaintext alert from it — e.g. a client abort — is
+                // legitimate and must be tolerated, not treated as an injected packet.
+                self.handleAlert(fragment, fragment.length)
+            else
+                Error(TlsError.UnexpectedMessage("plaintext record after keys established"))
+        else if contentType == 22 then
+            self.handshakeBuffer.append(fragment)
+            self.processHandshakeBuffer()
+        else if contentType == 21 then
+            self.handleAlert(fragment, fragment.length)
+        else if contentType == 23 then
+            Error(TlsError.UnexpectedMessage("application data before keys"))
+        else
+            Error(TlsError.UnexpectedMessage("unknown record type"))
+
+    function handleAlert(self, payload: Array<Uint8>, contentLength: Int32): Result<Unit, TlsError> =
+        if contentLength < 2 then
+            Error(TlsError.DecodeError("truncated alert"))
+        else if isOrderlyClose(payload) then
+            self.pushEvent(TlsEvent.ConnectionClosed)
+            self.state = ServerState.ServerClosed
+            Ok(())
+        else if isIgnorableWarning(payload) then
+            Ok(())                                   // warning user_canceled: tolerate
+        else
+            Error(TlsError.UnexpectedMessage("fatal alert from peer"))
+
+    function processHandshakeBuffer(self): Result<Unit, TlsError> =
+        let mutable cont = true
+        let mutable outcome: Result<Unit, TlsError> = Ok(())
+        while cont do
+            match pendingHandshakeLength(self.handshakeBuffer) with
+                case None => cont = false
+                case Some(len) =>
+                    if self.handshakeBuffer.pending < len then
+                        cont = false
+                    else
+                        let msgBytes = self.handshakeBuffer.slice(0, len)
+                        self.handshakeBuffer.consume(len)
+                        match parseHandshake(msgBytes) with
+                            case Error(e) =>
+                                outcome = Error(e)
+                                cont = false
+                            case Ok(msg) =>
+                                match self.handleHandshakeMessage(msg, msgBytes) with
+                                    case Error(e) =>
+                                        outcome = Error(e)
+                                        cont = false
+                                    case Ok(_) => ()
+        outcome
+
+    function handleHandshakeMessage(self, msg: HandshakeMessage, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        match msg with
+            case ClientHello(ch) =>
+                match self.state with
+                    case WaitClientHello => self.handleClientHello(ch, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("ClientHello"))
+            case Finished(vd) =>
+                match self.state with
+                    case WaitClientFinished => self.handleClientFinished(vd, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("Finished"))
+            case KeyUpdate(req) => self.handleKeyUpdate(req)
+            case _ => Error(TlsError.UnexpectedMessage("unexpected handshake message"))
+
+    function handleClientHello(self, ch: ClientHelloMessage, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        // This engine only speaks TLS 1.3: the client MUST offer it via supported_versions
+        // (RFC 8446 §4.2.1). Reject a 1.2-only ClientHello rather than answer a 1.3
+        // ServerHello it never asked for.
+        if clientOffersTls13(ch.extensions) == false then
+            try Result.Error(TlsError.ProtocolVersion)
+        let resumed = try self.tryResumption(ch, msgBytes)
+        let cs = match resumed with
+            case Some(ticket) => ticket.cipherSuite
+            case None => try selectCipherSuite(self.config.cipherSuites, ch.cipherSuites)
+        let clientShare = try selectKeyShare(self.config.keyExchangeGroups, ch.extensions)
+        let kx = keyExchangeFor(clientShare.group)
+        let secretBytes = self.nextEntropy(kx.secretKeySize)
+        let serverSecret = match kx.secretKeyFromBytes(secretBytes) with
+            case Some(s) => s
+            case None => SecretKey(secretBytes)
+        let serverPublic = kx.derivePublicKey(serverSecret)
+        let shared = match kx.computeSharedSecret(serverSecret, PublicKey(clientShare.keyExchange)) with
+            case Ok(s) => s
+            case Error(_) => try Result.Error(TlsError.HandshakeFailure("ECDHE failed"))
+        // Resumption is now committed (suite + key share selected, ECDHE done): consume
+        // the ticket so a replayed ClientHello cannot resume again (single-use, RFC 8446
+        // §8.1). Done here rather than in tryResumption so an earlier failure — e.g. no
+        // common key_share — does not burn a still-usable ticket.
+        match resumed with
+            case Some(ticket) => self.config.ticketStore.remove(ticket.identity)
+            case None => ()
+        self.suite = Some(cs)
+        self.group = Some(clientShare.group)
+        self.clientServerName = findServerName(ch.extensions)
+        self.negotiatedAlpn = try negotiateAlpn(self.config.alpnProtocols, ch.extensions)
+        self.resuming = match resumed with
+            case Some(_) => true
+            case None => false
+
+        // ClientHello and our ServerHello (sent in the clear)
+        self.transcriptRaw.putBytes(msgBytes)
+        let baseExts = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.KeyShare([KeyShareEntry { group = clientShare.group; keyExchange = serverPublic.value }]),
+        ]
+        let shExts = if self.resuming then baseExts.append(Extension.PskSelectedIdentity(0)) else baseExts
+        let sh = ServerHelloMessage {
+            random = self.nextEntropy(32)
+            legacySessionId = ch.legacySessionId
+            cipherSuite = cs
+            extensions = shExts
+        }
+        let shBytes = serializeHandshake(HandshakeMessage.ServerHello(sh))
+        self.transcriptRaw.putBytes(shBytes)
+        self.outputBuffer = self.outputBuffer.concat(self.recordLayer.framePlaintext(ContentType.Handshake, shBytes))
+        self.outputBuffer = self.outputBuffer.concat(self.recordLayer.framePlaintext(ContentType.ChangeCipherSpec, [|0x01u8|]))
+
+        let ks = KeySchedule.make(cs)
+        match resumed with
+            case Some(ticket) => ks.initEarly(Some(ticket.psk))
+            case None => ks.initEarly(None)
+        ks.initHandshake(shared, self.transcriptHash())
+        self.keySchedule = Some(ks)
+        let aead = aeadFor(cs)
+        self.recordLayer.installWriteKeys(aead, ks.deriveTrafficKeys(ks.serverHandshakeTrafficSecret()))
+        self.recordLayer.installReadKeys(aead, ks.deriveTrafficKeys(ks.clientHandshakeTrafficSecret()))
+
+        let eeExts = match self.negotiatedAlpn with
+            case Some(p) => [Extension.Alpn([p])]
+            case None => List<Extension>.empty
+        try self.sendHandshakeEncrypted(HandshakeMessage.EncryptedExtensions(eeExts))
+        if self.resuming == false then
+            let entries = certificateEntries(self.config.certificateChain)
+            try self.sendHandshakeEncrypted(HandshakeMessage.Certificate(CertificateMessage {
+                certificateRequestContext = Array<Uint8>.empty()
+                certificates = entries
+            }))
+            let input = signedContentInput(serverVerifyContext, self.transcriptHash())
+            let signature = try signCertificateVerify(self.config.signatureScheme, self.config.privateKey, input)
+            try self.sendHandshakeEncrypted(HandshakeMessage.CertificateVerify(CertificateVerifyMessage {
+                algorithm = self.config.signatureScheme
+                signature = signature
+            }))
+        let serverVd = ks.finishedVerifyData(ks.serverHandshakeTrafficSecret(), self.transcriptHash())
+        try self.sendHandshakeEncrypted(HandshakeMessage.Finished(serverVd))
+        ks.initApplication(self.transcriptHash())
+        self.recordLayer.installWriteKeys(aead, ks.deriveTrafficKeys(ks.serverApplicationTrafficSecret()))
+        self.writeAppSecret = Some(ks.serverApplicationTrafficSecret())
+        self.state = ServerState.WaitClientFinished
+        Ok(())
+
+    /// Issue a NewSessionTicket so the client can resume later (RFC 8446 §4.6.1).
+    function issueNewSessionTicket(self, ks: KeySchedule): Result<Unit, TlsError> =
+        let rms = ks.resumptionSecret(self.transcriptHash())
+        let nonce = self.nextEntropy(8)
+        let identity = self.nextEntropy(16)
+        let hash = hashFor(self.suite.require)
+        let psk = derivePsk(hash, rms, nonce)
+        self.config.ticketStore.add(StoredTicket {
+            identity = identity
+            psk = psk
+            cipherSuite = self.suite.require
+            ageAdd = 0i64
+        })
+        self.sendHandshakeEncrypted(HandshakeMessage.NewSessionTicket(NewSessionTicketMessage {
+            ticketLifetime = 7200i64
+            ticketAgeAdd = 0i64
+            ticketNonce = nonce
+            ticket = identity
+            extensions = List<Extension>.empty
+        }))
+
+    function handleClientFinished(self, verifyData: Array<Uint8>, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        let ks = self.keySchedule.require
+        let th = self.transcriptHash()
+        let expected = ks.finishedVerifyData(ks.clientHandshakeTrafficSecret(), th)
+        if ConstantTime.equal(expected, verifyData) == false then
+            Error(TlsError.DecryptError)
+        else
+            self.transcriptRaw.putBytes(msgBytes)
+            let aead = aeadFor(self.suite.require)
+            self.recordLayer.installReadKeys(aead, ks.deriveTrafficKeys(ks.clientApplicationTrafficSecret()))
+            self.readAppSecret = Some(ks.clientApplicationTrafficSecret())
+            self.state = ServerState.ServerConnected
+            self.pushEvent(TlsEvent.HandshakeComplete(NegotiatedParams {
+                cipherSuite = self.suite.require
+                keyExchangeGroup = self.group.require
+                signatureScheme = self.config.signatureScheme
+                peerCertificates = List<X509Certificate>.empty
+                alpnProtocol = self.negotiatedAlpn
+                serverName = self.clientServerName
+            }))
+            try self.issueNewSessionTicket(ks)
+            Ok(())
+
+// --- negotiation helpers (package-level) ----------------------------------
+
+/// Whether an inbound protected application_data record may be surfaced to the
+/// application: only once the handshake has completed (`ServerConnected`). Before
+/// that the client's Finished has not been verified, so injected application data
+/// must be rejected rather than delivered (RFC 8446 §5.1).
+function serverAppDataAllowed(state: ServerState): Bool =
+    match state with
+        case ServerConnected => true
+        case _ => false
+
+/// Whether the ClientHello's supported_versions offers TLS 1.3 (0x0304).
+function clientOffersTls13(exts: List<Extension>): Bool =
+    let mutable ok = false
+    for ext in exts do
+        match ext with
+            case SupportedVersions(versions) =>
+                for v in versions do
+                    if v == versionTls13 then ok = true
+            case _ => ()
+    ok
+
+/// Whether `suite` appears among the cipher suites the client offered.
+function suiteOffered(clientSuites: List<CipherSuite>, suite: CipherSuite): Bool =
+    let mutable found = false
+    for c in clientSuites do
+        if cipherSuiteCode(c) == cipherSuiteCode(suite) then found = true
+    found
+
+function selectCipherSuite(serverSuites: List<CipherSuite>, clientSuites: List<CipherSuite>): Result<CipherSuite, TlsError> =
+    let mutable chosen: Option<CipherSuite> = None
+    for s in serverSuites do
+        for c in clientSuites do
+            if cipherSuiteCode(s) == cipherSuiteCode(c) then
+                match chosen with
+                    case None => chosen = Some(s)
+                    case Some(_) => ()
+    match chosen with
+        case Some(cs) => Ok(cs)
+        case None => Error(TlsError.HandshakeFailure("no common cipher suite"))
+
+function selectKeyShare(serverGroups: List<KeyExchangeGroup>, exts: List<Extension>): Result<KeyShareEntry, TlsError> =
+    match findKeyShare(exts) with
+        case None => Error(TlsError.MissingExtension("key_share"))
+        case Some(entries) =>
+            let mutable chosen: Option<KeyShareEntry> = None
+            for g in serverGroups do
+                for e in entries do
+                    if groupCode(g) == groupCode(e.group) then
+                        match chosen with
+                            case None => chosen = Some(e)
+                            case Some(_) => ()
+            match chosen with
+                case Some(entry) => Ok(entry)
+                case None => Error(TlsError.HandshakeFailure("no common key_share group"))
+
+function findServerName(exts: List<Extension>): String =
+    let mutable name = ""
+    for ext in exts do
+        match ext with
+            case ServerName(host) => name = host
+            case _ => ()
+    name
+
+function negotiateAlpn(serverProtocols: List<String>, exts: List<Extension>): Result<Option<String>, TlsError> =
+    let mutable clientProtocols: List<String> = List.empty
+    let mutable clientOfferedAlpn = false
+    for ext in exts do
+        match ext with
+            case Alpn(protocols) =>
+                clientProtocols = protocols
+                clientOfferedAlpn = true
+            case _ => ()
+    let mutable chosen: Option<String> = None
+    for sp in serverProtocols do
+        for cp in clientProtocols do
+            if sp == cp then
+                match chosen with
+                    case None => chosen = Some(sp)
+                    case Some(_) => ()
+    match chosen with
+        case Some(p) => Ok(Some(p))
+        case None =>
+            // The client offered ALPN but nothing overlapped what this server supports:
+            // RFC 7301 §3.2 — the server MUST abort with no_application_protocol rather than
+            // complete a handshake with no agreed protocol. If the client offered no ALPN
+            // (or this server advertises none), there is simply nothing to negotiate.
+            if clientOfferedAlpn && !serverProtocols.isEmpty then
+                Error(TlsError.NoApplicationProtocol)
+            else
+                Ok(None)
+
+function certificateEntries(chain: List<X509Certificate>): List<CertificateEntry> =
+    chain.map(cert => CertificateEntry { certData = cert.der; extensions = List<Extension>.empty })
+
+test "tls server surfaces application data only once ServerConnected (FIX 7)" =
+    // The gate `handleRecord` applies to a decrypted application_data record: before the
+    // handshake completes the client's Finished is unverified, so app data in any
+    // pre-ServerConnected state must be rejected, not delivered (RFC 8446 §5.1). Only the
+    // terminal ServerConnected state may pass it through.
+    assert serverAppDataAllowed(ServerState.ServerConnected)
+    assert serverAppDataAllowed(ServerState.ServerStart) == false
+    assert serverAppDataAllowed(ServerState.WaitClientHello) == false
+    assert serverAppDataAllowed(ServerState.WaitClientFinished) == false
+    assert serverAppDataAllowed(ServerState.ServerClosed) == false
+
+test "tls server suiteOffered gates resumption on an offered cipher suite (FIX D4)" =
+    // A resumption ticket's cipher suite must appear in the client's offer, else the
+    // server must not negotiate it (RFC 8446 §4.2.11).
+    let offered = [CipherSuite.Aes128GcmSha256, CipherSuite.Aes256GcmSha384]
+    assert suiteOffered(offered, CipherSuite.Aes128GcmSha256)
+    assert suiteOffered(offered, CipherSuite.Aes256GcmSha384)
+    assert suiteOffered([CipherSuite.Aes128GcmSha256], CipherSuite.Aes256GcmSha384) == false
+    assert suiteOffered(List<CipherSuite>.empty, CipherSuite.Aes128GcmSha256) == false
+
+test "tls server ALPN alerts on no overlap but tolerates no offer (FIX C-F2)" =
+    // offered-but-no-overlap -> no_application_protocol; overlap -> selected; no offer -> None.
+    match negotiateAlpn(["http/1.1"], [Extension.Alpn(["h2"])]) with
+        case Error(TlsError.NoApplicationProtocol) => assert true
+        case _ => assert false
+    match negotiateAlpn(["http/1.1", "h2"], [Extension.Alpn(["h2"])]) with
+        case Ok(Some(p)) => assert p == "h2"
+        case _ => assert false
+    match negotiateAlpn(["http/1.1"], List<Extension>.empty) with
+        case Ok(None) => assert true
+        case _ => assert false
+    // a server advertising no ALPN never alerts, even if the client offered some
+    match negotiateAlpn(List<String>.empty, [Extension.Alpn(["h2"])]) with
+        case Ok(None) => assert true
+        case _ => assert false
+
+test "tls server requires the client to offer TLS 1.3 via supported_versions (FIX C-F6)" =
+    assert clientOffersTls13([Extension.SupportedVersions([versionTls13])])
+    assert clientOffersTls13([Extension.SupportedVersions([0x0303])]) == false
+    assert clientOffersTls13(List<Extension>.empty) == false

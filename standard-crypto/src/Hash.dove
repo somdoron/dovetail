@@ -1,0 +1,20 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// A stateful, incremental hash computation. Callers feed data in chunks via
+/// `update`, then `finalize` to obtain the digest. `reset` returns the hasher
+/// to its initial state for reuse.
+public interface Hasher =
+    function update(self, data: Array<Uint8>): Unit
+    function finalize(self): Array<Uint8>
+    function reset(self): Unit
+
+/// A hash algorithm singleton (e.g. `Sha256`). Stateless: the mutable state
+/// lives in the `Hasher` returned by `hasher()`. `hash` is a one-shot
+/// convenience equivalent to creating a hasher, updating once, and finalizing.
+public interface HashAlgorithm =
+    property digestSize(self): Int32
+    property blockSize(self): Int32
+    function hasher(self): Hasher
+    function hash(self, data: Array<Uint8>): Array<Uint8>

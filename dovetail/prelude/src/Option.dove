@@ -1,0 +1,51 @@
+package standard.prelude
+
+public enum Option<out T> =
+    Some(T)
+    None
+
+module Option<T> =
+    public function expect(self, message: ByName<String>): T =
+        match self with
+            case Some(v) => v
+            case None => panic message.get
+
+    public property require(self): T =
+        match self with
+            case Some(v) => v
+            case None => panic "called require on None"
+
+    public function or(self, default: ByName<T>): T =
+        match self with
+            case Some(v) => v
+            case None => default.get
+
+    public function map<U>(self, f: (T) => U): Option<U> =
+        match self with
+            case Some(v) => Some(f(v))
+            case None => None
+
+    public function andThen<U>(self, f: (T) => Option<U>): Option<U> =
+        match self with
+            case Some(v) => f(v)
+            case None => None
+
+    public function filter(self, predicate: (T) => Bool): Option<T> =
+        match self with
+            case Some(v) => if predicate(v) then Some(v) else None
+            case None => None
+
+    public property isSome(self): Bool =
+        match self with
+            case Some(_) => true
+            case None => false
+
+    public property isNone(self): Bool =
+        match self with
+            case Some(_) => false
+            case None => true
+
+    public function toResult<E>(self, error: ByName<E>): Result<T, E> =
+        match self with
+            case Some(v) => Ok(v)
+            case None => Error(error.get)

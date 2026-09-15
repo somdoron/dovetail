@@ -1,0 +1,229 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Dovetail",
+  "scopeName": "source.dovetail",
+  "patterns": [
+    { "include": "#doc-comment" },
+    { "include": "#line-comment" },
+    { "include": "#prefixed-string" },
+    { "include": "#string" },
+    { "include": "#char-literal" },
+    { "include": "#numeric-literal" },
+    { "include": "#keyword" },
+    { "include": "#operator" },
+    { "include": "#function-definition" },
+    { "include": "#type-name" },
+    { "include": "#constant" },
+    { "include": "#identifier" }
+  ],
+  "repository": {
+    "doc-comment": {
+      "match": "///.*$",
+      "name": "comment.block.documentation.dovetail"
+    },
+    "line-comment": {
+      "match": "//.*$",
+      "name": "comment.line.double-slash.dovetail"
+    },
+    "prefixed-string": {
+      "patterns": [
+        {
+          "name": "string.quoted.triple.prefixed.dovetail",
+          "begin": "([a-zA-Z_][a-zA-Z0-9_]*)(\"\"\")",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.dovetail" },
+            "2": { "name": "punctuation.definition.string.begin.dovetail" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.dovetail" }
+          },
+          "patterns": [{ "include": "#prefixed-string-body" }]
+        },
+        {
+          "name": "string.quoted.double.prefixed.dovetail",
+          "begin": "([a-zA-Z_][a-zA-Z0-9_]*)(\")",
+          "end": "\"",
+          "beginCaptures": {
+            "1": { "name": "entity.name.tag.dovetail" },
+            "2": { "name": "punctuation.definition.string.begin.dovetail" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.dovetail" }
+          },
+          "patterns": [{ "include": "#prefixed-string-body" }]
+        }
+      ]
+    },
+    "prefixed-string-body": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.dovetail",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.interpolation.dovetail",
+          "begin": "\\$\\.\\.\\{|\\$\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.interpolation.begin.dovetail" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.interpolation.end.dovetail" }
+          },
+          "patterns": [{ "include": "source.dovetail" }]
+        },
+        {
+          "name": "meta.interpolation.dovetail",
+          "match": "\\$\\.?\\.?([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "0": { "name": "punctuation.definition.interpolation.dovetail" }
+          }
+        }
+      ]
+    },
+    "string": {
+      "name": "string.quoted.double.dovetail",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.dovetail",
+          "match": "\\\\."
+        },
+        {
+          "name": "meta.interpolation.dovetail",
+          "begin": "\\$\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.interpolation.begin.dovetail" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.interpolation.end.dovetail" }
+          },
+          "patterns": [
+            { "include": "source.dovetail" }
+          ]
+        },
+        {
+          "name": "meta.interpolation.dovetail",
+          "match": "\\$([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "0": { "name": "punctuation.definition.interpolation.dovetail" }
+          }
+        }
+      ]
+    },
+    "char-literal": {
+      "name": "string.quoted.single.dovetail",
+      "begin": "'",
+      "end": "'",
+      "patterns": [
+        {
+          "name": "constant.character.escape.dovetail",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numeric-literal": {
+      "patterns": [
+        {
+          "match": "\\b(0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|[0-9]+)(big)\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.integer.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        },
+        {
+          "match": "\\b([0-9]+(?:\\.[0-9]+)?(?:[eE][+-]?[0-9]+)?)(dec)\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.float.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        },
+        {
+          "match": "\\b(0[xX][0-9a-fA-F_]+)([iu](?:8|16|32|64))?\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.hex.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        },
+        {
+          "match": "\\b(0[bB][01_]+)([iu](?:8|16|32|64))?\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.binary.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        },
+        {
+          "match": "\\b(0[oO][0-7_]+)([iu](?:8|16|32|64))?\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.octal.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        },
+        {
+          "match": "\\b([0-9][0-9_]*\\.[0-9][0-9_]*(?:[eE][+-]?[0-9_]+)?)(f(?:32|64))?\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.float.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        },
+        {
+          "match": "\\b([0-9][0-9_]*)([iu](?:8|16|32|64))?\\b",
+          "captures": {
+            "1": { "name": "constant.numeric.integer.dovetail" },
+            "2": { "name": "keyword.other.suffix.dovetail storage.type.numeric.dovetail" }
+          }
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.dovetail",
+          "match": "\\b(if|then|else|match|with|case|while|do|for|in|break|continue|return|try|await)\\b"
+        },
+        {
+          "name": "keyword.declaration.dovetail",
+          "match": "\\b(package|import|function|let|mutable|record|enum|trait|interface|class|module|extension|implement|newtype|type|test|property)\\b"
+        },
+        {
+          "name": "keyword.modifier.dovetail",
+          "match": "\\b(public|internal|private|protected|abstract|final|sealed|override|static|async)\\b"
+        },
+        {
+          "name": "keyword.operator.dovetail",
+          "match": "\\b(is|as|and|or|not)\\b"
+        },
+        {
+          "name": "keyword.other.dovetail",
+          "match": "\\b(where|extends|self|super|intrinsic|panic|assert)\\b"
+        }
+      ]
+    },
+    "constant": {
+      "match": "\\b(true|false)\\b",
+      "name": "constant.language.dovetail"
+    },
+    "operator": {
+      "match": "(=>|->|\\.\\.|\\.\\.<|\\[\\||\\|\\]|::|<=|>=|==|!=|&&|\\|\\||<<|>>|\\+\\+|[+\\-*/%<>&|^~!]|=)",
+      "name": "keyword.operator.dovetail"
+    },
+    "function-definition": {
+      "match": "\\b(function|property)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.declaration.dovetail" },
+        "2": { "name": "entity.name.function.dovetail" }
+      }
+    },
+    "type-name": {
+      "match": "\\b([A-Z][a-zA-Z0-9_]*)\\b",
+      "name": "entity.name.type.dovetail"
+    },
+    "identifier": {
+      "match": "\\b[a-z_][a-zA-Z0-9_]*\\b",
+      "name": "variable.other.dovetail"
+    }
+  }
+}

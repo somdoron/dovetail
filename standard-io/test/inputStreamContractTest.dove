@@ -1,0 +1,173 @@
+package test
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.ByteBuffer
+import standard.wasi.IoError
+
+/// The error channel these streams never use. Local to the test rather than
+/// borrowed from a real transport because `Async.run` needs `Display` and
+/// `AsyncInputStream` needs `IoError`, and nothing is served by making this
+/// test depend on which library error type happens to have both.
+enum ProbeError =
+    Unreachable
+
+implement IoError for ProbeError
+
+implement Display for ProbeError =
+    public function format(self: ProbeError): String = "probe error"
+
+// The edge-length contract belongs to `AsyncInputStream`, whose public reads are
+// all FINAL, so an implementation gets it whether or not its author has read the
+// contract. That is the property under test here, and the subjects are
+// deliberately the most naive subclasses anyone could write: the transport hook,
+// the one-line answer to "can you die", and nothing else — no guards, no idea
+// what a zero or a negative length is supposed to mean.
+//
+// Everything below fails if the guards move back down into the subclasses,
+// because these subclasses do not have any.
+
+/// Hands back one byte per call and counts the calls. The count is the whole
+/// point: it says whether `read` reached the transport at all.
+class OneBytePerCallStream(public mutable reads: Int32) extends AsyncInputStream<ProbeError>() =
+    protected override function checkAlive(self): Async<Unit, ProbeError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, ProbeError> =
+        self.reads = self.reads + 1
+        [|7u8|]
+
+    public override async function close(self): Async<Unit, ProbeError> = ()
+
+test "a zero-length read is answered without reaching a naive subclass" =
+    let stream = OneBytePerCallStream(0)
+    let mutable length: Int32 = -1i32
+    zeroProbe(stream, (n: Int32) => length = n).run()
+    assert length == 0
+    // Not merely "answered empty": no transport read was posted. A subclass that
+    // has never heard of zero would otherwise ask its transport for a
+    // zero-capacity copy, which for the p3 streams underneath this is a trap.
+    assert stream.reads == 0
+
+async function zeroProbe(stream: AsyncInputStream<ProbeError>, setter: (Int32) => Unit): Async<Unit, ProbeError> =
+    let empty = await stream.read(0i64)
+    setter(empty.length)
+
+@panics
+test "a negative read length panics even for a subclass that never checks" =
+    negativeProbe(OneBytePerCallStream(0)).run()
+
+async function negativeProbe(stream: AsyncInputStream<ProbeError>): Async<Unit, ProbeError> =
+    let ignored = await stream.read(-1i64)
+    ()
+
+// A caller that needs three bytes now writes the loop, so what is pinned here is
+// the fact that MAKES it write one: a `read` may answer short, every time, and
+// the only thing that means "no more" is an empty answer. The size family that
+// used to live in the base class was three copies of this loop with the count
+// supplied by the caller — see (6) on `AsyncInputStream` for why it went.
+test "a short answer is ordinary, and only an empty one ends the stream" =
+    let stream = OneBytePerCallStream(0)
+    let mutable collected: Int32 = -1i32
+    chunkLoopProbe(stream, (n: Int32) => collected = n).run()
+    assert collected == 3
+    assert stream.reads == 3
+
+async function chunkLoopProbe(stream: AsyncInputStream<ProbeError>, setter: (Int32) => Unit): Async<Unit, ProbeError> =
+    let got = ByteBuffer.make()
+    let mutable reading = true
+    while reading do
+        let chunk = await stream.read((3i32 - got.length).toInt64())
+        if chunk.length == 0 then
+            reading = false
+        else
+            got.append(chunk)
+            reading = got.length < 3i32
+    setter(got.length)
+
+// --- a dead stream owes every operation the same answer ----------------------
+//
+// Invariant (2): a stream that has recorded a transport failure may not answer
+// ANY operation with something a caller reads as clean success, and an empty
+// array — which this library defines as end of stream — is exactly that.
+//
+// This used to cover three operations, because `readFully(0)` and `skip(0)`
+// answered a dead stream cheerfully: their loops tested the request before
+// making it, so a request of zero never asked the stream anything at all. Both
+// are gone with the size family, and the class is down to the two operations
+// below — which is the same defect made unreachable rather than fixed twice.
+
+/// Dead on arrival, with nothing to hand back. `readAvailable` panics rather
+/// than answering: no operation below is entitled to reach the transport of a
+/// stream that has already died, and a panic says so louder than an assertion.
+class DeadStream(unused: Bool) extends AsyncInputStream<ProbeError>() =
+    protected override function checkAlive(self): Async<Unit, ProbeError> = Async.fail(ProbeError.Unreachable)
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, ProbeError> =
+        panic "DeadStream.readAvailable must not be reached"
+    public override async function close(self): Async<Unit, ProbeError> = ()
+
+function probeFailed(error: ProbeError): Async<String, Never> = Async.succeed("failed")
+
+function probeBytes(bytes: Array<Uint8>): Async<String, Never> =
+    if bytes.length == 0 then Async.succeed("eof") else Async.succeed("bytes")
+
+test "a dead stream reports its failure to the operation that has nothing to fetch" =
+    let outcomes = Array<String>.fill(1, "")
+    deadZeroLengthProbe(outcomes).run()
+    assert outcomes.get(0) == "failed"
+
+async function deadZeroLengthProbe(outcomes: Array<String>): Async<Unit, Never> =
+    // Annotated with the ABSTRACT type, like every other receiver in this file:
+    // see the note above `deadWriteProbe` in the output-stream contract test.
+    let stream: AsyncInputStream<ProbeError> = DeadStream(true)
+    outcomes.set(0, await stream.read(0i64).fold<String, Never>(probeFailed, probeBytes))
+    // And `readAll` is deliberately NOT here, though it has nothing to hand back
+    // either: its first `read` is positive-length, so it goes to the transport
+    // first and reports the death only once there is nothing left (invariant
+    // (3), and (2)'s "where they meet, (3) wins"). On this stream that reaches
+    // the panicking hook, which is the correct behaviour written down as a
+    // deliberate absence rather than a forgotten case.
+
+// --- a subclass that over-delivers is caught at the front door ---------------
+//
+// The guard is on `read`, which is final, and that is the only place it can be:
+// there is nowhere for the surplus to go — this class holds no pushback buffer,
+// dropping the bytes destroys a payload the transport already handed over (3),
+// and handing them to the caller silently overruns whatever it sized from the
+// number it passed in. So it is a bug in the subclass and it is reported as one.
+//
+// Two of these tests went with the size family they used to go through
+// (`readFully(1)` answered 4 bytes, and `readString(n)` inherited it). What is
+// left is the guard itself and its boundary, which is what always mattered:
+// every caller now loops over `read`, so `read` is where an over-delivering
+// subclass has to be stopped.
+
+/// Four bytes however few were asked for: a transport with its own idea of a
+/// minimum read.
+class OverDeliveringStream(public mutable reads: Int32) extends AsyncInputStream<ProbeError>() =
+    protected override function checkAlive(self): Async<Unit, ProbeError> = Async.succeed(())
+    protected override async function readAvailable(self, bytesLength: Int64): Async<Array<Uint8>, ProbeError> =
+        self.reads = self.reads + 1
+        [|1u8, 2u8, 3u8, 4u8|]
+    public override async function close(self): Async<Unit, ProbeError> = ()
+
+@panics
+test "a subclass that hands back more than it was asked for is a bug and says so" =
+    overDeliverChunkProbe(OverDeliveringStream(0)).run()
+
+async function overDeliverChunkProbe(stream: AsyncInputStream<ProbeError>): Async<Unit, ProbeError> =
+    let bytes = await stream.read(2i64)
+    ()
+
+// An exactly-sized answer is NOT over-delivery, which is the boundary the guard
+// has to get right: `>` and not `>=`. A subclass that fills the request exactly
+// is the ordinary case, and a guard off by one here would panic on every read
+// that succeeded completely.
+test "a subclass that fills the request exactly is not over-delivering" =
+    let stream = OverDeliveringStream(0)
+    let mutable collected: Int32 = -1i32
+    exactProbe(stream, (n: Int32) => collected = n).run()
+    assert collected == 4
+    assert stream.reads == 1
+
+async function exactProbe(stream: AsyncInputStream<ProbeError>, setter: (Int32) => Unit): Async<Unit, ProbeError> =
+    let bytes = await stream.read(4i64)
+    setter(bytes.length)

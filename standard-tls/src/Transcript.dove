@@ -1,0 +1,44 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.crypto.HashAlgorithm
+import standard.crypto.Sha256
+import standard.crypto.ConstantTime
+
+/// The running handshake transcript hash (RFC 8446 §4.4.1). The key schedule
+/// needs `Transcript-Hash(messages)` at several points (through ServerHello,
+/// through the server Finished, through the client Finished) while the
+/// transcript keeps growing. The crypto `Hasher` has no `clone`, so rather than
+/// snapshot a hasher we buffer the concatenated handshake-message bytes and
+/// hash the accumulated prefix on demand — which is exactly what
+/// `Hash(handshake-context)` means. Transcripts are a few KB, so re-hashing is
+/// negligible.
+class TranscriptHash(hash: HashAlgorithm, writer: ByteWriter) =
+    /// An empty transcript for the cipher suite's hash.
+    public function make(hash: HashAlgorithm): TranscriptHash =
+        TranscriptHash(hash, ByteWriter.make())
+
+    /// Append a full handshake message (header + body) to the transcript.
+    public function update(self, message: Array<Uint8>): Unit =
+        self.writer.putBytes(message)
+
+    /// The hash of every message appended so far.
+    public function currentHash(self): Array<Uint8> =
+        self.hash.hash(self.writer.toBytes())
+
+    /// The raw concatenated transcript bytes (used for PSK binder computation).
+    public function bytes(self): Array<Uint8> =
+        self.writer.toBytes()
+
+test "tls transcript hashes the accumulated prefix" =
+    let t = TranscriptHash.make(Sha256)
+    t.update([|0x01u8, 0x02u8|])
+    let h1 = t.currentHash()
+    t.update([|0x03u8, 0x04u8|])
+    let h2 = t.currentHash()
+    // h1 = SHA-256(0102), h2 = SHA-256(01020304); the two prefixes differ
+    assert h1.length == 32
+    assert h2.length == 32
+    assert ConstantTime.equal(h1, Sha256.hash([|0x01u8, 0x02u8|]))
+    assert ConstantTime.equal(h2, Sha256.hash([|0x01u8, 0x02u8, 0x03u8, 0x04u8|]))
+    assert ConstantTime.equal(h1, h2) == false

@@ -1,0 +1,46 @@
+package standard.io.http
+
+/// HTTP request method. Standard verbs are first-class variants;
+/// non-standard verbs (e.g. WebDAV's PROPFIND, MKCOL) use `Other(name)`.
+/// Stored on `Request<B>` instead of a raw `String` so the builder API
+/// and proxy code can pattern-match without typo risk.
+public enum Method =
+    Get
+    Post
+    Put
+    Delete
+    Patch
+    Head
+    Options
+    /// Custom HTTP verb. The string is emitted to the wire verbatim — caller
+    /// is responsible for sticking to valid method-token characters.
+    Other(String)
+
+module Method =
+    /// Wire-form string used in the HTTP request line.
+    public function name(self): String =
+        match self with
+            case Method.Get => "GET"
+            case Method.Post => "POST"
+            case Method.Put => "PUT"
+            case Method.Delete => "DELETE"
+            case Method.Patch => "PATCH"
+            case Method.Head => "HEAD"
+            case Method.Options => "OPTIONS"
+            case Method.Other(s) => s
+
+    /// Parse a wire-form method string back into a `Method`. Unknown verbs
+    /// surface as `Other`; case is preserved as-is.
+    public function parse(s: String): Method =
+        let upper = s.toUpperCase()
+        if upper == "GET" then Method.Get
+        else if upper == "POST" then Method.Post
+        else if upper == "PUT" then Method.Put
+        else if upper == "DELETE" then Method.Delete
+        else if upper == "PATCH" then Method.Patch
+        else if upper == "HEAD" then Method.Head
+        else if upper == "OPTIONS" then Method.Options
+        else Method.Other(s)
+
+implement Display for Method =
+    public function format(self: Method): String = self.name()

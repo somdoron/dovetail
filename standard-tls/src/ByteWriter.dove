@@ -1,0 +1,120 @@
+package standard.tls
+
+import standard.prelude.Array
+
+/// A big-endian byte builder for serialising TLS structures (RFC 8446 §3). It
+/// grows a backing array by doubling, mirroring `standard.http`'s
+/// `ReceiveBuffer`. Length-prefixed vectors are written compositionally —
+/// build the inner bytes first, then `putVec16(inner)` — so there is no
+/// back-patching of reserved length fields.
+class ByteWriter(mutable buf: Array<Uint8>, mutable len: Int32) =
+    /// A writer with a small initial capacity.
+    public function make(): ByteWriter =
+        ByteWriter(Array<Uint8>.fill(64, 0u8), 0)
+
+    /// Bytes written so far.
+    public property length(self): Int32 = self.len
+
+    public function ensure(self, extra: Int32): Unit =
+        if self.len + extra > self.buf.length then
+            let mutable newCap = self.buf.length * 2
+            while self.len + extra > newCap do
+                newCap = newCap * 2
+            let grown = Array<Uint8>.fill(newCap, 0u8)
+            self.buf.copy(0, grown, 0, self.len)
+            self.buf = grown
+
+    /// Append one byte (low 8 bits of `v`).
+    public function putU8(self, v: Int32): Unit =
+        self.ensure(1)
+        self.buf.set(self.len, v.toUint8())
+        self.len = self.len + 1
+
+    /// Append a big-endian `uint16`.
+    public function putU16(self, v: Int32): Unit =
+        self.putU8(v >> 8)
+        self.putU8(v)
+
+    /// Append a big-endian `uint24`.
+    public function putU24(self, v: Int32): Unit =
+        self.putU8(v >> 16)
+        self.putU8(v >> 8)
+        self.putU8(v)
+
+    /// Append a big-endian `uint32`.
+    public function putU32(self, v: Int64): Unit =
+        self.putU8((v >> 24i64).toInt32())
+        self.putU8((v >> 16i64).toInt32())
+        self.putU8((v >> 8i64).toInt32())
+        self.putU8(v.toInt32())
+
+    /// Append raw bytes verbatim.
+    public function putBytes(self, data: Array<Uint8>): Unit =
+        self.ensure(data.length)
+        data.copy(0, self.buf, self.len, data.length)
+        self.len = self.len + data.length
+
+    /// Append a `uint8`-length-prefixed vector.
+    public function putVec8(self, data: Array<Uint8>): Unit =
+        // A uint8 prefix cannot describe more than 255 bytes; `putU8` would silently
+        // truncate the length and emit a malformed vector. Every current caller passes
+        // a short (label/nonce-sized) value, so a longer one is a serializer bug — fail
+        // loudly rather than put a corrupt length on the wire.
+        if data.length > 255 then
+            panic "ByteWriter.putVec8: vector length exceeds the uint8 length prefix (255)"
+        self.putU8(data.length)
+        self.putBytes(data)
+
+    /// Append a `uint16`-length-prefixed vector.
+    public function putVec16(self, data: Array<Uint8>): Unit =
+        self.putU16(data.length)
+        self.putBytes(data)
+
+    /// Append a `uint24`-length-prefixed vector.
+    public function putVec24(self, data: Array<Uint8>): Unit =
+        self.putU24(data.length)
+        self.putBytes(data)
+
+    /// A trimmed copy of everything written.
+    public function toBytes(self): Array<Uint8> =
+        let result = Array<Uint8>.fill(self.len, 0u8)
+        self.buf.copy(0, result, 0, self.len)
+        result
+
+test "tls ByteWriter writes big-endian integers" =
+    let w = ByteWriter.make()
+    w.putU8(0x12)
+    w.putU16(0x3456)
+    w.putU24(0x789abc)
+    let bytes = w.toBytes()
+    let expected = [|0x12u8, 0x34u8, 0x56u8, 0x78u8, 0x9au8, 0xbcu8|]
+    assert bytes.length == expected.length
+    let mutable i = 0
+    let mutable ok = true
+    while i < bytes.length do
+        if bytes.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "tls ByteWriter grows past initial capacity" =
+    let w = ByteWriter.make()
+    let mutable i = 0
+    while i < 200 do
+        w.putU8(i)
+        i = i + 1
+    assert w.length == 200
+    let bytes = w.toBytes()
+    assert bytes.get(199) == 199.toUint8()
+
+test "tls ByteWriter vectors round-trip through ByteReader" =
+    let w = ByteWriter.make()
+    w.putVec8([|0xaau8, 0xbbu8|])
+    w.putVec16([|0x01u8, 0x02u8, 0x03u8|])
+    let r = ByteReader.make(w.toBytes())
+    let a = r.vec8().require
+    let b = r.vec16().require
+    assert a.length == 2
+    assert a.get(0) == 0xaau8
+    assert b.length == 3
+    assert b.get(2) == 0x03u8
+    assert r.atEnd

@@ -1,0 +1,73 @@
+package standard.io.net
+
+// =============================================================================
+// User-facing networking types. Addresses are strings ("127.0.0.1:8080" for
+// IPv4, "[::1]:8080" for IPv6) — internal helpers in `net_intrinsics.dove`
+// parse them into wasi structured forms. The string-based API keeps the
+// public surface free of wasi-named types (Dovetail has no `import as`
+// aliasing, so structured `IpAddress`/`SocketAddress` types in this package
+// would shadow the wasi versions in any file that needs to reach both).
+// Structured types can be added in v2 once a clean disambiguation exists.
+// =============================================================================
+
+/// A UDP datagram. On receive, `remoteAddress` is always `Some` (the sender).
+/// On send, `None` means "use the endpoint's connected remote"; `Some(addr)`
+/// overrides per datagram.
+public record Datagram =
+    data: Array<Uint8>
+    remoteAddress: Option<String>
+
+/// User-facing networking error. Collapses the 21 wasi `NetworkError`
+/// variants into a smaller user-relevant set.
+public enum NetError =
+    AccessDenied
+    Unsupported
+    InvalidArgument
+    OutOfMemory
+    Timeout
+    InvalidState
+    NewSocketLimit
+    AddressNotBindable
+    AddressInUse
+    RemoteUnreachable
+    ConnectionRefused
+    ConnectionReset
+    ConnectionAborted
+    DatagramTooLarge
+    HostnameNotResolvable
+    /// `--allow-network` flag missing or address not parseable.
+    InvalidAddress
+    /// The listener's accept stream was dropped — no further connections will
+    /// arrive on it. Terminal, unlike the transient per-accept failures.
+    ListenerClosed
+    /// An explicit `close` on the stream aborted this operation.
+    Canceled
+    /// Catch-all for host errors the wasi enums cannot name, carrying the
+    /// host's optional explanatory message when it supplied one.
+    Other(Option<String>)
+
+implement Display for NetError =
+    public function format(self: NetError): String =
+        match self with
+            case NetError.Canceled => "canceled by close"
+            case NetError.AccessDenied => "access denied"
+            case NetError.Unsupported => "operation not supported"
+            case NetError.InvalidArgument => "invalid argument"
+            case NetError.OutOfMemory => "out of memory"
+            case NetError.Timeout => "operation timed out"
+            case NetError.InvalidState => "invalid state"
+            case NetError.NewSocketLimit => "socket limit reached"
+            case NetError.AddressNotBindable => "address not bindable"
+            case NetError.AddressInUse => "address in use"
+            case NetError.RemoteUnreachable => "remote unreachable"
+            case NetError.ConnectionRefused => "connection refused"
+            case NetError.ConnectionReset => "connection reset"
+            case NetError.ConnectionAborted => "connection aborted"
+            case NetError.DatagramTooLarge => "datagram too large"
+            case NetError.HostnameNotResolvable => "hostname could not be resolved"
+            case NetError.InvalidAddress => "invalid address"
+            case NetError.ListenerClosed => "listener closed"
+            case NetError.Other(detail) =>
+                match detail with
+                    case Some(message) => "network error: " ++ message
+                    case None => "unspecified network error"

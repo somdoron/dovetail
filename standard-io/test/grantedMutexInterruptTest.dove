@@ -1,0 +1,307 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.Fiber
+import standard.io.Mutex
+import standard.io.MutexError
+import standard.io.Promise
+import standard.io.ReentrantMutex
+import standard.io.Resource
+import standard.time.Duration
+
+// A GRANTED-BUT-NOT-YET-ARMED MUTEX MUST NOT DIE WITH THE FIBER IT WAS HANDED TO.
+//
+// `grantMutex` transfers ownership at the handoff (`takeMutex`) and resumes the
+// waiter back into its acquire node; until that node re-runs, the fiber owns the
+// mutex with no `BracketReleaseFrame` armed to give it back. An interrupt landing
+// in that window — while the granted fiber sits in the run queue — discards the
+// node, so nothing ever releases the mutex. A fiber that then dies is caught by
+// `releaseHeldMutexes` at `finalizeFiber`; a fiber that recovers through an outer
+// `foldCause` and lives on used to strand the mutex forever, deadlocking every
+// other waiter. The stream-lock twin of this window is covered by
+// `granted_lock_interrupt_test`; this drives the mutex side.
+//
+// Hitting the window deterministically takes run-queue choreography, because the
+// handoff happens inside the HOLDER's unwind, not inside the interrupt call:
+// the holder `use`s a signal resource INSIDE its mutex hold, so on the unwind the
+// inner release completes `released` (waking the main fiber into the run queue)
+// BEFORE the outer release hands the mutex to the waiter (enqueued behind main).
+// Main's next slice therefore runs before the freshly granted waiter gets a
+// step, and its interrupt lands exactly in the granted-but-not-yet-armed window.
+
+/// A resource whose only job is its release: completing `released` on the way
+/// out. `use`d inside the mutex hold, its release runs BEFORE the mutex's on
+/// the unwind (releases are LIFO).
+function signalOnRelease(released: Promise<Unit, Never>): Resource<Unit, Never> =
+    let acquire: () => Async<Unit, Never> = () => Async.succeed(())
+    let release: (Unit) => Async<Unit, Never> = (_: Unit) =>
+        released.complete(()).map<Unit>((_: Bool) => ())
+    Resource<Unit, Never>.make(acquire, release)
+
+// ── the non-reentrant flavor ─────────────────────────────────────────────────
+
+/// The holder: takes the mutex, arms the signal resource inside the hold, parks
+/// forever, and swallows the interrupt that ends it.
+async function grantWindowHolder(
+    mutex: Mutex,
+    released: Promise<Unit, Never>,
+    forever: Promise<Unit, Never>
+): Async<Unit, Never> =
+    await grantWindowHold(mutex, released, forever).foldCause<Unit, Never>(
+        (_: Cause<MutexError>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(()))
+
+async function grantWindowHold(
+    mutex: Mutex,
+    released: Promise<Unit, Never>,
+    forever: Promise<Unit, Never>
+): Async<Unit, MutexError> =
+    let _held = use mutex.acquire()
+    let _armed = use signalOnRelease(released)
+    await forever.awaitPromise()
+
+/// The waiter: queues behind the holder, and on its interrupt recovers through
+/// `foldCause` onto `gate` rather than finishing — the path on which nothing
+/// ever reaches `finalizeFiber`'s backstop.
+async function grantWindowWaiter(mutex: Mutex, gate: Promise<Unit, Never>): Async<Unit, Never> =
+    await grantWindowAcquire(mutex).foldCause<Unit, Never>(
+        (_: Cause<MutexError>) => gate.awaitPromise(),
+        (_: Unit) => Async.succeed(()))
+
+async function grantWindowAcquire(mutex: Mutex): Async<Unit, MutexError> =
+    let _held = use mutex.acquire()
+    ()
+
+/// Take the mutex and report it, or report the acquire failing.
+async function probeMutex(mutex: Mutex): Async<String, Never> =
+    await grantWindowProbe(mutex).fold<String, Never>(
+        (_: MutexError) => Async.succeed("failed"),
+        (message: String) => Async.succeed(message))
+
+async function grantWindowProbe(mutex: Mutex): Async<String, MutexError> =
+    let _held = use mutex.acquire()
+    "acquired"
+
+async function grantedMutexInterruptProgram(landed: Array<String>): Async<Unit, Never> =
+    let mutex = await Mutex.make()
+    let released: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let forever: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+
+    // Holder takes the mutex, arms the signal resource inside it, and parks.
+    let holder: Fiber<Unit, Never> = await grantWindowHolder(mutex, released, forever).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    // Waiter queues behind the holder for the mutex.
+    let waiter: Fiber<Unit, Never> = await grantWindowWaiter(mutex, gate).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    // Interrupt the holder, then park on `released`. The holder's unwind
+    // completes `released` (inner release) before handing the mutex to the
+    // waiter (outer release), so this fiber re-enters the run queue AHEAD of
+    // the freshly granted waiter and interrupts it before it gets a step —
+    // the granted-but-not-yet-armed window. The waiter recovers onto `gate`.
+    await holder.interrupt()
+    await released.awaitPromise()
+    await waiter.interrupt()
+
+    // The mutex must be takable again. On the broken runtime the recovered
+    // waiter stranded it, this acquire queues forever, and the event loop
+    // panics on the deadlock instead of reaching the assert.
+    landed.set(0, await probeMutex(mutex))
+
+    // Release the recovered waiter and reap everyone.
+    await gate.complete(())
+    await holder.join()
+    await waiter.join()
+    ()
+
+@timeout(10000)
+test "a granted mutex is reclaimed when its fiber is interrupted before the acquire re-runs" =
+    let landed = Array<String>.fill(1, "")
+    grantedMutexInterruptProgram(landed).run()
+    assert landed.get(0) == "acquired"
+
+// ── the reentrant flavor ─────────────────────────────────────────────────────
+//
+// The same reclaim choreography through a `ReentrantMutex`. The grantee is
+// interrupted before its acquire node re-runs, so this covers the reclaim path
+// for the reentrant flavor; the re-run's grant recognition in the
+// `AcquireReentrantMutex` arm is pinned by the grant-consumed test at the
+// bottom of this file.
+
+async function reentrantGrantWindowHolder(
+    mutex: ReentrantMutex,
+    released: Promise<Unit, Never>,
+    forever: Promise<Unit, Never>
+): Async<Unit, Never> =
+    await reentrantGrantWindowHold(mutex, released, forever).foldCause<Unit, Never>(
+        (_: Cause<Never>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(()))
+
+async function reentrantGrantWindowHold(
+    mutex: ReentrantMutex,
+    released: Promise<Unit, Never>,
+    forever: Promise<Unit, Never>
+): Async<Unit, Never> =
+    let _held = use mutex.acquire()
+    let _armed = use signalOnRelease(released)
+    await forever.awaitPromise()
+
+async function reentrantGrantWindowWaiter(
+    mutex: ReentrantMutex,
+    gate: Promise<Unit, Never>
+): Async<Unit, Never> =
+    await reentrantGrantWindowAcquire(mutex).foldCause<Unit, Never>(
+        (_: Cause<Never>) => gate.awaitPromise(),
+        (_: Unit) => Async.succeed(()))
+
+async function reentrantGrantWindowAcquire(mutex: ReentrantMutex): Async<Unit, Never> =
+    let _held = use mutex.acquire()
+    ()
+
+async function reentrantProbe(mutex: ReentrantMutex): Async<String, Never> =
+    let _held = use mutex.acquire()
+    "acquired"
+
+async function reentrantGrantedMutexInterruptProgram(landed: Array<String>): Async<Unit, Never> =
+    let mutex = await ReentrantMutex.make()
+    let released: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let forever: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+
+    let holder: Fiber<Unit, Never> = await reentrantGrantWindowHolder(mutex, released, forever).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    let waiter: Fiber<Unit, Never> = await reentrantGrantWindowWaiter(mutex, gate).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    await holder.interrupt()
+    await released.awaitPromise()
+    await waiter.interrupt()
+
+    landed.set(0, await reentrantProbe(mutex))
+
+    await gate.complete(())
+    await holder.join()
+    await waiter.join()
+    ()
+
+@timeout(10000)
+test "a granted reentrant mutex is reclaimed when its fiber is interrupted before the acquire re-runs" =
+    let landed = Array<String>.fill(1, "")
+    reentrantGrantedMutexInterruptProgram(landed).run()
+    assert landed.get(0) == "acquired"
+
+// ── the reclaim hands the mutex on, not just back ────────────────────────────
+//
+// With a THIRD fiber queued behind the interrupted grantee, the reclaim's
+// `handOffMutex` must grant it directly — the handoff chain continues past the
+// reclaimed grant instead of stopping at it.
+
+async function grantWindowThirdWaiter(mutex: Mutex, landed: Array<String>): Async<Unit, Never> =
+    landed.set(1, await probeMutex(mutex))
+
+async function grantedMutexHandsOnProgram(landed: Array<String>): Async<Unit, Never> =
+    let mutex = await Mutex.make()
+    let released: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let forever: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+
+    let holder: Fiber<Unit, Never> = await grantWindowHolder(mutex, released, forever).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    let waiter: Fiber<Unit, Never> = await grantWindowWaiter(mutex, gate).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    // Third in line, behind the waiter that is about to be granted-and-killed.
+    let third: Fiber<Unit, Never> = await grantWindowThirdWaiter(mutex, landed).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    // Same window as above; reclaiming the waiter's grant must hand the mutex
+    // straight to `third`, which then acquires, records and releases it.
+    await holder.interrupt()
+    await released.awaitPromise()
+    await waiter.interrupt()
+
+    await third.join()
+    landed.set(0, await probeMutex(mutex))
+
+    await gate.complete(())
+    await holder.join()
+    await waiter.join()
+    ()
+
+@timeout(10000)
+test "reclaiming a granted mutex hands it to the next queued waiter" =
+    let landed = Array<String>.fill(2, "")
+    grantedMutexHandsOnProgram(landed).run()
+    assert landed.get(1) == "acquired"
+    assert landed.get(0) == "acquired"
+
+// ── the reentrant grant is consumed, not nested ──────────────────────────────
+//
+// The reentrant twin of the hands-on test, with the third waiter LIVING ON
+// after its hold: the grant already took the mutex at depth one, so the re-run
+// of `AcquireReentrantMutex` must recognize it (`consumeGrantedMutex`) rather
+// than let `holdsMutex` nest to depth two — a level the single release coming
+// would never unwind. On that regression the third waiter still reports
+// "acquired", but leaves the mutex owned at depth one while it parks on
+// `lingering`, and the main fiber's probe deadlocks. (Dying instead would let
+// `finalizeFiber`'s `releaseHeldMutexes` backstop mask the stranding — hence
+// the park.)
+
+async function reentrantThirdWaiter(
+    mutex: ReentrantMutex,
+    landed: Array<String>,
+    thirdDone: Promise<Unit, Never>,
+    lingering: Promise<Unit, Never>
+): Async<Unit, Never> =
+    landed.set(1, await reentrantProbe(mutex))
+    await thirdDone.complete(())
+    await lingering.awaitPromise()
+
+async function reentrantGrantConsumedProgram(landed: Array<String>): Async<Unit, Never> =
+    let mutex = await ReentrantMutex.make()
+    let released: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let forever: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let thirdDone: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let lingering: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+
+    let holder: Fiber<Unit, Never> = await reentrantGrantWindowHolder(mutex, released, forever).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    let waiter: Fiber<Unit, Never> = await reentrantGrantWindowWaiter(mutex, gate).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    let third: Fiber<Unit, Never> = await reentrantThirdWaiter(mutex, landed, thirdDone, lingering).fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+
+    // Reclaiming the interrupted waiter's grant hands the mutex to `third`,
+    // which re-runs its acquire node and must find the mutex already its own
+    // at depth one.
+    await holder.interrupt()
+    await released.awaitPromise()
+    await waiter.interrupt()
+
+    // `third` has acquired and released, and stays alive on `lingering`. The
+    // mutex must be free: on a depth-nesting regression it is still owned at
+    // depth one and this probe queues forever into the deadlock panic.
+    await thirdDone.awaitPromise()
+    landed.set(0, await reentrantProbe(mutex))
+
+    await gate.complete(())
+    await lingering.complete(())
+    await holder.join()
+    await waiter.join()
+    await third.join()
+    ()
+
+@timeout(10000)
+test "a granted reentrant mutex is consumed at depth one, not nested by the re-run" =
+    let landed = Array<String>.fill(2, "")
+    reentrantGrantConsumedProgram(landed).run()
+    assert landed.get(1) == "acquired"
+    assert landed.get(0) == "acquired"

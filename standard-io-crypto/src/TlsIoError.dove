@@ -1,0 +1,43 @@
+package standard.io.crypto
+
+import standard.prelude.String
+import standard.prelude.Display
+import standard.wasi.net.NetworkError
+import standard.wasi.IoError
+import standard.tls.TlsError
+
+/// Error surfaced by the async TLS streams: a transport (socket) failure, a TLS
+/// protocol failure, or a clean connection close. Satisfies `IoError` so the
+/// encrypted streams are `AsyncInputStream<TlsIoError>` / `AsyncOutputStream<TlsIoError>`.
+/// `Canceled` is raised locally when an explicit `close` aborts an operation
+/// that was still in flight, keeping "somebody closed this under me" distinct
+/// from a transport or protocol failure.
+public enum TlsIoError =
+    Transport(NetworkError)
+    Protocol(TlsError)
+    Closed
+    Canceled
+    Truncated
+
+implement IoError for TlsIoError
+
+implement Display for TlsIoError =
+    public function format(self: TlsIoError): String =
+        match self with
+            case TlsIoError.Transport(e) => "TLS transport error: " ++ e.format()
+            case TlsIoError.Protocol(e) => "TLS protocol error: " ++ e.format()
+            case TlsIoError.Closed => "TLS connection closed"
+            case TlsIoError.Canceled => "TLS operation canceled by close"
+            case TlsIoError.Truncated => "TLS connection truncated (socket EOF without close_notify)"
+
+/// Lift a transport error from the underlying socket via `.mapError(TlsIoError.from)`.
+///
+/// A cancellation stays a cancellation rather than becoming `Transport(Canceled)`:
+/// closing the socket out from under a TLS stream is the same event as closing the
+/// TLS stream itself, and burying it one level down would make callers unwrap a
+/// transport error to find out that nothing about the transport went wrong.
+implement From<NetworkError> for TlsIoError =
+    public function from(value: NetworkError): TlsIoError =
+        match value with
+            case NetworkError.Canceled => TlsIoError.Canceled
+            case _ => TlsIoError.Transport(value)

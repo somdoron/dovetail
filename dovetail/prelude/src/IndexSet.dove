@@ -1,0 +1,6 @@
+package standard.prelude
+
+/// The capability used by indexed assignment.
+public trait IndexSet<K> =
+    type Value
+    function set(self: Self, index: K, value: Value): Unit

@@ -1,0 +1,50 @@
+package test
+import standard.io.Async
+import standard.io.Resource
+
+function deferWithBound<T, A>(body: ByName<A>, trace: SourceLocation): A where A: Awaitable<T> = A.defer(body, trace)
+
+test "Awaitable defer: class and generic calls delay by-name values" =
+    let trace = SourceLocation { file = "review"; line = 1; column = 1; functionName = "test" }
+    let mutable count = 0
+    let makeProgram = () =>
+        count = count + 1
+        Async.thunk(() => ())
+    let program = Async<Unit, Never>.defer(makeProgram(), trace)
+    let generic = deferWithBound<Unit, Async<Unit, Never>>(makeProgram(), trace)
+    assert count == 0
+    program.run()
+    program.run()
+    generic.run()
+    assert count == 3
+
+test "Awaitable defer: newtype calls delay construction and release" =
+    let trace = SourceLocation { file = "review"; line = 1; column = 1; functionName = "test" }
+    let mutable count = 0
+    let mutable released = 0
+    let makeResource = () =>
+        count = count + 1
+        Resource.make(() => Async.succeed(42), (_: Int32) => Async.thunk(() => released = released + 1))
+    let resource = Resource<Int32, Never>.defer(makeResource(), trace)
+    assert count == 0
+    let program: Async<Unit, Never> = async do
+        let value = use resource
+        assert value == 42
+    program.run()
+    program.run()
+    assert count == 2
+    assert released == 2
+
+
+test "Awaitable defer: implementation parameter order follows receiver structure" =
+    let trace = SourceLocation { file = "review"; line = 1; column = 1; functionName = "test" }
+    let mutable count = 0
+    let makeValue = () =>
+        count = count + 1
+        let result: ExpressionValue<String, Int32> = ExpressionValue.Deferred(() => 42)
+        result
+    let program = ExpressionValue<String, Int32>.defer(makeValue(), trace)
+    assert count == 0
+    assert program.evaluate() == 42
+    assert program.evaluate() == 42
+    assert count == 2

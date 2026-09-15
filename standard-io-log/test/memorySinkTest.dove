@@ -1,0 +1,54 @@
+package test
+
+import standard.io.log.MemorySink
+import standard.io.log.LogLevel
+import standard.io.log.LogRecord
+import standard.io.log.LogField
+import standard.io.log.LogSpan
+import standard.io.Async
+import standard.time.Instant
+
+function dummyRecord(level: LogLevel, message: String): LogRecord =
+    LogRecord {
+        timestamp = Instant.ofEpochSecond(0i64)
+        level = level
+        loggerName = ""
+        spans = List<LogSpan>.empty
+        fields = List<LogField>.empty
+        message = message
+    }
+
+test "MemorySink.new starts empty" =
+    let sink = MemorySink.make()
+    assert sink.snapshot().length == 0
+
+test "MemorySink.emit captures records in order" =
+    let sink = MemorySink.make()
+    sink.emit(dummyRecord(LogLevel.Info, "one")).run()
+    sink.emit(dummyRecord(LogLevel.Warn, "two")).run()
+    sink.emit(dummyRecord(LogLevel.Error, "three")).run()
+    match sink.snapshot() with
+        case [first, second, third] =>
+            assert first.message == "one"
+            assert second.message == "two"
+            assert third.message == "three"
+            assert first.level == LogLevel.Info
+            assert third.level == LogLevel.Error
+        case _ => assert false
+
+test "MemorySink.clear empties the buffer" =
+    let sink = MemorySink.make()
+    sink.emit(dummyRecord(LogLevel.Info, "x")).run()
+    sink.emit(dummyRecord(LogLevel.Info, "y")).run()
+    assert sink.snapshot().length == 2
+    sink.clear()
+    assert sink.snapshot().length == 0
+
+test "MemorySink.snapshot is independent of later writes" =
+    let sink = MemorySink.make()
+    sink.emit(dummyRecord(LogLevel.Info, "one")).run()
+    let snap = sink.snapshot()
+    sink.emit(dummyRecord(LogLevel.Info, "two")).run()
+    assert snap.length == 1
+    assert sink.snapshot().length == 2
+

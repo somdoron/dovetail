@@ -1,0 +1,106 @@
+package standard.io.log
+
+import standard.time.Instant
+
+/// A single structured field attached to a `LogRecord` or `LogSpan`. The value
+/// is already stringified via the caller's `Display` impl — sinks/formatters
+/// only see strings, never the original typed value.
+public record LogField =
+    key: String
+    value: String
+
+module LogField =
+    /// Build a `LogField` from any value whose type implements `Display`.
+    ///
+    /// ```
+    /// let f = LogField.make("rowCount", 42)
+    /// // f.key == "rowCount", f.value == "42"
+    /// ```
+    public function make<T>(key: String, value: T): LogField where T: Display =
+        LogField { key = key; value = value.format() }
+
+/// A named scope around a unit of work. Attaching a span to a `Logger`
+/// (via `withSpan`) tags every record emitted under that logger until it
+/// goes out of lexical scope. Spans may carry their own fields, merged into
+/// each emitted record by the formatter.
+public record LogSpan =
+    name: String
+    fields: List<LogField>
+
+module LogSpan =
+    /// Build a fieldless span. Add fields with `withField` / `withLogField`.
+    ///
+    /// ```
+    /// let s = LogSpan.make("data-access")
+    ///     .withField("db", "orders")
+    ///     .withField("pool", "primary")
+    /// ```
+    public function make(name: String): LogSpan =
+        LogSpan { name = name; fields = List<LogField>.empty }
+
+    /// Append a single field, formatted via `Display`. Chainable.
+    public function withField<T>(self, key: String, value: T): LogSpan where T: Display =
+        LogSpan { name = self.name; fields = self.fields.append(LogField.make(key, value)) }
+
+    /// Append a pre-built `LogField`. Use when the field value is already a
+    /// `LogField` (e.g. shared between spans and records).
+    public function withLogField(self, field: LogField): LogSpan =
+        LogSpan { name = self.name; fields = self.fields.append(field) }
+
+    /// Append multiple fields at once.
+    public function withFields(self, fields: List<LogField>): LogSpan =
+        LogSpan { name = self.name; fields = self.fields.concat(fields) }
+
+/// One log event, frozen at emission time. Sinks receive `LogRecord` values
+/// and decide how to render them (logfmt is the only built-in formatter).
+public record LogRecord =
+    timestamp: Instant
+    level: LogLevel
+    loggerName: String
+    spans: List<LogSpan>
+    fields: List<LogField>
+    message: String
+
+test "LogField.make stringifies Int32 via Display" =
+    let f = LogField.make("rowCount", 42i32)
+    assert f.key == "rowCount"
+    assert f.value == "42"
+
+test "LogField.make on String is identity" =
+    let f = LogField.make("name", "alice")
+    assert f.key == "name"
+    assert f.value == "alice"
+
+test "LogSpan.make has no fields" =
+    let s = LogSpan.make("data-access")
+    assert s.name == "data-access"
+    assert s.fields.length == 0
+
+test "LogSpan.withField appends" =
+    let s = LogSpan.make("query").withField("table", "orders").withField("rows", 17i32)
+    match s.fields with
+        case [first, second] =>
+            assert first.key == "table"
+            assert first.value == "orders"
+            assert second.key == "rows"
+            assert second.value == "17"
+        case _ => assert false
+
+test "LogSpan.withLogField appends pre-built" =
+    let f = LogField.make("trace", "abc-123")
+    let s = LogSpan.make("request").withLogField(f)
+    match s.fields with
+        case [only] => assert only.key == "trace"
+        case _ => assert false
+
+test "LogSpan.withFields appends many" =
+    let fs: List<LogField> = [
+        LogField.make("a", 1i32),
+        LogField.make("b", "two"),
+    ]
+    let s = LogSpan.make("x").withFields(fs)
+    match s.fields with
+        case [first, second] =>
+            assert first.value == "1"
+            assert second.value == "two"
+        case _ => assert false

@@ -1,0 +1,53 @@
+package standard.io.crypto
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Resource
+import standard.wasi.net.NetworkError
+import standard.tls.TlsServer
+import standard.tls.TlsServerConfig
+import standard.tls.NegotiatedParams
+
+/// An encrypted TLS server connection: the stream pair (`input`/`output`) over
+/// the underlying socket. The handshake runs in the background (started at
+/// `accept`, which returns immediately — so an accept loop is never blocked
+/// negotiating a connection); `read`/`write` wait for it, or await it explicitly
+/// via `handshake()`.
+public record TlsServerStream =
+    input: AsyncInputStream<TlsIoError>
+    output: AsyncOutputStream<TlsIoError>
+    connection: TlsConnection
+
+module TlsServerStream =
+    /// Wrap an already-accepted socket's streams in TLS as a server. Returns
+    /// immediately; the handshake proceeds in a background fiber (so the accept
+    /// loop is never blocked negotiating). The underlying socket is owned by the
+    /// caller; the returned `Resource`'s release stops the background handshake
+    /// and sends a TLS close_notify (it does not close the socket).
+    public function accept(
+        config: TlsServerConfig,
+        underlyingInput: AsyncInputStream<NetworkError>,
+        underlyingOutput: AsyncOutputStream<NetworkError>
+    ): Resource<TlsServerStream, Never> =
+        // Built INSIDE `acquire`, and by the shared `openTlsConnection` — the
+        // client's `connect` differs from this only in the engine it passes.
+        let acquire: () => Async<TlsServerStream, Never> = async () =>
+            let engine = TlsEngineKind.Server(TlsServer.make(config))
+            let conn = await openTlsConnection(engine, underlyingInput, underlyingOutput)
+            TlsServerStream {
+                input = TlsInputStream(conn)
+                output = TlsOutputStream(conn)
+                connection = conn
+            }
+        let release: (TlsServerStream) => Async<Unit, Never> = (s: TlsServerStream) =>
+            s.connection.shutdown()
+        Resource.make(acquire, release)
+
+    /// Await the (background) handshake and return the negotiated parameters
+    /// (cipher suite, key-exchange group, signature scheme, ALPN, peer
+    /// certificates, server name). Idempotent and safe to call concurrently with
+    /// I/O; lets a caller inspect the negotiation — e.g. route on ALPN/SNI or the
+    /// client certificate — or surface a handshake error before the first read/write.
+    public async function params(self): Async<NegotiatedParams, TlsIoError> =
+        await self.connection.ensureHandshake()

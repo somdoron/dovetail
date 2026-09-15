@@ -1,0 +1,408 @@
+package standard.prelude
+
+/// An immutable singly-linked list.
+///
+/// List is a recursive enum with two variants:
+/// - `Nil` — the empty list
+/// - `Cons(head, tail)` — a node with a head element and a tail list
+///
+/// Build one with a literal (`[1, 2]`, `[]`), with `::`, or with `List.empty`.
+/// The variant names are what you match on: `case Nil =>`, `case h :: t =>`.
+public enum List<out T> =
+    Nil
+    Cons(T, List<T>)
+
+module List<T> =
+    /// Returns true if the list is empty.
+    public property isEmpty(self): Bool =
+        match self with
+            case Nil => true
+            case Cons(_, _) => false
+
+    /// Returns the first element, or panics if the list is empty.
+    public property head(self): T =
+        match self with
+            case Cons(h, _) => h
+            case Nil => panic "head called on empty list"
+
+    /// Returns the tail of the list, or panics if the list is empty.
+    public property tail(self): List<T> =
+        match self with
+            case Cons(_, t) => t
+            case Nil => panic "tail called on empty list"
+
+    /// Returns the first element as an Option.
+    public property headOption(self): Option<T> =
+        match self with
+            case Cons(h, _) => Some(h)
+            case Nil => None
+
+    /// Returns the number of elements in the list.
+    public property length(self): Int32 =
+        let mutable count = 0
+        let mutable current = self
+        while !current.isEmpty do
+            count = count + 1
+            current = current.tail
+        count
+
+    /// Returns a new list with the given element prepended.
+    public function prepend(self, value: T): List<T> =
+        List.Cons(value, self)
+
+    /// Returns a new list with elements in reverse order.
+    public function reverse(self): List<T> =
+        let mutable result: List<T> = List.empty
+        let mutable current = self
+        while !current.isEmpty do
+            result = List.Cons(current.head, result)
+            current = current.tail
+        result
+
+    /// Copies the list's elements into a new `Array`, preserving order.
+    /// O(n), and needs no `Default` for `T`: a non-empty list seeds the array
+    /// with its own head before overwriting every slot.
+    public function toArray(self): Array<T> =
+        match self with
+            case Nil => Array.empty()
+            case Cons(first, _) =>
+                let n = self.length
+                let result = Array.fill(n, first)
+                let mutable current = self
+                let mutable i = 0
+                while i < n do
+                    result.set(i, current.head)
+                    current = current.tail
+                    i = i + 1
+                result
+
+    /// Returns a new list with the function applied to each element.
+    ///
+    /// Iterative, not recursive: a list can hold far more elements than the
+    /// stack has frames.
+    public function map<U>(self, f: (T) => U): List<U> =
+        let mutable acc: List<U> = List.empty
+        let mutable current = self
+        while !current.isEmpty do
+            acc = List.Cons(f(current.head), acc)
+            current = current.tail
+        acc.reverse()
+
+    /// Returns a new list containing only elements that satisfy the predicate.
+    public function filter(self, predicate: (T) => Bool): List<T> =
+        let mutable acc: List<T> = List.empty
+        let mutable current = self
+        while !current.isEmpty do
+            let h = current.head
+            if predicate(h) then acc = List.Cons(h, acc)
+            current = current.tail
+        acc.reverse()
+
+    /// Reduces the list from left to right using the given function.
+    public function foldLeft<U>(self, initial: U, f: (U, T) => U): U =
+        let mutable acc = initial
+        let mutable current = self
+        while !current.isEmpty do
+            acc = f(acc, current.head)
+            current = current.tail
+        acc
+
+    /// Returns true if any element satisfies the predicate.
+    public function any(self, predicate: (T) => Bool): Bool =
+        let mutable found = false
+        let mutable current = self
+        while !found && !current.isEmpty do
+            if predicate(current.head) then found = true
+            else current = current.tail
+        found
+
+    /// Returns true if all elements satisfy the predicate.
+    public function all(self, predicate: (T) => Bool): Bool =
+        let mutable holds = true
+        let mutable current = self
+        while holds && !current.isEmpty do
+            if predicate(current.head) then current = current.tail
+            else holds = false
+        holds
+
+    /// Applies the function to each element for side effects.
+    public function forEach(self, f: (T) => Unit): Unit =
+        let mutable current = self
+        while !current.isEmpty do
+            f(current.head)
+            current = current.tail
+
+    /// Returns the element at the given index, or None if out of bounds.
+    public function get(self, index: Int32): Option<T> =
+        if index < 0 then None
+        else
+            let mutable current = self
+            let mutable i = 0
+            while i < index do
+                if current.isEmpty then current = current
+                else current = current.tail
+                i = i + 1
+            current.headOption
+
+    /// Concatenates another list to the end of this list. O(n) in `self`.
+    public function concat(self, other: List<T>): List<T> =
+        let mutable acc = other
+        let mutable current = self.reverse()
+        while !current.isEmpty do
+            acc = List.Cons(current.head, acc)
+            current = current.tail
+        acc
+
+    /// Maps each element to a list and flattens the results.
+    public function flatMap<U>(self, f: (T) => List<U>): List<U> =
+        let mutable acc: List<U> = List.empty
+        let mutable current = self
+        while !current.isEmpty do
+            let mutable inner = f(current.head)
+            while !inner.isEmpty do
+                acc = List.Cons(inner.head, acc)
+                inner = inner.tail
+            current = current.tail
+        acc.reverse()
+
+    /// Returns a new list with the first n elements.
+    public function take(self, n: Int32): List<T> =
+        let mutable acc: List<T> = List.empty
+        let mutable current = self
+        let mutable i = 0
+        while i < n && !current.isEmpty do
+            acc = List.Cons(current.head, acc)
+            current = current.tail
+            i = i + 1
+        acc.reverse()
+
+    /// Returns a new list with the first n elements removed.
+    public function drop(self, n: Int32): List<T> =
+        let mutable current = self
+        let mutable i = 0
+        while i < n && !current.isEmpty do
+            current = current.tail
+            i = i + 1
+        current
+
+    /// The empty list.
+    ///
+    /// `[]` is the usual spelling — it is the same thing, and unlike this
+    /// property it also works in *patterns* (`case [] =>`). Reach for
+    /// `List.empty` when naming the type reads better than the literal.
+    public property empty: List<T> = List.Nil
+
+    /// Returns the last element, or None if the list is empty. O(n).
+    public property last(self): Option<T> =
+        let mutable current = self
+        let mutable result: Option<T> = None
+        while !current.isEmpty do
+            result = Some(current.head)
+            current = current.tail
+        result
+
+    /// Returns the first element satisfying the predicate, or None.
+    public function find(self, predicate: (T) => Bool): Option<T> =
+        let mutable current = self
+        let mutable result: Option<T> = None
+        while result.isNone && !current.isEmpty do
+            let h = current.head
+            if predicate(h) then result = Some(h)
+            else current = current.tail
+        result
+
+    /// True if any element equals `value`.
+    public function contains(self, value: T): Bool where T: Equatable =
+        self.any(a => a == value)
+
+    /// Returns the number of elements satisfying the predicate.
+    public function count(self, predicate: (T) => Bool): Int32 =
+        let mutable current = self
+        let mutable n = 0
+        while !current.isEmpty do
+            if predicate(current.head) then n = n + 1
+            current = current.tail
+        n
+
+    /// Returns a new list with the element added at the end. O(n) — prefer
+    /// `prepend` (O(1)) when order allows.
+    public function append(self, value: T): List<T> =
+        self.concat(List.Cons(value, List.empty))
+
+class ListIterator<T>(mutable current: List<T>) implements Iterator<T> =
+    public function next(self): Option<T> =
+        match self.current with
+            case Cons(h, t) =>
+                self.current = t
+                Some(h)
+            case Nil => None
+
+implement <T> Iterable<T> for List<T> =
+    public function iterator(self): Iterator<T> = ListIterator<T>(self)
+
+/// `++` on lists appends. `::` prepends a single element; `++` joins two lists.
+///
+/// `self.concat(rhs)` is not self-recursive: a module function takes priority
+/// over an `implement` block in method resolution, so this calls
+/// `List.concat` above.
+implement <T> Concat<List<T>> for List<T> =
+    type Output = List<T>
+    public function concat(self: List<T>, rhs: List<T>): List<T> = self.concat(rhs)
+
+implement <T> Default for List<T> =
+    public property default: List<T> = List.empty
+
+/// Lockstep walk rather than comparing lengths — `length` is O(n), so a
+/// length check would make this O(n) even when the heads already differ.
+implement <T> Equatable for List<T> where T: Equatable =
+    public function equals(self: List<T>, other: List<T>): Bool =
+        let mutable a = self
+        let mutable b = other
+        let mutable same = true
+        while same && !a.isEmpty && !b.isEmpty do
+            if a.head == b.head then
+                a = a.tail
+                b = b.tail
+            else same = false
+        same && a.isEmpty && b.isEmpty
+
+/// Lexicographic: the first differing element decides, otherwise the shorter
+/// list sorts first.
+implement <T> Comparable for List<T> where T: Comparable =
+    public function compare(self: List<T>, other: List<T>): Ordering =
+        let mutable a = self
+        let mutable b = other
+        let mutable result = Ordering.Equal
+        while result == Ordering.Equal && !a.isEmpty && !b.isEmpty do
+            result = a.head.compare(b.head)
+            a = a.tail
+            b = b.tail
+        match result with
+            case Equal =>
+                if a.isEmpty && b.isEmpty then Ordering.Equal
+                else if a.isEmpty then Ordering.Less
+                else Ordering.Greater
+            case other => other
+
+test "List: isEmpty" =
+    let empty: List<Int32> = List.empty
+    assert empty.isEmpty
+    assert !List.Cons(1, []).isEmpty
+
+test "List: head and tail" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    assert xs.head == 1
+    assert xs.tail.head == 2
+    assert xs.tail.tail.head == 3
+    assert xs.tail.tail.tail.isEmpty
+
+test "List: headOption" =
+    let empty: List<Int32> = List.empty
+    assert empty.headOption.isNone
+    assert List.Cons(42, []).headOption.isSome
+
+test "List: length" =
+    let empty: List<Int32> = List.empty
+    assert empty.length == 0
+    assert List.Cons(1, []).length == 1
+    assert List.Cons(1, List.Cons(2, List.Cons(3, []))).length == 3
+
+test "List: prepend" =
+    let xs = List.Cons(2, List.Cons(3, List.empty))
+    let ys = xs.prepend(1)
+    assert ys.head == 1
+    assert ys.length == 3
+
+test "List: reverse" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    let reversed = xs.reverse()
+    assert reversed.head == 3
+    assert reversed.tail.head == 2
+    assert reversed.tail.tail.head == 1
+
+test "List: map" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    let doubled = xs.map(x => x * 2)
+    assert doubled.head == 2
+    assert doubled.tail.head == 4
+    assert doubled.tail.tail.head == 6
+
+test "List: filter" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, List.Cons(4, List.empty))))
+    let evens = xs.filter(x => x % 2 == 0)
+    assert evens.length == 2
+    assert evens.head == 2
+    assert evens.tail.head == 4
+
+test "List: foldLeft" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    let sum = xs.foldLeft(0, (acc: Int32, x: Int32) => acc + x)
+    assert sum == 6
+
+test "List: any and all" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    assert xs.any(x => x == 2)
+    assert !xs.any(x => x == 5)
+    assert xs.all(x => x > 0)
+    assert !xs.all(x => x > 1)
+
+test "List: get" =
+    let xs = List.Cons(10, List.Cons(20, List.Cons(30, List.empty)))
+    assert xs.get(0).or(0) == 10
+    assert xs.get(1).or(0) == 20
+    assert xs.get(2).or(0) == 30
+    assert xs.get(3).isNone
+    assert xs.get(-1).isNone
+
+test "List: concat" =
+    let a = List.Cons(1, List.Cons(2, List.empty))
+    let b = List.Cons(3, List.Cons(4, List.empty))
+    let combined = a.concat(b)
+    assert combined.length == 4
+    assert combined.head == 1
+    assert combined.get(2).or(0) == 3
+    assert combined.get(3).or(0) == 4
+
+test "List: flatMap" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    let result = xs.flatMap(x => List.Cons(x, List.Cons(x * 10, List.empty)))
+    assert result.length == 6
+    assert result.head == 1
+    assert result.tail.head == 10
+
+test "List: take and drop" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, List.Cons(4, List.empty))))
+    let first2 = xs.take(2)
+    assert first2.length == 2
+    assert first2.head == 1
+    assert first2.tail.head == 2
+    let last2 = xs.drop(2)
+    assert last2.length == 2
+    assert last2.head == 3
+    assert last2.tail.head == 4
+
+test "List: iterator" =
+    let xs = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    let mutable sum = 0
+    for x in xs do
+        sum = sum + x
+    assert sum == 6
+
+test "List: iterator empty" =
+    let empty: List<Int32> = List.empty
+    let mutable count = 0
+    for x in empty do
+        count = count + 1
+    assert count == 0
+
+test "List: toArray preserves order" =
+    let xs: List<Int32> = List.Cons(1, List.Cons(2, List.Cons(3, [])))
+    let arr = xs.toArray()
+    assert arr.length == 3
+    assert arr.get(0) == 1
+    assert arr.get(1) == 2
+    assert arr.get(2) == 3
+
+test "List: toArray of empty is empty" =
+    let empty: List<Int32> = List.empty
+    assert empty.toArray().length == 0

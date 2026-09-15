@@ -1,0 +1,393 @@
+package standard.crypto
+
+import standard.prelude.Array
+
+/// Variable-length big-integer modular arithmetic for RSA, via Montgomery
+/// multiplication (CIOS). A number is `k` little-endian `Uint64` limbs, where
+/// `k = modulus.length`. Products are accumulated in `Uint128`. The modulus
+/// must be odd (true for any RSA modulus).
+module Bignum =
+    /// -m^{-1} mod 2^64 (Newton's iteration; m odd).
+    function n0inv(m: Array<Uint64>): Uint64 =
+        let m0 = m.get(0)
+        let mutable inv = m0
+        let mutable i = 0
+        while i < 6 do
+            inv = inv * (2u64 - m0 * inv)
+            i = i + 1
+        0u64 - inv
+
+    /// `t` (k+1 limbs, value < 2*m) reduced mod `m` in place to the low k limbs.
+    private function condSub(t: Array<Uint64>, m: Array<Uint64>): Unit =
+        let k = m.length
+        let diff = Array<Uint64>.fill(k, 0u64)
+        let mutable borrow = 0u64
+        let mutable i = 0
+        while i < k do
+            let lhs = t.get(i).toUint128()
+            let rhs = m.get(i).toUint128() + borrow.toUint128()
+            let d = lhs - rhs
+            diff.set(i, d.low)
+            borrow = (d >> 64u128).low & 1u64
+            i = i + 1
+        let useSub = t.get(k) | (1u64 - borrow)
+        let mask = 0u64 - useSub
+        i = 0
+        while i < k do
+            t.set(i, (diff.get(i) & mask) | (t.get(i) & (~mask)))
+            i = i + 1
+
+    /// Montgomery multiply: a*b*R^{-1} mod m, R = 2^(64k). `ni = n0inv(m)`.
+    function montMul(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>, ni: Uint64): Array<Uint64> =
+        let k = m.length
+        let t = Array<Uint64>.fill(k + 2, 0u64)
+        let mutable i = 0
+        while i < k do
+            let mutable c = 0u64
+            let mutable j = 0
+            while j < k do
+                let prod = Uint128.multiply(a.get(j), b.get(i)) + t.get(j).toUint128() + c.toUint128()
+                t.set(j, prod.low)
+                c = prod.high
+                j = j + 1
+            let sk = t.get(k).toUint128() + c.toUint128()
+            t.set(k, sk.low)
+            t.set(k + 1, sk.high)
+            let mm = t.get(0) * ni
+            let p0 = Uint128.multiply(mm, m.get(0)) + t.get(0).toUint128()
+            let mutable c2 = p0.high
+            let mutable jj = 1
+            while jj < k do
+                let pj = Uint128.multiply(mm, m.get(jj)) + t.get(jj).toUint128() + c2.toUint128()
+                t.set(jj - 1, pj.low)
+                c2 = pj.high
+                jj = jj + 1
+            let s = t.get(k).toUint128() + c2.toUint128()
+            t.set(k - 1, s.low)
+            t.set(k, t.get(k + 1) + s.high)
+            i = i + 1
+        // t[0..k] holds the result (< 2m); reduce into k limbs.
+        let r = Array<Uint64>.fill(k + 1, 0u64)
+        let mutable z = 0
+        while z <= k do
+            r.set(z, t.get(z))
+            z = z + 1
+        condSub(r, m)
+        let res = Array<Uint64>.fill(k, 0u64)
+        z = 0
+        while z < k do
+            res.set(z, r.get(z))
+            z = z + 1
+        res
+
+    /// R^2 mod m (= 2^(128k) mod m) by repeated modular doubling.
+    function rr(m: Array<Uint64>): Array<Uint64> =
+        let k = m.length
+        let mutable x = Array<Uint64>.fill(k, 0u64)
+        x.set(0, 1u64)
+        let bits = 128 * k
+        let mutable i = 0
+        while i < bits do
+            // x = 2x mod m
+            let t = Array<Uint64>.fill(k + 1, 0u64)
+            let mutable carry = 0u64
+            let mutable j = 0
+            while j < k do
+                let s = (x.get(j).toUint128() << 1u128) + carry.toUint128()
+                t.set(j, s.low)
+                carry = s.high
+                j = j + 1
+            t.set(k, carry)
+            condSub(t, m)
+            j = 0
+            while j < k do
+                x.set(j, t.get(j))
+                j = j + 1
+            i = i + 1
+        x
+
+    function toMont(a: Array<Uint64>, m: Array<Uint64>, ni: Uint64): Array<Uint64> =
+        montMul(a, rr(m), m, ni)
+
+    function fromMont(a: Array<Uint64>, m: Array<Uint64>, ni: Uint64): Array<Uint64> =
+        let one = Array<Uint64>.fill(m.length, 0u64)
+        one.set(0, 1u64)
+        montMul(a, one, m, ni)
+
+    function montOne(m: Array<Uint64>, ni: Uint64): Array<Uint64> =
+        let one = Array<Uint64>.fill(m.length, 0u64)
+        one.set(0, 1u64)
+        toMont(one, m, ni)
+
+    /// base^exp mod m. `base` and `m` have k limbs; `exp` is any limb length
+    /// (big integer). Square-and-multiply, MSB first.
+    function modExp(base: Array<Uint64>, exp: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
+        let ni = n0inv(m)
+        let baseM = toMont(base, m, ni)
+        let mutable result = montOne(m, ni)
+        let totalBits = exp.length * 64
+        let mutable i = totalBits - 1
+        while i >= 0 do
+            result = montMul(result, result, m, ni)
+            let bit = (exp.get(i / 64) >> (i % 64).toUint64()) & 1u64
+            if bit == 1u64 then
+                result = montMul(result, baseM, m, ni)
+            i = i - 1
+        fromMont(result, m, ni)
+
+    /// Parse `len` big-endian bytes at `off` into ceil(len/8) little-endian limbs.
+    function fromBytes(bytes: Array<Uint8>, off: Int32, len: Int32): Array<Uint64> =
+        let k = (len + 7) / 8
+        let r = Array<Uint64>.fill(k, 0u64)
+        // little-endian limbs from a big-endian byte string
+        let mutable bi = 0
+        while bi < len do
+            let byteVal = bytes.get(off + len - 1 - bi).toUint64()
+            let limb = bi / 8
+            r.set(limb, r.get(limb) | (byteVal << ((bi % 8) * 8).toUint64()))
+            bi = bi + 1
+        r
+
+    /// Serialize `k`-limb value to `len` big-endian bytes (left-zero-padded).
+    function toBytes(a: Array<Uint64>, len: Int32): Array<Uint8> =
+        let r = Array<Uint8>.fill(len, 0u8)
+        let mutable bi = 0
+        while bi < len do
+            let limb = bi / 8
+            let byteVal = if limb < a.length then (a.get(limb) >> ((bi % 8) * 8).toUint64()).toUint8() else 0u8
+            r.set(len - 1 - bi, byteVal)
+            bi = bi + 1
+        r
+
+    /// Full schoolbook product a*b (length a.length + b.length).
+    function mul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let r = Array<Uint64>.fill(a.length + b.length, 0u64)
+        let mutable i = 0
+        while i < a.length do
+            let mutable carry = 0u64
+            let mutable j = 0
+            while j < b.length do
+                let idx = i + j
+                let prod = Uint128.multiply(a.get(i), b.get(j)) + r.get(idx).toUint128() + carry.toUint128()
+                r.set(idx, prod.low)
+                carry = prod.high
+                j = j + 1
+            let mutable cc = carry
+            let mutable idx = i + b.length
+            while cc > 0u64 do
+                let s = r.get(idx).toUint128() + cc.toUint128()
+                r.set(idx, s.low)
+                cc = s.high
+                idx = idx + 1
+            i = i + 1
+        r
+
+    /// a - s (small), assuming a >= s.
+    function subSmall(a: Array<Uint64>, s: Uint64): Array<Uint64> =
+        let r = a.clone()
+        let mutable borrow = s
+        let mutable i = 0
+        while i < a.length do
+            let d = r.get(i).toUint128() - borrow.toUint128()
+            r.set(i, d.low)
+            borrow = (d >> 64u128).low & 1u64
+            i = i + 1
+        r
+
+    /// a * s (small); result has a.length + 1 limbs.
+    function mulSmall(a: Array<Uint64>, s: Uint64): Array<Uint64> =
+        let r = Array<Uint64>.fill(a.length + 1, 0u64)
+        let mutable carry = 0u64
+        let mutable i = 0
+        while i < a.length do
+            let prod = Uint128.multiply(a.get(i), s) + carry.toUint128()
+            r.set(i, prod.low)
+            carry = prod.high
+            i = i + 1
+        r.set(a.length, carry)
+        r
+
+    /// a + s (small); caller ensures room in `a`.
+    function addSmall(a: Array<Uint64>, s: Uint64): Array<Uint64> =
+        let r = a.clone()
+        let mutable carry = s
+        let mutable i = 0
+        while (i < a.length) && (carry > 0u64) do
+            let sm = r.get(i).toUint128() + carry.toUint128()
+            r.set(i, sm.low)
+            carry = sm.high
+            i = i + 1
+        r
+
+    /// (hi:lo) / d with hi < d and d small (so quotient and remainder fit u64).
+    private function divrem128(hi: Uint64, lo: Uint64, d: Uint64): (Uint64, Uint64) =
+        let mutable rem = hi
+        let mutable q = 0u64
+        let mutable i = 63
+        while i >= 0 do
+            rem = (rem << 1u64) | ((lo >> i.toUint64()) & 1u64)
+            if rem >= d then
+                rem = rem - d
+                q = q | (1u64 << i.toUint64())
+            i = i - 1
+        (q, rem)
+
+    /// a / s and a mod s, for small s. Returns (quotient, remainder).
+    function divSmall(a: Array<Uint64>, s: Uint64): (Array<Uint64>, Uint64) =
+        let q = Array<Uint64>.fill(a.length, 0u64)
+        let mutable rem = 0u64
+        let mutable i = a.length - 1
+        while i >= 0 do
+            let dr = divrem128(rem, a.get(i), s)
+            q.set(i, dr._0)
+            rem = dr._1
+            i = i - 1
+        (q, rem)
+
+    /// a^{-1} mod m for small (< 2^63) values, via extended Euclid.
+    function invModU64(a: Uint64, m: Uint64): Uint64 =
+        let mutable t = 0i64
+        let mutable newt = 1i64
+        let mutable r = m.toInt64()
+        let mutable newr = a.toInt64()
+        while newr != 0i64 do
+            let q = r / newr
+            let tmp = t - q * newt
+            t = newt
+            newt = tmp
+            let tmp2 = r - q * newr
+            r = newr
+            newr = tmp2
+        if t < 0i64 then
+            t = t + m.toInt64()
+        t.toUint64()
+
+    /// a + b mod m (a, b, m all k limbs).
+    function add(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
+        let k = m.length
+        let t = Array<Uint64>.fill(k + 1, 0u64)
+        let mutable carry = 0u64
+        let mutable i = 0
+        while i < k do
+            let s = a.get(i).toUint128() + b.get(i).toUint128() + carry.toUint128()
+            t.set(i, s.low)
+            carry = s.high
+            i = i + 1
+        t.set(k, carry)
+        condSub(t, m)
+        let r = Array<Uint64>.fill(k, 0u64)
+        i = 0
+        while i < k do
+            r.set(i, t.get(i))
+            i = i + 1
+        r
+
+    /// a - b mod m.
+    function sub(a: Array<Uint64>, b: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
+        let k = m.length
+        let mb = Array<Uint64>.fill(k, 0u64)
+        let mutable borrow = 0u64
+        let mutable i = 0
+        while i < k do
+            let lhs = m.get(i).toUint128()
+            let rhs = b.get(i).toUint128() + borrow.toUint128()
+            let d = lhs - rhs
+            mb.set(i, d.low)
+            borrow = (d >> 64u128).low & 1u64
+            i = i + 1
+        add(a, mb, m)
+
+    /// Reduce `x` (value < 2*m, same limb count as m) modulo `m`: one
+    /// conditional subtraction.
+    function reduceOnce(x: Array<Uint64>, m: Array<Uint64>): Array<Uint64> =
+        let k = m.length
+        let t = Array<Uint64>.fill(k + 1, 0u64)
+        let mutable i = 0
+        while i < k do
+            t.set(i, x.get(i))
+            i = i + 1
+        condSub(t, m)
+        let r = Array<Uint64>.fill(k, 0u64)
+        i = 0
+        while i < k do
+            r.set(i, t.get(i))
+            i = i + 1
+        r
+
+    /// a < b (same limb count), constant-time.
+    function lessThan(a: Array<Uint64>, b: Array<Uint64>): Bool =
+        let mutable borrow = 0u64
+        let mutable i = 0
+        while i < a.length do
+            let lhs = a.get(i).toUint128()
+            let rhs = b.get(i).toUint128() + borrow.toUint128()
+            let d = lhs - rhs
+            borrow = (d >> 64u128).low & 1u64
+            i = i + 1
+        borrow == 1u64
+
+    /// True iff all limbs are zero.
+    function isZero(a: Array<Uint64>): Bool =
+        let mutable diff = 0u64
+        let mutable i = 0
+        while i < a.length do
+            diff = diff | a.get(i)
+            i = i + 1
+        diff == 0u64
+
+    /// Number of significant bits (position of the highest set bit + 1).
+    function bitLength(a: Array<Uint64>): Int32 =
+        let mutable result = 0
+        let mutable i = a.length - 1
+        let mutable found = false
+        while (i >= 0) && (found == false) do
+            if a.get(i) != 0u64 then
+                let mutable b = 63
+                while (b >= 0) && (found == false) do
+                    if ((a.get(i) >> b.toUint64()) & 1u64) == 1u64 then
+                        result = i * 64 + b + 1
+                        found = true
+                    b = b - 1
+            i = i - 1
+        result
+
+    function equal(a: Array<Uint64>, b: Array<Uint64>): Bool =
+        let mutable diff = 0u64
+        let mutable i = 0
+        while i < a.length do
+            diff = diff | (a.get(i) ^ b.get(i))
+            i = i + 1
+        diff == 0u64
+
+test "Bignum modExp small" =
+    // 2^10 mod 1009 = 1024 mod 1009 = 15
+    let r = Bignum.modExp([|2u64|], [|10u64|], [|1009u64|])
+    assert Bignum.equal(r, [|15u64|])
+
+test "Bignum Fermat little theorem" =
+    // 1009 is prime, so 3^1008 mod 1009 == 1
+    let r = Bignum.modExp([|3u64|], [|1008u64|], [|1009u64|])
+    assert Bignum.equal(r, [|1u64|])
+
+test "Bignum byte roundtrip" =
+    let bytes = [|
+        0x01u8, 0x23u8, 0x45u8, 0x67u8, 0x89u8, 0xabu8, 0xcdu8, 0xefu8,
+        0xfeu8, 0xdcu8, 0xbau8, 0x98u8, 0x76u8, 0x54u8, 0x32u8, 0x10u8,
+    |]
+    let limbs = Bignum.fromBytes(bytes, 0, 16)
+    let back = Bignum.toBytes(limbs, 16)
+    let mutable i = 0
+    let mutable ok = true
+    while i < 16 do
+        if back.get(i) != bytes.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "Bignum modExp two-limb modulus" =
+    // small numbers but a 2-limb (128-bit) modulus, exercising k=2 CIOS.
+    // 7^5 = 16807 mod (2^64+0x...) — use a 2-limb odd modulus and check
+    // a^0 == 1 and a^1 == a mod m.
+    let m = [|0xffffffffffffffffu64, 0x0000000000000001u64|]
+    let a = [|0x123456789abcdef0u64, 0x0u64|]
+    assert Bignum.equal(Bignum.modExp(a, [|0u64|], m), [|1u64, 0u64|])
+    assert Bignum.equal(Bignum.modExp(a, [|1u64|], m), a)

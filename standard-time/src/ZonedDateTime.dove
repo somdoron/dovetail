@@ -1,0 +1,63 @@
+package standard.time
+
+/// Represents a date-time paired with a time-zone.
+@derive(Equatable)
+public record ZonedDateTime =
+    /// The local date-time component.
+    dateTime: LocalDateTime
+    /// The time-zone associated with this date-time.
+    zone: TimeZone
+
+/// Factory methods and operations for ZonedDateTime.
+module ZonedDateTime =
+    /// Creates a ZonedDateTime from a LocalDateTime and a TimeZone.
+    public function of(dt: LocalDateTime, zone: TimeZone): ZonedDateTime =
+        ZonedDateTime { dateTime = dt; zone = zone }
+
+    /// Returns the LocalDateTime component of this zoned date-time.
+    public function toLocalDateTime(self): LocalDateTime =
+        self.dateTime
+
+implement Display for ZonedDateTime =
+    /// Formats this zoned date-time as "yyyy-MM-ddTHH:mm:ss zone".
+    public function format(self: ZonedDateTime): String =
+        self.dateTime.format() ++ " " ++ self.zone.format()
+
+test "ZonedDateTime of" =
+    let dt = LocalDateTime.ofParts(2024, 6, 15, 14, 30, 0)
+    let tz = TimeZone.utc
+    let zdt = ZonedDateTime.of(dt, tz)
+    assert zdt.dateTime.equals(dt)
+    assert zdt.zone.equals(tz)
+
+test "ZonedDateTime toLocalDateTime" =
+    let dt = LocalDateTime.ofParts(2024, 3, 15, 10, 0, 0)
+    let tz = TimeZone.of("CET", 3600)
+    let zdt = ZonedDateTime.of(dt, tz)
+    let local = zdt.toLocalDateTime()
+    assert local.equals(dt)
+
+test "ZonedDateTime equals" =
+    let dt = LocalDateTime.ofParts(2024, 1, 1, 12, 0, 0)
+    let tz = TimeZone.utc
+    let a = ZonedDateTime.of(dt, tz)
+    let b = ZonedDateTime.of(dt, tz)
+    assert a.equals(b)
+
+test "ZonedDateTime not equals different zone" =
+    let dt = LocalDateTime.ofParts(2024, 1, 1, 12, 0, 0)
+    let a = ZonedDateTime.of(dt, TimeZone.utc)
+    let b = ZonedDateTime.of(dt, TimeZone.of("CET", 3600))
+    assert a.equals(b) == false
+
+test "ZonedDateTime not equals different time" =
+    let tz = TimeZone.utc
+    let a = ZonedDateTime.of(LocalDateTime.ofParts(2024, 1, 1, 10, 0, 0), tz)
+    let b = ZonedDateTime.of(LocalDateTime.ofParts(2024, 1, 1, 11, 0, 0), tz)
+    assert a.equals(b) == false
+
+test "ZonedDateTime display" =
+    let dt = LocalDateTime.ofParts(2024, 3, 5, 9, 5, 3)
+    let tz = TimeZone.utc
+    let zdt = ZonedDateTime.of(dt, tz)
+    assert zdt.format() == "2024-03-05T09:05:03 UTC (offset 0s)"

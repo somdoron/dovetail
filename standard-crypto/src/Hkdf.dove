@@ -1,0 +1,92 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Result
+
+/// HKDF (RFC 5869): HMAC-based extract-and-expand KDF, parameterized by a
+/// `HashAlgorithm`. Construct with `Hkdf(Sha256)`.
+public class Hkdf(algo: HashAlgorithm) =
+    /// Extract a pseudorandom key from input keying material and an optional
+    /// salt. An empty `salt` is equivalent to HashLen zero bytes (HMAC pads the
+    /// key to a full block of zeros either way).
+    public function extract(self, salt: Array<Uint8>, ikm: Array<Uint8>): SymmetricKey =
+        SymmetricKey(HmacCore.compute(self.algo, salt, ikm))
+
+    /// Expand a pseudorandom key into `length` bytes of output keying material.
+    /// Fails when `length` exceeds 255 * HashLen (RFC 5869 limit).
+    public function expand(
+        self,
+        prk: SymmetricKey,
+        info: Array<Uint8>,
+        length: Int32
+    ): Result<SymmetricKey, CryptoError> =
+        let hashLen = self.algo.digestSize
+        if length > 255 * hashLen then
+            Error(CryptoError.InvalidInput("HKDF length exceeds 255 * HashLen"))
+        else
+            let prkBytes = prk.value
+            let n = (length + hashLen - 1) / hashLen
+            let okm = Array<Uint8>.fill(n * hashLen, 0u8)
+            let mutable prev: Array<Uint8> = [||]
+            let mutable i = 1
+            while i <= n do
+                // T(i) = HMAC(prk, T(i-1) || info || byte(i))
+                let block = Array<Uint8>.fill(prev.length + info.length + 1, 0u8)
+                prev.copy(block, 0)
+                info.copy(block, prev.length)
+                block.set(prev.length + info.length, i.toUint8())
+                let t = HmacCore.compute(self.algo, prkBytes, block)
+                t.copy(okm, (i - 1) * hashLen)
+                prev = t
+                i = i + 1
+            let result = Array<Uint8>.fill(length, 0u8)
+            okm.copy(0, result, 0, length)
+            Ok(SymmetricKey(result))
+
+test "HKDF-SHA256 RFC 5869 case 1 extract" =
+    let salt = [|
+        0x00u8, 0x01u8, 0x02u8, 0x03u8, 0x04u8, 0x05u8, 0x06u8,
+        0x07u8, 0x08u8, 0x09u8, 0x0au8, 0x0bu8, 0x0cu8,
+    |]
+    let ikm = Array<Uint8>.fill(22, 0x0bu8)
+    let prk = Hkdf(Sha256).extract(salt, ikm).value
+    let expected = [|
+        0x07u8, 0x77u8, 0x09u8, 0x36u8, 0x2cu8, 0x2eu8, 0x32u8, 0xdfu8,
+        0x0du8, 0xdcu8, 0x3fu8, 0x0du8, 0xc4u8, 0x7bu8, 0xbau8, 0x63u8,
+        0x90u8, 0xb6u8, 0xc7u8, 0x3bu8, 0xb5u8, 0x0fu8, 0x9cu8, 0x31u8,
+        0x22u8, 0xecu8, 0x84u8, 0x4au8, 0xd7u8, 0xc2u8, 0xb3u8, 0xe5u8,
+    |]
+    assert prk.length == 32
+    let mutable i = 0
+    let mutable ok = true
+    while i < 32 do
+        if prk.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+
+test "HKDF-SHA256 RFC 5869 case 1 expand" =
+    let prkBytes = [|
+        0x07u8, 0x77u8, 0x09u8, 0x36u8, 0x2cu8, 0x2eu8, 0x32u8, 0xdfu8,
+        0x0du8, 0xdcu8, 0x3fu8, 0x0du8, 0xc4u8, 0x7bu8, 0xbau8, 0x63u8,
+        0x90u8, 0xb6u8, 0xc7u8, 0x3bu8, 0xb5u8, 0x0fu8, 0x9cu8, 0x31u8,
+        0x22u8, 0xecu8, 0x84u8, 0x4au8, 0xd7u8, 0xc2u8, 0xb3u8, 0xe5u8,
+    |]
+    let info = [|0xf0u8, 0xf1u8, 0xf2u8, 0xf3u8, 0xf4u8, 0xf5u8, 0xf6u8, 0xf7u8, 0xf8u8, 0xf9u8|]
+    let result = Hkdf(Sha256).expand(SymmetricKey(prkBytes), info, 42)
+    assert result.isOk
+    let okm = result.require.value
+    let expected = [|
+        0x3cu8, 0xb2u8, 0x5fu8, 0x25u8, 0xfau8, 0xacu8, 0xd5u8, 0x7au8,
+        0x90u8, 0x43u8, 0x4fu8, 0x64u8, 0xd0u8, 0x36u8, 0x2fu8, 0x2au8,
+        0x2du8, 0x2du8, 0x0au8, 0x90u8, 0xcfu8, 0x1au8, 0x5au8, 0x4cu8,
+        0x5du8, 0xb0u8, 0x2du8, 0x56u8, 0xecu8, 0xc4u8, 0xc5u8, 0xbfu8,
+        0x34u8, 0x00u8, 0x72u8, 0x08u8, 0xd5u8, 0xb8u8, 0x87u8, 0x18u8,
+        0x58u8, 0x65u8,
+    |]
+    assert okm.length == 42
+    let mutable i = 0
+    let mutable ok = true
+    while i < 42 do
+        if okm.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok

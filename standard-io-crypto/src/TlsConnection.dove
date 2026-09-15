@@ -1,0 +1,531 @@
+package standard.io.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.io.Async
+import standard.time.Duration
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Fiber
+import standard.io.Mutex
+import standard.io.MutexError
+import standard.wasi.net.NetworkError
+import standard.tls.TlsClient
+import standard.tls.TlsServer
+import standard.tls.TlsEvent
+import standard.tls.NegotiatedParams
+
+/// Which side of the connection drives the engine. `TlsClient` and `TlsServer`
+/// share the same sans-I/O surface; this enum lets `TlsConnection` delegate to
+/// whichever one is present with a plain match.
+public enum TlsEngineKind =
+    Client(TlsClient)
+    Server(TlsServer)
+
+/// Shared, mutable state for one TLS connection, held by reference by both the
+/// encrypted input and output streams. `engine` drives the sans-I/O TLS state
+/// machine (a `TlsClient` or `TlsServer`, selected via `TlsEngineKind`); the
+/// underlying socket streams carry ciphertext. Decrypted application bytes
+/// are buffered in `plaintext` until the caller reads them. Because Dovetail
+/// classes are reference types, the single `TlsConnection` instance lets the
+/// input and output streams see each other's engine mutations.
+public class TlsConnection(
+    engine: TlsEngineKind,
+    underlyingInput: AsyncInputStream<NetworkError>,
+    underlyingOutput: AsyncOutputStream<NetworkError>,
+    mutable plaintext: Array<Uint8>,
+    /// Where the application content in `plaintext` ends. The engine hands a
+    /// decrypted record over WITHOUT copying, so the array still carries the
+    /// record's trailing content-type byte and padding — bytes at and past this
+    /// index are not application data and must never be served.
+    mutable plaintextEnd: Int32,
+    /// How much of `plaintext` the reader has already taken. A read cursor
+    /// rather than a slice: see `takeBuffered`.
+    mutable plaintextOffset: Int32,
+    mutable closed: Bool,
+    /// Whether the peer sent a TLS close_notify (a `ConnectionClosed` event) before
+    /// the socket reached EOF. A socket EOF WITHOUT a preceding close_notify is a
+    /// truncation attack, not a clean end of stream (RFC 8446 §6.1) — pumpStep
+    /// latches `Truncated` in that case rather than rounding it down to a clean
+    /// close, which is the one failure a TLS library must never hide.
+    mutable peerCloseNotified: Bool,
+    /// Whether the TLS close_notify has already gone out. Guards the emission
+    /// only, because a second close_notify is a protocol error where a second
+    /// `AsyncOutputStream.close` is merely idempotent. Explicitly closing the
+    /// encrypted output stream and then releasing the connection Resource is the
+    /// ordinary path, and it must not put two of them on the wire.
+    mutable sendClosed: Bool,
+    /// Whether the read direction's owner has closed it — `TlsInputStream.close`,
+    /// and nothing else. The peer finishing is `closed` above; this is the local
+    /// side saying it will read no more, which per `AsyncInputStream`'s invariant
+    /// (9) is not the same thing and must not be answered with the empty array
+    /// that means end of stream.
+    mutable recvClosed: Bool,
+    /// The protocol failure that killed this connection, latched.
+    ///
+    /// The engine reports a protocol `Error` EXACTLY ONCE and then latches itself
+    /// closed, so without this the second reader gets a worse answer than a
+    /// confusing one: it finds no buffered plaintext and an engine that is not
+    /// yet marked closed here, feeds a dead engine that emits nothing, spins the
+    /// socket to EOF, and reports a clean end of connection over a MAC/AEAD
+    /// failure. Which is the one failure a TLS library must never round down.
+    mutable failure: Option<TlsIoError>,
+    mutable handshakeParams: Option<NegotiatedParams>,
+    mutable handshakeFiber: Option<Fiber<NegotiatedParams, TlsIoError>>,
+    /// Serializes ciphertext-in: the socket read, the engine feed, and the
+    /// plaintext take are one unit. The runtime's per-handle lock on the
+    /// underlying socket only makes the READ atomic — two fibers could each
+    /// finish their read and then feed the engine in the wrong order, which to a
+    /// TLS engine is records arriving out of sequence: a MAC/AEAD failure and a
+    /// dead connection.
+    ///
+    /// NON-reentrant, and held by callers ACROSS `pumpStep` rather than re-taken
+    /// inside it: `pumpStep` requires its callers to already hold this lock (it
+    /// documents so) and never acquires it itself, so nothing here re-enters. What
+    /// `pumpStep` does take inside is the underlying SOCKET's lock when it reads —
+    /// a different lock in a different key space, and always taken after this one.
+    public readLock: Mutex,
+    /// Serializes ciphertext-out for the same reason, mirrored: draining the
+    /// engine's queue and writing that drain to the socket must not be split, or
+    /// two writers put their records on the wire in the opposite order to the
+    /// one the engine sequenced them in.
+    ///
+    /// Separate from `readLock` on purpose — one lock would make a fiber parked
+    /// waiting for inbound records block every outbound write, which for a
+    /// full-duplex protocol is a deadlock waiting to happen.
+    public writeLock: Mutex
+) =
+    /// Start the background handshake fiber. Called EXACTLY ONCE, in the resource
+    /// `acquire` (a single fiber, before the streams are handed out) — so the
+    /// handshake runs concurrently in the background without blocking stream
+    /// creation, and there is no fork race: nothing else forks it, callers only
+    /// `join`. Forking here (rather than lazily inside `ensureHandshake`) avoids
+    /// the double-fork hazard where two concurrent callers both observe a `None`
+    /// fiber across the fork's suspension point.
+    ///
+    /// `forkBackground`, and both halves of that matter. A fiber forked during
+    /// `acquire` is owned by the RESOURCE's scope rather than by the transient
+    /// acquire, so this outlives `startHandshake` and lives exactly as long as the
+    /// connection. And background rather than waited: the handshake loop only ends
+    /// when the handshake finishes or the connection closes, so a scope that waited
+    /// for it would never reach `shutdown` — the very thing that ends it.
+    ///
+    /// What is forked is the handshake WITH its failure latched, and that is
+    /// load-bearing rather than tidy. A handshake failure otherwise lives only in
+    /// this fiber's result, reachable exclusively by joining it — so a connection
+    /// killed during negotiation looked perfectly healthy to everything that asks
+    /// the connection instead of the fiber, and a zero-length read (which must
+    /// not wait on a network round trip, so it must not join) answered `Ok`
+    /// with an empty array: this library's spelling of a clean end of stream, for
+    /// a connection that never carried a byte. Latching costs nothing here and
+    /// makes "dead" one question with one answer.
+    ///
+    /// `catchAll`, so only a TYPED failure latches. The shutdown path interrupts
+    /// this fiber, and an interrupt is not the connection failing — it is the
+    /// connection being taken down deliberately, and recording it as a protocol
+    /// failure would make `close` report an error it caused itself.
+    public async function startHandshake(self): Async<Unit, Never> =
+        let latching: Async<NegotiatedParams, TlsIoError> =
+            self.driveHandshake().catchAll<TlsIoError>((failure: TlsIoError) => self.latchAndFail(failure))
+        let f = await latching.forkBackground()
+        self.handshakeFiber = Some(f)
+
+    /// Record a handshake failure on the connection, then re-raise it for
+    /// whoever joins the fiber. Both halves matter: the latch is what every
+    /// later reader and writer consults, and the re-raise is what
+    /// `ensureHandshake` reports to the caller that asked for the parameters.
+    function latchAndFail(self, failure: TlsIoError): Async<NegotiatedParams, TlsIoError> =
+        self.latch(failure)
+        Async.fail(failure)
+
+    /// Wait for the handshake (started by `startHandshake` at acquire) to finish.
+    /// Safe under concurrent callers — they all `join` the one fiber and observe
+    /// the same success/failure. Returns the negotiated parameters.
+    public async function ensureHandshake(self): Async<NegotiatedParams, TlsIoError> =
+        match self.handshakeFiber with
+            case Some(f) => await f.join()
+            case None => await Async.failPanic("internal: TLS handshake fiber not started")
+
+    /// Resource-release shutdown: stop the background handshake fiber (no-op if
+    /// it already finished) so it can't race the close_notify on the underlying
+    /// stream, then send the TLS close_notify (best-effort), BOUNDED.
+    ///
+    /// The bound is what keeps teardown peer-proof. `initiateClose` waits on the
+    /// write lock, the close_notify write, and a flush — and the last two make
+    /// progress only as fast as the peer drains its TCP window, so a peer that
+    /// stops reading would otherwise stall this release forever, uncuttably,
+    /// since releases run under the hard mask. `.timeout` is the one escape
+    /// hatch a masked region has: the timer and the close race in fresh fibers
+    /// of their own, born interruptible, so the timer fires regardless of the
+    /// caller's mask and the losing close unwinds through its OWN armed frames —
+    /// the write lock is released and the in-flight copy cancelled, never
+    /// abandoned. A close_notify the peer refused to accept is forfeit exactly
+    /// as if the network had dropped it, which is the "best-effort" this
+    /// function always promised; the transport socket is closed by its own
+    /// resource right after, either way.
+    public async function shutdown(self): Async<Unit, Never> =
+        match self.handshakeFiber with
+            case Some(f) => await f.interrupt()
+            case None => ()
+        await self.initiateClose().timeout(Duration.ofSeconds(3i64))
+        ()
+
+    /// Drive the handshake to completion. Works for both peers: a client's first
+    /// `flushSend` emits the ClientHello; a server's is empty and it reads first.
+    /// Takes `readLock` around its pump like every other caller. Uncontended in
+    /// practice — a reader cannot get past `ensureHandshake` until this fiber is
+    /// done — but taking it keeps the invariant free of exceptions.
+    async function driveHandshake(self): Async<NegotiatedParams, TlsIoError> =
+        let mutable done = false
+        while !done do
+            await self.flushSend()
+            match self.negotiated with
+                case Some(_) => done = true
+                case None =>
+                    if self.closed then
+                        done = true
+                    else
+                        let _held = use self.readLock.acquire().orPanicWith((_: MutexError) => "TLS handshake re-entered the read lock")
+                        await self.pumpStep()
+        match self.negotiated with
+            case Some(p) => p
+            // The loop exits with no negotiated params because the connection closed. If
+            // pumpStep latched a specific failure (e.g. a mid-handshake `Truncated`, or a
+            // protocol error), surface THAT rather than flattening every handshake-phase
+            // close to a generic `Closed` — a truncation must not be downgraded.
+            case None =>
+                match self.failure with
+                    case Some(e) => await Async.fail(e)
+                    case None => await Async.fail(TlsIoError.Closed)
+    // --- engine delegation (plain match over client/server) ---------------
+    function engineDataToSend(self): Array<Uint8> =
+        match self.engine with
+            case Client(c) => c.dataToSend()
+            case Server(s) => s.dataToSend()
+
+    function engineReceiveData(self, data: Array<Uint8>): Unit =
+        match self.engine with
+            case Client(c) => c.receiveData(data)
+            case Server(s) => s.receiveData(data)
+
+    function engineNextEvent(self): Option<TlsEvent> =
+        match self.engine with
+            case Client(c) => c.nextEvent()
+            case Server(s) => s.nextEvent()
+
+    function engineSendApp(self, data: ReadonlySlice<Uint8>): Unit =
+        match self.engine with
+            case Client(c) => c.sendApplicationData(data)
+            case Server(s) => s.sendApplicationData(data)
+
+    function engineInitiateClose(self): Unit =
+        match self.engine with
+            case Client(c) => c.initiateClose()
+            case Server(s) => s.initiateClose()
+
+    function engineHasPartialRecord(self): Bool =
+        match self.engine with
+            case Client(c) => c.hasPartialRecord
+            case Server(s) => s.hasPartialRecord
+
+    /// Whether the peer closed (via TLS close_notify or socket EOF).
+    public property isClosed(self): Bool = self.closed
+
+    /// Whether the write direction has already sent its close_notify. The write
+    /// stream's half of "can this stream still take a byte" — see
+    /// `TlsOutputStream.checkAlive`; a connection can be perfectly healthy for
+    /// reading and finished for writing.
+    public property isSendClosed(self): Bool = self.sendClosed
+
+    /// Whether the read direction's owner has closed it. The read stream's half of
+    /// invariant (9) — see `closeReceive`.
+    public property isReceiveClosed(self): Bool = self.recvClosed
+
+    /// End the read direction: no further read on this connection may succeed, and
+    /// the plaintext already decrypted is dropped.
+    ///
+    /// Dropping it is the point rather than a shortcut. Buffered plaintext belongs
+    /// to a reader, and the call that gets here is that reader saying it wants no
+    /// more; handing what is left to whoever asks next would make a closed stream
+    /// answer with data. The alternative — serve the remainder and then report the
+    /// close — is the rule for a stream that ENDED (invariant (3)), and a close is
+    /// the case (9) exists to tell apart from an ending.
+    ///
+    /// The socket underneath is untouched, and that is not this call's business:
+    /// the write direction still has a close_notify to put on it, and the
+    /// connection `Resource` is what owns it.
+    public function closeReceive(self): Unit =
+        self.recvClosed = true
+        self.plaintext = Array<Uint8>.empty()
+        self.plaintextEnd = 0i32
+        self.plaintextOffset = 0i32
+
+    /// The negotiated parameters once the handshake completes (else None).
+    public property negotiated(self): Option<NegotiatedParams> = self.handshakeParams
+
+    /// Whether there is buffered decrypted APPLICATION data ready to serve.
+    /// `plaintext` is appended to only by the `ApplicationData` event in
+    /// `pumpStep`, which the engine emits only post-handshake — so this is never
+    /// true for handshake records and is never true before the handshake completes.
+    public property hasBuffered(self): Bool = self.plaintextOffset < self.plaintextEnd
+
+    /// Take up to `n` bytes from the decrypted-plaintext buffer (empty if none).
+    ///
+    /// The cursor is what makes this linear. Copying the untaken remainder down
+    /// to zero on every read — which is what slicing the buffer in two amounts
+    /// to — costs a copy of the whole record per read, so a 16KiB record read
+    /// out 1KiB at a time copied about 128KiB to deliver 16KiB, and a body read
+    /// in small chunks was quadratic in the size of a record.
+    public function takeBuffered(self, n: Int64): Array<Uint8> =
+        let avail = self.plaintextEnd - self.plaintextOffset
+        // Clamped in Int64, before anything narrows. `n` is a caller's read
+        // length: a content length past 2GiB, or an `Int64.max` standing for
+        // "everything you have", truncates through `toInt32` to a NEGATIVE
+        // count, which walks the cursor backwards and leaves every later
+        // `subBytes` clamped to empty — authenticated plaintext that would
+        // never be delivered again, and an empty array a reader takes for a
+        // clean EOF. Clamping against `avail` first makes any `n` at or above
+        // what is buffered mean exactly "everything available".
+        let availWide = avail.toInt64()
+        let want = if n < 0i64 then 0i64 else if n > availWide then availWide else n
+        let take = want.toInt32()
+        let result = subBytes(self.plaintext, self.plaintextOffset, self.plaintextOffset + take)
+        self.plaintextOffset = self.plaintextOffset + take
+        // Drop the spent buffer rather than hold a reference to it until the
+        // next record arrives.
+        if self.plaintextOffset >= self.plaintextEnd then
+            self.plaintext = Array<Uint8>.empty()
+            self.plaintextEnd = 0i32
+            self.plaintextOffset = 0i32
+        result
+
+    /// Buffer one decrypted record for the reader. `contentLength` bounds the
+    /// content in `bytes`: the engine hands the record over without copying, so
+    /// the array still carries the record's type byte and padding past it.
+    ///
+    /// A fully-read buffer is replaced rather than appended to — array, end and
+    /// cursor together — so the steady state — read drains what pump produced,
+    /// pump produces the next record — copies nothing at all here and once in
+    /// `takeBuffered`. Only a record that lands on top of bytes the reader has
+    /// not taken yet costs a copy, and then only of what is left plus the new
+    /// record's content.
+    function bufferPlaintext(self, bytes: Array<Uint8>, contentLength: Int32): Unit =
+        if self.plaintextOffset >= self.plaintextEnd then
+            self.plaintext = bytes
+            self.plaintextEnd = contentLength
+            self.plaintextOffset = 0i32
+        else
+            // Compact to exactly the untaken content first: the held array may
+            // itself end in a record's type byte / padding (`plaintextEnd` short
+            // of `length`), which a bare concat would smuggle into the middle
+            // of the stream.
+            if self.plaintextOffset > 0 || self.plaintextEnd < self.plaintext.length then
+                self.plaintext = subBytes(self.plaintext, self.plaintextOffset, self.plaintextEnd)
+                self.plaintextOffset = 0i32
+            self.plaintext = self.plaintext.concat(subBytes(bytes, 0i32, contentLength))
+            self.plaintextEnd = self.plaintext.length
+
+    /// Encrypt and queue application data on the engine (drained by `flushSend`).
+    public function sendApp(self, data: ReadonlySlice<Uint8>): Unit =
+        self.engineSendApp(data)
+
+    /// Drain the engine's outbound queue to the socket and flush. Held under
+    /// `writeLock`: the drain and the write it produces are one unit, or two
+    /// writers can hand the socket their records in the reverse of the order the
+    /// engine gave them sequence numbers in.
+    public async function flushSend(self): Async<Unit, TlsIoError> =
+        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "TlsConnection.flushSend re-entered the write lock")
+        let bytes = self.engineDataToSend()
+        if bytes.length > 0 then
+            await self.underlyingOutput.write(bytes.readonly).mapError(TlsIoError.from)
+            // The `write` above has already been accepted, so the flush adds no
+            // waiting — what it adds is the transport's latched failure, which a
+            // completed write does not report. See `AsyncOutputStream.flush`:
+            // accepted, not durable. Durability is `finish`, and the socket
+            // belongs to the caller, so this connection never calls it.
+            await self.underlyingOutput.flush().mapError(TlsIoError.from)
+        ()
+
+    /// Read one ciphertext chunk from the socket, feed it to the engine, and
+    /// drain the engine's events: append `ApplicationData` to `plaintext`, mark
+    /// `closed` on `ConnectionClosed` or socket EOF, capture `HandshakeComplete`
+    /// params, and fail on a protocol `Error`. One step may consume a partial/
+    /// handshake record and produce no plaintext — callers loop or re-arm.
+    /// Callers must hold `readLock` — `TlsInputStream.read` and the handshake
+    /// loop below both do. This is where the ordering matters: the read and the
+    /// `engineReceiveData` that follows it are what has to stay paired.
+    public async function pumpStep(self): Async<Unit, TlsIoError> =
+        // Answer from the latch before touching the socket: the engine is spent,
+        // and everything below it would report a clean close instead.
+        await Async.fromResult(self.latchedFailure())
+        let chunk = await self.underlyingInput.read(16384i64).mapError(TlsIoError.from)
+        if chunk.length == 0 then
+            // Socket EOF. Distinguish a truncation attack from a benign close:
+            //  - close_notify already seen -> clean close (RFC 8446 §6.1).
+            //  - no close_notify but a partial ciphertext record is still buffered ->
+            //    the peer's TCP was cut MID-RECORD: a truncation, latch it so the read
+            //    fails rather than reporting a short but "clean" stream.
+            //  - no close_notify and a clean record boundary -> the common "server
+            //    closes the connection without a close_notify" case (e.g. many HTTP
+            //    servers). Treat as a normal end of stream; application-layer framing
+            //    (Content-Length/chunked) is what catches truncation there, and
+            //    rejecting it outright would break interop with conformant peers.
+            if self.peerCloseNotified == false && self.engineHasPartialRecord() then
+                self.latch(TlsIoError.Truncated)
+            else
+                self.closed = true
+        else
+            self.engineReceiveData(chunk)
+        let mutable draining = true
+        while draining do
+            match self.engineNextEvent() with
+                case None => draining = false
+                case Some(event) =>
+                    match event with
+                        case ApplicationData(bytes, contentLength) => self.bufferPlaintext(bytes, contentLength)
+                        case ConnectionClosed =>
+                            self.peerCloseNotified = true
+                            self.closed = true
+                        case Error(e) => await self.poison(TlsIoError.Protocol(e))
+                        case HandshakeComplete(p) => self.handshakeParams = Some(p)
+                        case _ => ()
+        ()
+
+    /// Record the failure that killed the connection, without raising it.
+    ///
+    /// Closes the connection as well as latching, so the readers looping on
+    /// `!hasBuffered && !isClosed` stop rather than pump a dead engine. The first
+    /// to discover it records it; a straggler is reporting a consequence, the
+    /// same rule the byte streams latch by.
+    ///
+    /// Deliberately synchronous and `Unit`-returning: an `Async` that nothing
+    /// awaits does nothing at all, and this must take effect at the call.
+    public function latch(self, failure: TlsIoError): Unit =
+        if self.failure.isNone then
+            self.failure = Some(failure)
+            self.closed = true
+
+    /// Record the protocol failure that killed the connection, then raise it.
+    /// The pump's own channel, for callers who have nothing buffered to hand
+    /// back first — `TlsInputStream.read` folds this into the latch instead, so
+    /// that the plaintext this same step decrypted is not lost with it.
+    function poison(self, failure: TlsIoError): Async<Unit, TlsIoError> =
+        self.latch(failure)
+        Async.fromResult(self.latchedFailure())
+
+    /// Fold a pump failure into the latch rather than raising it, so a step that
+    /// authenticated plaintext BEFORE it died can still hand that plaintext to
+    /// the caller. The failure is not lost, only deferred: it is answered by the
+    /// next read that finds the buffer empty.
+    public function latchPumpFailure(self, failure: TlsIoError): Async<Unit, Never> =
+        self.latch(failure)
+        Async.succeed(())
+
+    /// The failure this connection has already recorded, if any. Every read and
+    /// write answers from here once it is set.
+    public function latchedFailure(self): Result<Unit, TlsIoError> =
+        match self.failure with
+            case Some(e) => Error(e)
+            case None => Ok(())
+
+    /// Flush the underlying socket (used by the encrypted output stream's flush).
+    public async function flushUnderlying(self): Async<Unit, TlsIoError> =
+        await self.underlyingOutput.flush().mapError(TlsIoError.from)
+
+    /// Put the TLS close_notify on the wire, once, best-effort. Answers whether
+    /// this call was the one that emitted it.
+    ///
+    /// The caller must already hold `writeLock` — both callers do, and the
+    /// mutex is not reentrant, so this cannot take it itself.
+    ///
+    /// Best-effort because both callers have a better report than this write's
+    /// error: `closeSend` reads the transport's result future straight after,
+    /// and `initiateClose` is a finalizer with nowhere to put a verdict.
+    async function emitCloseNotify(self): Async<Bool, Never> =
+        if self.sendClosed then
+            false
+        else
+            self.sendClosed = true
+            self.engineInitiateClose()
+            let bytes = self.engineDataToSend()
+            if bytes.length > 0 then
+                await self.underlyingOutput.write(bytes.readonly).catchAll((_: NetworkError) => Async.succeed(()))
+            true
+
+    /// Send a TLS close_notify (best-effort) on the engine and drain it to the
+    /// socket. The finalizer's half of the close: it does NOT end the underlying
+    /// write half, because a finalizer has nowhere to report what ending it
+    /// revealed — `closeSend` is the path that can.
+    public async function initiateClose(self): Async<Unit, Never> =
+        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "TlsConnection.initiateClose re-entered the write lock")
+        let emitted = await self.emitCloseNotify()
+        // The flush belongs to this path alone, and stays: `write` resolves when
+        // the host accepts the bytes, and a finalizer that returns without
+        // waiting for the transport to take them can be the last thing to run.
+        // `closeSend` does not need it — its `close` subsumes a flush.
+        //
+        // Only when this call emitted: if `closeSend` already ran, it ended the
+        // underlying write half, and flushing a stream that has been closed is
+        // not a question worth asking the transport.
+        if emitted then
+            await self.underlyingOutput.flush().catchAll((_: NetworkError) => Async.succeed(()))
+        ()
+
+    /// End the write direction of the connection and report what the transport
+    /// made of it: drain whatever the engine still has queued along with the TLS
+    /// close_notify, then END the underlying write half.
+    ///
+    /// That last step is the point. A `write` resolves when the host ACCEPTS the
+    /// bytes, so a reset arriving after the final record is invisible to it; the
+    /// verdict lands on the underlying stream's one-shot result future, and that
+    /// future only resolves once the stream has ended. Nothing but a close ends
+    /// it, which is why a `flush` here would report success on a response the
+    /// peer never received.
+    ///
+    /// The close_notify write stays best-effort — if it fails, the result future
+    /// read immediately below is the better-informed report of the same event,
+    /// and raising the write's error would shadow it.
+    ///
+    /// Ending the write half is not closing the socket: the read half is
+    /// untouched and the socket resource is still the caller's. What the caller
+    /// gives up by calling this is the ability to send, which is exactly what
+    /// they asked for.
+    public async function closeSend(self): Async<Unit, TlsIoError> =
+        let _held = use self.writeLock.acquire().orPanicWith((_: MutexError) => "TlsConnection.closeSend re-entered the write lock")
+        await self.emitCloseNotify()
+        await self.underlyingOutput.close().mapError(TlsIoError.from)
+
+/// Build a `TlsConnection` over an already-established socket's streams and
+/// start its background handshake. `TlsClientStream.connect` and
+/// `TlsServerStream.accept` differ only in which engine they hand over, so
+/// everything downstream of that choice lives here once.
+///
+/// Called from INSIDE the Resource's `acquire`, not beside it. A `Resource` is a
+/// description that may be used more than once, and a connection built outside
+/// would be one engine, one record buffer and one pair of locks shared by every
+/// use of it. That is the same reason `Mutex.make` is an `Async`: making mutable
+/// state is an effect, and this is where the effects belong.
+///
+/// The handshake runs in the background — concurrently, without blocking the
+/// acquire, so an accept loop is never held up negotiating a connection.
+/// `read`/`write`/`params()` just join it.
+async function openTlsConnection(
+    engine: TlsEngineKind,
+    underlyingInput: AsyncInputStream<NetworkError>,
+    underlyingOutput: AsyncOutputStream<NetworkError>
+): Async<TlsConnection, Never> =
+    let readLock = await Mutex.make()
+    let writeLock = await Mutex.make()
+    let conn = TlsConnection(engine, underlyingInput, underlyingOutput,
+        Array<Uint8>.empty(), 0i32, 0i32, false, false, false, false, None, None, None, readLock, writeLock)
+    await conn.startHandshake()
+    conn
+
+/// Copy of `arr[start..end]` (clamped), as a fresh byte array.
+function subBytes(arr: Array<Uint8>, start: Int32, end: Int32): Array<Uint8> =
+    let lo = if start < 0 then 0 else start
+    let hi = if end > arr.length then arr.length else end
+    let n = if hi > lo then hi - lo else 0
+    let result = Array<Uint8>.fill(n, 0u8)
+    arr.copy(lo, result, 0, n)
+    result

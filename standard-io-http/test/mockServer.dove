@@ -1,0 +1,46 @@
+package test
+
+import standard.io.Async
+import standard.io.net.TcpListener
+import standard.io.net.TcpStream
+import standard.io.net.NetError
+
+// Shared one-shot raw-bytes HTTP server harness used by every standard-io-http
+// integration test. Lives in its own file so multiple test files can call it
+// without colliding on function-name namespaces (all test files share
+// `package test`).
+
+/// Accept one connection, read up to 64 KiB of request bytes (discarded), write
+/// `canned` back, then let the scope close the connection so the client sees
+/// EOF. All errors are
+/// swallowed so the resulting Async fiber type is `Never`.
+public function mockServer(listener: TcpListener, canned: Array<Uint8>): Async<Unit, Never> =
+    mockServerBody(listener, canned).fold(
+        (_: NetError) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+async function mockServerBody(listener: TcpListener, canned: Array<Uint8>): Async<Unit, NetError> =
+    let stream: TcpStream = use listener.accept()
+    let _ignored = await stream.input
+        .read(65536i64)
+        .mapError(NetError.from)
+    if canned.length > 0 then
+        await stream.output
+            .write(canned.readonly)
+            .mapError(NetError.from)
+    else ()
+
+/// Parse the trailing ":PORT" of an address string ("127.0.0.1:N") into a
+/// Uint16. Standard listener-address formatter from `formatWasiSocketAddress`.
+public function parsePortSuffix(address: String): Uint16 =
+    let portStr = match address.split(":").last with
+        case Some(text) => text
+        case None => panic "expected a host:port address"
+    let bytes = portStr.bytes()
+    let mutable n = 0
+    let mutable i = 0
+    while i < bytes.length do
+        n = n * 10 + (bytes.get(i).toInt32() - 48)
+        i = i + 1
+    n.toUint16()

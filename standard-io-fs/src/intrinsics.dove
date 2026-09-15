@@ -1,0 +1,415 @@
+package standard.io.fs
+
+import standard.wasi.fs.FileSystemError
+import standard.wasi.fs.FileDescriptor
+import standard.wasi.fs.FsStream
+import standard.wasi.fs.DescriptorType
+import standard.wasi.fs.DirectoryEntry
+import standard.wasi.fs.FileStat
+import standard.wasi.fs.FileFlags
+import standard.wasi.fs.PathFlags
+import standard.wasi.fs.OpenFlags
+import standard.wasi.AsyncCall
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.ComponentSubtask
+import standard.wasi.CopyResult
+import standard.prelude.List
+import standard.wasi.Stream
+import standard.io.Async
+import standard.io.Cause
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.WasiInputStream
+import standard.io.WasiOutputStream
+import standard.io.TornWrite
+import standard.io.Resource
+import standard.time.Instant
+
+// =============================================================================
+// Internal helpers used by Directory.dove / File.dove. None exported.
+// Under WASI p3 the descriptor methods are asynchronous (start → await → finish);
+// these wrappers present a synchronous-looking `Async<Result<...>>` to the
+// callers, matching the old p2 shape so File/Directory changed only at the
+// call boundary.
+// =============================================================================
+
+// --- Async method wrappers (start → park → finish) --------------------------
+//
+// Every one goes through `Async.subtask`, which brackets the whole window: an
+// interrupt anywhere between the start and the finish cancels the subtask and
+// releases the result block (running `finish` instead when the cancel raced a
+// completion, since only `finish` frees what the block points to).
+
+/// INTERRUPTIBLE, punching back through the mask every Resource acquire runs
+/// under (`Async.bracket`): an open is usually instant, but the syscall can
+/// block without bound — a FIFO opened read-only with no writer, a hung network
+/// mount — and a `.timeout` over `use File.openInputStream(...)` must be able
+/// to cut it short rather than wait it out. Only the park is opted in; the fd
+/// the finish produces flows on masked, and `walkDir`'s `onUnwind` closes the
+/// intermediates an interrupt strands.
+function openAtAsync(fd: FileDescriptor, pathFlags: PathFlags, path: String, openFlags: OpenFlags, fileFlags: FileFlags): Async<Result<FileDescriptor, FileSystemError>, Never> =
+    Async<Result<FileDescriptor, FileSystemError>, Never>.subtask(ComponentSubtask<Result<FileDescriptor, FileSystemError>, Never> {
+        start = () => fd.openAtStart(pathFlags, path, openFlags, fileFlags)
+        finish = (call: AsyncCall) => Ok(FileDescriptor.openAtFinish(call))
+    }).interruptible()
+
+function statAtAsync(fd: FileDescriptor, pathFlags: PathFlags, path: String): Async<Result<FileStat, FileSystemError>, Never> =
+    Async<Result<FileStat, FileSystemError>, Never>.subtask(ComponentSubtask<Result<FileStat, FileSystemError>, Never> {
+        start = () => fd.statAtStart(pathFlags, path)
+        finish = (call: AsyncCall) => Ok(FileDescriptor.statFinish(call))
+    })
+
+function createDirectoryAtAsync(fd: FileDescriptor, path: String): Async<Result<Unit, FileSystemError>, Never> =
+    Async<Result<Unit, FileSystemError>, Never>.subtask(ComponentSubtask<Result<Unit, FileSystemError>, Never> {
+        start = () => fd.createDirectoryAtStart(path)
+        finish = (call: AsyncCall) => Ok(FileDescriptor.unitFinish(call))
+    })
+
+function removeDirectoryAtAsync(fd: FileDescriptor, path: String): Async<Result<Unit, FileSystemError>, Never> =
+    Async<Result<Unit, FileSystemError>, Never>.subtask(ComponentSubtask<Result<Unit, FileSystemError>, Never> {
+        start = () => fd.removeDirectoryAtStart(path)
+        finish = (call: AsyncCall) => Ok(FileDescriptor.unitFinish(call))
+    })
+
+function unlinkFileAtAsync(fd: FileDescriptor, path: String): Async<Result<Unit, FileSystemError>, Never> =
+    Async<Result<Unit, FileSystemError>, Never>.subtask(ComponentSubtask<Result<Unit, FileSystemError>, Never> {
+        start = () => fd.unlinkFileAtStart(path)
+        finish = (call: AsyncCall) => Ok(FileDescriptor.unitFinish(call))
+    })
+
+// --- WASI error mapping -----------------------------------------------------
+
+/// Translate a WASI `FileSystemError` to the user-facing `FileStreamError`.
+function mapWasiError(e: FileSystemError): FileStreamError =
+    match e with
+        case FileSystemError.Access => FileStreamError.AccessDenied
+        case FileSystemError.NotPermitted => FileStreamError.AccessDenied
+        case FileSystemError.NoEntry => FileStreamError.NotFound
+        case FileSystemError.NoSuchDevice => FileStreamError.NotFound
+        case FileSystemError.Exist => FileStreamError.AlreadyExists
+        case FileSystemError.Already => FileStreamError.AlreadyExists
+        case FileSystemError.IsDirectory => FileStreamError.IsDirectory
+        case FileSystemError.NotDirectory => FileStreamError.NotDirectory
+        case FileSystemError.NotEmpty => FileStreamError.NotEmpty
+        case FileSystemError.IllegalByteSequence => FileStreamError.InvalidUtf8
+        case FileSystemError.Invalid => FileStreamError.InvalidPath
+        case FileSystemError.Loop => FileStreamError.Loop
+        case FileSystemError.NameTooLong => FileStreamError.NameTooLong
+        case FileSystemError.TooManyLinks => FileStreamError.TooManyLinks
+        case FileSystemError.InsufficientSpace => FileStreamError.OutOfSpace
+        case FileSystemError.Quota => FileStreamError.OutOfSpace
+        case FileSystemError.FileTooLarge => FileStreamError.OutOfSpace
+        case FileSystemError.ReadOnly => FileStreamError.ReadOnly
+        case FileSystemError.Interrupted => FileStreamError.Interrupted
+        case FileSystemError.Pipe => FileStreamError.PipeBroken
+        case FileSystemError.Unsupported => FileStreamError.Unsupported
+        case FileSystemError.Canceled => FileStreamError.Canceled
+        case FileSystemError.BadDescriptor => FileStreamError.Other(-3)
+        case FileSystemError.Busy => FileStreamError.Other(-4)
+        case FileSystemError.Deadlock => FileStreamError.Other(-5)
+        case FileSystemError.InProgress => FileStreamError.Other(-6)
+        case FileSystemError.Io => FileStreamError.Other(-7)
+        case FileSystemError.MessageSize => FileStreamError.Other(-8)
+        case FileSystemError.NoDevice => FileStreamError.NotFound
+        case FileSystemError.NoLock => FileStreamError.Other(-9)
+        case FileSystemError.InsufficientMemory => FileStreamError.Other(-10)
+        case FileSystemError.NotRecoverable => FileStreamError.Other(-11)
+        case FileSystemError.NoTty => FileStreamError.Other(-12)
+        case FileSystemError.Overflow => FileStreamError.Other(-13)
+        case FileSystemError.InvalidSeek => FileStreamError.Other(-14)
+        case FileSystemError.TextFileBusy => FileStreamError.Other(-15)
+        case FileSystemError.CrossDevice => FileStreamError.Other(-16)
+        case FileSystemError.Other => FileStreamError.Other(-99)
+
+// --- DescriptorType / FileStat conversions ---------------------------------
+
+function descriptorTypeToEntryType(t: DescriptorType): EntryType =
+    match t with
+        case DescriptorType.RegularFile => EntryType.File
+        case DescriptorType.Directory => EntryType.Directory
+        case DescriptorType.SymbolicLink => EntryType.Symlink
+        case _ => EntryType.Other
+
+/// Build a Metadata record from a WASI FileStat.
+function fileStatToMetadata(s: FileStat): Metadata =
+    let modified = match s.dataModificationTimestamp with
+        case Some(t) => t
+        case None => Instant.ofEpochSecond(0i64)
+    Metadata { size = s.size; entryType = descriptorTypeToEntryType(s.descriptorType); modified = modified; created = None }
+
+// --- Preset wasi records ---------------------------------------------------
+
+function defaultPathFlagsFollow(): PathFlags =
+    PathFlags { symlinkFollow = true }
+
+function defaultPathFlagsNoFollow(): PathFlags =
+    PathFlags { symlinkFollow = false }
+
+function fileFlagsRead(): FileFlags =
+    FileFlags { read = true; write = false; fileIntegritySync = false; dataIntegritySync = false; requestedWriteSync = false; mutateDirectory = false }
+
+function fileFlagsWrite(): FileFlags =
+    FileFlags { read = false; write = true; fileIntegritySync = false; dataIntegritySync = false; requestedWriteSync = false; mutateDirectory = false }
+
+function fileFlagsReadWrite(): FileFlags =
+    FileFlags { read = true; write = true; fileIntegritySync = false; dataIntegritySync = false; requestedWriteSync = false; mutateDirectory = false }
+
+function fileFlagsDirectory(): FileFlags =
+    FileFlags { read = true; write = false; fileIntegritySync = false; dataIntegritySync = false; requestedWriteSync = false; mutateDirectory = true }
+
+function openFlagsCreate(): OpenFlags =
+    OpenFlags { create = true; directory = false; exclusive = false; truncate = false }
+
+function openFlagsCreateExclusive(): OpenFlags =
+    OpenFlags { create = true; directory = false; exclusive = true; truncate = false }
+
+function openFlagsTruncate(): OpenFlags =
+    OpenFlags { create = false; directory = false; exclusive = false; truncate = true }
+
+function openFlagsCreateOrTruncate(): OpenFlags =
+    OpenFlags { create = true; directory = false; exclusive = false; truncate = true }
+
+function openFlagsAppendOnly(): OpenFlags =
+    OpenFlags { create = false; directory = false; exclusive = false; truncate = false }
+
+function openFlagsOpenExisting(): OpenFlags =
+    OpenFlags { create = false; directory = false; exclusive = false; truncate = false }
+
+function openFlagsDirectory(): OpenFlags =
+    OpenFlags { create = false; directory = true; exclusive = false; truncate = false }
+
+// --- Preopen routing -------------------------------------------------------
+
+/// FileDescriptor for the preopen mounted at "/" (or first absolute preopen).
+async function rootPreopen(): Async<FileDescriptor, FileStreamError> =
+    await findPreopen(true)
+
+/// FileDescriptor for the cwd preopen — mount path "." or empty.
+async function cwdPreopen(): Async<FileDescriptor, FileStreamError> =
+    await findPreopen(false)
+
+/// Scan the preopen table for the absolute (`absolute = true`) or relative root.
+/// An exact match on the canonical mount path ("/" or "." / "") wins outright;
+/// otherwise the first preopen on the right side of the absolute/relative split
+/// is used. The two roots differ only in that predicate, so they share the walk.
+async function findPreopen(absolute: Bool): Async<FileDescriptor, FileStreamError> =
+    let preopens = await Async.thunk(() => FileDescriptor.preopens())
+    let mutable result: Option<FileDescriptor> = None
+    let mutable i = 0i32
+    while i < preopens.length do
+        let entry = preopens.get(i)
+        let mountPath = entry._1
+        let isExact =
+            if absolute then mountPath == "/"
+            else mountPath == "." || mountPath == ""
+        let isCandidate = mountPath.startsWith("/") == absolute
+        if isExact then
+            result = Some(entry._0)
+            i = preopens.length
+        else
+            if isCandidate then
+                match result with
+                    case None => result = Some(entry._0)
+                    case Some(_) => ()
+            i = i + 1
+    match result with
+        case Some(fd) => fd
+        case None => await Async.fail(FileStreamError.NotFound)
+
+// --- Path → directory walk -------------------------------------------------
+
+/// Walk path segments from `root`, opening each as a directory via `openAt`.
+/// Returns the FINAL descriptor; intermediates are closed inside. For zero
+/// segments, returns `root` unchanged (the caller decides ownership).
+async function walkDir(root: FileDescriptor, segments: Array<String>): Async<FileDescriptor, FileStreamError> =
+    let mutable current = root
+    let mutable i = 0i32
+    while i < segments.length do
+        let seg = segments.get(i)
+        // The typed-error arm below closes the intermediate FD we hold on a normal failure,
+        // but an INTERRUPT (or panic) at the await bypasses that arm and would leak the
+        // descriptor. Acquires run MASKED now, but `openAtAsync` opts its park back in
+        // with `.interruptible()`, so an interrupt can still land at this await — and a
+        // panic always could. Close `current` (an intermediate exactly when i > 0) on any
+        // non-value unwind. openAtAsync surfaces I/O errors as a Result VALUE, so this
+        // fires only on interrupt/panic and never double-closes.
+        let onUnwind: (Cause<Never>) => Async<Result<FileDescriptor, FileSystemError>, FileStreamError> =
+            (cause: Cause<Never>) =>
+                if i > 0 then current.close()
+                Async.fromCause(cause)
+        let onValue: (Result<FileDescriptor, FileSystemError>) => Async<Result<FileDescriptor, FileSystemError>, FileStreamError> =
+            (r: Result<FileDescriptor, FileSystemError>) => Async.succeed(r)
+        let openStep: Async<Result<FileDescriptor, FileSystemError>, FileStreamError> =
+            openAtAsync(current, defaultPathFlagsFollow(), seg, openFlagsDirectory(), fileFlagsDirectory())
+                .foldCause<Result<FileDescriptor, FileSystemError>, FileStreamError>(onUnwind, onValue)
+        let opened = await openStep
+        match opened with
+            case Ok(fd) =>
+                if i > 0 then
+                    current.close()
+                current = fd
+                i = i + 1
+            case Error(e) =>
+                if i > 0 then
+                    current.close()
+                await Async.fail(mapWasiError(e))
+    current
+
+// =============================================================================
+// Resource-builders shared by File and Directory.
+// =============================================================================
+
+/// Resource for the preopen FD that `path` is rooted at (`/` or `.`).
+/// Preopens are owned by the WASI runtime, so release is a no-op.
+function startingPointResource(path: Path): Resource<FileDescriptor, FileStreamError> =
+    let acquire: () => Async<FileDescriptor, FileStreamError> = async () =>
+        if path.isAbsolute then await rootPreopen() else await cwdPreopen()
+    Resource.make(acquire, (_: FileDescriptor) => Async.succeed(()))
+
+/// Walked directory FD wrapped in a `Resource` whose release closes it. Must
+/// only be used with non-empty `segments` (otherwise it would close a preopen).
+function walkDirResource(root: FileDescriptor, segments: Array<String>): Resource<FileDescriptor, FileStreamError> =
+    Resource.make(
+        () => walkDir(root, segments),
+        (fd: FileDescriptor) => Async.thunk(() => fd.close())
+    )
+
+function parentSegments(segs: Array<String>): Array<String> =
+    let mutable acc = Array<String>.empty()
+    let mutable i = 0i32
+    while i < segs.length - 1 do
+        acc = acc.concat(Array<String>.fill(1, segs.get(i)))
+        i = i + 1
+    acc
+
+/// Resource for the (parent-dir-FD, basename) tuple of `path`. The parent FD
+/// is closed on release iff it was actually walked (a preopen has a no-op
+/// release). Used by every path-relative operation (open, create, remove, stat).
+function parentResource(path: Path): Resource<(FileDescriptor, String), FileStreamError> =
+    let segs = path.segments
+    if segs.length == 0 then
+        let acquire: () => Async<(FileDescriptor, String), FileStreamError> =
+            () => Async<(FileDescriptor, String), FileStreamError>.fail(FileStreamError.InvalidPath)
+        Resource.make(acquire, (_: (FileDescriptor, String)) => Async.succeed(()))
+    else
+        let basename = segs.get(segs.length - 1)
+        let parentDirRes =
+            if segs.length == 1 then
+                startingPointResource(path)
+            else
+                startingPointResource(path).andThen<FileDescriptor>(root => walkDirResource(root, parentSegments(segs)))
+        parentDirRes.map<(FileDescriptor, String)>(fd => (fd, basename))
+
+/// Resource for the FD of the directory AT `path` (the path is the directory
+/// itself, not its parent). Preopen for empty path; walked otherwise.
+function openDirFdResource(path: Path): Resource<FileDescriptor, FileStreamError> =
+    let segs = path.segments
+    if segs.length == 0 then
+        startingPointResource(path)
+    else
+        startingPointResource(path).andThen<FileDescriptor>(root => walkDirResource(root, segs))
+
+/// Resource for an FD opened via `parent.openAt(...)`. Closed on release.
+function openAtResource(parent: FileDescriptor, basename: String, openFlags: OpenFlags, fileFlags: FileFlags): Resource<FileDescriptor, FileStreamError> =
+    let acquire: () => Async<FileDescriptor, FileStreamError> = async () =>
+        let result = await openAtAsync(parent, defaultPathFlagsFollow(), basename, openFlags, fileFlags)
+        await Async.fromResult(result.mapError(mapWasiError))
+    Resource.make(acquire, (fd: FileDescriptor) => Async.thunk(() => fd.close()))
+
+/// One-stop file-FD resource: walks to parent dir, opens the basename. Both
+/// parent (if walked) and child are released LIFO.
+function openFileFdResource(path: Path, openFlags: OpenFlags, fileFlags: FileFlags): Resource<FileDescriptor, FileStreamError> =
+    parentResource(path).andThen<FileDescriptor>(pair => openAtResource(pair._0, pair._1, openFlags, fileFlags))
+
+// --- Stream-from-FD resources ----------------------------------------------
+
+/// Resource for an `AsyncInputStream<FileSystemError>` reading from `fd` at
+/// offset 0. The p3 read stream + its result future are opened at acquire time;
+/// release drops both. The FD is owned by the caller.
+function inputStreamResource(fd: FileDescriptor): Resource<AsyncInputStream<FileSystemError>, FileStreamError> =
+    let open: () => Async<ComponentStreamRead<Array<Uint8>, FileSystemError>, FileStreamError> = async () =>
+        let fsStream = await Async.thunk(() => fd.readViaStream(0i64))
+        fsStream.componentRead()
+    WasiInputStream<FileSystemError>.resource<FileStreamError>(open)
+
+/// Same as `inputStreamResource` but for `writeViaStream` / `AsyncOutputStream`.
+function outputStreamResource(fd: FileDescriptor): Resource<AsyncOutputStream<FileSystemError>, FileStreamError> =
+    let open: () => Async<ComponentStreamWrite<FileSystemError>, FileStreamError> = async () =>
+        let fsStream = await Async.thunk(() => fd.writeViaStream(0i64))
+        fsStream.componentWrite()
+    // `TornWrite.Fence`: a file's framing is the caller's — records, a length
+    // prefix, a serialized document — and nothing this layer could emit would mark
+    // a hole in it. The stream is scoped by the `Resource` that hands it out, so a
+    // caller that loses it reopens; a caller that keeps writing over a hole
+    // produces a file that reads as whole. See `TornWrite`.
+    WasiOutputStream<FileSystemError>.resource<FileStreamError>(FileSystemError.Io, TornWrite.Fence, open)
+
+/// Resource for a directory-entry stream opened on the directory at `path`.
+/// Release drops the readable end + its result future.
+function dirEntryStreamResource(path: Path): Resource<FsStream, FileStreamError> =
+    openDirFdResource(path).andThen<FsStream>(fd =>
+        let acquire: () => Async<FsStream, FileStreamError> = async () =>
+            await Async.thunk(() => fd.readDirectory())
+        // Through the stream's own `dropEnd` rather than a second hand-written
+        // copy of it: one definition of which handles this listing owns, and the
+        // one place that has to stay in step with the ABI.
+        let release: (FsStream) => Async<Unit, Never> = (s: FsStream) =>
+            Async.thunk(() => s.componentEntryRead().dropEnd())
+        Resource.make(acquire, release)
+    )
+
+// --- Directory iteration ----------------------------------------------------
+
+/// Read the next directory entry from a `read-directory` stream, blocking
+/// until it arrives. Returns `None` at end of listing. Frees the per-entry
+/// pinned buffer.
+///
+/// Driven by the runtime like every other read, write and accept in the library:
+/// posting the copy and arming its cleanup happen in one interpreter step, so an
+/// interrupt cannot leave an entry read in flight. Spelled by hand, that window
+/// left the op live, and the resource release then dropped a busy stream end.
+///
+/// A forced close under a live reader ends the listing rather than stranding it,
+/// mirroring EOF on a byte stream.
+///
+/// Reports the copy's ending AND the host's reason for it alongside the entry,
+/// because those are three separate questions and one copy can answer all three.
+/// A copy that reports the stream ended can still carry the last entry, exactly
+/// as a byte read can carry its final chunk — and a caller that reads only the
+/// entry would post another copy on a stream it has already seen end. Every
+/// other stream in the library latches those; a listing has no wrapper to latch
+/// them in, so they are handed to the loop instead, which is where the last
+/// entry and the reason it was the last both have to be believed at once.
+async function readNextDirEntry(listing: FsStream): Async<(CopyResult, Option<DirectoryEntry>, Option<FileStreamError>), FileStreamError> =
+    // `lift` is well-defined at a count of zero — a listing that ended has no
+    // entry to hand back — so "did anything arrive" lives in the Option rather
+    // than in a separate path.
+    let copied = await Async<Option<DirectoryEntry>, FileSystemError>
+        .streamRead(listing.componentEntryRead(), 1i32)
+        .mapError(mapWasiError)
+    // The copy that ends the listing can be carrying its last entry AND the
+    // reason the host gave for ending it, and the entry is the one of those two
+    // that cannot be asked for again — the result future is one-shot and has
+    // been read. So the entry wins and the reason travels BESIDE it, exactly as
+    // the byte streams hand over a final chunk and report the failure on the
+    // next read. With no entry there is nothing to prefer and the reason is
+    // raised here.
+    //
+    // Handed on rather than dropped, which is the whole of the third component.
+    // A listing has no wrapper to latch a reason in, so the loop is the latch:
+    // it is the only thing that knows the listing is over and is the only place
+    // left that can refuse to call a truncated directory a complete one. Losing
+    // the reason here made `Directory.entries` report an I/O error as a shorter
+    // directory, which no caller can detect and every caller believes.
+    match copied._1 with
+        case Some(_) => (copied._0, copied._1, copied._2.map((e: FileSystemError) => mapWasiError(e)))
+        case None =>
+            match copied._2 with
+                case Some(error) => await Async<(CopyResult, Option<DirectoryEntry>, Option<FileStreamError>), FileStreamError>.fail(mapWasiError(error))
+                case None =>
+                    let noReason: Option<FileStreamError> = None
+                    (copied._0, copied._1, noReason)
+
+implement From<FileSystemError> for FileStreamError =
+    public function from(value: FileSystemError): FileStreamError = mapWasiError(value)

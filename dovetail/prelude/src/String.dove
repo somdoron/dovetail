@@ -1,0 +1,317 @@
+module standard.prelude.String
+
+private function unsafe_bytes(self): Array<Uint8> = intrinsic
+public function bytes(self): Array<Uint8> = self.unsafe_bytes().clone()
+public function fromBytes(buf: Array<Uint8>, start: Int32, length: Int32): String = intrinsic
+public function fromChar(c: Char): String = intrinsic
+public function getChar(self, index: Int32): Char = intrinsic
+
+/// The number of Unicode scalar values in the string.
+public property length(self): Int32 = intrinsic
+/// The number of UTF-8 bytes in the string.
+public property byteLength(self): Int32 = intrinsic
+/// True if every scalar value is ASCII.
+public property isAscii(self): Bool = intrinsic
+
+/// True if the string has zero length.
+public property isEmpty(self): Bool = self.length == 0
+
+/// Returns an array of all characters in the string.
+public function chars(self): Array<Char> =
+    let len = self.length
+    if len == 0 then Array.fill(0, ' ')
+    else
+        let result = Array.fill(len, self.getChar(0))
+        let mutable i = 1
+        while i < len do
+            result.set(i, self.getChar(i))
+            i = i + 1
+        result
+
+/// Returns a substring from start (inclusive) to end (exclusive) by character index.
+public function substring(self, start: Int32, end: Int32): String =
+    let len = self.length
+    let s = if start < 0 then 0 else start
+    let e = if end > len then len else end
+    if s >= e then ""
+    else
+        let mutable result = ""
+        let mutable i = s
+        while i < e do
+            result = result ++ String.fromChar(self.getChar(i))
+            i = i + 1
+        result
+
+/// True if the string starts with the given prefix.
+public function startsWith(self, prefix: String): Bool =
+    if prefix.length > self.length then false
+    else
+        let mutable i = 0
+        let mutable matches = true
+        while i < prefix.length do
+            if self.getChar(i) == prefix.getChar(i) then
+                i = i + 1
+            else
+                matches = false
+                i = prefix.length
+        matches
+
+/// True if the string ends with the given suffix.
+public function endsWith(self, suffix: String): Bool =
+    if suffix.length > self.length then false
+    else
+        let offset = self.length - suffix.length
+        let mutable i = 0
+        let mutable matches = true
+        while i < suffix.length do
+            if self.getChar(i + offset) == suffix.getChar(i) then
+                i = i + 1
+            else
+                matches = false
+                i = suffix.length
+        matches
+
+/// True if the string contains the given substring.
+public function contains(self, sub: String): Bool =
+    self.indexOf(sub).isSome
+
+/// Returns the character index of the first occurrence of the substring, or None.
+public function indexOf(self, sub: String): Option<Int32> =
+    if sub.length == 0 then Some(0)
+    else if sub.length > self.length then None
+    else
+        let mutable i = 0
+        let limit = self.length - sub.length
+        let mutable found: Option<Int32> = None
+        while i <= limit do
+            let mutable j = 0
+            let mutable ok = true
+            while j < sub.length do
+                if self.getChar(i + j) == sub.getChar(j) then
+                    j = j + 1
+                else
+                    ok = false
+                    j = sub.length
+            if ok then
+                found = Some(i)
+                i = limit + 1
+            else
+                i = i + 1
+        found
+
+/// Returns the character index of the last occurrence of the substring, or None.
+public function lastIndexOf(self, sub: String): Option<Int32> =
+    if sub.length == 0 then Some(self.length)
+    else if sub.length > self.length then None
+    else
+        let mutable i = self.length - sub.length
+        let mutable found: Option<Int32> = None
+        while i >= 0 do
+            let mutable j = 0
+            let mutable ok = true
+            while j < sub.length do
+                if self.getChar(i + j) == sub.getChar(j) then
+                    j = j + 1
+                else
+                    ok = false
+                    j = sub.length
+            if ok then
+                found = Some(i)
+                i = -1
+            else
+                i = i - 1
+        found
+
+/// Replaces the first occurrence of old with the replacement.
+public function replace(self, old: String, replacement: String): String =
+    match self.indexOf(old) with
+        case None => self
+        case Some(idx) =>
+            let before = self.take(idx)
+            let after = self.skip(idx + old.length)
+            before ++ replacement ++ after
+
+/// Replaces all occurrences of old with the replacement.
+public function replaceAll(self, old: String, replacement: String): String =
+    if old.length == 0 then self
+    else
+        let mutable result = self
+        let mutable searchFrom = 0
+        let mutable cont = true
+        while cont do
+            let remaining = result.skip(searchFrom)
+            match remaining.indexOf(old) with
+                case Some(i) =>
+                    let idx = searchFrom + i
+                    let before = result.take(idx)
+                    let after = result.skip(idx + old.length)
+                    result = before ++ replacement ++ after
+                    searchFrom = idx + replacement.length
+                case None => cont = false
+        result
+
+/// Splits the string by the given delimiter.
+///
+/// An empty delimiter splits into single characters. Parts are accumulated by
+/// prepending and reversed once: appending to an array per part copied the
+/// whole array each time, i.e. O(n^2) in the number of parts.
+public function split(self, delimiter: String): List<String> =
+    if delimiter.length == 0 then
+        let mutable chars: List<String> = List.empty
+        let mutable i = self.length - 1
+        while i >= 0 do
+            chars = List.Cons(String.fromChar(self.getChar(i)), chars)
+            i = i - 1
+        chars
+    else
+        let mutable parts: List<String> = List.empty
+        let mutable remaining = self
+        let mutable cont = true
+        while cont do
+            match remaining.indexOf(delimiter) with
+                case Some(idx) =>
+                    parts = parts.prepend(remaining.take(idx))
+                    remaining = remaining.skip(idx + delimiter.length)
+                case None =>
+                    parts = parts.prepend(remaining)
+                    cont = false
+        parts.reverse()
+
+/// Joins a list of strings with the given separator.
+public function join(items: List<String>, separator: String): String =
+    match items with
+        case Nil => ""
+        case Cons(first, rest) =>
+            let mutable result = first
+            let mutable current = rest
+            while !current.isEmpty do
+                result = result ++ separator ++ current.head
+                current = current.tail
+            result
+
+/// Removes leading and trailing ASCII whitespace.
+public function trim(self): String = self.trimStart().trimEnd()
+
+/// Removes leading ASCII whitespace.
+public function trimStart(self): String =
+    let len = self.length
+    let mutable i = 0
+    let mutable scanning = true
+    while scanning do
+        if i >= len then scanning = false
+        else
+            let c = self.getChar(i)
+            if c == ' ' then i = i + 1
+            else if c == '\t' then i = i + 1
+            else if c == '\n' then i = i + 1
+            else if c == '\r' then i = i + 1
+            else scanning = false
+    self.skip(i)
+
+/// Removes trailing ASCII whitespace.
+public function trimEnd(self): String =
+    let len = self.length
+    let mutable i = len - 1
+    let mutable scanning = true
+    while scanning do
+        if i < 0 then scanning = false
+        else
+            let c = self.getChar(i)
+            if c == ' ' then i = i - 1
+            else if c == '\t' then i = i - 1
+            else if c == '\n' then i = i - 1
+            else if c == '\r' then i = i - 1
+            else scanning = false
+    self.take(i + 1)
+
+/// Converts ASCII letters to uppercase.
+public function toUpperCase(self): String =
+    let len = self.length
+    let mutable result = ""
+    let mutable i = 0
+    while i < len do
+        let c = self.getChar(i)
+        if c >= 'a' then
+            if c <= 'z' then
+                let b = String.fromChar(c).bytes().get(0) - 32u8
+                result = result ++ String.fromBytes(Array.fill(1, b), 0, 1)
+            else result = result ++ String.fromChar(c)
+        else result = result ++ String.fromChar(c)
+        i = i + 1
+    result
+
+/// Converts ASCII letters to lowercase.
+public function toLowerCase(self): String =
+    let len = self.length
+    let mutable result = ""
+    let mutable i = 0
+    while i < len do
+        let c = self.getChar(i)
+        if c >= 'A' then
+            if c <= 'Z' then
+                let b = String.fromChar(c).bytes().get(0) + 32u8
+                result = result ++ String.fromBytes(Array.fill(1, b), 0, 1)
+            else result = result ++ String.fromChar(c)
+        else result = result ++ String.fromChar(c)
+        i = i + 1
+    result
+
+/// Repeats the string n times.
+public function repeat(self, n: Int32): String =
+    if n <= 0 then ""
+    else if n == 1 then self
+    else
+        let source = self.bytes()
+        let unitLength = source.length
+        if unitLength == 0 then ""
+        else if unitLength.toInt64() * n.toInt64() > 2147483647i64 then
+            // `unitLength * n` is Int32 arithmetic and wraps: a 4-byte string
+            // repeated 2^30+1 times wrapped to 4, and the answer was a 4-byte
+            // string with no error anywhere. The concatenation loop this
+            // replaced would have exhausted memory and trapped, which is the
+            // better failure — a request this size cannot be served either way,
+            // and a silently short string is worse than a stopped program.
+            panic "String.repeat: repeated length overflows Int32"
+        else
+            let totalLength = unitLength * n
+            let buffer = Array<Uint8>.fill(totalLength, 0u8)
+            let mutable offset = 0
+            while offset < totalLength do
+                source.copy(0, buffer, offset, unitLength)
+                offset = offset + unitLength
+            String.fromBytes(buffer, 0, totalLength)
+
+/// Pads the start of the string until it reaches the target length.
+public function padStart(self, targetLength: Int32, pad: Char): String =
+    if self.length >= targetLength then self
+    else String.fromChar(pad).repeat(targetLength - self.length) ++ self
+
+/// Pads the end of the string until it reaches the target length.
+public function padEnd(self, targetLength: Int32, pad: Char): String =
+    if self.length >= targetLength then self
+    else self ++ String.fromChar(pad).repeat(targetLength - self.length)
+
+/// Takes the first n characters of the string.
+public function take(self, n: Int32): String =
+    if n <= 0 then ""
+    else if n >= self.length then self
+    else
+        let mutable result = ""
+        let mutable i = 0
+        while i < n do
+            result = result ++ String.fromChar(self.getChar(i))
+            i = i + 1
+        result
+
+/// Skips the first n characters of the string.
+public function skip(self, n: Int32): String =
+    if n <= 0 then self
+    else if n >= self.length then ""
+    else
+        let remaining = self.length - n
+        let mutable result = ""
+        let mutable i = 0
+        while i < remaining do
+            result = result ++ String.fromChar(self.getChar(n + i))
+            i = i + 1
+        result

@@ -1,0 +1,150 @@
+package standard.sqlite
+
+import standard.time.Instant
+
+// =============================================================================
+// Result row -> Dovetail value.
+//
+// Two mapping modes, each where it is the natural one:
+//
+//   * **Records map by column name.** `@derive(FromRow)` looks each field up by
+//     its own name, so reordering the `SELECT` list or the record's fields
+//     cannot silently swap two same-typed columns. The cost is that the query
+//     must actually produce those names — alias with `AS` when it doesn't.
+//
+//   * **Tuples map by column index.** A tuple has no field names, so position
+//     is the only thing to map on. That makes tuples the escape hatch for the
+//     queries by-name decoding cannot express: computed columns
+//     (`SELECT COUNT(*), MAX(x)`), and joins where two tables contribute the
+//     same column name.
+//
+// Positional decoding checks the row width first (`Row.expectWidth`), so a
+// widened `SELECT` list is an error rather than silently ignored columns. It
+// still cannot catch a *reordered* select list of same-typed columns — that
+// risk is inherent to positional mapping, and is why records are by name.
+//
+// The scalar implementations are the width-1 case of the positional mode, so
+// `fetchOne<Int64>` over `SELECT COUNT(*)` works without a wrapper type.
+//
+// A blanket `implement <T> FromRow for T where T: FromSqlValue` is not
+// expressible — an impl target must be a nominal type, and it would collide
+// with every derived record implementation — so the scalars are enumerated,
+// each delegating to `Row.scalar`, which owns the single-column check.
+// =============================================================================
+
+/// A value decodable from a whole result row.
+public trait FromRow =
+    /// Decode `row`, or report why it doesn't fit.
+    function fromRow(row: Row): Result<Self, SqliteError>
+
+implement FromRow for Bool =
+    public function fromRow(row: Row): Result<Bool, SqliteError> =
+        Bool.fromSqlValue(try row.scalar())
+
+implement FromRow for Int8 =
+    public function fromRow(row: Row): Result<Int8, SqliteError> =
+        Int8.fromSqlValue(try row.scalar())
+
+implement FromRow for Int16 =
+    public function fromRow(row: Row): Result<Int16, SqliteError> =
+        Int16.fromSqlValue(try row.scalar())
+
+implement FromRow for Int32 =
+    public function fromRow(row: Row): Result<Int32, SqliteError> =
+        Int32.fromSqlValue(try row.scalar())
+
+implement FromRow for Int64 =
+    public function fromRow(row: Row): Result<Int64, SqliteError> =
+        Int64.fromSqlValue(try row.scalar())
+
+implement FromRow for Uint8 =
+    public function fromRow(row: Row): Result<Uint8, SqliteError> =
+        Uint8.fromSqlValue(try row.scalar())
+
+implement FromRow for Uint16 =
+    public function fromRow(row: Row): Result<Uint16, SqliteError> =
+        Uint16.fromSqlValue(try row.scalar())
+
+implement FromRow for Uint32 =
+    public function fromRow(row: Row): Result<Uint32, SqliteError> =
+        Uint32.fromSqlValue(try row.scalar())
+
+implement FromRow for Float32 =
+    public function fromRow(row: Row): Result<Float32, SqliteError> =
+        Float32.fromSqlValue(try row.scalar())
+
+implement FromRow for Float64 =
+    public function fromRow(row: Row): Result<Float64, SqliteError> =
+        Float64.fromSqlValue(try row.scalar())
+
+implement FromRow for String =
+    public function fromRow(row: Row): Result<String, SqliteError> =
+        String.fromSqlValue(try row.scalar())
+
+implement FromRow for Array<Uint8> =
+    public function fromRow(row: Row): Result<Array<Uint8>, SqliteError> =
+        Array<Uint8>.fromSqlValue(try row.scalar())
+
+implement FromRow for Instant =
+    public function fromRow(row: Row): Result<Instant, SqliteError> =
+        Instant.fromSqlValue(try row.scalar())
+
+/// A nullable single-column row, for `SELECT nullableColumn` queries.
+implement <T> FromRow for Option<T> where T: FromSqlValue =
+    public function fromRow(row: Row): Result<Option<T>, SqliteError> =
+        Option<T>.fromSqlValue(try row.scalar())
+
+// --- positional decoding ---------------------------------------------------
+//
+// One column per element, left to right. Use these for computed columns and for
+// joins whose column names collide; use a record when the query names its
+// columns and you want the safety of matching on those names.
+
+implement <A, B> FromRow for (A, B) where A: FromSqlValue, B: FromSqlValue =
+    public function fromRow(row: Row): Result<(A, B), SqliteError> =
+        try row.expectWidth(2)
+        let a = try A.fromSqlValue(try row.at(0))
+        let b = try B.fromSqlValue(try row.at(1))
+        Ok((a, b))
+
+implement <A, B, C> FromRow for (A, B, C) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue =
+    public function fromRow(row: Row): Result<(A, B, C), SqliteError> =
+        try row.expectWidth(3)
+        let a = try A.fromSqlValue(try row.at(0))
+        let b = try B.fromSqlValue(try row.at(1))
+        let c = try C.fromSqlValue(try row.at(2))
+        Ok((a, b, c))
+
+implement <A, B, C, D> FromRow for (A, B, C, D) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue, D: FromSqlValue =
+    public function fromRow(row: Row): Result<(A, B, C, D), SqliteError> =
+        try row.expectWidth(4)
+        let a = try A.fromSqlValue(try row.at(0))
+        let b = try B.fromSqlValue(try row.at(1))
+        let c = try C.fromSqlValue(try row.at(2))
+        let d = try D.fromSqlValue(try row.at(3))
+        Ok((a, b, c, d))
+
+implement <A, B, C, D, E> FromRow for (A, B, C, D, E) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue, D: FromSqlValue, E: FromSqlValue =
+    public function fromRow(row: Row): Result<(A, B, C, D, E), SqliteError> =
+        try row.expectWidth(5)
+        let a = try A.fromSqlValue(try row.at(0))
+        let b = try B.fromSqlValue(try row.at(1))
+        let c = try C.fromSqlValue(try row.at(2))
+        let d = try D.fromSqlValue(try row.at(3))
+        let e = try E.fromSqlValue(try row.at(4))
+        Ok((a, b, c, d, e))
+
+implement <A, B, C, D, E, F> FromRow for (A, B, C, D, E, F) where A: FromSqlValue, B: FromSqlValue, C: FromSqlValue, D: FromSqlValue, E: FromSqlValue, F: FromSqlValue =
+    public function fromRow(row: Row): Result<(A, B, C, D, E, F), SqliteError> =
+        try row.expectWidth(6)
+        let a = try A.fromSqlValue(try row.at(0))
+        let b = try B.fromSqlValue(try row.at(1))
+        let c = try C.fromSqlValue(try row.at(2))
+        let d = try D.fromSqlValue(try row.at(3))
+        let e = try E.fromSqlValue(try row.at(4))
+        let f = try F.fromSqlValue(try row.at(5))
+        Ok((a, b, c, d, e, f))
+
+/// The whole row, undecoded. Useful for exploratory queries and for tests.
+implement FromRow for Row =
+    public function fromRow(row: Row): Result<Row, SqliteError> = Ok(row)

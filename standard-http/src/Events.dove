@@ -1,0 +1,330 @@
+package standard.http
+
+import standard.collection.ArrayList
+
+/// HTTP protocol error types.
+/// `LocalProtocolError` indicates our side violated the protocol.
+/// `RemoteProtocolError` indicates the peer violated the protocol.
+/// Both carry a human-readable message and an HTTP status code hint.
+public enum HttpError =
+    /// Our side violated the protocol. Carries (message, statusHint).
+    LocalProtocolError(String, Int32)
+    /// The peer violated the protocol. Carries (message, statusHint).
+    RemoteProtocolError(String, Int32)
+
+module HttpError =
+    /// Create a local protocol error with default status hint 400.
+    public function local(message: String): HttpError =
+        HttpError.LocalProtocolError(message, 400)
+
+    /// Create a local protocol error with a specific status hint.
+    public function localWithHint(message: String, hint: Int32): HttpError =
+        HttpError.LocalProtocolError(message, hint)
+
+    /// Create a remote protocol error with default status hint 400.
+    public function remote(message: String): HttpError =
+        HttpError.RemoteProtocolError(message, 400)
+
+    /// Create a remote protocol error with a specific status hint.
+    public function remoteWithHint(message: String, hint: Int32): HttpError =
+        HttpError.RemoteProtocolError(message, hint)
+
+    /// Get the error message.
+    public property message(self): String =
+        match self with
+            case LocalProtocolError(msg, _) => msg
+            case RemoteProtocolError(msg, _) => msg
+
+    /// Get the error status hint.
+    public property errorStatusHint(self): Int32 =
+        match self with
+            case LocalProtocolError(_, hint) => hint
+            case RemoteProtocolError(_, hint) => hint
+
+    /// Convert a LocalProtocolError to a RemoteProtocolError.
+    public function toRemote(self): HttpError =
+        match self with
+            case LocalProtocolError(msg, hint) => HttpError.RemoteProtocolError(msg, hint)
+            case RemoteProtocolError(_, _) => self
+
+/// A single HTTP header with original casing, lowercased name, and value.
+public record HeaderItem =
+    rawName: String
+    name: String
+    value: String
+
+implement Default for HeaderItem =
+    public property default: HeaderItem = HeaderItem { rawName = ""; name = ""; value = "" }
+
+/// Immutable list of HTTP headers. Names are lowercased for comparison,
+/// but original casing is preserved for serialization.
+public class Headers(
+    public items: List<HeaderItem>
+) =
+    /// Create a Headers instance from a list of header items.
+    public function new(headerItems: List<HeaderItem>): Headers =
+        Headers(headerItems)
+
+    /// Create an empty Headers instance with no headers.
+    public function empty(): Headers =
+        Headers(List<HeaderItem>.empty)
+
+    /// The number of headers. O(n).
+    public property length(self): Int32 = self.items.length
+
+    /// Whether this collection contains any headers.
+    public property hasItems(self): Bool = !self.items.isEmpty
+
+    /// Get raw items as (original name, value) pairs.
+    public function rawItems(self): List<(String, String)> =
+        self.items.map(item => (item.rawName, item.value))
+
+/// An HTTP request.
+public record HttpRequest =
+    method: String
+    target: String
+    headers: Headers
+    httpVersion: String
+
+/// An HTTP response (status code >= 200).
+public record HttpResponse =
+    statusCode: Int32
+    headers: Headers
+    httpVersion: String
+    reason: String
+
+/// The set of HTTP events that can occur during a connection.
+public enum HttpEvent =
+    /// A client request.
+    Request(HttpRequest)
+    /// A server informational response (1xx).
+    InformationalResponse(HttpResponse)
+    /// A server response (2xx-5xx).
+    Response(HttpResponse)
+    /// Body data.
+    Data(Array<Uint8>)
+    /// End of message, with optional trailer headers.
+    EndOfMessage(Headers)
+    /// The connection has been closed.
+    ConnectionClosed
+
+/// Result of calling `nextEvent()` on a connection.
+public enum NextEventResult =
+    /// Not enough data yet; call `receiveData()` with more bytes.
+    NeedData
+    /// Connection is paused (e.g., DONE with trailing data, or protocol switch pending).
+    Paused
+    /// A complete event was parsed.
+    Event(HttpEvent)
+    /// A protocol error occurred.
+    Error(HttpError)
+
+/// The type of an HTTP event, used for state machine transition lookups.
+public enum EventType =
+    /// A client request event.
+    RequestType
+    /// An informational (1xx) response event.
+    InformationalResponseType
+    /// A final (2xx-5xx) response event.
+    ResponseType
+    /// A body data event.
+    DataType
+    /// An end-of-message event.
+    EndOfMessageType
+    /// A connection-closed event.
+    ConnectionClosedType
+
+/// Get the event type for an HTTP event.
+public function eventType(event: HttpEvent): EventType =
+    match event with
+        case Request(_) => EventType.RequestType
+        case InformationalResponse(_) => EventType.InformationalResponseType
+        case Response(_) => EventType.ResponseType
+        case Data(_) => EventType.DataType
+        case EndOfMessage(_) => EventType.EndOfMessageType
+        case ConnectionClosed => EventType.ConnectionClosedType
+
+// ---- Validation functions (called from Connection.send / readers) ----
+
+/// Check if a byte is a valid HTTP token character.
+function isTokenChar(b: Int32): Bool =
+    // token = 1*tchar
+    // tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
+    //         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+    if b >= 65 then
+        if b <= 90 then true          // A-Z
+        else if b >= 97 then
+            if b <= 122 then true     // a-z
+            else b == 124 || b == 126 // | ~
+        else b == 94 || b == 95 || b == 96 // ^ _ `
+    else if b >= 48 then
+        if b <= 57 then true          // 0-9
+        else false
+    else b == 33 || b == 35 || b == 36 || b == 37 || b == 38 || b == 39 ||
+         b == 42 || b == 43 || b == 45 || b == 46 // ! # $ % & ' * + - .
+
+/// Validate that a string is a valid HTTP method token.
+public function validateMethod(method: String): Result<Unit, HttpError> =
+    let bytes = method.bytes()
+    if bytes.length == 0 then Error(HttpError.local("Illegal method characters"))
+    else
+        let mutable i = 0
+        let mutable valid = true
+        while i < bytes.length do
+            if !isTokenChar(bytes.get(i).toInt32()) then
+                valid = false
+                i = bytes.length
+            else i = i + 1
+        if valid then Ok(())
+        else Error(HttpError.local("Illegal method characters"))
+
+/// Validate that a string is a valid request target (all visible ASCII chars).
+public function validateTarget(target: String): Result<Unit, HttpError> =
+    let bytes = target.bytes()
+    if bytes.length == 0 then Error(HttpError.local("Illegal target characters"))
+    else
+        let mutable i = 0
+        let mutable valid = true
+        while i < bytes.length do
+            let b = bytes.get(i).toInt32()
+            if b < 33 || b > 126 then
+                valid = false
+                i = bytes.length
+            else i = i + 1
+        if valid then Ok(())
+        else Error(HttpError.local("Illegal target characters"))
+
+/// Validate a header field name (must be token chars).
+public function validateFieldName(name: String): Result<Unit, HttpError> =
+    let bytes = name.bytes()
+    if bytes.length == 0 then Error(HttpError.local("Illegal header name"))
+    else
+        let mutable i = 0
+        let mutable valid = true
+        while i < bytes.length do
+            if !isTokenChar(bytes.get(i).toInt32()) then
+                valid = false
+                i = bytes.length
+            else i = i + 1
+        if valid then Ok(())
+        else Error(HttpError.localWithHint("Illegal header name '" ++ name ++ "'", 400))
+
+/// Validate a header field value (no NUL, CR, LF; no leading/trailing whitespace).
+public function validateFieldValue(value: String): Result<Unit, HttpError> =
+    let bytes = value.bytes()
+    // Empty value is allowed
+    if bytes.length == 0 then Ok(())
+    else
+        // Check for leading/trailing whitespace
+        let first = bytes.get(0).toInt32()
+        let last = bytes.get(bytes.length - 1).toInt32()
+        if first == 32 || first == 9 then Error(HttpError.local("Illegal header value '" ++ value ++ "'"))
+        else if last == 32 || last == 9 then Error(HttpError.local("Illegal header value '" ++ value ++ "'"))
+        else
+            let mutable i = 0
+            let mutable valid = true
+            while i < bytes.length do
+                let b = bytes.get(i).toInt32()
+                // Disallow NUL, CR, LF, and other whitespace control chars
+                if b == 0 || b == 10 || b == 13 || b == 11 || b == 12 then
+                    valid = false
+                    i = bytes.length
+                else i = i + 1
+            if valid then Ok(())
+            else Error(HttpError.local("Illegal header value '" ++ value ++ "'"))
+
+test "HttpError creation" =
+    let e = HttpError.local("test error")
+    assert e.message == "test error"
+    assert e.errorStatusHint == 400
+
+test "HttpError with hint" =
+    let e = HttpError.localWithHint("too large", 431)
+    assert e.message == "too large"
+    assert e.errorStatusHint == 431
+
+test "HttpError toRemote" =
+    let local = HttpError.local("bad request")
+    let remote = local.toRemote()
+    match remote with
+        case RemoteProtocolError(msg, hint) =>
+            assert msg == "bad request"
+            assert hint == 400
+        case _ => assert false
+
+test "Headers empty" =
+    let h = Headers.empty()
+    assert h.length == 0
+    assert !h.hasItems
+
+test "Headers construction" =
+    let items = [HeaderItem { rawName = "Host"; name = "host"; value = "example.com" }]
+    let h = Headers.new(items)
+    match h.items with
+        case [only] =>
+            assert only.name == "host"
+            assert only.value == "example.com"
+        case _ => assert false
+
+test "Headers rawItems" =
+    let items = [
+        HeaderItem { rawName = "Host"; name = "host"; value = "example.com" },
+        HeaderItem { rawName = "Content-Type"; name = "content-type"; value = "text/html" }
+    ]
+    let h = Headers.new(items)
+    match h.rawItems() with
+        case [first, second] =>
+            assert first._0 == "Host"
+            assert second._0 == "Content-Type"
+        case _ => assert false
+
+test "validateMethod valid" =
+    assert validateMethod("GET").isOk
+    assert validateMethod("POST").isOk
+    assert validateMethod("DELETE").isOk
+
+test "validateMethod invalid" =
+    assert validateMethod("GET / HTTP/1.1").isError
+    assert validateMethod("").isError
+
+test "validateTarget valid" =
+    assert validateTarget("/").isOk
+    assert validateTarget("/index.html").isOk
+    assert validateTarget("*").isOk
+
+test "validateTarget invalid" =
+    assert validateTarget("").isError
+
+test "validateFieldName valid" =
+    assert validateFieldName("Host").isOk
+    assert validateFieldName("Content-Type").isOk
+    assert validateFieldName("X-Custom-Header").isOk
+
+test "validateFieldName invalid" =
+    assert validateFieldName("").isError
+    assert validateFieldName("foo bar").isError
+    assert validateFieldName("foo:bar").isError
+
+test "validateFieldValue valid" =
+    assert validateFieldValue("").isOk
+    assert validateFieldValue("hello").isOk
+    assert validateFieldValue("hello world").isOk
+
+test "validateFieldValue invalid leading space" =
+    assert validateFieldValue(" hello").isError
+    assert validateFieldValue("\thello").isError
+
+test "validateFieldValue invalid trailing space" =
+    assert validateFieldValue("hello ").isError
+    assert validateFieldValue("hello\t").isError
+
+test "EventType extraction" =
+    let req = HttpEvent.Request(HttpRequest { method = "GET"; target = "/"; headers = Headers.empty(); httpVersion = "1.1" })
+    let t1 = eventType(req)
+    match t1 with
+        case RequestType => assert true
+        case _ => assert false
+    let t2 = eventType(HttpEvent.ConnectionClosed)
+    match t2 with
+        case ConnectionClosedType => assert true
+        case _ => assert false

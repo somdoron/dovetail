@@ -1,0 +1,112 @@
+package test
+
+import standard.io.http.HttpClient
+import standard.io.http.HttpClientError
+import standard.io.http.Response
+import standard.io.Async
+import standard.io.Fiber
+import standard.io.net.Tcp
+import standard.io.net.TcpListener
+
+// =============================================================================
+// URL-validation tests: builder errors surface only when `.send()` is called.
+// =============================================================================
+
+test "HttpClient rejects unsupported URL schemes" =
+    // `http` and `https` are supported; anything else is rejected at `.send()`.
+    let mutable saw: Option<HttpClientError> = None
+    let program: Async<Unit, Never> = HttpClient.get("ftp://example.com/").send().fold(
+        (e: HttpClientError) => Async.thunk(() => saw = Some(e)),
+        (_: Response) => Async.thunk(() => saw = None)
+    )
+    program.run()
+    match saw with
+        case Some(HttpClientError.UnsupportedScheme(s)) => assert s == "ftp"
+        case _ => assert false
+
+test "HttpClient rejects URLs without a host" =
+    let mutable saw: Option<HttpClientError> = None
+    let program: Async<Unit, Never> = HttpClient.get("http:///nohost").send().fold(
+        (e: HttpClientError) => Async.thunk(() => saw = Some(e)),
+        (_: Response) => Async.thunk(() => saw = None)
+    )
+    program.run()
+    match saw with
+        case Some(HttpClientError.MissingHost) => assert true
+        case _ => assert false
+
+test "HttpClient rejects URLs with no scheme" =
+    let mutable saw: Option<HttpClientError> = None
+    let program: Async<Unit, Never> = HttpClient.get("/just/a/path").send().fold(
+        (e: HttpClientError) => Async.thunk(() => saw = Some(e)),
+        (_: Response) => Async.thunk(() => saw = None)
+    )
+    program.run()
+    match saw with
+        case Some(HttpClientError.UnsupportedScheme(_)) => assert true
+        case _ => assert false
+
+// =============================================================================
+// End-to-end with a canned-bytes mock server.
+// =============================================================================
+
+@timeout(5000)
+test "HttpClient GET returns 200 + body" =
+    let canned = "HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\nhello world"
+    let mutable response: Option<Response> = None
+    let mutable err: Option<HttpClientError> = None
+    let program: Async<Unit, Never> = runClientAgainstMock(canned.bytes()).fold(
+        (e: HttpClientError) => Async.thunk(() => err = Some(e)),
+        (r: Response) => Async.thunk(() => response = Some(r))
+    )
+    program.run()
+    match err with
+        case Some(_) => assert false
+        case None => ()
+    match response with
+        case None => assert false
+        case Some(r) =>
+            assert r.statusCode == 200
+            assert r.reason == "OK"
+            assert r.isSuccess
+            assert r.bodyAsString() == "hello world"
+
+@timeout(5000)
+test "HttpClient sees 404 as non-success" =
+    let canned = "HTTP/1.1 404 Not Found\r\nContent-Length: 5\r\nConnection: close\r\n\r\noops!"
+    let mutable response: Option<Response> = None
+    let program: Async<Unit, Never> = runClientAgainstMock(canned.bytes()).fold(
+        (_: HttpClientError) => Async.succeed(()),
+        (r: Response) => Async.thunk(() => response = Some(r))
+    )
+    program.run()
+    match response with
+        case None => assert false
+        case Some(r) =>
+            assert r.statusCode == 404
+            assert !r.isSuccess
+            assert r.bodyAsString() == "oops!"
+
+@timeout(5000)
+test "HttpClient errors when peer closes before any response" =
+    let canned = Array<Uint8>.empty()
+    let mutable err: Option<HttpClientError> = None
+    let program: Async<Unit, Never> = runClientAgainstMock(canned).fold(
+        (e: HttpClientError) => Async.thunk(() => err = Some(e)),
+        (_: Response) => Async.succeed(())
+    )
+    program.run()
+    match err with
+        case Some(HttpClientError.UnexpectedEndOfStream) => assert true
+        case Some(HttpClientError.ProtocolError(_)) => assert true
+        case _ => assert false
+
+// --- Mock server harness ----------------------------------------------------
+
+async function runClientAgainstMock(canned: Array<Uint8>): Async<Response, HttpClientError> =
+    let listener: TcpListener = use Tcp.bind("127.0.0.1:0")
+    let address = await listener.localAddress().mapError(HttpClientError.from)
+    let port = parsePortSuffix(address)
+    let _server: Fiber<Unit, Never> = await mockServer(listener, canned).forkBackground()
+    let url = "http://127.0.0.1:" ++ port.format()
+    await HttpClient.get(url).send()

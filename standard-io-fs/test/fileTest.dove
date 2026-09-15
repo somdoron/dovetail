@@ -1,0 +1,288 @@
+package test
+
+import standard.io.fs.File
+import standard.io.fs.FileStreamError
+import standard.io.fs.Path
+import standard.io.Async
+import standard.text.Charset
+import standard.wasi.fs.FileSystemError
+
+// Integration tests against the live wasi:filesystem host (test runner mounts
+// a writable tempdir as a preopen).
+
+test "File.writeString then readString round-trip" =
+    let mutable readBack: String = ""
+    let program: Async<Unit, FileStreamError> = writeReadProgram((s: String) => readBack = s)
+    program.run()
+    assert readBack == "hello fs"
+
+async function writeReadProgram(setter: (String) => Unit): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-roundtrip.txt")
+    await File.writeString(p, "hello fs", Charset.Utf8)
+    let content: String = await File.readString(p, Charset.Utf8)
+    setter(content)
+    await File.remove(p)
+
+test "File.exists distinguishes file from missing" =
+    let mutable beforeWrite: Bool = true
+    let mutable afterWrite: Bool = false
+    let mutable afterRemove: Bool = true
+    let program: Async<Unit, FileStreamError> = existsProgram(
+        (b: Bool) => beforeWrite = b,
+        (b: Bool) => afterWrite = b,
+        (b: Bool) => afterRemove = b
+    )
+    program.run()
+    assert !beforeWrite
+    assert afterWrite
+    assert !afterRemove
+
+async function existsProgram(
+    setBefore: (Bool) => Unit,
+    setAfter: (Bool) => Unit,
+    setFinal: (Bool) => Unit
+): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-exists-test.txt")
+    let before: Bool = await File.exists(p)
+    setBefore(before)
+    await File.writeString(p, "x", Charset.Utf8)
+    let after: Bool = await File.exists(p)
+    setAfter(after)
+    await File.remove(p)
+    let final2: Bool = await File.exists(p)
+    setFinal(final2)
+
+test "File.readBytes returns raw byte array" =
+    let mutable len: Int32 = 0
+    let program: Async<Unit, FileStreamError> = readBytesProgram((n: Int32) => len = n)
+    program.run()
+    assert len == 5
+
+async function readBytesProgram(setter: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("bytes-test.txt")
+    await File.writeString(p, "hello", Charset.Utf8)
+    let bytes: Array<Uint8> = await File.readBytes(p)
+    setter(bytes.length)
+    await File.remove(p)
+
+// --- The marshaling arena must never reach the pinned heap --------------------
+// A path is marshaled into linear memory by copying the caller's string. That
+// copy used to come from the scratch arena — a single page sitting directly
+// below the pinned heap — so a path over 64 KiB ran off the end of the arena.
+// Under P2 that hit a memory bound and trapped; once memory grows for the
+// pinned heap it silently overwrites what lives there: the pinned block headers
+// and free list, plus the posted buffers of any parked fiber. The oversized
+// path itself must simply fail (no host has a 68 KiB filename); the assertion
+// is that ordinary pinned-heap work still behaves afterwards.
+
+test "Path: an oversized path fails without corrupting the pinned heap" =
+    let mutable rejected: Bool = false
+    let mutable readBack: String = ""
+    let program: Async<Unit, FileStreamError> = oversizedPathProgram(
+        (b: Bool) => rejected = b,
+        (s: String) => readBack = s
+    )
+    program.run()
+    assert rejected
+    assert readBack == "still here"
+
+async function oversizedPathProgram(
+    setRejected: (Bool) => Unit,
+    setReadBack: (String) => Unit
+): Async<Unit, FileStreamError> =
+    // 68 KiB — past the 64 KiB arena. Shrinking it below a page would stop
+    // testing anything.
+    let huge: Path = Path.of("x".repeat(69632i32))
+    let existed: Bool = await File.exists(huge)
+    setRejected(!existed)
+    // Every one of these allocates from the pinned heap, whose free list the
+    // pre-fix copy had just scribbled over.
+    let p: Path = Path.of("file-oversized-path-probe.txt")
+    await File.writeString(p, "still here", Charset.Utf8)
+    let content: String = await File.readString(p, Charset.Utf8)
+    setReadBack(content)
+    await File.remove(p)
+
+// A file whose contents exceed the scratch arena, for the same reason: the
+// payload of a write is caller-sized too.
+
+test "File: a payload larger than the scratch arena round-trips byte for byte" =
+    let mutable matched: Bool = false
+    let mutable length: Int32 = 0i32
+    let program: Async<Unit, FileStreamError> = hugePayloadProgram(
+        (b: Bool) => matched = b,
+        (n: Int32) => length = n
+    )
+    program.run()
+    assert length == 69632i32
+    assert matched
+
+async function hugePayloadProgram(
+    setMatched: (Bool) => Unit,
+    setLength: (Int32) => Unit
+): Async<Unit, FileStreamError> =
+    let payload: String = "abcdefgh".repeat(8704i32)
+    let p: Path = Path.of("file-huge-payload.txt")
+    await File.writeString(p, payload, Charset.Utf8)
+    let content: String = await File.readString(p, Charset.Utf8)
+    setLength(content.byteLength)
+    setMatched(content == payload)
+    await File.remove(p)
+
+// --- what `read(n)` promises for the awkward values of n ----------------------
+// A read's capacity is a pinned linear-memory ALLOCATION, not a ceiling on the
+// answer, so the size of the ask is the size of the buffer. `Int64.max` is the
+// documented "give me whatever is there" idiom and used to allocate 2 GiB and
+// die in `memory.grow`; it is served one 64 KiB chunk at a time instead, and
+// here that is the whole file.
+
+test "File: read(Int64.max) returns the bytes rather than trapping" =
+    let mutable content: String = ""
+    let program: Async<Unit, FileStreamError> = hugeRequestProgram((s: String) => content = s)
+    program.run()
+    assert content == "hello huge request"
+
+async function hugeRequestProgram(setContent: (String) => Unit): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-huge-request.txt")
+    await File.writeString(p, "hello huge request", Charset.Utf8)
+    let bytes: Array<Uint8> = await readOnce(p, 9223372036854775807i64)
+    setContent(String.fromBytes(bytes, 0, bytes.length))
+    await File.remove(p)
+
+// Zero is answered without touching the transport: no copy is posted, because a
+// zero-capacity one comes back with a count of zero, which `read` treats as a
+// host that transferred nothing and re-posts.
+
+test "File: read(0) is empty and does not consume the stream" =
+    let mutable first: Int32 = -1i32
+    let mutable second: String = ""
+    let program: Async<Unit, FileStreamError> = zeroRequestProgram(
+        (n: Int32) => first = n,
+        (s: String) => second = s
+    )
+    program.run()
+    assert first == 0i32
+    assert second == "not yet read"
+
+async function zeroRequestProgram(
+    setFirst: (Int32) => Unit,
+    setSecond: (String) => Unit
+): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-zero-request.txt")
+    await File.writeString(p, "not yet read", Charset.Utf8)
+    let stream = use File.openInputStream(p)
+    let empty: Array<Uint8> = await stream.read(0i64).mapError(toStreamError)
+    setFirst(empty.length)
+    let rest: Array<Uint8> = await stream.read(1024i64).mapError(toStreamError)
+    setSecond(String.fromBytes(rest, 0, rest.length))
+    await File.remove(p)
+
+// A negative length is a caller whose arithmetic underflowed. Folding it in with
+// zero would answer it with an empty array — a clean end of stream reported to a
+// reader whose bookkeeping is broken.
+
+@panics
+test "File: a negative read length panics instead of reporting EOF" =
+    negativeRequestProgram().run()
+
+async function negativeRequestProgram(): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-negative-request.txt")
+    await File.writeString(p, "unreachable", Charset.Utf8)
+    let ignored: Array<Uint8> = await readOnce(p, -1i64)
+    ()
+
+// Ordering, where a stream that is no longer open meets one of the two edge
+// lengths: the zero answers from the ending, the negative panics anyway.
+
+// WHAT THIS TEST CANNOT SHOW, said plainly rather than left looking like
+// coverage: it does not pin the ORDER of the zero-length check and the state
+// check. A spent stream answers a zero-length read with an empty array either
+// way, because "nothing was asked for" and "this stream has ended" have the same
+// answer whenever the ending is a clean one. The order is only observable when
+// the ending is a FAILURE, which no file operation in this suite can produce, so
+// it is pinned on the TLS implementation instead — see the zero-length tests in
+// `tls_interop_test`, where the connection can be poisoned on demand.
+//
+// What it does pin is that a zero-length read on a spent stream posts NO copy: a
+// zero-capacity copy on a stream whose ending has already been read re-reads a
+// one-shot future and traps, so a `read` with no handling for zero at all fails
+// here rather than returning the wrong number.
+test "File: read(0) on a spent stream posts nothing and answers empty" =
+    let mutable observed: Int32 = -1i32
+    zeroAfterEndProgram((n: Int32) => observed = n).run()
+    assert observed == 0i32
+
+async function zeroAfterEndProgram(setter: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-zero-after-end.txt")
+    await File.writeString(p, "spent", Charset.Utf8)
+    let stream = use File.openInputStream(p)
+    let all: Array<Uint8> = await stream.readAll().mapError(toStreamError)
+    let atEnd: Array<Uint8> = await stream.read(0i64).mapError(toStreamError)
+    setter(atEnd.length)
+    await File.remove(p)
+
+@panics
+test "File: a negative read length panics even on a stream that has ended" =
+    negativeAfterEndProgram().run()
+
+async function negativeAfterEndProgram(): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-negative-after-end.txt")
+    await File.writeString(p, "spent", Charset.Utf8)
+    let stream = use File.openInputStream(p)
+    let all: Array<Uint8> = await stream.readAll().mapError(toStreamError)
+    // The state check does NOT get to this one first. A stream with an ending to
+    // report is precisely where a caller's underflow would be least visible: it
+    // would come back as that ending, indistinguishable from the truth.
+    let ignored: Array<Uint8> = await stream.read(-1i64).mapError(toStreamError)
+    await File.remove(p)
+
+// The helpers that take a SIZE fill it. `read` answers with one transport chunk
+// and is documented to, but a caller who asked `readString` for a megabyte and
+// got 64 KiB of decoded text has no way to tell that from a megabyte-long file
+// that ends there — and `skip` reporting 64 KiB leaves the cursor somewhere the
+// caller did not ask for. Both cross the chunk boundary here.
+
+test "File: a read larger than the chunk size comes back short, and reading on continues" =
+    let mutable first: Int32 = -1i32
+    let mutable total: Int32 = -1i32
+    bigChunkedReadProgram((n: Int32) => first = n, (n: Int32) => total = n).run()
+    // A FILE does not fill the buffer either: the request is 100000 bytes and
+    // one copy answers at most the 64 KiB the runtime allocates for it. This is
+    // the fact behind invariant (6) — "fill the request" is not something any
+    // transport here promises, so the loop that wants a particular count belongs
+    // to whoever named the count.
+    assert first > 0i32
+    assert first < 100000i32
+    // And the short answer is not an ending: reading on picks up where it left
+    // off, which is what makes the caller's loop correct.
+    assert total == 100000i32
+
+async function bigChunkedReadProgram(setFirst: (Int32) => Unit, setTotal: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("file-big-chunked-read.txt")
+    let content: String = String.fromBytes(Array<Uint8>.fill(100000, 0x61u8), 0, 100000)
+    await File.writeString(p, content, Charset.Utf8)
+    let stream = use File.openInputStream(p)
+    let head: Array<Uint8> = await stream.read(100000i64).mapError(toStreamError)
+    setFirst(head.length)
+    let rest: Array<Uint8> = await stream.readAll().mapError(toStreamError)
+    setTotal(head.length + rest.length)
+    await File.remove(p)
+
+async function readOnce(path: Path, bytesLength: Int64): Async<Array<Uint8>, FileStreamError> =
+    let stream = use File.openInputStream(path)
+    await stream.read(bytesLength).mapError(toStreamError)
+
+/// The package's own `mapWasiError` is internal, and these tests only need to
+/// reach the error channel, not to name what is in it.
+function toStreamError(error: FileSystemError): FileStreamError = FileStreamError.Unsupported
+
+test "File output writes exactly an interior readonly window" =
+    let program: Async<Unit, FileStreamError> = async do
+        let path = Path.of("readonly-window.txt")
+        let output = use File.openOutputStream(path)
+        let storage = [|99u8, 1u8, 2u8, 3u8, 88u8|]
+        await output.write(storage.readonly[|1..4|]).mapError(FileStreamError.from)
+        await output.close().mapError(FileStreamError.from)
+        assert (await File.readBytes(path)).readonly == [|1u8, 2u8, 3u8|].readonly
+        await File.remove(path)
+    program.run()

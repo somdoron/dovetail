@@ -1,0 +1,77 @@
+package standard.sqlite
+
+import standard.time.Instant
+
+// =============================================================================
+// Dovetail value -> SQLite storage class.
+//
+// This is the bound the compiler's `sql"..."` lowering enforces at every
+// interpolation, purely through `SqlBuilder.value`'s signature — the compiler
+// itself knows nothing about SQL. Modeled on `standard.json`'s `JsonEncoder`.
+// =============================================================================
+
+/// A value that can be bound as a SQLite parameter.
+public trait ToSqlValue =
+    /// This value as the storage class it should be bound as.
+    function toSqlValue(self): SqlValue
+
+/// SQLite has no boolean storage class; 1 and 0 are the convention, and what
+/// SQLite's own boolean literals evaluate to.
+implement ToSqlValue for Bool =
+    public function toSqlValue(self: Bool): SqlValue =
+        if self then SqlValue.Integer(1i64) else SqlValue.Integer(0i64)
+
+implement ToSqlValue for Int8 =
+    public function toSqlValue(self: Int8): SqlValue = SqlValue.Integer(self.toInt64())
+
+implement ToSqlValue for Int16 =
+    public function toSqlValue(self: Int16): SqlValue = SqlValue.Integer(self.toInt64())
+
+implement ToSqlValue for Int32 =
+    public function toSqlValue(self: Int32): SqlValue = SqlValue.Integer(self.toInt64())
+
+implement ToSqlValue for Int64 =
+    public function toSqlValue(self: Int64): SqlValue = SqlValue.Integer(self)
+
+implement ToSqlValue for Uint8 =
+    public function toSqlValue(self: Uint8): SqlValue = SqlValue.Integer(self.toInt64())
+
+implement ToSqlValue for Uint16 =
+    public function toSqlValue(self: Uint16): SqlValue = SqlValue.Integer(self.toInt64())
+
+implement ToSqlValue for Uint32 =
+    public function toSqlValue(self: Uint32): SqlValue = SqlValue.Integer(self.toInt64())
+
+// `Uint64` is deliberately not implemented. SQLite's INTEGER storage class is a
+// signed 64-bit value (`bind-int64` takes an `s64`), so any `Uint64` above
+// `Int64`'s maximum wraps to a negative integer on binding and decodes back as
+// a different number — a silent, lossy round-trip for half the type's range.
+// `Uint32` is safe because its maximum fits. Store large unsigned values as
+// `Text` (decimal) or `Blob` (big-endian) behind a newtype with a hand-written
+// `ToSqlValue`/`FromSqlValue` pair.
+
+implement ToSqlValue for Float32 =
+    public function toSqlValue(self: Float32): SqlValue = SqlValue.Real(self.toFloat64())
+
+implement ToSqlValue for Float64 =
+    public function toSqlValue(self: Float64): SqlValue = SqlValue.Real(self)
+
+implement ToSqlValue for String =
+    public function toSqlValue(self: String): SqlValue = SqlValue.Text(self)
+
+implement ToSqlValue for Array<Uint8> =
+    public function toSqlValue(self: Array<Uint8>): SqlValue = SqlValue.Blob(self)
+
+/// Stored as whole seconds since the epoch, matching SQLite's `unixepoch()`.
+/// Sub-second precision is truncated: for finer resolution, use a newtype over
+/// `Int64` milliseconds with its own implementation.
+implement ToSqlValue for Instant =
+    public function toSqlValue(self: Instant): SqlValue = SqlValue.Integer(self.epochSecond)
+
+/// `None` binds as SQL NULL, so an optional column needs no special handling at
+/// the call site.
+implement <T> ToSqlValue for Option<T> where T: ToSqlValue =
+    public function toSqlValue(self: Option<T>): SqlValue =
+        match self with
+            case Some(value) => value.toSqlValue()
+            case None => SqlValue.Null

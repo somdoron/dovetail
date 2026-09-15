@@ -1,0 +1,274 @@
+compiler-version = "0.1.0"
+
+[[project]]
+name = "prelude"
+path = "dovetail/prelude"
+root_package = "standard.prelude"
+packages = ["."]
+
+[[project]]
+name = "wasi"
+root_package = "standard.wasi"
+depends = [
+    "prelude",
+    "standard-time",
+]
+packages = [
+    ".",
+    "random",
+    "clock",
+    "cli",
+    "fs",
+    "net",
+    "tcp",
+    "udp",
+]
+
+[[project]]
+name = "standard-collection"
+root_package = "standard.collection"
+packages = ["."]
+
+[[project]]
+name = "standard-time"
+root_package = "standard.time"
+depends = ["standard-collection"]
+packages = ["."]
+resources = ["tzdata/tzdata.bin"]
+
+[[project]]
+name = "standard-text"
+root_package = "standard.text"
+depends = []
+packages = ["."]
+
+[[project]]
+name = "standard-encoding"
+root_package = "standard.encoding"
+packages = ["."]
+
+[[project]]
+name = "standard-math"
+root_package = "standard.math"
+packages = ["."]
+
+[[project]]
+name = "standard-json"
+root_package = "standard.json"
+depends = [
+    "standard-collection",
+    "standard-time",
+]
+packages = ["."]
+
+[[project.macro]]
+name = "JsonEncoder"
+package = "standard.json"
+kind = "derive"
+trait = "standard.json.JsonEncoder"
+script = "macros/JsonEncoder.rhai"
+
+[[project.macro]]
+name = "JsonDecoder"
+package = "standard.json"
+kind = "derive"
+trait = "standard.json.JsonDecoder"
+script = "macros/JsonDecoder.rhai"
+
+[[project]]
+name = "standard-uri"
+root_package = "standard.uri"
+depends = ["standard-encoding"]
+packages = ["."]
+
+[[project]]
+name = "standard-parser"
+root_package = "standard.parser"
+depends = [
+    "standard-collection"
+]
+packages = ["."]
+
+[[project]]
+name = "standard-http"
+root_package = "standard.http"
+depends = ["standard-collection"]
+packages = ["."]
+
+# Pure, synchronous cryptographic primitives (hashes, MAC, KDF, AEAD, curves,
+# RSA, X.509). See docs/crypto-library-design.md. Depends on standard-time only
+# for the X.509 validity-window check (Instant); earlier phases use prelude only.
+[[project]]
+name = "standard-crypto"
+root_package = "standard.crypto"
+depends = ["standard-time"]
+packages = ["."]
+
+# Mozilla-derived trust anchors (the curl/NSS CA bundle), embedded as a passive
+# WASM data segment and parsed on demand into X.509 certificates. See
+# tools/refresh-ca-roots.sh for provenance/refresh.
+[[project]]
+name = "standard-crypto-roots"
+root_package = "standard.crypto.roots"
+depends = ["standard-crypto"]
+packages = ["."]
+resources = ["roots/cacert.pem"]
+
+# Pure, synchronous sans-I/O TLS 1.3 (RFC 8446): record layer, key schedule,
+# handshake state machines (client + server), and the application/alert layer.
+# Bytes-in/events-out like standard-http; the async layer wraps it with sockets.
+# See docs/tls-library-design.md. Builds on crypto primitives + trust anchors.
+[[project]]
+name = "standard-tls"
+root_package = "standard.tls"
+depends = ["standard-collection", "standard-crypto", "standard-crypto-roots", "standard-time"]
+packages = ["."]
+
+[[project]]
+name = "standard-io"
+root_package = "standard.io"
+depends = ["standard-collection", "wasi", "standard-time", "standard-text"]
+packages = ["."]
+
+# Host-behaviour fixture for standard-io, driven by the Rust integration tests
+# (see dovetail/tests/stdio_blocking.rs). The in-process test runner inherits the
+# real stdio, so a stdin that fails mid-stream can only be exercised through a
+# component the test starts with streams of its own.
+[[project]]
+name = "standard-io-interop"
+root_package = "interop.io"
+depends = ["standard-io"]
+packages = ["."]
+
+[[project]]
+name = "standard-io-stream"
+root_package = "standard.io.stream"
+depends = ["standard-io", "standard-collection"]
+packages = ["."]
+
+[[project]]
+name = "standard-io-fs"
+root_package = "standard.io.fs"
+depends = [
+    "standard-collection",
+    "standard-time",
+    "standard-text",
+    "wasi",
+    "standard-io",
+]
+packages = ["."]
+[[project]]
+name = "standard-io-net"
+root_package = "standard.io.net"
+depends = [
+    "standard-collection",
+    "standard-time",
+    "standard-text",
+    "wasi",
+    "standard-io",
+]
+packages = ["."]
+[[project]]
+name = "standard-io-http"
+root_package = "standard.io.http"
+depends = [
+    "standard-collection",
+    "standard-text",
+    "standard-uri",
+    "standard-http",
+    "wasi",
+    "standard-io",
+    "standard-io-net",
+    "standard-json",
+    "standard-crypto",
+    "standard-crypto-roots",
+    "standard-tls",
+    "standard-io-crypto",
+]
+packages = ["."]
+[[project]]
+name = "standard-io-http-interop"
+root_package = "interop.http"
+depends = [
+    "standard-collection",
+    "standard-text",
+    "standard-uri",
+    "standard-http",
+    "wasi",
+    "standard-io",
+    "standard-io-net",
+    "standard-io-fs",
+    "standard-json",
+    "standard-io-http",
+    "standard-crypto",
+    "standard-io-crypto",
+]
+packages = ["."]
+[[project]]
+name = "standard-io-log"
+root_package = "standard.io.log"
+depends = [
+    "standard-collection",
+    "standard-time",
+    "standard-text",
+    "wasi",
+    "standard-io",
+    "standard-io-fs",
+]
+packages = ["."]
+
+# Async/WASI bridge for crypto: random key/nonce/keypair generation (WASI
+# entropy), resource-managed zeroizing secrets, and loading certificates from a
+# file. Extends the pure crypto traits; the crypto package stays I/O-free.
+[[project]]
+name = "standard-io-crypto"
+root_package = "standard.io.crypto"
+depends = ["standard-crypto", "standard-io", "standard-io-fs", "standard-tls", "standard-io-net", "wasi"]
+packages = ["."]
+
+# Async SQLite over the component shipped with standard-sqlite. The component's WIT interface
+# is projected into the low-level `sqlite.raw` bindings package (generated), and
+# the component binary is composed into any output that imports it. The
+# high-level Sqlite.dove wraps the raw s32/handle API as `Async`/`Result`.
+# See docs/component-model-design.md.
+[[project]]
+name = "standard-sqlite"
+root_package = "standard.sqlite"
+depends = ["standard-collection", "standard-time", "standard-io"]
+packages = ["."]
+
+[[project.component]]
+path = "artifacts/sqlite.wasm"
+package = "sqlite.raw"
+
+[[project.macro]]
+name = "ToSqlValue"
+package = "standard.sqlite"
+kind = "derive"
+trait = "standard.sqlite.ToSqlValue"
+script = "macros/ToSqlValue.rhai"
+
+[[project.macro]]
+name = "FromSqlValue"
+package = "standard.sqlite"
+kind = "derive"
+trait = "standard.sqlite.FromSqlValue"
+script = "macros/FromSqlValue.rhai"
+
+[[project.macro]]
+name = "FromRow"
+package = "standard.sqlite"
+kind = "derive"
+trait = "standard.sqlite.FromRow"
+script = "macros/FromRow.rhai"
+
+# Consumer that depends on standard-sqlite but declares NO component or macro of
+# its own. Regression guard: the sqlite component must be composed in
+# transitively, and @derive(ToSqlValue) and friends must resolve through the
+# inherited [[project.macro]] entries. It also imports `standard.sqlite.sql`, so
+# it covers a prefixed literal reaching a dependent by ordinary import.
+[[project]]
+name = "sqlite-consumer-test"
+root_package = "consumer.sqlite"
+depends = ["standard-sqlite", "standard-io"]
+packages = ["."]

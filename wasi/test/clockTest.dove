@@ -1,0 +1,30 @@
+package test
+
+import standard.wasi.clock.MonotonicClock
+import standard.wasi.clock.WallClock
+import standard.wasi.WaitableSet
+import standard.time.Duration
+
+test "wall clock now" =
+    let now = WallClock.now
+    assert now.epochSecond > 0i64
+
+test "monotonic now is monotonic" =
+    let first = MonotonicClock.now()
+    let second = MonotonicClock.now()
+    assert second >= first
+
+test "waitFor completes via blocking wait" =
+    let before = MonotonicClock.now()
+    let call = MonotonicClock.waitForStart(Duration.ofMillis(20i64))
+    assert call.started
+    let set = WaitableSet.make()
+    set.join(call.subtask.waitable)
+    let event = set.wait()
+    assert event.isSubtask
+    assert event.index == call.subtask.waitable
+    assert event.payload.subtaskState == 2
+    call.subtask.drop()
+    set.close()
+    let elapsed = MonotonicClock.now() - before
+    assert elapsed >= 15000000i64

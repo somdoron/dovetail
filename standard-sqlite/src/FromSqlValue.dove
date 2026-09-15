@@ -1,0 +1,134 @@
+package standard.sqlite
+
+import standard.time.Instant
+
+// =============================================================================
+// SQLite storage class -> Dovetail value.
+//
+// The mirror of `ToSqlValue`, modeled on `standard.json`'s `JsonDecoder`:
+// a static method returning `Result<Self, _>`, so it is called through the type
+// (`Int64.fromSqlValue(cell)`) rather than on a value.
+// =============================================================================
+
+/// A value decodable from one SQLite column cell.
+public trait FromSqlValue =
+    /// Decode `value`, or report why its storage class doesn't fit.
+    function fromSqlValue(value: SqlValue): Result<Self, SqliteError>
+
+implement FromSqlValue for Bool =
+    public function fromSqlValue(value: SqlValue): Result<Bool, SqliteError> =
+        match value with
+            case SqlValue.Integer(n) =>
+                if n == 0i64 then Ok(false)
+                else if n == 1i64 then Ok(true)
+                else Error(mismatchError("a boolean 0 or 1", value))
+            case _ => Error(mismatchError("Integer", value))
+
+implement FromSqlValue for Int8 =
+    public function fromSqlValue(value: SqlValue): Result<Int8, SqliteError> =
+        match narrowed(value, -128i64, 127i64) with
+            case Ok(n) => Ok(n.toInt8())
+            case Error(e) => Error(e)
+
+implement FromSqlValue for Int16 =
+    public function fromSqlValue(value: SqlValue): Result<Int16, SqliteError> =
+        match narrowed(value, -32768i64, 32767i64) with
+            case Ok(n) => Ok(n.toInt16())
+            case Error(e) => Error(e)
+
+implement FromSqlValue for Int32 =
+    public function fromSqlValue(value: SqlValue): Result<Int32, SqliteError> =
+        match narrowed(value, -2147483648i64, 2147483647i64) with
+            case Ok(n) => Ok(n.toInt32())
+            case Error(e) => Error(e)
+
+implement FromSqlValue for Int64 =
+    public function fromSqlValue(value: SqlValue): Result<Int64, SqliteError> =
+        match value with
+            case SqlValue.Integer(n) => Ok(n)
+            case _ => Error(mismatchError("Integer", value))
+
+implement FromSqlValue for Uint8 =
+    public function fromSqlValue(value: SqlValue): Result<Uint8, SqliteError> =
+        match narrowed(value, 0i64, 255i64) with
+            case Ok(n) => Ok(n.toUint8())
+            case Error(e) => Error(e)
+
+implement FromSqlValue for Uint16 =
+    public function fromSqlValue(value: SqlValue): Result<Uint16, SqliteError> =
+        match narrowed(value, 0i64, 65535i64) with
+            case Ok(n) => Ok(n.toUint16())
+            case Error(e) => Error(e)
+
+implement FromSqlValue for Uint32 =
+    public function fromSqlValue(value: SqlValue): Result<Uint32, SqliteError> =
+        match narrowed(value, 0i64, 4294967295i64) with
+            case Ok(n) => Ok(n.toUint32())
+            case Error(e) => Error(e)
+
+// No `Uint64`, for the reason given in ToSqlValue.dove: SQLite's INTEGER is
+// signed 64-bit, so half of `Uint64`'s range cannot round-trip.
+
+implement FromSqlValue for Float32 =
+    public function fromSqlValue(value: SqlValue): Result<Float32, SqliteError> =
+        match value with
+            case SqlValue.Real(x) => Ok(x.toFloat32())
+            case SqlValue.Integer(n) => Ok(n.toFloat32())
+            case _ => Error(mismatchError("Real", value))
+
+/// An INTEGER cell widens to a float: SQLite stores `1.0` as an integer when it
+/// can, so a REAL column can hand back either storage class.
+implement FromSqlValue for Float64 =
+    public function fromSqlValue(value: SqlValue): Result<Float64, SqliteError> =
+        match value with
+            case SqlValue.Real(x) => Ok(x)
+            case SqlValue.Integer(n) => Ok(n.toFloat64())
+            case _ => Error(mismatchError("Real", value))
+
+implement FromSqlValue for String =
+    public function fromSqlValue(value: SqlValue): Result<String, SqliteError> =
+        match value with
+            case SqlValue.Text(s) => Ok(s)
+            case _ => Error(mismatchError("Text", value))
+
+implement FromSqlValue for Array<Uint8> =
+    public function fromSqlValue(value: SqlValue): Result<Array<Uint8>, SqliteError> =
+        match value with
+            case SqlValue.Blob(bytes) => Ok(bytes)
+            case _ => Error(mismatchError("Blob", value))
+
+/// Reads the whole-seconds encoding `ToSqlValue for Instant` writes.
+implement FromSqlValue for Instant =
+    public function fromSqlValue(value: SqlValue): Result<Instant, SqliteError> =
+        match value with
+            case SqlValue.Integer(seconds) => Ok(Instant.ofEpochSecond(seconds))
+            case _ => Error(mismatchError("Integer", value))
+
+/// A NULL cell decodes to `None`; anything else delegates to `T`.
+implement <T> FromSqlValue for Option<T> where T: FromSqlValue =
+    public function fromSqlValue(value: SqlValue): Result<Option<T>, SqliteError> =
+        match value with
+            case SqlValue.Null => Ok(None)
+            case _ =>
+                match T.fromSqlValue(value) with
+                    case Ok(inner) => Ok(Some(inner))
+                    case Error(e) => Error(e)
+
+/// An INTEGER cell, range-checked for a narrower target type. Out-of-range is a
+/// mismatch rather than a silent wrap.
+function narrowed(value: SqlValue, low: Int64, high: Int64): Result<Int64, SqliteError> =
+    match value with
+        case SqlValue.Integer(n) =>
+            if n < low || n > high then
+                Error(mismatchError(
+                    "an Integer between " ++ low.format() ++ " and " ++ high.format(), value
+                ))
+            else Ok(n)
+        case _ => Error(mismatchError("Integer", value))
+
+/// SQLITE_MISMATCH (20) — a cell's storage class isn't what the target needs.
+function mismatchError(expected: String, got: SqlValue): SqliteError =
+    SqliteError {
+        code = 20
+        message = "expected " ++ expected ++ ", got " ++ got.storageClassName()
+    }

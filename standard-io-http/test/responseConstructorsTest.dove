@@ -1,0 +1,121 @@
+package test
+
+import standard.io.http.Response
+import standard.json.Json
+import standard.json.JsonError
+import standard.json.JsonEncoder
+import standard.json.JsonDecoder
+
+// Pure constructor tests — no socket, no codec dispatch. Pins one builder
+// path per test: status code, the headers/customizers, and the format
+// helpers.
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+record RespUser =
+    id: Int32
+    name: String
+
+// --- Status-bearing constructors --------------------------------------------
+
+test "Response.ok() defaults to 200 OK with empty body" =
+    let r: Response = Response.ok()
+    assert r.statusCode == 200
+    assert r.reason == "OK"
+    assert r.body.length == 0
+    assert r.isSuccess
+
+test "Response.ok(bytes) keeps the bytes" =
+    let r: Response = Response.ok([|1u8, 2u8, 3u8|])
+    assert r.statusCode == 200
+    assert r.body.length == 3
+    assert r.body.get(0) == 1u8
+
+test "Response.ok(status, reason, body) sets custom status line" =
+    let r: Response = Response.ok(203, "Non-Authoritative", "body".bytes())
+    assert r.statusCode == 203
+    assert r.reason == "Non-Authoritative"
+
+test "Response.created uses 201 Created" =
+    let r = Response.created()
+    assert r.statusCode == 201
+    assert r.reason == "Created"
+
+test "Response.notFound uses 404" =
+    let r = Response.notFound()
+    assert r.statusCode == 404
+    assert r.reason == "Not Found"
+    assert !r.isSuccess
+
+test "Response.serverError uses 500" =
+    let r = Response.serverError()
+    assert r.statusCode == 500
+    assert r.reason == "Internal Server Error"
+
+// --- Format helpers ---------------------------------------------------------
+
+test "Response.text wraps a string and sets Content-Type" =
+    let r = Response.text("hello")
+    assert r.statusCode == 200
+    assert r.bodyAsString() == "hello"
+    assert r.header("Content-Type").require == "text/plain; charset=utf-8"
+
+test "Response.json(value) encodes as application/json" =
+    let user = RespUser { id = 1; name = "Ada" }
+    let r: Response = Response.json(user)
+    assert r.statusCode == 200
+    assert r.header("Content-Type").require == "application/json"
+    let decoded = r.jsonBody<RespUser>()
+    assert decoded.isOk
+    assert decoded.require.id == 1
+    assert decoded.require.name == "Ada"
+
+test "Response.json(status, value) sets the status" =
+    let user = RespUser { id = 2; name = "Lin" }
+    let r: Response = Response.json(404, user)
+    assert r.statusCode == 404
+    assert r.reason == "Not Found"
+
+test "Response.json status lookup falls back to 'Error'" =
+    let user = RespUser { id = 0; name = "x" }
+    let r: Response = Response.json(599, user)
+    assert r.reason == "Error"
+
+// --- Customizers ------------------------------------------------------------
+
+test "Response.withHeader appends a header" =
+    let r: Response = Response.ok().withHeader("X-Foo", "bar")
+    assert r.header("X-Foo").require == "bar"
+
+test "Response.withHeaders appends multiple" =
+    let r: Response = Response.ok().withHeaders([
+        ("X-A", "1"),
+        ("X-B", "2")
+    ])
+    assert r.header("X-A").require == "1"
+    assert r.header("X-B").require == "2"
+
+test "Response.withStatus overrides the status line" =
+    let r: Response = Response.ok().withStatus(207, "Multi-Status")
+    assert r.statusCode == 207
+    assert r.reason == "Multi-Status"
+
+test "Response.withHeader does not mutate the source response" =
+    let r1: Response = Response.ok()
+    let r2 = r1.withHeader("X-Foo", "bar")
+    assert r1.header("X-Foo").isNone
+    assert r2.header("X-Foo").isSome
+
+// --- Chained --------------------------------------------------------------
+
+test "Constructors chain cleanly" =
+    let r: Response =
+        Response.json(RespUser { id = 5; name = "Lin" })
+            .withHeader("X-Cache", "miss")
+            .withStatus(201, "Created")
+    assert r.statusCode == 201
+    assert r.reason == "Created"
+    assert r.header("X-Cache").require == "miss"
+    let decoded = r.jsonBody<RespUser>()
+    assert decoded.isOk
+    assert decoded.require.id == 5

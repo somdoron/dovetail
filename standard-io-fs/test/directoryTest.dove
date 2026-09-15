@@ -1,0 +1,130 @@
+package test
+
+import standard.io.fs.Directory
+import standard.io.fs.DirEntry
+import standard.io.fs.EntryType
+import standard.io.fs.FileStreamError
+import standard.io.fs.Metadata
+import standard.io.fs.Path
+import standard.io.Async
+
+// Integration tests against a real preopened directory. The test runner mounts
+// a writable tempdir as a preopen, so these exercise the live wasi:filesystem
+// host.
+
+test "Directory.preopens returns at least one entry" =
+    let mutable count: Int32 = 0
+    let program: Async<Unit, FileStreamError> = countPreopens((n: Int32) => count = n)
+    program.run()
+    assert count > 0
+
+async function countPreopens(setter: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let preopens: List<(String, Directory)> = await Directory.preopens()
+    setter(preopens.length)
+
+test "Directory.create then Directory.remove round-trip" =
+    let mutable existedAfter: Bool = false
+    let mutable existedFinal: Bool = true
+    let program: Async<Unit, FileStreamError> = createRemoveProgram(
+        (b: Bool) => existedAfter = b,
+        (b: Bool) => existedFinal = b
+    )
+    program.run()
+    assert existedAfter
+    assert !existedFinal
+
+async function createRemoveProgram(
+    setAfter: (Bool) => Unit,
+    setFinal: (Bool) => Unit
+): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("dir-roundtrip-test")
+    await Directory.create(p)
+    let afterCreate: Bool = await Directory.exists(p)
+    setAfter(afterCreate)
+    await Directory.remove(p)
+    let afterRemove: Bool = await Directory.exists(p)
+    setFinal(afterRemove)
+
+test "Directory.entries lists newly created directories" =
+    let mutable foundCount: Int32 = 0
+    let program: Async<Unit, FileStreamError> = entriesProgram((n: Int32) => foundCount = n)
+    program.run()
+    assert foundCount == 2
+
+async function entriesProgram(setter: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let parent: Path = Path.of("entries-test")
+    await Directory.create(parent)
+    await Directory.create(parent / "a")
+    await Directory.create(parent / "b")
+    let entries: List<DirEntry> = await Directory.entries(parent)
+    let mutable count: Int32 = 0
+    for e in entries do
+        match e.entryType with
+            case EntryType.Directory => count = count + 1
+            case _ => ()
+    setter(count)
+    // cleanup
+    await Directory.remove(parent / "a")
+    await Directory.remove(parent / "b")
+    await Directory.remove(parent)
+
+test "Directory.metadata returns Directory entry type for existing dir" =
+    let mutable seenDir: Bool = false
+    let program: Async<Unit, FileStreamError> = metadataProgram((b: Bool) => seenDir = b)
+    program.run()
+    assert seenDir
+
+async function metadataProgram(setter: (Bool) => Unit): Async<Unit, FileStreamError> =
+    let p: Path = Path.of("metadata-test")
+    await Directory.create(p)
+    let md: Option<Metadata> = await Directory.metadata(p)
+    match md with
+        case Some(m) =>
+            match m.entryType with
+                case EntryType.Directory => setter(true)
+                case _ => setter(false)
+        case None => setter(false)
+    await Directory.remove(p)
+
+// --- Lifted host lists must not leak their pinned blocks ----------------------
+// `get-directories` (like `get-environment` / `get-arguments` / `initial-cwd`)
+// returns a list whose backing block and per-element strings the host allocates
+// through `cabi_realloc` — i.e. out of the pinned heap. The guest owns them once
+// it has copied the contents into GC memory. They used to be dropped on the
+// floor on the theory that these are call-once sync lifts; nothing stops a
+// program from polling them.
+//
+// What this pins is that the frees are CORRECT: freeing a pointer that is not a
+// pinned block, or freeing one twice, corrupts the free list and the next
+// `pinned_alloc` traps — which the fs work at the end runs straight into. It
+// does NOT pin the absence of the leak: the pinned heap is capped by the
+// module's 256-page memory maximum and each call leaks ~56 bytes, so showing
+// exhaustion takes ~300k iterations and minutes of wall clock. There is no
+// introspection on the heap to assert against instead.
+
+@timeout(30000)
+test "Directory.preopens: repeated lookups keep the pinned heap consistent" =
+    let mutable seen: Int32 = -1i32
+    let mutable stillWorks: Bool = false
+    pollPreopensProgram((n: Int32) => seen = n, (b: Bool) => stillWorks = b).run()
+    // The test runner mounts one writable preopen, so each call really does
+    // lift a list with a string in it — an empty list would free nothing.
+    assert seen >= 1i32
+    assert stillWorks
+
+async function pollPreopensProgram(
+    setSeen: (Int32) => Unit,
+    setStillWorks: (Bool) => Unit
+): Async<Unit, FileStreamError> =
+    let mutable count = 0i32
+    let mutable i = 0i32
+    while i < 5000i32 do
+        let preopens = await Directory.preopens()
+        count = preopens.length
+        i = i + 1
+    setSeen(count)
+    // Allocates from the pinned heap, so a free list the loop damaged shows up
+    // here rather than silently.
+    let entries = await Directory.entries(Path.of(""))
+    setStillWorks(entries.length >= 0i32)
+

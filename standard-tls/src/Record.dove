@@ -1,0 +1,377 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Result
+import standard.prelude.Option
+
+import standard.crypto.SymmetricKey
+import standard.crypto.Nonce
+import standard.crypto.AeadAlgorithm
+import standard.crypto.Aes128Gcm
+import standard.crypto.Aes256Gcm
+
+/// The TLS 1.3 record layer (RFC 8446 §5): framing of the byte stream into
+/// records, and AEAD protection of records once traffic keys are installed.
+///
+/// A `RecordLayer` holds the read/write traffic keys and the per-direction
+/// 64-bit sequence numbers. Before keys are installed (ClientHello/ServerHello,
+/// and the dummy ChangeCipherSpec) records are sent and received in the clear;
+/// after `installWriteKeys`/`installReadKeys` they are sealed/opened with the
+/// negotiated AEAD. Sequence numbers reset to zero each time keys change
+/// (handshake→application, KeyUpdate).
+
+/// The key + IV for one traffic direction (RFC 8446 §7.3). The IV is the static
+/// per-connection IV; the per-record nonce is `computeNonce(iv, seq)`.
+record TrafficKeys =
+    key: SymmetricKey
+    iv: Nonce
+
+/// A decoded record: its real content type and plaintext payload. For an
+/// encrypted record the content type is the inner type recovered after
+/// stripping AEAD padding (RFC 8446 §5.2).
+///
+/// `payload` is handed out WITHOUT copying: for a protected record it is the
+/// whole decrypted TLSInnerPlaintext (content ‖ type byte ‖ zero padding), and
+/// only the first `contentLength` bytes are content. Consumers must honor
+/// `contentLength` — copying the content out per record is exactly the cost
+/// this shape exists to avoid.
+record TlsRecord =
+    contentType: ContentType
+    payload: Array<Uint8>
+    contentLength: Int32
+
+/// A raw on-wire record before decryption: the outer content-type byte and the
+/// record fragment (ciphertext for protected records, plaintext otherwise).
+record RawRecord =
+    contentType: Int32
+    fragment: Array<Uint8>
+
+/// Maximum plaintext fragment length: 2^14 bytes (RFC 8446 §5.1).
+let maxPlaintext: Int32 = 16384
+
+/// Maximum protected-record fragment: 2^14 + 256 (RFC 8446 §5.2).
+let maxCiphertext: Int32 = 16384 + 256
+
+/// The 5-byte record header: type ‖ legacy_version(0x0303) ‖ length. This is
+/// also the AEAD associated data for protected records (RFC 8446 §5.2).
+function recordHeader(contentTypeByte: Int32, length: Int32): Array<Uint8> =
+    [|
+        contentTypeByte.toUint8(),
+        0x03u8,
+        0x03u8,
+        (length >> 8).toUint8(),
+        length.toUint8(),
+    |]
+
+/// The per-record nonce: the static IV with the 64-bit big-endian record
+/// sequence number XORed into its trailing bytes (RFC 8446 §5.3).
+function computeNonce(iv: Nonce, seq: Int64): Nonce =
+    let nonce = iv.value.clone()
+    let n = nonce.length
+    let mutable i = 0
+    while i < 8 do
+        let shift = (8 * (7 - i)).toInt64()
+        let byteVal = (seq >> shift).toInt32().toUint8()
+        let idx = n - 8 + i
+        nonce.set(idx, nonce.get(idx) ^ byteVal)
+        i = i + 1
+    Nonce(nonce)
+
+class RecordLayer(
+    mutable aead: Option<AeadAlgorithm>,
+    mutable writeKeys: Option<TrafficKeys>,
+    mutable readKeys: Option<TrafficKeys>,
+    mutable writeSeq: Int64,
+    mutable readSeq: Int64
+) =
+    /// A record layer with no keys installed (everything in the clear).
+    public function make(): RecordLayer =
+        RecordLayer(None, None, None, 0i64, 0i64)
+
+    /// Install (or rotate) the write-direction traffic keys; resets write seq.
+    public function installWriteKeys(self, aead: AeadAlgorithm, keys: TrafficKeys): Unit =
+        self.aead = Some(aead)
+        self.writeKeys = Some(keys)
+        self.writeSeq = 0i64
+
+    /// Install (or rotate) the read-direction traffic keys; resets read seq.
+    public function installReadKeys(self, aead: AeadAlgorithm, keys: TrafficKeys): Unit =
+        self.aead = Some(aead)
+        self.readKeys = Some(keys)
+        self.readSeq = 0i64
+
+    /// Whether protected records can currently be written.
+    public property canWriteProtected(self): Bool =
+        match self.writeKeys with
+            case Some(_) => true
+            case None => false
+
+    /// Whether protected records can currently be read.
+    public property canReadProtected(self): Bool =
+        match self.readKeys with
+            case Some(_) => true
+            case None => false
+
+    /// Frame a plaintext fragment as an unprotected record (used before keys
+    /// exist and for the ChangeCipherSpec compatibility record).
+    public function framePlaintext(self, contentType: ContentType, fragment: Array<Uint8>): Array<Uint8> =
+        recordHeader(contentTypeCode(contentType), fragment.length).concat(fragment)
+
+    /// Seal `content` of type `contentType` into a protected record (outer type
+    /// `application_data`, RFC 8446 §5.2). Returns the full record bytes.
+    public function sealRecord(self, contentType: ContentType, content: ReadonlySlice<Uint8>): Result<Array<Uint8>, TlsError> =
+        match self.aead with
+            case None => Error(TlsError.InternalError("seal without keys"))
+            case Some(aead) =>
+                match self.writeKeys with
+                    case None => Error(TlsError.InternalError("seal without write keys"))
+                    case Some(keys) =>
+                        let inner = Array<Uint8>.fill(content.length + 1, 0u8)
+                        content.copyTo(inner[|0..content.length|])
+                        inner[content.length] = contentTypeCode(contentType).toUint8()
+                        let recordLen = inner.length + aead.tagSize
+                        let header = recordHeader(contentTypeCode(ContentType.ApplicationData), recordLen)
+                        let nonce = computeNonce(keys.iv, self.writeSeq)
+                        let ciphertext = aead.encrypt(keys.key, nonce, inner, header)
+                        self.writeSeq = self.writeSeq + 1i64
+                        Ok(header.concat(ciphertext))
+
+    /// Open a protected record, returning its inner content type and payload.
+    /// Tag mismatch or an all-padding plaintext is a fatal `BadRecordMac`.
+    public function openRecord(self, raw: RawRecord): Result<TlsRecord, TlsError> =
+        match self.aead with
+            case None => Error(TlsError.InternalError("open without keys"))
+            case Some(aead) =>
+                match self.readKeys with
+                    case None => Error(TlsError.InternalError("open without read keys"))
+                    case Some(keys) =>
+                        let header = recordHeader(raw.contentType, raw.fragment.length)
+                        let nonce = computeNonce(keys.iv, self.readSeq)
+                        match aead.decrypt(keys.key, nonce, raw.fragment, header) with
+                            case Error(_) => Error(TlsError.BadRecordMac)
+                            case Ok(plaintext) =>
+                                self.readSeq = self.readSeq + 1i64
+                                stripInner(plaintext)
+
+/// Strip trailing zero padding from a decrypted inner plaintext and split off
+/// the real content-type byte (RFC 8446 §5.2 TLSInnerPlaintext). No bytes are
+/// copied: the record keeps the whole plaintext and marks where the content
+/// ends, so a 16 KiB record costs an index scan rather than a fresh 16 KiB
+/// allocation per record.
+function stripInner(plaintext: Array<Uint8>): Result<TlsRecord, TlsError> =
+    let mutable end = plaintext.length - 1
+    while end >= 0 && plaintext.get(end) == 0u8 do
+        end = end - 1
+    if end < 0 then
+        Error(TlsError.UnexpectedMessage("record with no content type"))
+    else if end > maxPlaintext then
+        // The recovered TLSInnerPlaintext content MUST NOT exceed 2^14 bytes
+        // (RFC 8446 §5.4). A decrypted fragment claiming more is a record_overflow.
+        Error(TlsError.RecordOverflow)
+    else
+        let typeByte = plaintext.get(end).toInt32()
+        match contentTypeFromCode(typeByte) with
+            case None => Error(TlsError.UnexpectedMessage("unknown inner content type"))
+            case Some(ct) => Ok(TlsRecord { contentType = ct; payload = plaintext; contentLength = end })
+
+/// Pull the next complete raw record from `reader`, or `None` if fewer than a
+/// full record's bytes are buffered. Enforces the ciphertext size limit.
+function readRawRecord(reader: ByteReader): Result<Option<RawRecord>, TlsError> =
+    if reader.remaining < 5 then
+        Ok(None)
+    else
+        let typeByte = try reader.u8()
+        let major = try reader.u8()
+        let minor = try reader.u8()
+        let length = try reader.u16()
+        if length > maxCiphertext then
+            Error(TlsError.RecordOverflow)
+        else if reader.remaining < length then
+            Ok(None)
+        else
+            let fragment = try reader.bytes(length)
+            Ok(Some(RawRecord { contentType = typeByte; fragment = fragment }))
+
+/// A byte accumulator with a consumed-prefix cursor, for reassembling records
+/// (and handshake messages) that arrive split across transport chunks.
+///
+/// It exists because the obvious loop is quadratic: rebuilding the pending
+/// buffer with `buffer = buffer.concat(chunk)` copies everything buffered so
+/// far on every chunk, and slicing off the consumed prefix re-copies the whole
+/// remainder per record — a 16 KiB record arriving in TCP-sized chunks copied
+/// ~200 KiB to deliver 16 KiB. Here a chunk is copied into the free tail
+/// (doubling on growth, so n appended bytes cost O(n) copies in total), and
+/// consuming just advances `start`.
+class ChunkBuffer(
+    mutable data: Array<Uint8>,
+    /// Bytes before `start` have been consumed; the pending bytes are
+    /// `data[start, used)` and `data[used, length)` is free tail.
+    mutable start: Int32,
+    mutable used: Int32
+) =
+    /// An empty buffer. Allocates nothing until the first append.
+    public function make(): ChunkBuffer = ChunkBuffer(Array<Uint8>.empty(), 0, 0)
+
+    /// How many appended bytes have not been consumed yet.
+    public property pending(self): Int32 = self.used - self.start
+
+    /// The pending byte at `index` (relative to the unconsumed front).
+    public function byteAt(self, index: Int32): Uint8 =
+        self.data.get(self.start + index)
+
+    /// Append `chunk[offset, offset + count)`. Copies into the free tail when
+    /// there is room; otherwise reallocates to twice what is actually needed,
+    /// dropping the consumed prefix in the same move (following
+    /// `Console.appendChunk`) — so a reader that consumed almost everything
+    /// does not carry a huge array around.
+    public function appendSlice(self, chunk: Array<Uint8>, offset: Int32, count: Int32): Unit =
+        if self.data.length - self.used < count then
+            let pendingCount = self.used - self.start
+            let capacity = (pendingCount + count) * 2
+            let grown = Array<Uint8>.fill(capacity, 0u8)
+            self.data.copy(self.start, grown, 0, pendingCount)
+            self.data = grown
+            self.start = 0
+            self.used = pendingCount
+        chunk.copy(offset, self.data, self.used, count)
+        self.used = self.used + count
+
+    /// Append a whole chunk.
+    public function append(self, chunk: Array<Uint8>): Unit =
+        self.appendSlice(chunk, 0, chunk.length)
+
+    /// A copy of pending bytes `[from, to)` (relative to the unconsumed front).
+    public function slice(self, from: Int32, to: Int32): Array<Uint8> =
+        subArray(self.data, self.start + from, self.start + to)
+
+    /// Drop `count` bytes from the front. Resets the cursor once everything is
+    /// consumed, so the space is reused instead of growing forever.
+    public function consume(self, count: Int32): Unit =
+        self.start = self.start + count
+        if self.start >= self.used then
+            self.start = 0
+            self.used = 0
+
+/// The total framed length (4-byte header + uint24 body) of the handshake
+/// message at the buffer's front, or `None` while fewer than 4 header bytes
+/// are pending. The buffered twin of `handshakeMessageLength`.
+function pendingHandshakeLength(buffer: ChunkBuffer): Option<Int32> =
+    if buffer.pending < 4 then
+        None
+    else
+        let b1 = buffer.byteAt(1).toInt32()
+        let b2 = buffer.byteAt(2).toInt32()
+        let b3 = buffer.byteAt(3).toInt32()
+        Some(4 + ((b1 << 16) | (b2 << 8) | b3))
+
+test "tls record layer round-trips a protected handshake record" =
+    let key = SymmetricKey(Array<Uint8>.fill(16, 0x2au8))
+    let iv = Nonce(Array<Uint8>.fill(12, 0x07u8))
+    let keys = TrafficKeys { key = key; iv = iv }
+    let send = RecordLayer.make()
+    send.installWriteKeys(Aes128Gcm, keys)
+    let recv = RecordLayer.make()
+    recv.installReadKeys(Aes128Gcm, keys)
+
+    let backing = [|0xffu8, 0x14u8, 0x00u8, 0x00u8, 0x20u8, 0xaau8, 0xbbu8, 0xccu8, 0xeeu8|]
+    let content = backing.readonly[|1..8|]
+    let recordBytes = send.sealRecord(ContentType.Handshake, content).require
+    // outer type is application_data (23) and version is 0x0303
+    assert recordBytes.get(0) == 23u8
+    assert recordBytes.get(1) == 0x03u8
+
+    let reader = ByteReader.make(recordBytes)
+    let raw = readRawRecord(reader).require.require
+    let opened = recv.openRecord(raw).require
+    assert opened.contentLength == content.length
+    let mutable i = 0
+    let mutable ok = true
+    while i < content.length do
+        if opened.payload.get(i) != content.get(i) then ok = false
+        i = i + 1
+    assert ok
+    match opened.contentType with
+        case Handshake => assert true
+        case _ => assert false
+
+test "tls record layer sequence numbers advance independently" =
+    let key = SymmetricKey(Array<Uint8>.fill(32, 0x11u8))
+    let iv = Nonce(Array<Uint8>.fill(12, 0x22u8))
+    let keys = TrafficKeys { key = key; iv = iv }
+    let send = RecordLayer.make()
+    send.installWriteKeys(Aes256Gcm, keys)
+    let recv = RecordLayer.make()
+    recv.installReadKeys(Aes256Gcm, keys)
+
+    let r0 = send.sealRecord(ContentType.ApplicationData, [|0x01u8, 0x02u8|].readonly).require
+    let r1 = send.sealRecord(ContentType.ApplicationData, [|0x03u8, 0x04u8|].readonly).require
+    // distinct nonces (seq 0 vs 1) ⇒ distinct ciphertext for distinct content
+    let raw0 = readRawRecord(ByteReader.make(r0)).require.require
+    let raw1 = readRawRecord(ByteReader.make(r1)).require.require
+    let p0 = recv.openRecord(raw0).require
+    let p1 = recv.openRecord(raw1).require
+    assert p0.payload.get(0) == 0x01u8
+    assert p1.payload.get(0) == 0x03u8
+
+test "tls record layer rejects a tampered record with BadRecordMac" =
+    let key = SymmetricKey(Array<Uint8>.fill(16, 0x33u8))
+    let iv = Nonce(Array<Uint8>.fill(12, 0x44u8))
+    let keys = TrafficKeys { key = key; iv = iv }
+    let send = RecordLayer.make()
+    send.installWriteKeys(Aes128Gcm, keys)
+    let recv = RecordLayer.make()
+    recv.installReadKeys(Aes128Gcm, keys)
+
+    let recordBytes = send.sealRecord(ContentType.Handshake, [|0xdeu8, 0xadu8|].readonly).require
+    // flip a ciphertext byte
+    recordBytes.set(6, recordBytes.get(6) ^ 0x01u8)
+    let raw = readRawRecord(ByteReader.make(recordBytes)).require.require
+    assert recv.openRecord(raw).isError
+
+test "tls ChunkBuffer keeps bytes in order across growth and consumption" =
+    let buffer = ChunkBuffer.make()
+    let mutable written = 0
+    while written < 300 do
+        buffer.append(Array<Uint8>.fill(7, (written % 251).toUint8()))
+        written = written + 7
+    assert buffer.pending == written
+    assert buffer.byteAt(0) == 0u8
+    assert buffer.byteAt(7) == 7u8
+    buffer.consume(7)
+    assert buffer.pending == written - 7
+    assert buffer.byteAt(0) == 7u8
+    let s = buffer.slice(0, 7)
+    assert s.length == 7
+    assert s.get(0) == 7u8
+    // appends after a consume land after the pending bytes, not over them
+    buffer.append([|0xffu8|])
+    assert buffer.byteAt(buffer.pending - 1) == 0xffu8
+
+test "tls ChunkBuffer resets once fully consumed" =
+    let buffer = ChunkBuffer.make()
+    buffer.append([|1u8, 2u8, 3u8|])
+    buffer.consume(3)
+    assert buffer.pending == 0
+    buffer.append([|9u8|])
+    assert buffer.byteAt(0) == 9u8
+
+test "tls ChunkBuffer appendSlice copies only the requested window" =
+    let buffer = ChunkBuffer.make()
+    buffer.appendSlice([|1u8, 2u8, 3u8, 4u8, 5u8|], 1, 3)
+    assert buffer.pending == 3
+    assert buffer.byteAt(0) == 2u8
+    assert buffer.byteAt(2) == 4u8
+
+test "tls pendingHandshakeLength reads the uint24 header at the front" =
+    let buffer = ChunkBuffer.make()
+    buffer.append([|0x01u8, 0x00u8|])
+    assert pendingHandshakeLength(buffer).isNone
+    buffer.append([|0x00u8, 0x05u8|])
+    assert pendingHandshakeLength(buffer).require == 9
+
+test "tls readRawRecord returns None on a partial record" =
+    // header claims 10 bytes but only 2 follow
+    let partial = [|23u8, 0x03u8, 0x03u8, 0x00u8, 0x0au8, 0xaau8, 0xbbu8|]
+    match readRawRecord(ByteReader.make(partial)).require with
+        case None => assert true
+        case Some(_) => assert false

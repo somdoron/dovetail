@@ -1,0 +1,268 @@
+package standard.time
+
+/// Represents a point on the timeline, measured as seconds and nanoseconds from the Unix epoch.
+@derive(Equatable)
+public record Instant =
+    /// Seconds since the Unix epoch (1970-01-01T00:00:00Z).
+    epochSecond: Int64
+    /// Nanosecond adjustment within the second (0 to 999,999,999).
+    nano: Int32
+
+function instantNormalize(seconds: Int64, nanos: Int32): Instant =
+    let mutable s = seconds
+    let mutable n = nanos
+    if n >= 1000000000 then
+        s = s + (n / 1000000000).toInt64()
+        n = n % 1000000000
+    if n < 0 then
+        let borrow = (-n + 999999999) / 1000000000
+        s = s - borrow.toInt64()
+        n = n + borrow * 1000000000
+    Instant { epochSecond = s; nano = n }
+
+/// Factory methods and operations for Instant.
+module Instant =
+    /// Creates an Instant from seconds since the Unix epoch.
+    public function ofEpochSecond(s: Int64): Instant =
+        Instant { epochSecond = s; nano = 0 }
+
+    /// Creates an Instant from milliseconds since the Unix epoch.
+    public function ofEpochMilli(ms: Int64): Instant =
+        let sec = ms / 1000i64
+        let ns = ((ms % 1000i64) * 1000000i64).toInt32()
+        instantNormalize(sec, ns)
+
+    /// Returns a new Instant that is this instant plus the given Duration.
+    public function plus(self, d: Duration): Instant =
+        instantNormalize(self.epochSecond + d.seconds, self.nano + d.nanos)
+
+    /// Returns a new Instant that is this instant minus the given Duration.
+    public function minus(self, d: Duration): Instant =
+        instantNormalize(self.epochSecond - d.seconds, self.nano - d.nanos)
+
+    /// Returns the Duration between this instant and the other instant.
+    public function until(self, other: Instant): Duration =
+        let otherD = Duration { seconds = other.epochSecond; nanos = other.nano }
+        let selfD = Duration { seconds = self.epochSecond; nanos = self.nano }
+        otherD.minus(selfD)
+
+    /// Converts this Instant to a LocalDateTime at the given TimeZone.
+    /// For IANA zones this honors DST and historical transitions via
+    /// `tz.offsetAt(self.epochSecond)`.
+    public function toLocalDateTime(self, tz: TimeZone): LocalDateTime =
+        let offsetSec = tz.offsetAt(self.epochSecond)
+        let (year, month, day, hour, minute, second) =
+            instantToYmdhms(self.epochSecond, offsetSec)
+        let date = LocalDate.of(year, month, day)
+        let time = LocalTime.ofNano(hour, minute, second, self.nano)
+        LocalDateTime.of(date, time)
+
+    /// Converts this Instant to a LocalDate at the given TimeZone.
+    public function toLocalDate(self, tz: TimeZone): LocalDate =
+        self.toLocalDateTime(tz).date
+
+    /// Converts this Instant to a LocalTime at the given TimeZone.
+    public function toLocalTime(self, tz: TimeZone): LocalTime =
+        self.toLocalDateTime(tz).time
+
+    /// Converts this Instant to a YearMonth at the given TimeZone.
+    public function toYearMonth(self, tz: TimeZone): YearMonth =
+        let date = self.toLocalDate(tz)
+        YearMonth { year = date.year; month = date.month }
+
+    /// Converts this Instant to a Year at the given TimeZone.
+    public function toYear(self, tz: TimeZone): Year =
+        self.toLocalDate(tz).year
+
+    /// Converts this Instant to a ZonedDateTime at the given TimeZone.
+    public function toZonedDateTime(self, tz: TimeZone): ZonedDateTime =
+        ZonedDateTime.of(self.toLocalDateTime(tz), tz)
+
+// Howard Hinnant's civil-from-days algorithm. The shift +719468 re-bases the epoch
+// from 1970-01-01 to 0000-03-01 so the year is a multiple of 400; 146097 is the
+// number of days in a 400-year cycle. Returns (year, month, day, hour, minute, second).
+function instantToYmdhms(epochSecond: Int64, offsetSeconds: Int32): (Int32, Int32, Int32, Int32, Int32, Int32) =
+    let localSec = epochSecond + offsetSeconds.toInt64()
+    let mutable epochDay = localSec / 86400i64
+    let mutable secOfDay = localSec - epochDay * 86400i64
+    if secOfDay < 0i64 then
+        epochDay = epochDay - 1i64
+        secOfDay = secOfDay + 86400i64
+    let sod = secOfDay.toInt32()
+    let hour = sod / 3600
+    let minute = (sod / 60) % 60
+    let second = sod % 60
+    let z = epochDay.toInt32() + 719468
+    let era = if z >= 0 then z / 146097 else (z - 146096) / 146097
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let y = yoe + era * 400
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d = doy - (153 * mp + 2) / 5 + 1
+    let m = if mp < 10 then mp + 3 else mp - 9
+    let year = if m <= 2 then y + 1 else y
+    (year, m, d, hour, minute, second)
+
+implement Comparable for Instant =
+    /// Compares two Instants chronologically.
+    public function compare(self: Instant, other: Instant): Ordering =
+        if self.epochSecond < other.epochSecond then Ordering.Less
+        else if self.epochSecond > other.epochSecond then Ordering.Greater
+        else if self.nano < other.nano then Ordering.Less
+        else if self.nano > other.nano then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for Instant =
+    /// Formats this Instant as epoch seconds with optional nanoseconds (e.g. "42s").
+    public function format(self: Instant): String =
+        if self.nano == 0 then self.epochSecond.format() ++ "s"
+        else self.epochSecond.format() ++ "." ++ padInstantNano(self.nano) ++ "s"
+
+function padInstantNano(n: Int32): String =
+    let s = n.format()
+    let len = s.length
+    if len >= 9 then s
+    else
+        let pad = 9 - len
+        let mutable result = ""
+        let mutable i = 0
+        while i < pad do
+            result = result ++ "0"
+            i = i + 1
+        result ++ s
+
+test "Instant ofEpochSecond" =
+    let i = Instant.ofEpochSecond(1000i64)
+    assert i.epochSecond == 1000i64
+    assert i.nano == 0
+
+test "Instant ofEpochMilli" =
+    let i = Instant.ofEpochMilli(1500i64)
+    assert i.epochSecond == 1i64
+    assert i.nano == 500000000
+
+test "Instant plus" =
+    let i = Instant.ofEpochSecond(100i64)
+    let d = Duration.ofSeconds(50i64)
+    let result = i.plus(d)
+    assert result.epochSecond == 150i64
+
+test "Instant minus" =
+    let i = Instant.ofEpochSecond(100i64)
+    let d = Duration.ofSeconds(30i64)
+    let result = i.minus(d)
+    assert result.epochSecond == 70i64
+
+test "Instant until" =
+    let a = Instant.ofEpochSecond(100i64)
+    let b = Instant.ofEpochSecond(150i64)
+    let d = a.until(b)
+    assert d.seconds == 50i64
+
+test "Instant equals" =
+    let a = Instant.ofEpochSecond(100i64)
+    let b = Instant.ofEpochSecond(100i64)
+    let c = Instant.ofEpochSecond(200i64)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "Instant compare" =
+    let a = Instant.ofEpochSecond(50i64)
+    let b = Instant.ofEpochSecond(100i64)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "Instant display no nanos" =
+    let i = Instant.ofEpochSecond(42i64)
+    assert i.format() == "42s"
+
+test "Instant ofEpochMilli zero" =
+    let i = Instant.ofEpochMilli(0i64)
+    assert i.epochSecond == 0i64
+    assert i.nano == 0
+
+test "Instant plus with nanos" =
+    let i = Instant.ofEpochMilli(500i64)
+    let d = Duration.ofMillis(700i64)
+    let result = i.plus(d)
+    assert result.epochSecond == 1i64
+    assert result.nano == 200000000
+
+test "Instant toLocalDateTime epoch at UTC" =
+    let i = Instant.ofEpochSecond(0i64)
+    let dt = i.toLocalDateTime(TimeZone.utc)
+    assert dt.date.year.value == 1970
+    assert dt.date.month.value == 1
+    assert dt.date.day.value == 1
+    assert dt.time.hour == 0
+    assert dt.time.minute == 0
+    assert dt.time.second == 0
+
+test "Instant toLocalDate leap day" =
+    // 2020-02-29T00:00:00Z = 1582934400
+    let i = Instant.ofEpochSecond(1582934400i64)
+    let d = i.toLocalDate(TimeZone.utc)
+    assert d.year.value == 2020
+    assert d.month.value == 2
+    assert d.day.value == 29
+
+test "Instant toLocalDateTime year boundary at UTC" =
+    // 2024-12-31T23:59:59Z = 1735689599
+    let i = Instant.ofEpochSecond(1735689599i64)
+    let dt = i.toLocalDateTime(TimeZone.utc)
+    assert dt.date.year.value == 2024
+    assert dt.date.month.value == 12
+    assert dt.date.day.value == 31
+    assert dt.time.hour == 23
+    assert dt.time.minute == 59
+    assert dt.time.second == 59
+
+test "Instant toLocalDateTime EST offset crosses day boundary" =
+    // 2024-01-02T03:00:00Z at EST (-5h) = 2024-01-01T22:00:00
+    let i = Instant.ofEpochSecond(1704164400i64)
+    let est = TimeZone.of("EST", -18000)
+    let dt = i.toLocalDateTime(est)
+    assert dt.date.year.value == 2024
+    assert dt.date.month.value == 1
+    assert dt.date.day.value == 1
+    assert dt.time.hour == 22
+
+test "Instant toLocalDateTime IST positive offset" =
+    // 2024-06-15T12:00:00Z at IST (+5:30) = 2024-06-15T17:30:00
+    let i = Instant.ofEpochSecond(1718452800i64)
+    let ist = TimeZone.of("IST", 19800)
+    let dt = i.toLocalDateTime(ist)
+    assert dt.date.year.value == 2024
+    assert dt.date.month.value == 6
+    assert dt.date.day.value == 15
+    assert dt.time.hour == 17
+    assert dt.time.minute == 30
+
+test "Instant toYearMonth and toYear" =
+    let i = Instant.ofEpochSecond(1718452800i64)
+    let ym = i.toYearMonth(TimeZone.utc)
+    assert ym.year.value == 2024
+    assert ym.month.value == 6
+    let y = i.toYear(TimeZone.utc)
+    assert y.value == 2024
+
+test "Instant toLocalTime preserves nanos" =
+    let i = Instant { epochSecond = 1718452800i64; nano = 123456789 }
+    let t = i.toLocalTime(TimeZone.utc)
+    assert t.hour == 12
+    assert t.minute == 0
+    assert t.second == 0
+    assert t.nano == 123456789
+
+test "Instant toZonedDateTime preserves zone" =
+    let i = Instant.ofEpochSecond(1718452800i64)
+    let cet = TimeZone.of("CET", 3600)
+    let zdt = i.toZonedDateTime(cet)
+    assert zdt.zone.id == "CET"
+    assert zdt.zone.offsetSeconds == 3600
+    assert zdt.dateTime.date.year.value == 2024
+    assert zdt.dateTime.date.month.value == 6
+    assert zdt.dateTime.date.day.value == 15
+    assert zdt.dateTime.time.hour == 13

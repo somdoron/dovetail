@@ -1,0 +1,165 @@
+package test
+
+import standard.io.log.Logger
+import standard.io.log.LogLevel
+import standard.io.log.LogRecord
+import standard.io.log.LogField
+import standard.io.log.LogSpan
+import standard.io.log.MemorySink
+import standard.io.Async
+
+// ── withName: dotted sub-naming ───────────────────────────────────────
+
+test "Logger.withName sets name on a fresh logger" =
+    let log = Logger.make(MemorySink.make()).withName("http")
+    assert log.name == "http"
+
+test "Logger.withName dots into existing name" =
+    let log = Logger.make(MemorySink.make()).withName("http").withName("server")
+    assert log.name == "http.server"
+
+// ── withMinLevel ──────────────────────────────────────────────────────
+
+test "Logger.withMinLevel adjusts threshold" =
+    let log = Logger.make(MemorySink.make()).withMinLevel(LogLevel.Warn)
+    assert log.minLevel == LogLevel.Warn
+
+// ── withField / withLogField / withFields ─────────────────────────────
+
+test "Logger.withField appends a Display-formatted field" =
+    let log = Logger.make(MemorySink.make())
+        .withField("userId", 42i32)
+        .withField("region", "eu-west")
+    match log.fields with
+        case [first, second] =>
+            assert first.key == "userId"
+            assert first.value == "42"
+            assert second.key == "region"
+            assert second.value == "eu-west"
+        case _ => assert false
+
+test "Logger.withLogField appends a pre-built LogField" =
+    let f = LogField.make("trace", "abc-123")
+    let log = Logger.make(MemorySink.make()).withLogField(f)
+    match log.fields with
+        case [only] =>
+            assert only.key == "trace"
+            assert only.value == "abc-123"
+        case _ => assert false
+
+test "Logger.withFields appends many" =
+    let fs: List<LogField> = [
+        LogField.make("a", 1i32),
+        LogField.make("b", "two"),
+    ]
+    let log = Logger.make(MemorySink.make()).withFields(fs)
+    assert log.fields.length == 2
+
+// ── withSpan / withSpanNamed ──────────────────────────────────────────
+
+test "Logger.withSpan appends a pre-built span" =
+    let s = LogSpan.make("data-access").withField("db", "orders")
+    let log = Logger.make(MemorySink.make()).withSpan(s)
+    match log.spans with
+        case [only] =>
+            assert only.name == "data-access"
+            assert only.fields.length == 1
+        case _ => assert false
+
+test "Logger.withSpanNamed adds an empty-fields span" =
+    let log = Logger.make(MemorySink.make()).withSpanNamed("handle")
+    match log.spans with
+        case [only] =>
+            assert only.name == "handle"
+            assert only.fields.isEmpty
+        case _ => assert false
+
+// ── Emission via MemorySink ───────────────────────────────────────────
+
+test "Logger.info emits a record at Info" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink)
+    log.info("hello").run()
+    match sink.snapshot() with
+        case [only] =>
+            assert only.level == LogLevel.Info
+            assert only.message == "hello"
+        case _ => assert false
+
+test "Logger.warn / error emit at higher levels" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink)
+    log.warn("careful").run()
+    log.error("ouch").run()
+    match sink.snapshot() with
+        case [first, second] =>
+            assert first.level == LogLevel.Warn
+            assert second.level == LogLevel.Error
+        case _ => assert false
+
+test "Logger drops records below minLevel" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink).withMinLevel(LogLevel.Warn)
+    log.info("ignored").run()
+    log.debug("also ignored").run()
+    log.warn("kept").run()
+    match sink.snapshot() with
+        case [only] => assert only.message == "kept"
+        case _ => assert false
+
+test "Logger emits attached fields and spans" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink)
+        .withName("svc")
+        .withField("userId", 7i32)
+        .withSpanNamed("op")
+    log.info("done").run()
+    match sink.snapshot() with
+        case [r] =>
+            assert r.loggerName == "svc"
+            match r.fields with
+                case [only] =>
+                    assert only.key == "userId"
+                    assert only.value == "7"
+                case _ => assert false
+            match r.spans with
+                case [only] => assert only.name == "op"
+                case _ => assert false
+        case _ => assert false
+
+// ── Lazy message evaluation ───────────────────────────────────────────
+
+// `ByName<String>` should NOT be forced when the level is filtered out.
+// We prove this by side-effecting a mutable counter inside the expression
+// the caller passes, and asserting it stays at 0 across many filtered calls.
+
+class Counter(public mutable n: Int32) =
+    public function tick(self): Int32 =
+        self.n = self.n + 1
+        self.n
+
+    public function make(): Counter = Counter(0)
+
+function buildMessage(c: Counter): String =
+    c.tick()
+    "noisy"
+
+test "Logger does not force ByName message when level is filtered" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink).withMinLevel(LogLevel.Error)
+    let counter = Counter.make()
+    log.info(buildMessage(counter)).run()
+    log.debug(buildMessage(counter)).run()
+    log.warn(buildMessage(counter)).run()
+    assert counter.n == 0
+    assert sink.snapshot().length == 0
+
+test "Logger forces ByName message exactly once when level passes" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink)
+    let counter = Counter.make()
+    log.info(buildMessage(counter)).run()
+    assert counter.n == 1
+    match sink.snapshot() with
+        case [only] => assert only.message == "noisy"
+        case _ => assert false

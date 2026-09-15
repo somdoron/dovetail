@@ -1,0 +1,133 @@
+package standard.prelude
+
+@derive(Equatable)
+public enum Ordering =
+    Less
+    Equal
+    Greater
+
+public trait Comparable =
+    function compare(self: Self, other: Self): Ordering
+
+implement Comparable for Int8 =
+    public function compare(self: Int8, other: Int8): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Int16 =
+    public function compare(self: Int16, other: Int16): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Int32 =
+    public function compare(self: Int32, other: Int32): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Int64 =
+    public function compare(self: Int64, other: Int64): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Uint8 =
+    public function compare(self: Uint8, other: Uint8): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Uint16 =
+    public function compare(self: Uint16, other: Uint16): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Uint32 =
+    public function compare(self: Uint32, other: Uint32): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Uint64 =
+    public function compare(self: Uint64, other: Uint64): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Float32 =
+    public function compare(self: Float32, other: Float32): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Float64 =
+    public function compare(self: Float64, other: Float64): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for Char =
+    public function compare(self: Char, other: Char): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+implement Comparable for String =
+    public function compare(self: String, other: String): Ordering =
+        if self == other then Ordering.Equal
+        else if self < other then Ordering.Less
+        else Ordering.Greater
+
+test "Ordering equality same" =
+    assert Ordering.Less == Ordering.Less
+    assert Ordering.Equal == Ordering.Equal
+    assert Ordering.Greater == Ordering.Greater
+
+test "Ordering inequality" =
+    let eq = Ordering.Less == Ordering.Greater
+    assert eq == false
+    let eq2 = Ordering.Less == Ordering.Equal
+    assert eq2 == false
+
+implement <T> Comparable for Array<T> where T: Comparable =
+    public function compare(self: Array<T>, other: Array<T>): Ordering =
+        let mutable i = 0
+        let mutable result = Ordering.Equal
+        while i < self.length do
+            if i >= other.length then
+                result = Ordering.Greater
+                break
+            let c = self.get(i).compare(other.get(i))
+            if c != Ordering.Equal then
+                result = c
+                break
+            i = i + 1
+        if result != Ordering.Equal then result
+        else if self.length < other.length then Ordering.Less
+        else Ordering.Equal
+
+test "Comparable Int32 returns Ordering" =
+    assert 1i32.compare(2i32) == Ordering.Less
+    assert 2i32.compare(2i32) == Ordering.Equal
+    assert 3i32.compare(2i32) == Ordering.Greater
+
+test "Comparable String returns Ordering" =
+    assert "abc".compare("def") == Ordering.Less
+    assert "abc".compare("abc") == Ordering.Equal
+    assert "def".compare("abc") == Ordering.Greater
+
+
+implement <A, B> Comparable for (A, B) where A: Comparable, B: Comparable =
+    public function compare(self: (A, B), other: (A, B)): Ordering =
+        match self.init.compare(other.init) with
+            case Ordering.Equal => self.last.compare(other.last)
+            case result => result
+
+implement <T, U> Comparable for T ~ U where T: Tuple, T: Comparable, U: Comparable =
+    public function compare(self: T ~ U, other: T ~ U): Ordering =
+        match self.init.compare(other.init) with
+            case Ordering.Equal => self.last.compare(other.last)
+            case result => result

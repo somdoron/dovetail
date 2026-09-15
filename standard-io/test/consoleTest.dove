@@ -1,0 +1,95 @@
+package test
+
+import standard.io.Console
+import standard.io.ConsoleError
+import standard.io.Async
+import standard.io.Fiber
+import standard.io.Promise
+
+// `ConsoleError` Display formatting — covers each variant.
+
+test "ConsoleError.PipeBroken Display" =
+    let e: ConsoleError = ConsoleError.PipeBroken
+    assert e.format() == "broken pipe"
+
+test "ConsoleError.InvalidEncoding Display" =
+    let e: ConsoleError = ConsoleError.InvalidEncoding
+    assert e.format() == "invalid encoding"
+
+test "ConsoleError.Other Display includes code" =
+    let e: ConsoleError = ConsoleError.Other(42)
+    assert e.format() == "console error 42"
+
+// Smoke tests — exercise the code path end-to-end. Output appears in the test
+// runner's stdout/stderr (it inherits stdio). We can't capture inside Dovetail;
+// success is "compiles + runs without panic". Same fidelity as
+// `wasi/test/cli_test.dove`'s blocking-console tests.
+
+// A payload past the host's stdout buffer comes back BLOCKED and has to be
+// finished in several chunks. Through the fiber runtime that parks only the
+// writing fiber; the runtime's own blocking stdio path would park the whole
+// component (see `emit_flush_write`), which is why `Console` no longer uses it.
+
+@timeout(15000)
+test "Console.write: a payload past the host stdout buffer completes" =
+    // 64 KiB — past both the host's stdout buffer and the scratch arena.
+    let payload = "x".repeat(65536i32)
+    let program: Async<Unit, ConsoleError> = Console.write(payload ++ "\n")
+    program.run()
+
+test "Console.write smoke" =
+    let program: Async<Unit, ConsoleError> = Console.write("[console_test] write\n")
+    program.run()
+
+test "Console.writeLine smoke" =
+    let program: Async<Unit, ConsoleError> = Console.writeLine("[console_test] writeLine")
+    program.run()
+
+test "Console.errorWrite smoke" =
+    let program: Async<Unit, ConsoleError> = Console.errorWrite("[console_test] errorWrite\n")
+    program.run()
+
+test "Console.errorWriteLine smoke" =
+    let program: Async<Unit, ConsoleError> = Console.errorWriteLine("[console_test] errorWriteLine")
+    program.run()
+
+// --- the two stdout paths coexist ---------------------------------------------
+//
+// `Console` and the compiler-owned blocking path (`debug`, panic reporting) both
+// write to stdout, and p3 allows exactly one outstanding operation per stream
+// end, so they open SEPARATE streams. These two tests interleave the paths
+// end-to-end.
+//
+// They do NOT pin that separation by themselves: the test runner inherits stdio,
+// and an inherited stdout consumes every write synchronously, so no write is
+// ever outstanding when the other path starts one. What the split protects
+// against only appears on a host that can exert backpressure — see
+// `dovetail/tests/stdio_blocking.rs`, which supplies one.
+
+test "Console.write and debug interleave" =
+    let before: Async<Unit, ConsoleError> = Console.write("[console_test] before debug\n")
+    before.run()
+    debug("[console_test] debug between two Console writes")
+    let after: Async<Unit, ConsoleError> = Console.write("[console_test] after debug\n")
+    after.run()
+
+/// Signal `ready`, then write. Completing the promise does not preempt this
+/// fiber — it only makes the waiter runnable — so this fiber runs on until its
+/// write either finishes or parks, and whoever awaited `ready` resumes behind it.
+async function writeThenSignal(ready: Promise<Unit, Never>): Async<Unit, Never> =
+    await ready.complete(())
+    await Console.write("[console_test] from the forked writer\n").fold(
+        (_: ConsoleError) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+async function debugBehindAForkedWrite(): Async<Unit, Never> =
+    let ready: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let writer: Fiber<Unit, Never> = await writeThenSignal(ready).fork()
+    await ready.awaitPromise()
+    debug("[console_test] debug behind a forked Console write")
+    await writer.join()
+
+@timeout(15000)
+test "debug fired behind a forked Console write does not trap" =
+    debugBehindAForkedWrite().run()

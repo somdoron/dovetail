@@ -1,0 +1,135 @@
+package standard.io.net
+
+import standard.wasi.net.NetworkError
+import standard.wasi.net.IpAddressFamily
+import standard.wasi.net.SocketAddress
+import standard.wasi.udp.UdpSocket
+import standard.io.Async
+import standard.io.Resource
+
+/// A bound UDP endpoint.
+///
+/// Under WASI p3 this is just the socket: `send`/`receive` are plain async
+/// funcs carrying one datagram each, so there are no incoming/outgoing
+/// datagram-stream resources and no readiness pollables to cache (both of which
+/// the p2 endpoint had to hold). Acquired via `Udp.bind` / `Udp.connect`.
+public record UdpEndpoint =
+    socket: UdpSocket
+    /// True when built by `Udp.connect`: `send` then omits the destination and
+    /// `receive` only yields datagrams from the connected peer.
+    connected: Bool
+
+module UdpEndpoint =
+
+    /// The address this endpoint is bound to, formatted as "host:port".
+    public function localAddress(self): Async<String, NetError> =
+        netCall<SocketAddress>(() => self.socket.localAddress()).map<String>((a: SocketAddress) => formatWasiSocketAddress(a))
+
+    /// The connected peer (for endpoints from `Udp.connect`), or `None` for
+    /// unconnected ones.
+    public async function remoteAddress(self): Async<Option<String>, NetError> =
+        let result = await Async.thunk(() => self.socket.remoteAddress())
+        match result with
+            case Ok(wasiAddress) => Some(formatWasiSocketAddress(wasiAddress))
+            case Error(NetworkError.InvalidState) => None
+            case Error(error) =>
+                await Async<Option<String>, NetError>.fail(mapWasiNetError(error))
+
+    /// Receive one datagram, suspending until one arrives. The returned
+    /// `Datagram.remoteAddress` is always `Some` (the sender).
+    ///
+    /// p3 delivers a single datagram per call — the p2 `receive(maxResults)`
+    /// batch form has no equivalent.
+    public async function receive(self): Async<Datagram, NetError> =
+        let wasiDatagram = await udpReceiveAsync(self.socket)
+        Datagram {
+            data = wasiDatagram.data
+            remoteAddress = Some(formatWasiSocketAddress(wasiDatagram.remoteAddress))
+        }
+
+    /// Send one datagram. Its `remoteAddress` must be `Some(addr)` on an
+    /// unconnected endpoint and is normally `None` on a connected one (where
+    /// the connected peer is the destination).
+    public async function send(self, datagram: Datagram): Async<Unit, NetError> =
+        let wasiRemote = match datagram.remoteAddress with
+            case Some(addressString) =>
+                match parseSocketAddressString(addressString) with
+                    case Some(parsed) => Some(parsed)
+                    case None => await Async.fail(NetError.InvalidAddress)
+            case None =>
+                if self.connected then
+                    None
+                else
+                    await Async.fail(NetError.InvalidArgument)
+        await udpSendAsync(self.socket, datagram.data, wasiRemote)
+
+    // --- Socket options -----------------------------------------------------
+    //
+    // The same three knobs TCP exposes, and with the same caveats: they are
+    // synchronous under the hood and `Async` only for uniformity, and a host may
+    // answer `NetError.NotSupported` for any of them.
+
+    /// IP time-to-live / hop limit for outbound datagrams. Setting 0 fails.
+    public function unicastHopLimit(self): Async<Int32, NetError> =
+        netCall<Int32>(() => self.socket.unicastHopLimit())
+
+    public function setUnicastHopLimit(self, value: Int32): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setUnicastHopLimit(value))
+
+    /// Kernel receive buffer size, in bytes. Hosts treat it as a cap and may
+    /// clamp or round, so a value read back need not equal the value set.
+    public function receiveBufferSize(self): Async<Int64, NetError> =
+        netCall<Int64>(() => self.socket.receiveBufferSize())
+
+    public function setReceiveBufferSize(self, value: Int64): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setReceiveBufferSize(value))
+
+    /// Kernel send buffer size, in bytes. Same caveat as the receive side.
+    public function sendBufferSize(self): Async<Int64, NetError> =
+        netCall<Int64>(() => self.socket.sendBufferSize())
+
+    public function setSendBufferSize(self, value: Int64): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setSendBufferSize(value))
+
+module Udp =
+
+    /// Bind an unconnected UDP endpoint to `address` (formatted as "host:port";
+    /// a zero port picks a free one). Datagrams sent through this endpoint must
+    /// carry `remoteAddress = Some(addr)`.
+    public function bind(address: String): Resource<UdpEndpoint, NetError> =
+        udpSocketResource(IpAddressFamily.Ipv4)
+            .andThen<UdpEndpoint>((socket: UdpSocket) => bindUdpResource(socket, address, None))
+
+    /// Bind to `local` and restrict the endpoint to a single `remote`.
+    /// Datagrams sent without an explicit `remoteAddress` go to `remote`.
+    public function connect(local: String, remote: String): Resource<UdpEndpoint, NetError> =
+        udpSocketResource(IpAddressFamily.Ipv4)
+            .andThen<UdpEndpoint>((socket: UdpSocket) => bindUdpResource(socket, local, Some(remote)))
+
+// --- Internal Resource builder --------------------------------------------
+
+/// Bind `socket` to `local` and, when `remote` is given, associate it with that
+/// peer. Both are synchronous under p3, so this is a plain acquire with a
+/// no-op release — the enclosing `udpSocketResource` closes the socket.
+function bindUdpResource(
+    socket: UdpSocket,
+    local: String,
+    remote: Option<String>
+): Resource<UdpEndpoint, NetError> =
+    let acquire: () => Async<UdpEndpoint, NetError> = async () =>
+        let wasiLocal = match parseSocketAddressString(local) with
+            case Some(parsed) => parsed
+            case None => await Async.fail(NetError.InvalidAddress)
+        let bindResult = await Async.thunk(() => socket.bind(wasiLocal))
+        await Async.fromResult(bindResult.mapError(mapWasiNetError))
+        let isConnected = match remote with
+            case Some(remoteString) =>
+                let wasiRemote = match parseSocketAddressString(remoteString) with
+                    case Some(parsed) => parsed
+                    case None => await Async.fail(NetError.InvalidAddress)
+                let connectResult = await Async.thunk(() => socket.connect(wasiRemote))
+                await Async.fromResult(connectResult.mapError(mapWasiNetError))
+                true
+            case None => false
+        UdpEndpoint { socket = socket; connected = isConnected }
+    Resource.make(acquire, (_: UdpEndpoint) => Async.succeed(()))

@@ -1,0 +1,105 @@
+package standard.io
+
+import standard.time.Duration
+
+function nestedProducerCleanup(replacePanic: Bool): Unit =
+    let mutable pulling = false
+    let mutable released = false
+    let childPull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => async do
+        pulling = true
+        await Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
+        1
+    let childRelease: (Unit) => Async<Unit, Never> = (_: Unit) => async do
+        released = true
+        await Async<Unit, Never>.failPanic("nested release")
+    let outerPull: (Unit) => Async<Int32, Option<String>> = (_: Unit) => async do
+        let acquire: Async<Unit, String> = Async.succeed(())
+        let child = await Producer<Int32, String>.make(acquire, childPull, childRelease)
+            .mapError((error: String) => Some(error))
+        await child.next().foldCause<Int32, Option<String>>(
+            (cause: Cause<Option<String>>) =>
+                if replacePanic then Async<Int32, Option<String>>.failPanic("replacement release")
+                else Async.fromCause(cause)
+            ,
+            (value: Int32) => Async.succeed(value))
+    let worker: Async<Unit, String> = async do
+        let acquire: Async<Unit, String> = Async.succeed(())
+        let outer = await Producer<Int32, String>.make(acquire, outerPull, (_: Unit) => Async.succeed(()))
+        await producerValue(outer.next())
+        ()
+    let program: Async<Unit, Never> = async do
+        let fiber = await worker.forkBackground()
+        while !pulling do await Async.yieldNow()
+        await fiber.interrupt()
+        await fiber.join().foldCause<Unit, Never>(
+            (cause: Cause<String>) => Async.thunk(() => match cause with
+                case Cause.Panicked(message, _) => assert message == (if replacePanic then "replacement release" else "nested release")
+                case _ => panic "lost nested cleanup panic"
+            ),
+            (_: Unit) => Async.thunk(() => panic "expected cleanup panic"))
+        assert released
+    program.run()
+
+@timeout(5000)
+test "Producer: nested pending pull preserves shutdown cleanup panic" =
+    for replacePanic in [false, true] do nestedProducerCleanup(replacePanic)
+
+test "Producer: observed cleanup does not label a later body panic as cleanup" =
+    for returnFirst in [false, true] do
+        let mutable observedCleanup = false
+        let mutable observedBody = false
+        let mutable inspectedFailure = false
+        let mutable outerFiber: Option<FiberId> = None
+        let pull: (ProducerTestState) => Async<Int32, Option<String>> = (state: ProducerTestState) => async do
+            state.position = state.position + 1
+            if state.position == 1 then
+                // The later body panic deliberately has the same message.
+                // Successful recovery must discard the earlier provenance.
+                let child = await testProducer(1, (_: ProducerTestState) => Async<Unit, Never>.failPanic("later body panic"))
+                    .mapError((error: String) => Some(error))
+                await child.interrupt().foldCause<Unit, Never>(
+                    (cause: Cause<Never>) => Async.thunk(() =>
+                        match cause with
+                            case Cause.Panicked(message, _) => assert message == "later body panic"
+                            case _ => panic "expected child cleanup panic"
+                        observedCleanup = true
+                    ),
+                    (_: Unit) => Async.thunk(() => panic "expected child cleanup panic"))
+            if returnFirst && state.position == 1 then 42
+            else await Async<Int32, Option<String>>.failPanic("later body panic")
+        let program: Async<Unit, String> = async do
+            let acquire: Async<ProducerTestState, String> = Async.succeed(ProducerTestState(0, 0))
+            let producer = await Producer<Int32, String>.make(acquire, pull,
+                (_: ProducerTestState) => Async.succeed(()))
+            outerFiber = Some(producer.fiber)
+            if returnFirst then assert (await producerValue(producer.next())) == 42
+            await producer.next().foldCause<Unit, String>(
+                (cause: Cause<Option<String>>) => Async.thunk(() =>
+                    match cause with
+                        case Cause.Panicked(message, _) => assert message == "later body panic"
+                        case _ => panic "expected body panic"
+                    observedBody = true
+                ),
+                (_: Int32) => Async.thunk(() => panic "expected body panic"))
+        let runtime = Runtime.make(program)
+        let main = runtime.fibers.get(FiberId.zero).require
+        let mutable rounds = 0
+        while main.handle.completedResult.isNone && rounds < 1000 do
+            let mutable runnable: List<FiberState> = []
+            for pair in runtime.fibers do
+                match pair._1.status with
+                    case FiberStatus.Running => runnable = runnable.prepend(pair._1)
+                    case _ => ()
+            assert !runnable.isEmpty
+            for fiber in runnable.reverse() do
+                runtime.step(fiber)
+                for pair in runtime.producers do
+                    match pair._1.phase with
+                        case ProducerPhase.Failed(Cause.Panicked(message, _), cleanup) =>
+                            if outerFiber.isSome && outerFiber.require.equals(pair._1.handle.fiber) && message == "later body panic" then
+                                assert cleanup.isNone
+                                inspectedFailure = true
+                        case _ => ()
+            rounds = rounds + 1
+        assert main.handle.completedResult.isSome
+        assert observedCleanup && observedBody && inspectedFailure

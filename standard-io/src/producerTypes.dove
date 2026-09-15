@@ -1,0 +1,57 @@
+package standard.io
+
+internal enum ProducerPhase =
+    Acquiring
+    Idle(Any)
+    Pulling(Any)
+    Closing(Option<Cause<Any>>)
+    Closed
+    Failed(Cause<Any>, Option<Cause<Any>>)
+
+internal class ProducerState(
+    public handle: Producer<Any, Any>,
+    public ownerScope: ScopeId,
+    public mutable phase: ProducerPhase,
+    public mutable pull: (Any) => Async<Any, Any>,
+    public mutable releaseScope: ScopeId,
+    public mutable waiter: Option<ProducerRequest>
+)
+
+internal enum ProducerRequestKind =
+    Create
+    Pull
+    Stop
+
+internal class ProducerRequest(
+    public caller: FiberId,
+    public producer: ProducerState,
+    public kind: ProducerRequestKind,
+    public mutable active: Bool
+)
+
+implement Default for ProducerState =
+    public property default: ProducerState = ProducerState(
+        Producer<Any, Any>(FiberId.zero, FiberId.zero), ScopeId(-1),
+        ProducerPhase.Closed, (_: Any) => Async.succeed(()), ScopeId(-1), None
+    )
+
+implement Default for ProducerRequest =
+    public property default: ProducerRequest = ProducerRequest(FiberId.zero, ProducerState.default, ProducerRequestKind.Stop, false)
+
+module ProducerPhase =
+    internal property isFinished(self): Bool =
+        match self with
+            case Closed => true
+            case Failed(_, _) => true
+            case _ => false
+
+    internal property isIdle(self): Bool =
+        match self with
+            case Idle(_) => true
+            case _ => false
+
+    internal property isPulling(self): Bool =
+        match self with
+            case Pulling(_) => true
+            case _ => false
+

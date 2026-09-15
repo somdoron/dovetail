@@ -1,0 +1,337 @@
+package standard.http
+
+import standard.collection.ArrayList
+
+/// Write header lines to a byte buffer.
+/// Host header is written first per RFC 7230.
+public function writeHeaders(headers: Headers): Array<Uint8> =
+    let parts = ArrayList<Array<Uint8>>.new()
+    // Write Host header first
+    for item in headers.items do
+        if item.name == "host" then
+            parts.add(stringToBytes(item.rawName ++ ": " ++ item.value ++ "\r\n"))
+    // Write remaining headers
+    for item in headers.items do
+        if item.name != "host" then
+            parts.add(stringToBytes(item.rawName ++ ": " ++ item.value ++ "\r\n"))
+    // Blank line
+    parts.add(stringToBytes("\r\n"))
+    concatByteArrays(parts.toArray())
+
+/// Serialize an HTTP request to bytes.
+public function writeRequest(request: HttpRequest): Result<Array<Uint8>, HttpError> =
+    if request.httpVersion != "1.1" then
+        Error(HttpError.local("I only send HTTP/1.1"))
+    else
+        // The method and target are interpolated straight into the request line, so a
+        // CR/LF in either (e.g. a `Method.Other`, or a target built from an untrusted URI)
+        // would forge extra request lines — request smuggling. Reject them, mirroring the
+        // reason-phrase check in `writeResponse`.
+        try validateMethod(request.method)
+        try validateTarget(request.target)
+        let line = stringToBytes(request.method ++ " " ++ request.target ++ " HTTP/1.1\r\n")
+        let headerBytes = writeHeaders(request.headers)
+        Ok(concatTwo(line, headerBytes))
+
+/// Serialize an HTTP response to bytes.
+public function writeResponse(response: HttpResponse): Result<Array<Uint8>, HttpError> =
+    if response.httpVersion != "1.1" then
+        Error(HttpError.local("I only send HTTP/1.1"))
+    else if response.statusCode < 100 || response.statusCode > 599 then
+        // A status code outside 100..599 produces a malformed status line ("HTTP/1.1 5 OK").
+        // The read path already bounds it to three digits; keep the write path symmetric.
+        Error(HttpError.local("status code out of range"))
+    else if response.reason.contains("\r") || response.reason.contains("\n") then
+        // A CR or LF in the reason phrase would split the status line into forged
+        // header lines (HTTP response splitting) if an application copied untrusted
+        // data into it — the one attacker-influenceable field on the write path that
+        // header validation does not already cover. Reject rather than emit it.
+        Error(HttpError.local("invalid CR or LF in response reason phrase"))
+    else
+        let statusStr = intToString(response.statusCode)
+        let line = stringToBytes("HTTP/1.1 " ++ statusStr ++ " " ++ response.reason ++ "\r\n")
+        let headerBytes = writeHeaders(response.headers)
+        Ok(concatTwo(line, headerBytes))
+
+/// Content-Length body writer. Tracks remaining bytes and errors
+/// if too much or too little data is written.
+public class ContentLengthWriter(
+    mutable remaining: Int64
+) =
+    /// Create a new writer expecting exactly `length` bytes of body data.
+    public function new(length: Int64): ContentLengthWriter =
+        ContentLengthWriter(length)
+
+    /// Write body data. Returns error if too much data.
+    public function writeData(self, data: Array<Uint8>): Result<Array<Uint8>, HttpError> =
+        self.remaining = self.remaining - data.length.toInt64()
+        if self.remaining < 0i64 then
+            Error(HttpError.local("Too much data for declared Content-Length"))
+        else Ok(data)
+
+    /// Write end of message. Returns error if too little data or trailers present.
+    public function writeEndOfMessage(self, trailers: Headers): Result<Array<Uint8>, HttpError> =
+        if self.remaining != 0i64 then
+            Error(HttpError.local("Too little data for declared Content-Length"))
+        else if trailers.hasItems then
+            Error(HttpError.local("Content-Length and trailers don't mix"))
+        else Ok(Array<Uint8>.empty())
+
+/// Chunked transfer encoding writer.
+/// Encodes body data as HTTP chunked encoding with hex size headers.
+public class ChunkedWriter(
+    mutable dummy: Bool
+) =
+    /// Create a new chunked writer.
+    public function new(): ChunkedWriter =
+        ChunkedWriter(false)
+
+    /// Write body data as a chunk.
+    public function writeData(self, data: Array<Uint8>): Array<Uint8> =
+        // Skip empty data to avoid looking like end-of-message
+        if data.length == 0 then Array<Uint8>.empty()
+        else
+            let sizeStr = intToHexString(data.length)
+            let header = stringToBytes(sizeStr ++ "\r\n")
+            let footer = stringToBytes("\r\n")
+            concatThree(header, data, footer)
+
+    /// Write end of message with optional trailers.
+    public function writeEndOfMessage(self, trailers: Headers): Array<Uint8> =
+        let terminator = stringToBytes("0\r\n")
+        let trailerBytes = writeHeaders(trailers)
+        concatTwo(terminator, trailerBytes)
+
+/// HTTP/1.0 body writer (no framing, just pass through).
+/// Closes the connection to signal end of body.
+public class Http10Writer(
+    mutable dummy: Bool
+) =
+    /// Create a new HTTP/1.0 writer.
+    public function new(): Http10Writer =
+        Http10Writer(false)
+
+    /// Write body data directly.
+    public function writeData(self, data: Array<Uint8>): Array<Uint8> =
+        data
+
+    /// Write end of message.
+    public function writeEndOfMessage(self, trailers: Headers): Result<Array<Uint8>, HttpError> =
+        if trailers.hasItems then
+            Error(HttpError.local("can't send trailers to HTTP/1.0 client"))
+        else Ok(Array<Uint8>.empty())
+
+// Helper functions
+
+/// Convert an integer to a string.
+function intToString(n: Int32): String =
+    if n == 0 then "0"
+    else
+        let mutable val = n
+        let mutable negative = false
+        if val < 0 then
+            negative = true
+            val = 0 - val
+        let digits = ArrayList<Uint8>.new()
+        while val > 0 do
+            let digit = (val % 10) + 48
+            digits.add(digit.toUint8())
+            val = val / 10
+        // Reverse
+        let len = digits.length
+        let result = Array.fill(if negative then len + 1 else len, 0u8)
+        let mutable offset = 0
+        if negative then
+            result.set(0, 45u8) // '-'
+            offset = 1
+        let mutable i = 0
+        while i < len do
+            result.set(offset + i, digits.get(len - 1 - i))
+            i = i + 1
+        String.fromBytes(result, 0, result.length)
+
+/// Convert an integer to lowercase hex string.
+function intToHexString(n: Int32): String =
+    if n == 0 then "0"
+    else
+        let mutable val = n
+        let digits = ArrayList<Uint8>.new()
+        while val > 0 do
+            let digit = val % 16
+            let ch = if digit < 10 then (digit + 48).toUint8()
+                else (digit - 10 + 97).toUint8()
+            digits.add(ch)
+            val = val / 16
+        // Reverse
+        let len = digits.length
+        let result = Array.fill(len, 0u8)
+        let mutable i = 0
+        while i < len do
+            result.set(i, digits.get(len - 1 - i))
+            i = i + 1
+        String.fromBytes(result, 0, result.length)
+
+/// Concatenate two byte arrays.
+function concatTwo(a: Array<Uint8>, b: Array<Uint8>): Array<Uint8> =
+    let len = a.length + b.length
+    let result = Array.fill(len, 0u8)
+    a.copy(0, result, 0, a.length)
+    b.copy(0, result, a.length, b.length)
+    result
+
+/// Concatenate three byte arrays.
+function concatThree(a: Array<Uint8>, b: Array<Uint8>, c: Array<Uint8>): Array<Uint8> =
+    let len = a.length + b.length + c.length
+    let result = Array.fill(len, 0u8)
+    a.copy(0, result, 0, a.length)
+    b.copy(0, result, a.length, b.length)
+    c.copy(0, result, a.length + b.length, c.length)
+    result
+
+/// Concatenate an array of byte arrays.
+function concatByteArrays(arrays: Array<Array<Uint8>>): Array<Uint8> =
+    let mutable totalLen = 0
+    let mutable i = 0
+    while i < arrays.length do
+        totalLen = totalLen + arrays.get(i).length
+        i = i + 1
+    let result = Array.fill(totalLen, 0u8)
+    let mutable offset = 0
+    let mutable j = 0
+    while j < arrays.length do
+        let arr = arrays.get(j)
+        arr.copy(0, result, offset, arr.length)
+        offset = offset + arr.length
+        j = j + 1
+    result
+
+// Tests
+
+test "writeRequest" =
+    let headers = normalizeAndValidate([("Host", "example.com")]).require
+    let req = HttpRequest { method = "GET"; target = "/"; headers = headers; httpVersion = "1.1" }
+    let result = writeRequest(req)
+    assert result.isOk
+    let bytes = result.require
+    let str = bytesToString(bytes)
+    assert str == "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"
+
+test "writeRequest non-1.1 fails" =
+    let headers = Headers.empty()
+    let req = HttpRequest { method = "GET"; target = "/"; headers = headers; httpVersion = "1.0" }
+    assert writeRequest(req).isError
+
+test "writeRequest rejects CRLF in method or target (request smuggling)" =
+    // A CR/LF in the method or target would forge extra request lines on the wire.
+    let headers = normalizeAndValidate([("Host", "example.com")]).require
+    let badMethod = HttpRequest { method = "GET / HTTP/1.1\r\nHost: evil"; target = "/"; headers = headers; httpVersion = "1.1" }
+    assert writeRequest(badMethod).isError
+    let badTarget = HttpRequest { method = "GET"; target = "/a\r\nX-Injected: 1"; headers = headers; httpVersion = "1.1" }
+    assert writeRequest(badTarget).isError
+    // a normal request still serializes
+    let ok = HttpRequest { method = "GET"; target = "/"; headers = headers; httpVersion = "1.1" }
+    assert writeRequest(ok).isOk
+
+test "writeResponse" =
+    let headers = normalizeAndValidate([("Content-Length", "5")]).require
+    let resp = HttpResponse { statusCode = 200; headers = headers; httpVersion = "1.1"; reason = "OK" }
+    let result = writeResponse(resp)
+    assert result.isOk
+    let str = bytesToString(result.require)
+    assert str == "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"
+
+test "writeResponse rejects an out-of-range status code" =
+    let headers = normalizeAndValidate([("Content-Length", "0")]).require
+    assert writeResponse(HttpResponse { statusCode = 5; headers = headers; httpVersion = "1.1"; reason = "x" }).isError
+    assert writeResponse(HttpResponse { statusCode = 1000; headers = headers; httpVersion = "1.1"; reason = "x" }).isError
+    assert writeResponse(HttpResponse { statusCode = 200; headers = headers; httpVersion = "1.1"; reason = "OK" }).isOk
+
+test "writeResponse rejects CRLF in the reason phrase (response splitting)" =
+    // A reason phrase carrying CR/LF would forge extra header lines. Reject it.
+    let headers = normalizeAndValidate([("Content-Length", "5")]).require
+    let injected = HttpResponse { statusCode = 200; headers = headers; httpVersion = "1.1"; reason = "OK\r\nX-Injected: 1" }
+    assert writeResponse(injected).isError
+    let bare = HttpResponse { statusCode = 200; headers = headers; httpVersion = "1.1"; reason = "OK\ndata" }
+    assert writeResponse(bare).isError
+
+test "writeHeaders host first" =
+    let headers = normalizeAndValidate([("Content-Type", "text/html"), ("Host", "example.com")]).require
+    let str = bytesToString(writeHeaders(headers))
+    // Host should come first
+    let hostIdx = str.indexOf("Host:")
+    let ctIdx = str.indexOf("Content-Type:")
+    assert hostIdx.isSome
+    assert ctIdx.isSome
+    assert hostIdx.require < ctIdx.require
+
+test "ContentLengthWriter" =
+    let writer = ContentLengthWriter.new(5i64)
+    let data = stringToBytes("hello")
+    let result = writer.writeData(data)
+    assert result.isOk
+    assert bytesToString(result.require) == "hello"
+    let eom = writer.writeEndOfMessage(Headers.empty())
+    assert eom.isOk
+
+test "ContentLengthWriter too much data" =
+    let writer = ContentLengthWriter.new(3i64)
+    let data = stringToBytes("hello")
+    assert writer.writeData(data).isError
+
+test "ContentLengthWriter too little data" =
+    let writer = ContentLengthWriter.new(10i64)
+    let data = stringToBytes("hello")
+    let _ = writer.writeData(data)
+    assert writer.writeEndOfMessage(Headers.empty()).isError
+
+test "ContentLengthWriter with trailers" =
+    let writer = ContentLengthWriter.new(0i64)
+    let trailers = normalizeAndValidate([("X-Checksum", "abc")]).require
+    assert writer.writeEndOfMessage(trailers).isError
+
+test "ChunkedWriter" =
+    let writer = ChunkedWriter.new()
+    let data = stringToBytes("hello")
+    let result = writer.writeData(data)
+    let str = bytesToString(result)
+    assert str == "5\r\nhello\r\n"
+
+test "ChunkedWriter empty data" =
+    let writer = ChunkedWriter.new()
+    let result = writer.writeData(Array<Uint8>.empty())
+    assert result.length == 0
+
+test "ChunkedWriter end of message" =
+    let writer = ChunkedWriter.new()
+    let result = writer.writeEndOfMessage(Headers.empty())
+    let str = bytesToString(result)
+    assert str == "0\r\n\r\n"
+
+test "Http10Writer" =
+    let writer = Http10Writer.new()
+    let data = stringToBytes("hello")
+    let result = writer.writeData(data)
+    assert bytesToString(result) == "hello"
+
+test "Http10Writer end no trailers" =
+    let writer = Http10Writer.new()
+    assert writer.writeEndOfMessage(Headers.empty()).isOk
+
+test "Http10Writer end with trailers" =
+    let writer = Http10Writer.new()
+    let trailers = normalizeAndValidate([("X-Checksum", "abc")]).require
+    assert writer.writeEndOfMessage(trailers).isError
+
+test "intToString" =
+    assert intToString(0) == "0"
+    assert intToString(42) == "42"
+    assert intToString(200) == "200"
+    assert intToString(404) == "404"
+    assert intToString(1234567) == "1234567"
+
+test "intToHexString" =
+    assert intToHexString(0) == "0"
+    assert intToHexString(10) == "a"
+    assert intToHexString(255) == "ff"
+    assert intToHexString(16) == "10"
+    assert intToHexString(256) == "100"

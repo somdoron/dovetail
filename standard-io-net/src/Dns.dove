@@ -1,0 +1,28 @@
+package standard.io.net
+
+import standard.wasi.net.IpAddress
+import standard.io.Async
+
+/// DNS hostname resolution over `wasi:sockets/ip-name-lookup`, which
+/// `dovetail run` enables when `--allow-network` is passed.
+///
+/// Under p3 one async call returns every address at once — there is no
+/// resolve-stream and no readiness retry loop (unlike p2). The interface never
+/// succeeds with zero addresses: it either fails or yields at least one. An
+/// IP-literal `hostname` is parsed and returned as-is with no network traffic,
+/// though it still needs the host's name-lookup permission.
+module Dns =
+
+    /// Resolve `hostname` to all matching IP addresses, as canonical strings.
+    /// Fails with `NetError.HostnameNotResolvable` on resolver failure.
+    public async function resolve(hostname: String): Async<List<String>, NetError> =
+        let addresses = await resolveWasi(hostname)
+        // `resolveWasi` is the WASI intrinsic and stays array-shaped; the
+        // conversion happens above it, not at the boundary.
+        addresses.toList().map<String>((ip: IpAddress) => formatWasiIp(ip))
+
+    /// Convenience: the first resolved address, or `None` when the host has no
+    /// records for `hostname`. Used by `Tcp.connect` when given a hostname.
+    public async function resolveFirst(hostname: String): Async<Option<String>, NetError> =
+        let all = await Dns.resolve(hostname)
+        all.headOption

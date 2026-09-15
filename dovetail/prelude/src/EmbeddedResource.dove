@@ -1,0 +1,12 @@
+module standard.prelude.EmbeddedResource
+
+/// Embed bytes from a resource declared in the calling project's
+/// `Dovetail.toml` `resources = [...]` list. The `name` argument MUST be a
+/// string literal — the compiler resolves it at typecheck time, looks the
+/// resource up in the calling project, and lowers the call to a passive
+/// WASM data segment access. No host I/O happens at runtime.
+///
+/// Compile-time errors:
+///   - `name` is not a string literal
+///   - no resource with that name is declared by the calling project
+public function bytes(name: String): Array<Uint8> = intrinsic

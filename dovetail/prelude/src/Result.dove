@@ -1,0 +1,53 @@
+package standard.prelude
+
+public enum Result<out T, out E> =
+    Ok(T)
+    Error(E)
+
+module Result<T, E> =
+    public function error(e: E): Result<T, E> = Error(e)
+
+    public function expect(self, message: ByName<String>): T =
+        match self with
+            case Ok(v) => v
+            case Error(_) => panic message.get
+
+    public property require(self): T =
+        match self with
+            case Ok(v) => v
+            case Error(_) => panic "called require on Error"
+
+    public function or(self, default: ByName<T>): T =
+        match self with
+            case Ok(v) => v
+            case Error(_) => default.get
+
+    public function map<U>(self, f: (T) => U): Result<U, E> =
+        match self with
+            case Ok(v) => Ok(f(v))
+            case Error(e) => Error(e)
+
+    public function mapError<F>(self, f: (E) => F): Result<T, F> =
+        match self with
+            case Ok(v) => Ok(v)
+            case Error(e) => Error(f(e))
+
+    public function andThen<U>(self, f: (T) => Result<U, E>): Result<U, E> =
+        match self with
+            case Ok(v) => f(v)
+            case Error(e) => Error(e)
+
+    public property isOk(self): Bool =
+        match self with
+            case Ok(_) => true
+            case Error(_) => false
+
+    public property isError(self): Bool =
+        match self with
+            case Ok(_) => false
+            case Error(_) => true
+
+    public function toOption(self): Option<T> =
+        match self with
+            case Ok(v) => Some(v)
+            case Error(_) => None

@@ -1,0 +1,96 @@
+package standard.io.http
+
+import standard.collection.ArrayList
+
+/// One segment of a parsed path pattern.
+internal enum PathSegment =
+    Literal(String)
+    Param(String)
+
+implement Default for PathSegment =
+    public property default: PathSegment = PathSegment.Literal("")
+
+/// Compiled path pattern (e.g. `/users/{id}/posts/{postId}`). Parsed
+/// once at registration time; matched against incoming `uri.path` at
+/// dispatch time.
+///
+/// Wildcards (`*`, `**`) are *not* in scope for v1 — segment counts
+/// must match exactly. Only literals and `{name}` segments are recognised.
+/// Specificity = count of literal segments, used by `Router.dispatch`
+/// to pick the most-specific match when multiple routes accept a path
+/// (e.g. `/users/me` beats `/users/{id}`).
+public class PathPattern(segments: Array<PathSegment>) =
+    /// Parse a pattern string. Patterns must start with `/`; segments
+    /// `{name}` are captured into `PathParams` at match time.
+    /// Malformed input (empty `{}`, unclosed brace, embedded `/` inside
+    /// braces) panics — patterns are static data known at registration.
+    public function parse(pattern: String): PathPattern =
+        let parts = ArrayList<PathSegment>.new()
+        // `split("/")` on `/users` yields ["", "users"]; we want to
+        // skip the leading empty segment from the leading `/` but
+        // preserve other empties (e.g. trailing `/`) — for v1 we
+        // simply drop *all* empties since `/users` and `/users/`
+        // are practically equivalent for matching.
+        for seg in pattern.split("/") do
+            if seg.length > 0 then
+                parts.add(parseSegment(seg))
+        PathPattern(parts.toArray())
+
+    /// Match the pattern against an incoming `path` (e.g. `/users/42`).
+    /// Returns `Some(PathParams)` with captures on success, `None` on
+    /// mismatch (different segment count or a literal that doesn't equal).
+    /// Named `tryMatch` because `match` is a reserved keyword.
+    public function tryMatch(self, path: String): Option<PathParams> =
+        // Drop leading-`/` empty segment, same convention as `parse`.
+        let trimmed = ArrayList<String>.new()
+        for s in path.split("/") do
+            if s.length > 0 then
+                trimmed.add(s)
+        let pathSegs = trimmed.toArray()
+        if pathSegs.length != self.segments.length then None
+        else
+            let mutable accum: PathParams = PathParams.empty()
+            let mutable j = 0
+            let mutable mismatch = false
+            while j < self.segments.length do
+                if !mismatch then
+                    match self.segments.get(j) with
+                        case PathSegment.Literal(lit) =>
+                            if pathSegs.get(j) != lit then mismatch = true
+                        case PathSegment.Param(name) =>
+                            accum = accum.put(name, pathSegs.get(j))
+                j = j + 1
+            if mismatch then None
+            else Some(accum)
+
+    /// Specificity score = count of literal segments. Higher beats lower
+    /// in `Router.dispatch` conflict resolution.
+    public property specificity(self): Int32 =
+        let mutable n = 0
+        let mutable i = 0
+        while i < self.segments.length do
+            match self.segments.get(i) with
+                case PathSegment.Literal(_) => n = n + 1
+                case PathSegment.Param(_) => ()
+            i = i + 1
+        n
+
+/// Classify one raw segment as `Literal` or `Param`. Panics on malformed
+/// brace syntax — patterns are author-controlled, so loud failure beats
+/// silent misroute.
+function parseSegment(s: String): PathSegment =
+    let bytes = s.bytes()
+    if bytes.length >= 2 && bytes.get(0) == 123u8 && bytes.get(bytes.length - 1) == 125u8 then
+        let name = s.substring(1, s.length - 1)
+        if name.length == 0 then
+            panic "PathPattern.parse: empty param name in '" ++ s ++ "'"
+        else
+            PathSegment.Param(name)
+    else
+        // Reject unbalanced braces — common typo, easier to catch here.
+        if bytes.length > 0 && bytes.get(0) == 123u8 then
+            panic "PathPattern.parse: unclosed '{' in segment '" ++ s ++ "'"
+        else if bytes.length > 0 && bytes.get(bytes.length - 1) == 125u8 then
+            panic "PathPattern.parse: stray '}' in segment '" ++ s ++ "'"
+        else
+            PathSegment.Literal(s)

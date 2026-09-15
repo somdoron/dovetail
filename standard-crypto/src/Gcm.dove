@@ -1,0 +1,382 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.Result
+
+/// AES-GCM (NIST SP 800-38D) core, key-length agnostic. GHASH uses a branch-free
+/// bit-serial GF(2^128) multiply (no secret-indexed tables), with the field
+/// element held as two big-endian `Uint64` halves (hi = bits 0..63 with bit 0
+/// the most significant). Supports the 96-bit nonce used by TLS.
+module GcmCore =
+    private function pad16Len(n: Int32): Int32 =
+        if n % 16 == 0 then 0 else 16 - (n % 16)
+
+    private function loadBE64(b: Array<Uint8>, off: Int32): Uint64 =
+        let mutable v = 0u64
+        let mutable i = 0
+        while i < 8 do
+            v = (v << 8u64) | b.get(off + i).toUint64()
+            i = i + 1
+        v
+
+    private function storeBE64(b: Array<Uint8>, off: Int32, v: Uint64): Unit =
+        let mutable i = 0
+        while i < 8 do
+            b.set(off + i, (v >> ((7 - i) * 8).toUint64()).toUint8())
+            i = i + 1
+
+    /// GF(2^128) multiply per SP 800-38D: scan the bits of X (MSB first),
+    /// accumulating V (initialised to H) into Z, shifting V right by one each
+    /// step and folding in R = 0xe1‖0^120 on carry-out. Branch-free.
+    private function gfMul(xhi: Uint64, xlo: Uint64, hhi: Uint64, hlo: Uint64): (Uint64, Uint64) =
+        let mutable zhi = 0u64
+        let mutable zlo = 0u64
+        let mutable vhi = hhi
+        let mutable vlo = hlo
+        let mutable i = 0
+        while i < 128 do
+            let xbit =
+                if i < 64 then (xhi >> (63 - i).toUint64()) & 1u64
+                else (xlo >> (127 - i).toUint64()) & 1u64
+            let mask = 0u64 - xbit
+            zhi = zhi ^ (vhi & mask)
+            zlo = zlo ^ (vlo & mask)
+            let lsb = vlo & 1u64
+            vlo = (vlo >> 1u64) | (vhi << 63u64)
+            vhi = vhi >> 1u64
+            let rmask = 0u64 - lsb
+            vhi = vhi ^ (0xe100000000000000u64 & rmask)
+            i = i + 1
+        (zhi, zlo)
+
+    /// GHASH over `data` (must be a multiple of 16 bytes).
+    private function ghash(hhi: Uint64, hlo: Uint64, data: Array<Uint8>): (Uint64, Uint64) =
+        let mutable yhi = 0u64
+        let mutable ylo = 0u64
+        let mutable pos = 0
+        while pos < data.length do
+            let r = gfMul(yhi ^ loadBE64(data, pos), ylo ^ loadBE64(data, pos + 8), hhi, hlo)
+            yhi = r._0
+            ylo = r._1
+            pos = pos + 16
+        (yhi, ylo)
+
+    /// Build the GHASH input: AAD ‖ pad ‖ CT ‖ pad ‖ len(AAD) ‖ len(CT) (lengths
+    /// in bits, big-endian 64-bit).
+    private function ghashData(aad: Array<Uint8>, ct: Array<Uint8>): Array<Uint8> =
+        let lenOff = aad.length + pad16Len(aad.length) + ct.length + pad16Len(ct.length)
+        let buf = Array<Uint8>.fill(lenOff + 16, 0u8)
+        aad.copy(buf, 0)
+        ct.copy(buf, aad.length + pad16Len(aad.length))
+        storeBE64(buf, lenOff, (aad.length.toInt64() * 8i64).toUint64())
+        storeBE64(buf, lenOff + 8, (ct.length.toInt64() * 8i64).toUint64())
+        buf
+
+    /// Increment the rightmost 32 bits of a counter block (big-endian).
+    private function inc32(counter: Array<Uint8>): Unit =
+        let mutable i = 15
+        let mutable carry = 1
+        while i >= 12 do
+            let v = counter.get(i).toInt32() + carry
+            counter.set(i, (v & 0xff).toUint8())
+            carry = (v >> 8) & 1
+            i = i - 1
+
+    /// CTR keystream XOR over `data`, starting from counter block `j0` + 1.
+    private function ctr(roundKeys: Array<Uint8>, nr: Int32, j0: Array<Uint8>, data: Array<Uint8>): Array<Uint8> =
+        let counter = j0.clone()
+        inc32(counter)
+        let res = Array<Uint8>.fill(data.length, 0u8)
+        let mutable pos = 0
+        while pos < data.length do
+            let ks = Aes.encryptBlock(roundKeys, nr, counter)
+            let mutable j = 0
+            while j < 16 && pos + j < data.length do
+                res.set(pos + j, data.get(pos + j) ^ ks.get(j))
+                j = j + 1
+            inc32(counter)
+            pos = pos + 16
+        res
+
+    /// J0 for a 96-bit nonce: nonce ‖ 0x00000001.
+    private function makeJ0(nonce: Array<Uint8>): Array<Uint8> =
+        let j0 = Array<Uint8>.fill(16, 0u8)
+        nonce.copy(j0, 0)
+        j0.set(15, 1u8)
+        j0
+
+    private function computeTag(
+        roundKeys: Array<Uint8>,
+        nr: Int32,
+        hhi: Uint64,
+        hlo: Uint64,
+        j0: Array<Uint8>,
+        aad: Array<Uint8>,
+        ct: Array<Uint8>
+    ): Array<Uint8> =
+        let gh = ghash(hhi, hlo, ghashData(aad, ct))
+        let ekJ0 = Aes.encryptBlock(roundKeys, nr, j0)
+        let tag = Array<Uint8>.fill(16, 0u8)
+        storeBE64(tag, 0, gh._0)
+        storeBE64(tag, 8, gh._1)
+        let mutable i = 0
+        while i < 16 do
+            tag.set(i, tag.get(i) ^ ekJ0.get(i))
+            i = i + 1
+        tag
+
+    /// Encrypt; returns (ciphertext, 16-byte tag).
+    function encrypt(
+        key: Array<Uint8>,
+        nonce: Array<Uint8>,
+        plaintext: Array<Uint8>,
+        aad: Array<Uint8>
+    ): (Array<Uint8>, Array<Uint8>) =
+        let roundKeys = Aes.expand(key)
+        let nr = Aes.rounds(key.length)
+        let hBlock = Aes.encryptBlock(roundKeys, nr, Array<Uint8>.fill(16, 0u8))
+        let hhi = loadBE64(hBlock, 0)
+        let hlo = loadBE64(hBlock, 8)
+        let j0 = makeJ0(nonce)
+        let ct = ctr(roundKeys, nr, j0, plaintext)
+        let tag = computeTag(roundKeys, nr, hhi, hlo, j0, aad, ct)
+        (ct, tag)
+
+    /// Verify the tag and decrypt; `None` on authentication failure.
+    function decrypt(
+        key: Array<Uint8>,
+        nonce: Array<Uint8>,
+        ciphertext: Array<Uint8>,
+        aad: Array<Uint8>,
+        tag: Array<Uint8>
+    ): Option<Array<Uint8>> =
+        let roundKeys = Aes.expand(key)
+        let nr = Aes.rounds(key.length)
+        let hBlock = Aes.encryptBlock(roundKeys, nr, Array<Uint8>.fill(16, 0u8))
+        let hhi = loadBE64(hBlock, 0)
+        let hlo = loadBE64(hBlock, 8)
+        let j0 = makeJ0(nonce)
+        let expected = computeTag(roundKeys, nr, hhi, hlo, j0, aad, ciphertext)
+        if ConstantTime.equal(expected, tag) then
+            Some(ctr(roundKeys, nr, j0, ciphertext))
+        else
+            None
+
+/// AES-128-GCM as an `AeadAlgorithm`. 128-bit key, 96-bit nonce, 128-bit tag.
+/// `encrypt` appends the tag to the ciphertext.
+class Aes128GcmAlgorithm() implements AeadAlgorithm =
+    public property keySize(self): Int32 = 16
+    public property nonceSize(self): Int32 = 12
+    public property tagSize(self): Int32 = 16
+
+    public function encrypt(
+        self,
+        key: SymmetricKey,
+        nonce: Nonce,
+        plaintext: Array<Uint8>,
+        authenticatedData: Array<Uint8>
+    ): Array<Uint8> =
+        let r = GcmCore.encrypt(key.value, nonce.value, plaintext, authenticatedData)
+        r._0.concat(r._1)
+
+    public function decrypt(
+        self,
+        key: SymmetricKey,
+        nonce: Nonce,
+        ciphertext: Array<Uint8>,
+        authenticatedData: Array<Uint8>
+    ): Result<Array<Uint8>, CryptoError> =
+        gcmOpen(key.value, nonce.value, ciphertext, authenticatedData)
+
+/// AES-256-GCM as an `AeadAlgorithm`. 256-bit key, 96-bit nonce, 128-bit tag.
+class Aes256GcmAlgorithm() implements AeadAlgorithm =
+    public property keySize(self): Int32 = 32
+    public property nonceSize(self): Int32 = 12
+    public property tagSize(self): Int32 = 16
+
+    public function encrypt(
+        self,
+        key: SymmetricKey,
+        nonce: Nonce,
+        plaintext: Array<Uint8>,
+        authenticatedData: Array<Uint8>
+    ): Array<Uint8> =
+        let r = GcmCore.encrypt(key.value, nonce.value, plaintext, authenticatedData)
+        r._0.concat(r._1)
+
+    public function decrypt(
+        self,
+        key: SymmetricKey,
+        nonce: Nonce,
+        ciphertext: Array<Uint8>,
+        authenticatedData: Array<Uint8>
+    ): Result<Array<Uint8>, CryptoError> =
+        gcmOpen(key.value, nonce.value, ciphertext, authenticatedData)
+
+/// Shared decrypt helper: split off the trailing tag, verify, and decrypt.
+function gcmOpen(
+    key: Array<Uint8>,
+    nonce: Array<Uint8>,
+    ciphertext: Array<Uint8>,
+    aad: Array<Uint8>
+): Result<Array<Uint8>, CryptoError> =
+    let n = ciphertext.length
+    if n < 16 then
+        Error(CryptoError.AuthenticationFailed)
+    else
+        let ctLen = n - 16
+        let ct = Array<Uint8>.fill(ctLen, 0u8)
+        ciphertext.copy(0, ct, 0, ctLen)
+        let tag = Array<Uint8>.fill(16, 0u8)
+        ciphertext.copy(ctLen, tag, 0, 16)
+        match GcmCore.decrypt(key, nonce, ct, aad, tag) with
+            case Some(plaintext) => Ok(plaintext)
+            case None => Error(CryptoError.AuthenticationFailed)
+
+/// The AES-128-GCM AEAD algorithm.
+public let Aes128Gcm: AeadAlgorithm = Aes128GcmAlgorithm()
+
+/// The AES-256-GCM AEAD algorithm.
+public let Aes256Gcm: AeadAlgorithm = Aes256GcmAlgorithm()
+
+test "AES-128-GCM NIST SP 800-38D test case 4" =
+    let key = [|
+        0xfeu8, 0xffu8, 0xe9u8, 0x92u8, 0x86u8, 0x65u8, 0x73u8, 0x1cu8,
+        0x6du8, 0x6au8, 0x8fu8, 0x94u8, 0x67u8, 0x30u8, 0x83u8, 0x08u8,
+    |]
+    let nonce = [|
+        0xcau8, 0xfeu8, 0xbau8, 0xbeu8, 0xfau8, 0xceu8, 0xdbu8, 0xadu8,
+        0xdeu8, 0xcau8, 0xf8u8, 0x88u8,
+    |]
+    let aad = [|
+        0xfeu8, 0xedu8, 0xfau8, 0xceu8, 0xdeu8, 0xadu8, 0xbeu8, 0xefu8,
+        0xfeu8, 0xedu8, 0xfau8, 0xceu8, 0xdeu8, 0xadu8, 0xbeu8, 0xefu8,
+        0xabu8, 0xadu8, 0xdau8, 0xd2u8,
+    |]
+    let plaintext = [|
+        0xd9u8, 0x31u8, 0x32u8, 0x25u8, 0xf8u8, 0x84u8, 0x06u8, 0xe5u8,
+        0xa5u8, 0x59u8, 0x09u8, 0xc5u8, 0xafu8, 0xf5u8, 0x26u8, 0x9au8,
+        0x86u8, 0xa7u8, 0xa9u8, 0x53u8, 0x15u8, 0x34u8, 0xf7u8, 0xdau8,
+        0x2eu8, 0x4cu8, 0x30u8, 0x3du8, 0x8au8, 0x31u8, 0x8au8, 0x72u8,
+        0x1cu8, 0x3cu8, 0x0cu8, 0x95u8, 0x95u8, 0x68u8, 0x09u8, 0x53u8,
+        0x2fu8, 0xcfu8, 0x0eu8, 0x24u8, 0x49u8, 0xa6u8, 0xb5u8, 0x25u8,
+        0xb1u8, 0x6au8, 0xedu8, 0xf5u8, 0xaau8, 0x0du8, 0xe6u8, 0x57u8,
+        0xbau8, 0x63u8, 0x7bu8, 0x39u8,
+    |]
+    let expectedCt = [|
+        0x42u8, 0x83u8, 0x1eu8, 0xc2u8, 0x21u8, 0x77u8, 0x74u8, 0x24u8,
+        0x4bu8, 0x72u8, 0x21u8, 0xb7u8, 0x84u8, 0xd0u8, 0xd4u8, 0x9cu8,
+        0xe3u8, 0xaau8, 0x21u8, 0x2fu8, 0x2cu8, 0x02u8, 0xa4u8, 0xe0u8,
+        0x35u8, 0xc1u8, 0x7eu8, 0x23u8, 0x29u8, 0xacu8, 0xa1u8, 0x2eu8,
+        0x21u8, 0xd5u8, 0x14u8, 0xb2u8, 0x54u8, 0x66u8, 0x93u8, 0x1cu8,
+        0x7du8, 0x8fu8, 0x6au8, 0x5au8, 0xacu8, 0x84u8, 0xaau8, 0x05u8,
+        0x1bu8, 0xa3u8, 0x0bu8, 0x39u8, 0x6au8, 0x0au8, 0xacu8, 0x97u8,
+        0x3du8, 0x58u8, 0xe0u8, 0x91u8,
+    |]
+    let expectedTag = [|
+        0x5bu8, 0xc9u8, 0x4fu8, 0xbcu8, 0x32u8, 0x21u8, 0xa5u8, 0xdbu8,
+        0x94u8, 0xfau8, 0xe9u8, 0x5au8, 0xe7u8, 0x12u8, 0x1au8, 0x47u8,
+    |]
+    let r = GcmCore.encrypt(key, nonce, plaintext, aad)
+    let ct = r._0
+    let tag = r._1
+    assert ct.length == expectedCt.length
+    let mutable i = 0
+    let mutable ok = true
+    while i < expectedCt.length do
+        if ct.get(i) != expectedCt.get(i) then ok = false
+        i = i + 1
+    i = 0
+    while i < 16 do
+        if tag.get(i) != expectedTag.get(i) then ok = false
+        i = i + 1
+    assert ok
+    // round-trip
+    let dec = GcmCore.decrypt(key, nonce, ct, aad, tag)
+    assert dec.isSome
+    assert ConstantTime.equal(dec.require, plaintext)
+
+test "Aes128Gcm AeadAlgorithm trait round-trip and tamper" =
+    let key = SymmetricKey(Array<Uint8>.fill(16, 0x2au8))
+    let nonce = Nonce(Array<Uint8>.fill(12, 0x13u8))
+    let aad = "hdr".bytes()
+    let plaintext = "the quick brown fox".bytes()
+    assert Aes128Gcm.keySize == 16
+    assert Aes128Gcm.tagSize == 16
+    let envelope = Aes128Gcm.encrypt(key, nonce, plaintext, aad)
+    assert envelope.length == plaintext.length + 16
+    let opened = Aes128Gcm.decrypt(key, nonce, envelope, aad)
+    assert opened.isOk
+    assert ConstantTime.equal(opened.require, plaintext)
+    // flip a ciphertext byte -> auth failure
+    envelope.set(0, envelope.get(0) ^ 0x80u8)
+    assert Aes128Gcm.decrypt(key, nonce, envelope, aad).isError
+
+test "Aes256Gcm AeadAlgorithm trait round-trip" =
+    let key = SymmetricKey(Array<Uint8>.fill(32, 0x55u8))
+    let nonce = Nonce(Array<Uint8>.fill(12, 0x66u8))
+    let plaintext = "another secret payload that spans blocks".bytes()
+    assert Aes256Gcm.keySize == 32
+    let envelope = Aes256Gcm.encrypt(key, nonce, plaintext, "".bytes())
+    let opened = Aes256Gcm.decrypt(key, nonce, envelope, "".bytes())
+    assert opened.isOk
+    assert ConstantTime.equal(opened.require, plaintext)
+
+test "AES-256-GCM NIST SP 800-38D test case 16" =
+    let key = [|
+        0xfeu8, 0xffu8, 0xe9u8, 0x92u8, 0x86u8, 0x65u8, 0x73u8, 0x1cu8,
+        0x6du8, 0x6au8, 0x8fu8, 0x94u8, 0x67u8, 0x30u8, 0x83u8, 0x08u8,
+        0xfeu8, 0xffu8, 0xe9u8, 0x92u8, 0x86u8, 0x65u8, 0x73u8, 0x1cu8,
+        0x6du8, 0x6au8, 0x8fu8, 0x94u8, 0x67u8, 0x30u8, 0x83u8, 0x08u8,
+    |]
+    let nonce = [|
+        0xcau8, 0xfeu8, 0xbau8, 0xbeu8, 0xfau8, 0xceu8, 0xdbu8, 0xadu8,
+        0xdeu8, 0xcau8, 0xf8u8, 0x88u8,
+    |]
+    let aad = [|
+        0xfeu8, 0xedu8, 0xfau8, 0xceu8, 0xdeu8, 0xadu8, 0xbeu8, 0xefu8,
+        0xfeu8, 0xedu8, 0xfau8, 0xceu8, 0xdeu8, 0xadu8, 0xbeu8, 0xefu8,
+        0xabu8, 0xadu8, 0xdau8, 0xd2u8,
+    |]
+    let plaintext = [|
+        0xd9u8, 0x31u8, 0x32u8, 0x25u8, 0xf8u8, 0x84u8, 0x06u8, 0xe5u8,
+        0xa5u8, 0x59u8, 0x09u8, 0xc5u8, 0xafu8, 0xf5u8, 0x26u8, 0x9au8,
+        0x86u8, 0xa7u8, 0xa9u8, 0x53u8, 0x15u8, 0x34u8, 0xf7u8, 0xdau8,
+        0x2eu8, 0x4cu8, 0x30u8, 0x3du8, 0x8au8, 0x31u8, 0x8au8, 0x72u8,
+        0x1cu8, 0x3cu8, 0x0cu8, 0x95u8, 0x95u8, 0x68u8, 0x09u8, 0x53u8,
+        0x2fu8, 0xcfu8, 0x0eu8, 0x24u8, 0x49u8, 0xa6u8, 0xb5u8, 0x25u8,
+        0xb1u8, 0x6au8, 0xedu8, 0xf5u8, 0xaau8, 0x0du8, 0xe6u8, 0x57u8,
+        0xbau8, 0x63u8, 0x7bu8, 0x39u8,
+    |]
+    let expectedCt = [|
+        0x52u8, 0x2du8, 0xc1u8, 0xf0u8, 0x99u8, 0x56u8, 0x7du8, 0x07u8,
+        0xf4u8, 0x7fu8, 0x37u8, 0xa3u8, 0x2au8, 0x84u8, 0x42u8, 0x7du8,
+        0x64u8, 0x3au8, 0x8cu8, 0xdcu8, 0xbfu8, 0xe5u8, 0xc0u8, 0xc9u8,
+        0x75u8, 0x98u8, 0xa2u8, 0xbdu8, 0x25u8, 0x55u8, 0xd1u8, 0xaau8,
+        0x8cu8, 0xb0u8, 0x8eu8, 0x48u8, 0x59u8, 0x0du8, 0xbbu8, 0x3du8,
+        0xa7u8, 0xb0u8, 0x8bu8, 0x10u8, 0x56u8, 0x82u8, 0x88u8, 0x38u8,
+        0xc5u8, 0xf6u8, 0x1eu8, 0x63u8, 0x93u8, 0xbau8, 0x7au8, 0x0au8,
+        0xbcu8, 0xc9u8, 0xf6u8, 0x62u8,
+    |]
+    let expectedTag = [|
+        0x76u8, 0xfcu8, 0x6eu8, 0xceu8, 0x0fu8, 0x4eu8, 0x17u8, 0x68u8,
+        0xcdu8, 0xdfu8, 0x88u8, 0x53u8, 0xbbu8, 0x2du8, 0x55u8, 0x1bu8,
+    |]
+    let r = GcmCore.encrypt(key, nonce, plaintext, aad)
+    let ct = r._0
+    let tag = r._1
+    assert ct.length == expectedCt.length
+    let mutable i = 0
+    let mutable ok = true
+    while i < expectedCt.length do
+        if ct.get(i) != expectedCt.get(i) then ok = false
+        i = i + 1
+    i = 0
+    while i < 16 do
+        if tag.get(i) != expectedTag.get(i) then ok = false
+        i = i + 1
+    assert ok
+    let dec = GcmCore.decrypt(key, nonce, ct, aad, tag)
+    assert dec.isSome
+    assert ConstantTime.equal(dec.require, plaintext)

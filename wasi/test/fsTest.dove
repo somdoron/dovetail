@@ -1,0 +1,591 @@
+package test
+
+import standard.wasi.fs.FileDescriptor
+import standard.wasi.fs.FsStreamOps
+import standard.wasi.fs.PathFlags
+import standard.wasi.fs.OpenFlags
+import standard.wasi.fs.FileFlags
+import standard.wasi.fs.DescriptorType
+import standard.wasi.fs.FileAdvice
+import standard.wasi.fs.FileSystemError
+import standard.wasi.fs.NewTimestamp
+import standard.wasi.AsyncCall
+import standard.wasi.CopyResult
+import standard.wasi.WaitableSet
+import standard.wasi.Waitable
+import standard.wasi.Stream
+import standard.wasi.CopyOperation
+
+// Block until an async call completes; returns after its terminal event.
+function awaitCall(call: AsyncCall): Unit =
+    if call.returned then ()
+    else
+        let set = WaitableSet.make()
+        set.join(call.subtask.waitable)
+        let event = set.wait()
+        assert event.isSubtask
+        call.subtask.drop()
+        set.close()
+
+function openRoot(): FileDescriptor =
+    let preopens = FileDescriptor.preopens()
+    assert preopens.length > 0
+    let (root, _) = preopens.get(0)
+    root
+
+function openFlags(create: Bool, truncate: Bool): OpenFlags =
+    OpenFlags { create = create; directory = false; exclusive = false; truncate = truncate }
+
+function rwFlags(): FileFlags =
+    FileFlags { read = true; write = true; fileIntegritySync = false; dataIntegritySync = false; requestedWriteSync = false; mutateDirectory = false }
+
+function openFile(root: FileDescriptor, path: String, create: Bool): FileDescriptor =
+    let call = root.openAtStart(PathFlags { symlinkFollow = false }, path, openFlags(create, create), rwFlags())
+    awaitCall(call)
+    FileDescriptor.openAtFinish(call).require
+
+/// Drive one posted write on `stream` to completion, blocking if the host did.
+/// The caller posts the copy, because which import posts it — `writeStart` or
+/// `appendWriteStart` — is exactly what these tests are here to distinguish.
+function pushBytes(stream: Int32, bytes: Slice<Uint8>, op: CopyOperation): Unit =
+    if op.blocked then
+        let set = WaitableSet.make()
+        set.join(Waitable(stream))
+        let event = set.wait()
+        assert event.isStreamWrite
+        assert event.copyCount == bytes.length
+        WaitableSet.remove(Waitable(stream))
+        set.close()
+    else
+        assert op.count == bytes.length
+    Stream.discard(op)
+
+/// Write `bytes` at `offset` through a write stream, releasing the stream.
+///
+/// `readRangeFrom`'s counterpart: a test that only needs a file to have some
+/// content in it wants these four lines and nothing else. Two callers keep
+/// spelling the sequence out, because for them it is the subject rather than
+/// the setup — the append stream (a different import, and no offset at all),
+/// and "write then read a file via streams", which is the one place the whole
+/// p3 copy dance is written out unabbreviated on BOTH sides.
+function writeBytesTo(fd: FileDescriptor, offset: Int64, bytes: Array<Uint8>): Unit =
+    let writeStream = fd.writeViaStream(offset)
+    pushBytes(writeStream.stream, bytes[|..|], FsStreamOps.writeStart(writeStream.stream, bytes[|..|].readonly))
+    FsStreamOps.dropWritable(writeStream.stream)
+    FsStreamOps.dropWriteResult(writeStream.resultFuture)
+
+/// Read up to `capacity` bytes from the start of `fd`, releasing the stream.
+function readAllFrom(fd: FileDescriptor, capacity: Int32): Array<Uint8> =
+    readRangeFrom(fd, 0i64, capacity)
+
+/// Read up to `capacity` bytes from `offset`, releasing the stream.
+function readRangeFrom(fd: FileDescriptor, offset: Int64, capacity: Int32): Array<Uint8> =
+    let readStream = fd.readViaStream(offset)
+    let readOp = FsStreamOps.readStart(readStream.stream, capacity)
+    let data =
+        if readOp.blocked then
+            let set = WaitableSet.make()
+            set.join(Waitable(readStream.stream))
+            let event = set.wait()
+            assert event.isStreamRead
+            let count = event.copyCount
+            WaitableSet.remove(Waitable(readStream.stream))
+            set.close()
+            Stream.readFinish(readOp, count)
+        else
+            Stream.readFinish(readOp, readOp.count)
+    FsStreamOps.dropReadable(readStream.stream)
+    FsStreamOps.dropReadResult(readStream.resultFuture)
+    data
+
+function unlink(root: FileDescriptor, path: String): Unit =
+    let call = root.unlinkFileAtStart(path)
+    awaitCall(call)
+    FileDescriptor.unitFinish(call).require
+
+test "preopens include the test directory" =
+    let root = openRoot()
+    let call = root.statStart()
+    awaitCall(call)
+    let stat = FileDescriptor.statFinish(call).require
+    match stat.descriptorType with
+        case DescriptorType.Directory => assert true
+        case _ => panic "expected directory"
+
+
+test "write then read a file via streams" =
+    let root = openRoot()
+    let file = openFile(root, "hello.txt", true)
+
+    // write "hello p3" through a write stream
+    let writeStream = file.writeViaStream(0i64)
+    let bytes = "!hello p3?".bytes()[|1..9|]
+    let op = FsStreamOps.writeStart(writeStream.stream, bytes[|..|].readonly)
+    if op.blocked then
+        let set = WaitableSet.make()
+        set.join(Waitable(writeStream.stream))
+        let event = set.wait()
+        assert event.isStreamWrite
+        assert event.copyCount == bytes.length
+        WaitableSet.remove(Waitable(writeStream.stream))
+        set.close()
+    else
+        assert op.count == bytes.length
+    Stream.discard(op)
+    FsStreamOps.dropWritable(writeStream.stream)
+    FsStreamOps.dropWriteResult(writeStream.resultFuture)
+    file.close()
+
+    // read it back
+    let file2 = openFile(root, "hello.txt", false)
+    let readStream = file2.readViaStream(0i64)
+    let readOp = FsStreamOps.readStart(readStream.stream, 64)
+    let data =
+        if readOp.blocked then
+            let set = WaitableSet.make()
+            set.join(Waitable(readStream.stream))
+            let event = set.wait()
+            assert event.isStreamRead
+            let count = event.copyCount
+            WaitableSet.remove(Waitable(readStream.stream))
+            set.close()
+            Stream.readFinish(readOp, count)
+        else
+            Stream.readFinish(readOp, readOp.count)
+    assert data.length == 8
+    assert data.get(0) == 104u8
+    assert data.get(7) == 51u8
+    FsStreamOps.dropReadable(readStream.stream)
+    FsStreamOps.dropReadResult(readStream.resultFuture)
+    file2.close()
+
+test "empty bounded slice writes no backing bytes" =
+    let root = openRoot()
+    let file = openFile(root, "empty-slice.txt", true)
+    let stream = file.writeViaStream(0i64)
+    let empty = "sentinel".bytes()[|3..3|]
+    pushBytes(stream.stream, empty, FsStreamOps.writeStart(stream.stream, empty.readonly))
+    FsStreamOps.dropWritable(stream.stream)
+    FsStreamOps.dropWriteResult(stream.resultFuture)
+    assert readAllFrom(file, 16).length == 0
+    file.close()
+    unlink(root, "empty-slice.txt")
+
+test "empty bottom slice writes no bytes after widening" =
+    let root = openRoot()
+    let file = openFile(root, "empty-bottom-slice.txt", true)
+    let stream = file.writeViaStream(0i64)
+    let empty: ReadonlySlice<Uint8> = Array<Never>.empty().readonly
+    pushBytes(stream.stream, Array<Uint8>.empty()[|..|], FsStreamOps.writeStart(stream.stream, empty))
+    FsStreamOps.dropWritable(stream.stream)
+    FsStreamOps.dropWriteResult(stream.resultFuture)
+    assert readAllFrom(file, 16).length == 0
+    file.close()
+    unlink(root, "empty-bottom-slice.txt")
+
+test "create and remove a directory" =
+    let root = openRoot()
+    let createCall = root.createDirectoryAtStart("subdir")
+    awaitCall(createCall)
+    FileDescriptor.unitFinish(createCall).require
+    let removeCall = root.removeDirectoryAtStart("subdir")
+    awaitCall(removeCall)
+    FileDescriptor.unitFinish(removeCall).require
+    assert true
+
+test "wave 2: setSize, getType, metadataHash, rename, symlink" =
+    let root = openRoot()
+    let file = openFile(root, "wave2.txt", true)
+
+    let sizeCall = file.setSizeStart(128i64)
+    awaitCall(sizeCall)
+    FileDescriptor.unitFinish(sizeCall).require
+
+    let typeCall = file.getTypeStart()
+    awaitCall(typeCall)
+    match FileDescriptor.getTypeFinish(typeCall).require with
+        case DescriptorType.RegularFile => assert true
+        case _ => panic "expected regular file"
+
+    let flagsCall = file.getFlagsStart()
+    awaitCall(flagsCall)
+    let flags = FileDescriptor.getFlagsFinish(flagsCall).require
+    assert flags.read
+    assert flags.write
+
+    let hashCall = file.metadataHashStart()
+    awaitCall(hashCall)
+    let hash = FileDescriptor.metadataHashFinish(hashCall).require
+    assert hash.lower != 0i64 || hash.upper != 0i64
+
+    let statCall = file.statStart()
+    awaitCall(statCall)
+    let stat = FileDescriptor.statFinish(statCall).require
+    assert stat.size == 128i64
+
+    let sameCall = file.isSameObjectStart(file)
+    awaitCall(sameCall)
+    assert FileDescriptor.isSameObjectFinish(sameCall)
+
+    // And the false case, without which a lift that ignores the retptr and
+    // returns a constant true passes: the file is not the directory holding it.
+    let differentCall = file.isSameObjectStart(root)
+    awaitCall(differentCall)
+    assert !FileDescriptor.isSameObjectFinish(differentCall)
+
+    file.close()
+
+    let renameCall = root.renameAtStart("wave2.txt", root, "wave2b.txt")
+    awaitCall(renameCall)
+    FileDescriptor.unitFinish(renameCall).require
+
+    let statAtCall = root.statAtStart(PathFlags { symlinkFollow = false }, "wave2b.txt")
+    awaitCall(statAtCall)
+    let stat2 = FileDescriptor.statFinish(statAtCall).require
+    assert stat2.size == 128i64
+
+    let symlinkCall = root.symlinkAtStart("wave2b.txt", "wave2-link")
+    awaitCall(symlinkCall)
+    FileDescriptor.unitFinish(symlinkCall).require
+
+    let cleanup1 = root.unlinkFileAtStart("wave2-link")
+    awaitCall(cleanup1)
+    FileDescriptor.unitFinish(cleanup1).require
+    let cleanup2 = root.unlinkFileAtStart("wave2b.txt")
+    awaitCall(cleanup2)
+    FileDescriptor.unitFinish(cleanup2).require
+    assert true
+
+test "wave 3: readDirectory, symlink readlink, setTimes" =
+    let root = openRoot()
+    let file = openFile(root, "w3.txt", true)
+    file.close()
+
+    // directory listing sees the file
+    let dirStream = root.readDirectory()
+    let mutable found = false
+    let mutable scanning = true
+    while scanning do
+        let op = FsStreamOps.entryReadStart(dirStream.stream)
+        if op.blocked then
+            let set = WaitableSet.make()
+            set.join(Waitable(dirStream.stream))
+            let event = set.wait()
+            WaitableSet.remove(Waitable(dirStream.stream))
+            set.close()
+            if event.copyResult == CopyResult.Dropped then
+                Stream.discard(op)
+                scanning = false
+            else
+                let entry = FsStreamOps.entryReadFinish(op)
+                if entry.name == "w3.txt" then found = true
+        else
+            if op.result == CopyResult.Dropped then
+                Stream.discard(op)
+                scanning = false
+            else
+                let entry = FsStreamOps.entryReadFinish(op)
+                if entry.name == "w3.txt" then found = true
+    assert found
+    FsStreamOps.dropEntryReadable(dirStream.stream)
+    FsStreamOps.dropEntryResult(dirStream.resultFuture)
+
+    // symlink + readlink round-trip
+    let symCall = root.symlinkAtStart("w3.txt", "w3-link")
+    awaitCall(symCall)
+    FileDescriptor.unitFinish(symCall).require
+    let rlCall = root.readlinkAtStart("w3-link")
+    awaitCall(rlCall)
+    let target = FileDescriptor.readlinkAtFinish(rlCall).require
+    assert target == "w3.txt"
+
+    // setTimes on the file
+    let f2 = openFile(root, "w3.txt", false)
+    let tsCall = f2.setTimesStart(NewTimestamp.Now, NewTimestamp.Now)
+    awaitCall(tsCall)
+    FileDescriptor.unitFinish(tsCall).require
+    f2.close()
+
+    let c1 = root.unlinkFileAtStart("w3-link")
+    awaitCall(c1)
+    FileDescriptor.unitFinish(c1).require
+    let c2 = root.unlinkFileAtStart("w3.txt")
+    awaitCall(c2)
+    FileDescriptor.unitFinish(c2).require
+    assert true
+
+// --- Error paths -----------------------------------------------------------
+//
+// Ported from the P2-era suite, which had one per verb and lost them all in the
+// p3 rewrite. They are worth their weight: an error lift reads the SAME retptr
+// the success lift does, but from the error side of the discriminant, so a wrong
+// payload offset shows up here and nowhere else. The point is not that the
+// operations fail — it is that every `*Finish` in this list decodes a failure
+// without trapping and without inventing a success.
+
+test "openAt on a nonexistent file without create fails" =
+    let root = openRoot()
+    let call = root.openAtStart(PathFlags { symlinkFollow = false }, "no-such-file.txt",
+        openFlags(false, false), rwFlags())
+    awaitCall(call)
+    assert FileDescriptor.openAtFinish(call).isError
+
+test "removeDirectoryAt on a nonexistent directory fails" =
+    let root = openRoot()
+    let call = root.removeDirectoryAtStart("no-such-dir")
+    awaitCall(call)
+    assert FileDescriptor.unitFinish(call).isError
+
+test "unlinkFileAt on a nonexistent file fails" =
+    let root = openRoot()
+    let call = root.unlinkFileAtStart("no-such-file.txt")
+    awaitCall(call)
+    assert FileDescriptor.unitFinish(call).isError
+
+test "createDirectoryAt on an existing entry fails" =
+    let root = openRoot()
+    let first = root.createDirectoryAtStart("err-existing-dir")
+    awaitCall(first)
+    FileDescriptor.unitFinish(first).require
+    let again = root.createDirectoryAtStart("err-existing-dir")
+    awaitCall(again)
+    assert FileDescriptor.unitFinish(again).isError
+    let cleanup = root.removeDirectoryAtStart("err-existing-dir")
+    awaitCall(cleanup)
+    FileDescriptor.unitFinish(cleanup).require
+
+test "statAt on a nonexistent path fails" =
+    let root = openRoot()
+    let call = root.statAtStart(PathFlags { symlinkFollow = false }, "no-such-path")
+    awaitCall(call)
+    // A `stat` failure lifts through the same retptr as a successful one, whose
+    // payload is a 48-byte record — the widest error lift in this interface.
+    assert FileDescriptor.statFinish(call).isError
+
+test "metadataHashAt on a nonexistent path fails" =
+    let root = openRoot()
+    let call = root.metadataHashAtStart(PathFlags { symlinkFollow = false }, "no-such-path")
+    awaitCall(call)
+    assert FileDescriptor.metadataHashFinish(call).isError
+
+test "readlinkAt on a path that is not a symlink fails" =
+    let root = openRoot()
+    let file = openFile(root, "err-not-a-symlink.txt", true)
+    file.close()
+    let call = root.readlinkAtStart("err-not-a-symlink.txt")
+    awaitCall(call)
+    // The success side of this one owns a heap string; the error side must not
+    // free — or lift — anything that was never allocated.
+    assert FileDescriptor.readlinkAtFinish(call).isError
+
+test "renameAt of a nonexistent file fails" =
+    let root = openRoot()
+    let call = root.renameAtStart("no-such-source.txt", root, "err-rename-target.txt")
+    awaitCall(call)
+    assert FileDescriptor.unitFinish(call).isError
+
+test "symlinkAt onto an existing entry fails" =
+    let root = openRoot()
+    let file = openFile(root, "err-symlink-target.txt", true)
+    file.close()
+    let call = root.symlinkAtStart("whatever", "err-symlink-target.txt")
+    awaitCall(call)
+    assert FileDescriptor.unitFinish(call).isError
+
+// --- append and advise -----------------------------------------------------
+//
+// `appendViaStream`, `appendWriteStart`, `dropAppendResult` and `adviseStart`
+// are hand-written p3 marshaling with their own import indices, their own
+// param block and (for advise) their own enum lowering. Nothing else in the
+// library calls them, so without these two they are four uncovered code paths
+// of exactly the class this migration kept finding bugs in.
+
+test "append stream writes at the end, not over the beginning" =
+    let root = openRoot()
+    let file = openFile(root, "append.txt", true)
+    writeBytesTo(file, 0i64, "abc".bytes())
+    file.close()
+
+    // The whole point of `appendViaStream`: it takes no offset, so a wrong
+    // lowering shows up as bytes landing at 0 and the file staying 3 long.
+    let appender = openFile(root, "append.txt", false)
+    let tail = "!de?".bytes()[|1..3|]
+    let appendStream = appender.appendViaStream()
+    pushBytes(appendStream.stream, tail[|..|], FsStreamOps.appendWriteStart(appendStream.stream, tail[|..|].readonly))
+    FsStreamOps.dropWritable(appendStream.stream)
+    // The append stream's own error channel, and the only one it has: a write
+    // the host rejected still ACCEPTS zero bytes and ends the stream, which to
+    // the copy alone is indistinguishable from a peer that simply stopped.
+    FsStreamOps.readAppendResult(appendStream.resultFuture).require
+    FsStreamOps.dropAppendResult(appendStream.resultFuture)
+    appender.close()
+
+    let reader = openFile(root, "append.txt", false)
+    let data = readAllFrom(reader, 64)
+    reader.close()
+    assert data.length == 5
+    assert data.get(0) == 97u8
+    assert data.get(2) == 99u8
+    assert data.get(3) == 100u8
+    assert data.get(4) == 101u8
+
+    unlink(root, "append.txt")
+
+// The append writable end is a `stream<u8>`, the same type write-via-stream
+// returns, so its lifecycle built-ins — `cancelWrite` (`stream.cancel-write`),
+// `dropWritable` (`stream.drop-writable`) and the `future.read` behind
+// `readAppendResult` — are keyed by type, not by the method that produced the
+// handle. That is why `componentWrite` drives an append stream through the
+// write-flavoured ops. This test posts an append write on that handle and drops
+// it through `cancelWrite`/`dropWritable`, then settles the append result
+// future, proving the cross-method wiring links and traps on none of it.
+//
+// The cancel only has something to cancel when the host PARKS the write; against
+// wasmtime's filesystem a small write completes inline, so that branch is
+// opportunistic — but the drop-writable + result-read path on an append handle
+// runs unconditionally.
+test "append stream drops through the write-via-stream lifecycle built-ins" =
+    let root = openRoot()
+    let file = openFile(root, "append-cancel.txt", true)
+    writeBytesTo(file, 0i64, "abc".bytes())
+    file.close()
+
+    let appender = openFile(root, "append-cancel.txt", false)
+    let tail = "!de?".bytes()[|1..3|]
+    let appendStream = appender.appendViaStream()
+    let op = FsStreamOps.appendWriteStart(appendStream.stream, tail[|..|].readonly)
+    if op.blocked then
+        // In-flight write: cancel it on the append handle (write built-in),
+        // consuming any raced completion, then release the copy.
+        FsStreamOps.cancelWrite(appendStream.stream)
+        Stream.discard(op)
+    else
+        assert op.count == tail.length
+        Stream.discard(op)
+    // drop-writable + future.read + future.drop on the append handle.
+    FsStreamOps.dropWritable(appendStream.stream)
+    FsStreamOps.readAppendResult(appendStream.resultFuture)
+    FsStreamOps.dropAppendResult(appendStream.resultFuture)
+    appender.close()
+
+    unlink(root, "append-cancel.txt")
+    assert true
+
+// --- stream offsets --------------------------------------------------------
+//
+// Every other caller in the tree opens its streams at offset 0, so until these
+// two tests the `offset` argument of `read-via-stream` / `write-via-stream` was
+// carried all the way to the host without one call ever checking that it
+// arrives. It is not a param-block field — both imports take it as a direct
+// i64 stack argument (`descriptor.read-via-stream : [i32, i64, i32] -> []`,
+// `descriptor.write-via-stream : [i32, i32, i64] -> [i32]`) — so the
+// adjacent-slot hazard that the open-at bug came from does not apply here. What
+// does apply: an offset dropped, truncated to 32 bits, or wired to the wrong
+// argument would silently write over the start of the file, and nothing in the
+// suite would notice.
+
+test "a write stream opened at an offset writes there, not at the start" =
+    let root = openRoot()
+    let file = openFile(root, "offsets.txt", true)
+    writeBytesTo(file, 0i64, "abcdefgh".bytes())
+    file.close()
+
+    let patcher = openFile(root, "offsets.txt", false)
+    writeBytesTo(patcher, 4i64, "XY".bytes())
+    patcher.close()
+
+    let reader = openFile(root, "offsets.txt", false)
+    let data = readAllFrom(reader, 64)
+    reader.close()
+    // "abcdXYgh": the patch landed at 4, and the bytes on either side of it
+    // are untouched. An ignored offset gives "XYcdefgh" and a truncated one
+    // gives a file that grew instead.
+    assert data.length == 8
+    assert data.get(0) == 97u8
+    assert data.get(3) == 100u8
+    assert data.get(4) == 88u8
+    assert data.get(5) == 89u8
+    assert data.get(6) == 103u8
+    assert data.get(7) == 104u8
+
+    unlink(root, "offsets.txt")
+
+test "a read stream opened at an offset reads from there" =
+    let root = openRoot()
+    let file = openFile(root, "read-offset.txt", true)
+    writeBytesTo(file, 0i64, "0123456789".bytes())
+    file.close()
+
+    let reader = openFile(root, "read-offset.txt", false)
+    let tail = readRangeFrom(reader, 6i64, 64)
+    reader.close()
+    // "6789", not "0123" and not the whole file.
+    assert tail.length == 4
+    assert tail.get(0) == 54u8
+    assert tail.get(3) == 57u8
+
+    unlink(root, "read-offset.txt")
+
+// --- durability ------------------------------------------------------------
+
+test "sync and syncData report, or say they are unsupported" =
+    // `syncStart` / `syncDataStart` had no caller anywhere in the tree: two
+    // async imports whose param blocks and finish wiring had never once been
+    // executed. As with advise, the host is entitled to answer `unsupported`;
+    // what it may not do is trap or hand back an undecodable result.
+    let root = openRoot()
+    let file = openFile(root, "sync.txt", true)
+    writeBytesTo(file, 0i64, "durable".bytes())
+
+    let dataCall = file.syncDataStart()
+    awaitCall(dataCall)
+    match FileDescriptor.unitFinish(dataCall) with
+        case Ok(_) => assert true
+        case Error(FileSystemError.Unsupported) => assert true
+        case Error(_) => panic "syncData failed with an unexpected error"
+
+    let fullCall = file.syncStart()
+    awaitCall(fullCall)
+    match FileDescriptor.unitFinish(fullCall) with
+        case Ok(_) => assert true
+        case Error(FileSystemError.Unsupported) => assert true
+        case Error(_) => panic "sync failed with an unexpected error"
+    file.close()
+
+    // The bytes survived the round trip either way.
+    let reader = openFile(root, "sync.txt", false)
+    let data = readAllFrom(reader, 64)
+    reader.close()
+    assert data.length == 7
+
+    unlink(root, "sync.txt")
+
+test "advise reports cleanly, or says it is unsupported" =
+    let root = openRoot()
+    let file = openFile(root, "advise.txt", true)
+    writeBytesTo(file, 0i64, "advise me".bytes())
+    file.close()
+
+    let f2 = openFile(root, "advise.txt", false)
+    let call = f2.adviseStart(0i64, 9i64, FileAdvice.Normal)
+    awaitCall(call)
+    // A host is free to say `unsupported` — advice is advice. What it must not
+    // do is trap, or hand back something that decodes as neither an ok nor a
+    // nameable error, which is what a wrong param block or enum lowering gives.
+    match FileDescriptor.unitFinish(call) with
+        case Ok(_) => assert true
+        case Error(FileSystemError.Unsupported) => assert true
+        case Error(_) => panic "advise failed with an unexpected error"
+    f2.close()
+
+    unlink(root, "advise.txt")
+
+test "getFlags on a closed-over directory still reports, and setTimesAt on a missing path fails" =
+    let root = openRoot()
+    let flagsCall = root.getFlagsStart()
+    awaitCall(flagsCall)
+    FileDescriptor.getFlagsFinish(flagsCall).require
+    let call = root.setTimesAtStart(PathFlags { symlinkFollow = false }, "no-such-path",
+        NewTimestamp.Now, NewTimestamp.Now)
+    awaitCall(call)
+    assert FileDescriptor.unitFinish(call).isError

@@ -1,0 +1,65 @@
+package test:iface@0.1.0;
+
+/// Fixture interface exercising every WIT type shape the generic
+/// canonical-ABI engine supports. Implemented host-side in wit_engine.rs.
+interface fixture {
+  record point {
+    x: f64,
+    y: f64,
+    label: string,
+  }
+
+  enum color {
+    red,
+    green,
+    blue,
+  }
+
+  variant shape {
+    circle(f64),
+    rect(point),
+    empty,
+  }
+
+  /// Flat-param join conflict: i32 vs f32 in the same slot.
+  variant mixed {
+    i(s32),
+    f(f32),
+  }
+
+  flags perms {
+    read,
+    write,
+    exec,
+  }
+
+  add: func(a: s32, b: s64) -> s64;
+  half: func(x: f64) -> f64;
+  negate: func(b: bool) -> bool;
+  small-sum: func(a: u8, b: s8, c: u16, d: s16) -> u32;
+  concat: func(a: string, b: string) -> string;
+  echo-point: func(p: point) -> point;
+  next-color: func(c: color) -> color;
+  area: func(s: shape) -> f64;
+  make-shape: func(kind: u32) -> shape;
+  mix-to-string: func(m: mixed) -> string;
+  set-flags: func(mask: perms) -> perms;
+  sum-list: func(values: list<u32>) -> u64;
+  reverse-bytes: func(data: list<u8>) -> list<u8>;
+  shout-all: func(words: list<string>) -> list<string>;
+  maybe-hello: func(want: bool) -> option<string>;
+  parse-num: func(s: string) -> result<s64, string>;
+  swap: func(pair: tuple<s32, string>) -> tuple<string, s32>;
+  describe: func(input: option<u32>) -> string;
+
+  resource counter {
+    constructor(start: s64);
+    add: func(amount: s64) -> s64;
+    get: func() -> s64;
+    merge: static func(a: borrow<counter>, b: borrow<counter>) -> counter;
+  }
+}
+
+world fixture-world {
+  import fixture;
+}

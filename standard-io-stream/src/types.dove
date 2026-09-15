@@ -1,0 +1,98 @@
+package standard.io.stream
+
+import standard.io.Async
+import standard.io.Producer
+import standard.io.Cause
+import standard.io.Fiber
+import standard.io.Rendezvous
+
+/// A reusable stream description. Every consumption allocates fresh execution state.
+public sealed abstract class Stream<out T, out E>()
+
+internal final class StreamEmpty<out T, out E>() extends Stream<T, E>()
+
+internal final class StreamFromChunk<out T, out E>(public chunk: Async<ReadonlySlice<T>, E>) extends Stream<T, E>()
+
+internal final class StreamUnfold<out T, out S, out E>(
+    public initial: () => Any,
+    public step: (Any) => Async<(ReadonlySlice<T>, Any), Option<E>>
+) extends Stream<T, E>()
+
+internal final class StreamTransform<out T, out U, out E>(
+    public source: Stream<T, E>,
+    public transform: (ReadonlySlice<Any>) => Async<ReadonlySlice<U>, E>
+) extends Stream<U, E>()
+
+internal final class StreamTransformItem<out T, out U, out E>(
+    public source: Stream<T, E>,
+    public effect: (Any) => Async<ReadonlySlice<U>, E>
+) extends Stream<U, E>()
+
+internal final class StreamDrop<out T, out E>(public source: Stream<T, E>, public count: Int32) extends Stream<T, E>()
+internal final class StreamTake<out T, out E>(public source: Stream<T, E>, public count: Int32) extends Stream<T, E>()
+internal final class StreamConcat<out T, out E>(public first: Stream<T, E>, public second: () => Stream<T, E>) extends Stream<T, E>()
+internal final class StreamFlatMap<out T, out U, out E>(public source: Stream<T, E>, public bind: (Any) => Stream<U, E>) extends Stream<U, E>()
+internal final class StreamRepeat<out T, out E>(public source: Stream<T, E>) extends Stream<T, E>()
+internal final class StreamRecover<out T, out E, out E2>(public source: Stream<T, E>, public recover: (Any) => Stream<T, E2>) extends Stream<T, E2>()
+internal final class StreamRechunk<out T, out E>(
+    public source: Stream<T, E>,
+    public size: Int32,
+    public assemble: (List<Any>, Int32) => Async<ReadonlySlice<T>, Never>
+) extends Stream<T, E>()
+internal final class StreamMerge<out T, out E>(public sources: () => List<Stream<T, E>>) extends Stream<T, E>()
+
+// Execution progress is separate from the reusable stream description.
+// Dispatch always matches `stream`; there are no operator methods or callbacks.
+internal class StreamExecutionState(
+    public mutable stream: Stream<Any, Any>,
+    public mutable initialized: Bool,
+    public mutable state: Any,
+    public mutable upstream: Option<StreamExecutionState>,
+    public mutable branch: Option<StreamSession>,
+    public mutable chunk: Option<ReadonlySlice<Any>>,
+    public mutable index: Int32,
+    public mutable count: Int32,
+    public mutable ended: Bool,
+    public mutable pending: List<Any>
+)
+
+internal class StreamBudget(public mutable steps: Int32)
+
+internal enum MergeEvent =
+    Chunk(ReadonlySlice<Any>)
+    End
+    Failed(Cause<Any>)
+
+internal class MergeState(
+    public rendezvous: Rendezvous<MergeEvent>,
+    public mutable workers: List<Fiber<Unit, Never>>,
+    public mutable remaining: Int32,
+    public mutable stopping: Bool
+)
+
+// A session routes nested interpretation to the fiber that owns the current
+// output's scope. Requests are made only by that producer's single owner.
+internal enum StreamRequest =
+    Advance
+    Bind(Stream<Any, Any>)
+    AdvanceBinding
+
+internal enum StreamReply =
+    Chunk(ReadonlySlice<Any>)
+    BindingEnd
+
+internal enum StreamBinding =
+    Owned(StreamSession)
+    Forwarded(StreamSession)
+
+internal class StreamSessionState(
+    public execution: StreamExecutionState,
+    public budget: StreamBudget,
+    public mutable request: StreamRequest,
+    public mutable bindings: List<StreamBinding>
+)
+
+internal class StreamSession(
+    public producer: Producer<StreamReply, Any>,
+    public state: Option<StreamSessionState>
+)

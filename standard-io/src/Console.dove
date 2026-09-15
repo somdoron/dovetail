@@ -1,0 +1,424 @@
+package standard.io
+
+
+import standard.wasi.cli.StdinStream
+import standard.wasi.cli.StdoutStream
+import standard.wasi.cli.StderrStream
+import standard.wasi.cli.CliIoError
+import standard.wasi.OpenFlag
+
+/// Error type for `Console` operations. Maps wasi:cli's untyped CliIoError
+/// into a small user-facing set; keeps `standard.io`'s public surface free
+/// of wasi types.
+public enum ConsoleError =
+    PipeBroken
+    InvalidEncoding
+    /// An explicit `close` on the stream aborted this operation. Unreachable in
+    /// practice — the standard streams live as long as the component and are
+    /// never closed — but the stream interface can raise it, so it is nameable.
+    Canceled
+    Other(Int32)
+
+implement Display for ConsoleError =
+    public function format(self: ConsoleError): String =
+        match self with
+            case ConsoleError.PipeBroken => "broken pipe"
+            case ConsoleError.InvalidEncoding => "invalid encoding"
+            case ConsoleError.Canceled => "canceled by close"
+            case ConsoleError.Other(code) => "console error " ++ code.format()
+
+/// Bytes pulled from stdin that `Console.readLine` has not handed out yet, plus
+/// the end-of-input latch.
+///
+/// `data` is a capacity buffer rather than a snug array: `[start, used)` is what
+/// is pending and everything past `used` is room to grow into. `scanned` is how
+/// far the newline search has already got, so a byte is examined once however
+/// many chunks it takes to find its terminator. Both exist for the same reason —
+/// an exact-fit buffer re-copied everything pending on every chunk and the
+/// search restarted from `start` each time, which made a newline-free megabyte
+/// quadratic twice over.
+class StdinLines(
+    public mutable data: Array<Uint8>,
+    public mutable start: Int32,
+    public mutable used: Int32,
+    public mutable scanned: Int32,
+    public mutable atEof: Bool
+)
+
+/// Async console I/O over wasi:cli's stdin/stdout/stderr. Public surface is
+/// just the verbs (`write`, `writeLine`, `errorWrite`, `errorWriteLine`,
+/// `readLine`) — stream construction is an internal detail. All operations
+/// use UTF-8.
+module Console =
+
+    // --- Cached streams ---
+    // Initialized once per process. Writes go through the compiler-owned
+    // runtime stdio streams (see the intrinsics above), so only stdin needs a
+    // wrapper here.
+
+    // Opened once at startup (a plain record — no closures in the global).
+    let stdinOpened: StdinStream = StdinStream.open()
+
+    /// The single stdin wrapper for the process. Caching is required, not just
+    /// an optimization: `WasiInputStream` holds the EOF latch and the stream's
+    /// one-shot result future, so a fresh wrapper per call would re-post on the
+    /// finished host stream after EOF. It also means concurrent `readLine`s
+    /// serialize through one lock instead of racing two reads onto one handle.
+    /// Built from the constructor rather than `WasiInputStream.resource`, and
+    /// this module is the only place that may. A `Resource` pairs acquisition
+    /// with release, which is exactly right for a stream with a scope — and
+    /// exactly wrong for one that IS the process: stdio is never released, and a
+    /// module-level global cannot run the `Async` that acquiring would be. Same
+    /// for the two writers below.
+    let stdinStream: AsyncInputStream<CliIoError> =
+        // The same probe wiring `WasiInputStream.resource` does. Nothing ever
+        // closes stdio, so the flag should never flip — but the probe must
+        // read the wrapper's flag and not a constant, or a close (should one
+        // ever exist) would leave the runtime posting on its handle.
+        let openFlag = OpenFlag(true)
+        WasiInputStream<CliIoError>(
+            stdinOpened.componentRead().withStillOpen(() => openFlag.open), openFlag,
+            StreamState.Open, None, Mutex.makeProcessWide()
+        )
+
+    /// The error a stream reports when the host dropped it without recording a
+    /// reason — for stdout/stderr, the reader going away.
+    ///
+    /// Deliberately outside wasi:cli's `error-code` enum, whose three cases are
+    /// 0 = io, 1 = illegal-byte-sequence, 2 = pipe. The old sentinel was
+    /// `CliIoError(0)`, which both collided with a real `io` code and made
+    /// `PipeBroken` unreachable: a closed pipe arrived as "console error 0".
+    function streamDropped(): CliIoError = CliIoError(-1i32)
+
+    /// wasi:cli's untyped code, or one of the negative local markers, as a
+    /// `ConsoleError`.
+    function mapStreamError(error: CliIoError): ConsoleError =
+        let code = error.value
+        if code == CliIoError.canceled.value then
+            ConsoleError.Canceled
+        else if code == -1i32 || code == 2i32 then
+            ConsoleError.PipeBroken
+        else if code == 1i32 then
+            ConsoleError.InvalidEncoding
+        else
+            ConsoleError.Other(code)
+
+    // --- stdout / stderr ---
+    //
+    // Real p3 stream writes, driven by the fiber runtime like every other
+    // stream in this library: backpressure suspends only the writing fiber
+    // instead of blocking the whole component in `waitable-set.wait`, and a
+    // dropped stream (a closed pipe) surfaces as a typed `ConsoleError` rather
+    // than trapping the component with no way to catch it.
+    //
+    // The compiler-owned blocking path still exists — panic reporting and
+    // `debug` have no runtime to report to, so all it can do with a failure is
+    // stop writing. It opens its own stream to the same target rather
+    // than sharing these: one stream end permits one outstanding operation, so a
+    // `debug` fired under a parked `Console` write would otherwise trap or take
+    // over its completion.
+
+    /// The single stdout wrapper for the process, cached for the same reasons
+    /// as `stdinStream`: it holds the failure latch and the stream's one-shot
+    /// result future, and it is what serializes concurrent writers onto the one
+    /// handle p3 allows a single outstanding write on.
+    ///
+    /// Both stdout and stderr live as long as the component and are never
+    /// dropped, hence the no-op close hook; a write after a broken pipe answers
+    /// from the failure latch rather than touching the handle again.
+    ///
+    /// `TornWrite.Reframe(newline)`, and these two are the only streams in the
+    /// tree that ask for it. A write interrupted with half its array out leaves a
+    /// hole here as everywhere else, and everywhere else the stream is retired for
+    /// it — but these are the process's only voice, made once and never released,
+    /// so retiring one would mean a single interrupted `print` silences every
+    /// fiber's output for the life of the component. Leaving the hole unmarked is
+    /// not the alternative either: console output is read a line at a time, by
+    /// people and by log collectors alike, and a torn line followed by the next
+    /// one is a MERGED line that reads as a real record. So the stream survives
+    /// and the next write begins on a fresh line, which turns a silent corruption
+    /// into a visibly truncated one. See `TornWrite`.
+    let stdoutStream: AsyncOutputStream<CliIoError> =
+        let opened: StdoutStream = StdoutStream.open()
+        // Probe wiring as in `WasiOutputStream.resource`; see `stdinStream`.
+        let openFlag = OpenFlag(true)
+        WasiOutputStream<CliIoError>(
+            opened.componentWrite().withStillOpen(() => openFlag.open), openFlag, streamDropped(),
+            StreamState.Open, None, TornWrite.Reframe(10u8), false, 0i32, Mutex.makeProcessWide()
+        )
+
+    let stderrStream: AsyncOutputStream<CliIoError> =
+        let opened: StderrStream = StderrStream.open()
+        let openFlag = OpenFlag(true)
+        WasiOutputStream<CliIoError>(
+            opened.componentWrite().withStillOpen(() => openFlag.open), openFlag, streamDropped(),
+            StreamState.Open, None, TornWrite.Reframe(10u8), false, 0i32, Mutex.makeProcessWide()
+        )
+
+    /// Write `text` to stdout.
+    public function write(text: String): Async<Unit, ConsoleError> =
+        stdoutStream.write(text.bytes().readonly).mapError(mapStreamError)
+
+    /// Write `line` to stdout followed by `\n`.
+    public function writeLine(line: String): Async<Unit, ConsoleError> =
+        stdoutStream.write((line ++ "\n").bytes().readonly).mapError(mapStreamError)
+
+    /// Write `text` to stderr.
+    public function errorWrite(text: String): Async<Unit, ConsoleError> =
+        stderrStream.write(text.bytes().readonly).mapError(mapStreamError)
+
+    /// Write `line` to stderr followed by `\n`.
+    public function errorWriteLine(line: String): Async<Unit, ConsoleError> =
+        stderrStream.write((line ++ "\n").bytes().readonly).mapError(mapStreamError)
+
+    // --- stdin ---
+
+    /// Bytes pulled from stdin that `readLine` has not handed out yet, plus the
+    /// end-of-input latch.
+    ///
+    /// Process-wide, alongside `stdinStream`, and for the same reason: reading a
+    /// chunk at a time is what makes `readLine` linear, but a chunk almost always
+    /// runs past the newline, and those bytes have to survive until the next
+    /// call. `start` is how far into `data` the reader has got, so consuming a
+    /// line does not re-copy the rest of the chunk.
+    ///
+    /// The consequence to know about: stdin bytes past a newline belong to this
+    /// buffer, not to the host stream, so mixing `readLine` with a direct read of
+    /// the underlying stdin stream would skip them. `Console` exposes no such
+    /// read, and stdin has exactly one wrapper.
+    let pendingLines: StdinLines = StdinLines(Array<Uint8>.empty(), 0i32, 0i32, 0i32, false)
+
+    /// `readLine` runs under a lock of its own rather than the stdin stream's,
+    /// because the buffer check has to sit inside the SAME critical section as
+    /// the host read. Without that, a second reader granted the stream lock
+    /// posts a fresh read while a complete line the first reader left behind
+    /// waits unclaimed — the caller blocks on input that has already arrived.
+    ///
+    /// The runtime's per-handle lock on the stdin stream is still taken inside
+    /// this one, always in this order and by nothing else, so the two cannot
+    /// deadlock. Non-reentrant: `readLine` is the only holder and does not call
+    /// itself, so an acquire that finds this fiber already holding it is a bug
+    /// here rather than something a caller could act on — hence the
+    /// `orPanicWith` on the acquire in `readLine`.
+    let stdinLinesLock: Mutex = Mutex.makeProcessWide()
+
+
+    /// Index of the next LF at or after `start`, or -1 if there is none yet.
+    /// Resumes from `scanned` and leaves it where it stopped, so the bytes of a
+    /// line that arrives over many chunks are examined once in total rather
+    /// than once per chunk.
+    function findNewline(buffer: StdinLines): Int32 =
+        let mutable index = buffer.scanned
+        let mutable found = -1i32
+        while found < 0i32 && index < buffer.used do
+            if buffer.data.get(index) == 10u8 then
+                found = index
+            else
+                index = index + 1i32
+        buffer.scanned = index
+        found
+
+    /// Decode `[start, end)` as a line, dropping one trailing CR.
+    function decodeLine(buffer: StdinLines, end: Int32): String =
+        let stop = if end > buffer.start && buffer.data.get(end - 1i32) == 13u8 then
+            end - 1i32
+        else
+            end
+        String.fromBytes(buffer.data, buffer.start, stop - buffer.start)
+
+    /// Take the next complete line, or `None` while the buffer holds no newline.
+    function takeLine(buffer: StdinLines): Option<String> =
+        let newlineAt = findNewline(buffer)
+        if newlineAt < 0i32 then
+            None
+        else
+            let line = decodeLine(buffer, newlineAt)
+            buffer.start = newlineAt + 1i32
+            buffer.scanned = buffer.start
+            Some(line)
+
+    /// Whatever is left once the input has ended: a final line with no
+    /// terminator, or `None` when the buffer is spent.
+    function takeRest(buffer: StdinLines): Option<String> =
+        if buffer.start >= buffer.used then
+            None
+        else
+            let line = decodeLine(buffer, buffer.used)
+            buffer.start = buffer.used
+            buffer.scanned = buffer.start
+            Some(line)
+
+    /// Append a freshly-read chunk. Copies into the free tail when there is
+    /// room; otherwise reallocates to twice what is actually needed, dropping
+    /// the consumed prefix in the same move. Twice-what-is-needed rather than
+    /// twice-the-buffer so a reader that has consumed almost everything does not
+    /// carry a huge array around, and so the reallocation count is logarithmic
+    /// in the length of a single line rather than one per chunk.
+    function appendChunk(buffer: StdinLines, chunk: Array<Uint8>): Unit =
+        if buffer.data.length - buffer.used < chunk.length then
+            let pending = buffer.used - buffer.start
+            // Guarded BEFORE it is computed, the same shape as `ByteBuffer.append`
+            // and for the same reason: `pending + chunk.length` is the live byte
+            // count that must survive the reallocation, and Int32 arithmetic wraps
+            // — past the maximum the add goes negative, the doubling below wraps
+            // through -2^31, and `Array.fill` traps on a negative length inside a
+            // single interpreter step where no interrupt can ever run. A stdin
+            // line past 2^31-1 bytes cannot be indexed at all; say so loudly.
+            if chunk.length > 2147483647i32 - pending then
+                panic "Console.readLine: stdin line buffer cannot grow to " ++
+                    pending.format() ++ " + " ++ chunk.length.format() ++
+                    " bytes: past the 2^31-1 maximum"
+            let required = pending + chunk.length
+            // Twice the live bytes for headroom, but never past what an `Int32`
+            // can hold: one doubling beyond 2^30 would wrap, and `required` is
+            // known representable (guarded above), so the last step grows to it
+            // exactly instead — the same cap `ByteBuffer` uses.
+            let capacity = if required > 1073741823i32 then required else required * 2i32
+            let grown = Array<Uint8>.fill(capacity, 0u8)
+            buffer.data.copy(buffer.start, grown, 0i32, pending)
+            buffer.data = grown
+            buffer.scanned = buffer.scanned - buffer.start
+            buffer.start = 0i32
+            buffer.used = pending
+        chunk.copy(0i32, buffer.data, buffer.used, chunk.length)
+        buffer.used = buffer.used + chunk.length
+
+    /// Read one line from stdin (LF-delimited, CRLF tolerant). Returns the
+    /// line content without the terminator, or `None` at EOF with no pending
+    /// data. UTF-8 decoded.
+    ///
+    /// Reads in 64 KiB chunks and keeps what it does not use in `pendingLines`,
+    /// so the cost is one host read per chunk rather than one per byte.
+    ///
+    /// Concurrent readers each get a whole line, and a reader only ever waits on
+    /// the host when the buffer genuinely has no line left: the check and the
+    /// read happen under one lock (`stdinLinesLock`), so the second reader
+    /// inspects the buffer the first one refilled rather than posting a read of
+    /// its own for input that has already arrived.
+    public async function readLine(): Async<Option<String>, ConsoleError> =
+        let _held = use stdinLinesLock.acquire().orPanicWith((_: MutexError) => "Console.readLine re-entered the stdin line lock")
+        // Hoisted out of the loop: one closure for the whole line, not one per chunk.
+        let toConsoleError: (CliIoError) => ConsoleError = mapStreamError
+        let mutable line: Option<String> = takeLine(pendingLines)
+        let mutable done = line.isSome
+        while !done do
+            if pendingLines.atEof then
+                done = true
+            else
+                let chunk = await stdinStream.read(readChunkBytes).mapError(toConsoleError)
+                if chunk.length == 0i32 then
+                    pendingLines.atEof = true
+                else
+                    appendChunk(pendingLines, chunk)
+                line = takeLine(pendingLines)
+                done = line.isSome
+        match line with
+            case Some(_) => line
+            case None => takeRest(pendingLines)
+
+    // --- Console unit tests -------------------------------------------------------
+
+    test "Console: a dropped stdout stream reports a broken pipe" =
+        // The sentinel the stream latches when the host drops it without a reason.
+        // It used to be `CliIoError(0)`, which is wasi:cli's `io` code, so a closed
+        // pipe surfaced as "console error 0" and `PipeBroken` was unreachable.
+        assert mapStreamError(streamDropped()).format() == "broken pipe"
+
+    test "Console: wasi:cli error codes map onto ConsoleError" =
+        // enum error-code { io, illegal-byte-sequence, pipe }
+        assert mapStreamError(CliIoError(2i32)).format() == "broken pipe"
+        assert mapStreamError(CliIoError(1i32)).format() == "invalid encoding"
+        assert mapStreamError(CliIoError(0i32)).format() == "console error 0"
+
+    /// A buffer holding `text`, as one chunk would arrive from the host.
+    function bufferOf(text: String): StdinLines =
+        let bytes = text.bytes()
+        StdinLines(bytes, 0i32, bytes.length, 0i32, false)
+
+    test "Console: one chunk yields every line it contains" =
+        let buffer = bufferOf("alpha\nbeta\ngamma\n")
+        assert takeLine(buffer).or("<none>") == "alpha"
+        assert takeLine(buffer).or("<none>") == "beta"
+        assert takeLine(buffer).or("<none>") == "gamma"
+        assert takeLine(buffer).isNone
+        // Fully consumed: nothing trails the last newline.
+        assert takeRest(buffer).isNone
+
+    test "Console: a line split across chunks is rejoined" =
+        let buffer = bufferOf("head")
+        assert takeLine(buffer).isNone
+        appendChunk(buffer, "-and-tail\nnext\n".bytes())
+        assert takeLine(buffer).or("<none>") == "head-and-tail"
+        assert takeLine(buffer).or("<none>") == "next"
+
+    test "Console: appending drops the consumed prefix" =
+        let buffer = bufferOf("first\nsecond")
+        assert takeLine(buffer).or("<none>") == "first"
+        appendChunk(buffer, "-part\n".bytes())
+        // "first\n" is gone; only the pending tail was carried over, and the
+        // buffer holds room to grow rather than an exact fit.
+        assert buffer.used == 12i32
+        assert buffer.start == 0i32
+        assert takeLine(buffer).or("<none>") == "second-part"
+
+    test "Console: CRLF terminators are trimmed" =
+        let buffer = bufferOf("one\r\ntwo\r\n")
+        assert takeLine(buffer).or("<none>") == "one"
+        assert takeLine(buffer).or("<none>") == "two"
+
+    test "Console: a final line without a terminator survives to takeRest" =
+        let buffer = bufferOf("done\nlast")
+        assert takeLine(buffer).or("<none>") == "done"
+        assert takeLine(buffer).isNone
+        assert takeRest(buffer).or("<none>") == "last"
+        assert takeRest(buffer).isNone
+
+    /// Each byte of a newline-free run must be copied and compared a bounded
+    /// number of times. The old buffer re-copied everything pending on every
+    /// chunk and restarted the newline scan from the beginning, so this shape —
+    /// a long line arriving in pieces, which is just a large field in a piped
+    /// record — cost O(n^2) in both.
+    ///
+    /// 400 chunks, not the 1000 this started at. The discriminating power is the
+    /// RATIO, and at C chunks the quadratic buffer does about C/2 times the
+    /// linear one's work — 200x here, which at the ~10 s the linear path costs
+    /// under the interpreter is over half an hour. So the budget below is
+    /// nowhere near the regression it exists to catch, while 1000 chunks spent
+    /// ~26 s of it: enough that a loaded box timed the test out and the failure
+    /// read as a regression. Keep the margin, not the chunk count.
+    @timeout(60000)
+    test "Console: a long line arriving in many chunks stays linear" =
+        let buffer = bufferOf("")
+        let chunk = Array<Uint8>.fill(4096i32, 65u8)
+        let mutable i = 0i32
+        while i < 400i32 do
+            appendChunk(buffer, chunk)
+            assert takeLine(buffer).isNone
+            i = i + 1i32
+        appendChunk(buffer, "\n".bytes())
+        let line = takeLine(buffer).or("<none>")
+        assert line.byteLength == 1638400i32
+        assert takeLine(buffer).isNone
+
+    // `appendChunk`'s capacity math wraps Int32 unless it is guarded: past the
+    // 2^31-1 maximum `pending + chunk.length` goes negative, the doubling wraps
+    // through -2^31, and `Array.fill` traps on a negative length — the exact
+    // sibling of the `ByteBuffer.append` overflow, inside one interpreter step
+    // where no interrupt can run. The overflow itself needs a >1GiB line to
+    // reach and so cannot be driven here; what is checked is that the guarded
+    // path keeps every byte across several growth boundaries and still leaves
+    // headroom (the doubling branch), so the refactor that added the guard did
+    // not change the small-input behaviour the rest of `readLine` relies on.
+    test "Console: appendChunk keeps every byte across growth boundaries" =
+        let buffer = bufferOf("")
+        let mutable written = 0i32
+        while written < 5000i32 do
+            appendChunk(buffer, Array<Uint8>.fill(7i32, (written % 251i32).toUint8()))
+            written = written + 7i32
+        assert buffer.used == written
+        // Headroom, not an exact fit: the doubling branch grows past `used` so a
+        // reader that has consumed almost nothing is not re-copied on every chunk.
+        assert buffer.data.length > buffer.used
+        assert buffer.data.get(0) == 0u8
+        assert buffer.data.get(7) == 7u8
+        assert buffer.data.get(written - 1i32) == ((written - 7i32) % 251i32).toUint8()

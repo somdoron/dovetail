@@ -1,0 +1,339 @@
+package test
+
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.Cause
+import standard.io.Fiber
+import standard.io.Promise
+import standard.io.Queue
+import standard.io.Resource
+import standard.io.WasiInputStream
+import standard.time.Duration
+import standard.wasi.ComponentStreamRead
+import standard.wasi.CopyOperation
+import standard.wasi.CopyResult
+import standard.wasi.EventPayload
+import standard.wasi.Waitable
+
+// THE SCHEDULER WINDOW: the fairness budget in `runFiber` means another fiber
+// — or an interrupt — can run between ANY two interpreter steps of this one.
+// Code that checks in one step and acts on the answer in a later step is code
+// with a race, and these tests aim the budget boundary into exactly those
+// windows.
+//
+// The first two tests cannot name the boundary's step index — it depends on
+// interpreter constants nobody should pin — so they SWEEP: the probe fiber
+// burns a varying number of pure steps before entering the window, and some
+// alignment in the swept range lands the 1024-step boundary inside it. On a
+// runtime with the race, the aligned iteration deadlocks the run, and the
+// event loop's stall panic fails the test loudly. On a fixed runtime every
+// alignment passes.
+//
+// The rest drive their windows deterministically instead. Two use the
+// synthetic blocked-copy sources this package already uses (`racingSource`):
+// a cancel that loses hands the fiber a payload and defers its interrupt,
+// which is the state the deferred-delivery rules are about. The last parks a
+// masked fiber on a promise and fails it, which is the state the
+// failure-path mask exit is about.
+
+// The step burner is `burnExactly` from `bracket_test` (same package): an
+// `Async` costing exactly `n` interpreter steps with no suspension anywhere —
+// single-step resolution, which is what lets a sweep walk the boundary
+// through a window a few steps wide.
+
+// --- a wake landing between an awaiter's check and its park ------------------
+
+@timeout(60000)
+test "a wake landing between an awaiter's check and its park is not lost" =
+    // Fiber A offers to a full one-slot queue: its check reads "full" and it
+    // parks on the offer waiter. The main fiber empties the queue and issues
+    // the wake. When the budget boundary falls between A's check and A's park,
+    // the wake used to find no registration — A then parked on the stale
+    // answer forever, and the join below deadlocked the run.
+    lostWakeSweepProgram().run()
+
+async function lostWakeSweepProgram(): Async<Unit, Never> =
+    let mutable n = 600i32
+    while n <= 1200i32 do
+        let makeQ: Async<Queue<Int32>, Never> = Queue.make(1i32)
+        let q = await makeQ
+        await q.offer(1i32)
+        let offerer: Fiber<Unit, Never> = await burnThenOffer(q, n).fork()
+        // Longer than one budget, so the boundary certainly lands in here and
+        // the offerer runs — and enters its window — before the take below.
+        await burnExactly(1400i32)
+        let first = await q.take()
+        assert first == 1i32
+        await offerer.join()
+        let second = await q.take()
+        assert second == 2i32
+        n = n + 2i32
+    ()
+
+async function burnThenOffer(q: Queue<Int32>, n: Int32): Async<Unit, Never> =
+    await burnExactly(n)
+    await q.offer(2i32)
+
+// --- a close landing between a reader's state check and its post -------------
+
+@timeout(120000)
+test "a close landing between a reader's state check and its post never reaches the handle" =
+    // `WasiInputStream.readOpen` checks `state == Open` in one interpreter step
+    // and posts the copy in the next. A sibling `close` landing on the budget
+    // boundary between them cancels, DROPS the handle, and hands the index back
+    // to the host — so the late post would not fail, it would land on whatever
+    // stream got the index next. The fixture's `start` panics once the handles
+    // are dropped, which is the loud spelling of that quiet disaster; the fix —
+    // the record's `stillOpen` probe, consulted INSIDE the posting step — turns
+    // the aligned iteration into the same `canceledError` every other side of
+    // the close reports.
+    closeRaceSweepProgram().run()
+
+/// A stream end that knows when its handles were dropped and refuses, loudly,
+/// any copy posted after that. Blocked otherwise, so an unraced reader parks
+/// and is detached by the close like any real reader would be.
+function droppableSource(waitable: Waitable, dropped: Array<Int32>): ComponentStreamRead<Array<Uint8>, CarriedError> =
+    ComponentStreamRead<Array<Uint8>, CarriedError> {
+        readable = waitable
+        ending = () => Ok(())
+        start = (capacity: Int32) =>
+            if dropped.get(0) == 1i32 then
+                panic "a copy was posted after the stream's handles were dropped"
+            else
+                blockedCopy()
+        cancel = () => EventPayload.ofCopy(CopyResult.Cancelled, 0i32)
+        canceledError = CarriedError.Broken
+        stillOpen = () => true
+        dropEnd = () => dropped.set(0, 1i32)
+        discardElements = (copy: CopyOperation, count: Int32) => ()
+        lift = (copy: CopyOperation, count: Int32) => Array<Uint8>.empty()
+    }
+
+function reportReadFailed(error: CarriedError): Async<String, Never> = Async.succeed("failed")
+
+function reportReadAnswered(bytes: Array<Uint8>): Async<String, Never> = Async.succeed("answered")
+
+async function burnThenReadOne(
+    stream: AsyncInputStream<CarriedError>,
+    n: Int32,
+    landed: Array<String>
+): Async<Unit, Never> =
+    await burnExactly(n)
+    landed.set(0, await stream.read(1i64).fold<String, Never>(reportReadFailed, reportReadAnswered))
+
+async function closeRaceIteration(waitable: Waitable, n: Int32): Async<Unit, Never> =
+    let dropped = Array<Int32>.fill(1, 0i32)
+    let landed = Array<String>.fill(1, "")
+    let stream: AsyncInputStream<CarriedError> =
+        use WasiInputStream<CarriedError>.resource<Never>(() => Async.succeed(droppableSource(waitable, dropped)))
+    let reader: Fiber<Unit, Never> = await burnThenReadOne(stream, n, landed).fork()
+    // Longer than one budget, so the reader runs — and reaches wherever its
+    // burn puts it inside the read path — before the close below.
+    await burnExactly(1400i32)
+    await stream.close().catchAll<Never>((_: CarriedError) => Async.succeed(()))
+    await reader.join()
+    // Whichever side of the close the boundary put the reader on, it is told
+    // the same thing: parked first — detached with `canceledError`; arrived
+    // after — the latch; caught in the window — the probe. Never bytes, never
+    // an EOF, and (the fixture's panic) never a copy on the dropped handle.
+    assert landed.get(0) == "failed"
+
+async function closeRaceSweepProgram(): Async<Unit, Never> =
+    // One real idle handle for the whole sweep: the fixture never posts on it,
+    // and each iteration's suspension and lock entries are unlinked by that
+    // iteration's close, so nothing leaks across iterations.
+    let waitable = idleWaitable()
+    let mutable n = 900i32
+    while n <= 1100i32 do
+        await closeRaceIteration(waitable, n)
+        n = n + 1i32
+    ()
+
+// --- an interrupt landing between a promise's claim and its wake -------------
+
+// 180 s for a sweep that costs about 23 s unloaded. The budget here is a HANG
+// DETECTOR, not a performance assertion: the defect it guards against parks an
+// awaiter forever, so any budget at all turns the deadlock into a failure, and
+// the only thing a tight one buys is a false failure on a loaded box — which is
+// what a 60 s budget delivered at load average 17. The sweep's value is the
+// range of scheduler offsets it covers, so the budget moves rather than the
+// range.
+@timeout(180000)
+test "an interrupt between a promise's claim and its wake strands no awaiter" =
+    // The completer claims the promise in one step and wakes the awaiters in a
+    // later one. An interrupt delivered into that window used to leave the
+    // promise `Completed` with the awaiter parked forever — and every later
+    // completer lost the claim, so nobody else would ever wake it either.
+    settleInterruptSweepProgram().run()
+
+async function settleInterruptSweepProgram(): Async<Unit, Never> =
+    let mutable n = 600i32
+    while n <= 1200i32 do
+        let p: Promise<Int32, Never> = await Async<Int32, Never>.makePromise()
+        let awaiter: Fiber<Int32, Never> = await p.awaitPromise().fork()
+        let completer: Fiber<Unit, Never> = await burnThenComplete(p, n).fork()
+        // Yield past the boundary so the awaiter parks and the completer
+        // enters its claim-then-wake window before the interrupt lands.
+        await burnExactly(1400i32)
+        await completer.interrupt()
+        // Wait the completer out first: settled or unwound, its part is over.
+        await completer.join().foldCause<Unit, Never>(
+            (_: Cause<Never>) => Async.succeed(()),
+            (_: Unit) => Async.succeed(())
+        )
+        // The interrupt may have landed BEFORE the claim — then the promise is
+        // legitimately unsettled and the awaiter is owed this completion. What
+        // must hold either way is the invariant under test: WHOEVER won the
+        // claim also issued the wake, so once a claim exists the join below
+        // terminates. An interrupt that split the completer's claim from its
+        // wake left `won == false` here with the awaiter parked forever.
+        let won = await p.complete(0i32)
+        let value = await awaiter.join()
+        assert (won && value == 0i32) || (!won && value == 42i32)
+        n = n + 2i32
+    ()
+
+async function burnThenComplete(p: Promise<Int32, Never>, n: Int32): Async<Unit, Never> =
+    await burnExactly(n)
+    let _won = await p.complete(42i32)
+    ()
+
+// --- a deferred interrupt must not fire inside a masked release --------------
+
+@timeout(10000)
+test "a deferred interrupt waits out a masked release" =
+    // A raced cancel hands the fiber a payload and defers its interrupt to the
+    // next safe point. A bracket release runs MASKED, and the first suspension
+    // inside it — here, waiting on the gate — used to count as that safe
+    // point: the release was cut in half, which for the real callers of this
+    // shape is a TLS `close_notify` never sent or a buffered file flushed but
+    // never closed. A masked region is masked against deferred interrupts
+    // exactly as it is against direct ones.
+    let events = Array<String>.fill(2, "")
+    maskedReleaseProgram(events).run()
+    assert events.get(0) == "started"
+    assert events.get(1) == "finished"
+
+async function releaseHalves(gate: Promise<Unit, Never>, events: Array<String>): Async<Unit, Never> =
+    events.set(0, "started")
+    await gate.awaitPromise()
+    events.set(1, "finished")
+
+async function bodyThenRelease(
+    gate: Promise<Unit, Never>,
+    events: Array<String>
+): Async<Unit, CarriedError> =
+    let held: Resource<Unit, CarriedError> = Resource<Unit, CarriedError>.make(
+        () => Async.succeed(()),
+        (_: Unit) => releaseHalves(gate, events)
+    )
+    let _r = use held
+    // Parks on the synthetic blocked copy; the interrupt's cancel loses and
+    // hands back the payload, so the fiber resumes carrying its deferred
+    // interrupt — and the body then ends, entering the masked release.
+    let _copied = await Async<Array<Uint8>, CarriedError>.streamRead(
+        racingSource([|1u8, 2u8, 3u8, 4u8|], idleWaitable()), 64i32)
+    ()
+
+async function maskedReleaseProgram(events: Array<String>): Async<Unit, Never> =
+    let gate: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let runner: Fiber<Unit, CarriedError> = await bodyThenRelease(gate, events).fork()
+    // Parked on the copy, not merely enqueued — same rationale as the raced
+    // cancel tests in `interrupt_payload_test`.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    await runner.interrupt()
+    // Let the runner reach the release and park on the gate before opening it:
+    // a gate completed first would let the release run without suspending,
+    // and the window under test is the suspension inside the mask.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    let _opened = await gate.complete(())
+    await runner.join().foldCause<Unit, Never>(
+        (_: Cause<CarriedError>) => Async.succeed(()),
+        (_: Unit) => Async.succeed(())
+    )
+
+// --- a masked fiber that stops suspending stays killable ---------------------
+
+@timeout(10000)
+test "a fiber carrying a deferred interrupt is delivered in bounded work" =
+    // The delivery points for a deferred interrupt are parks, host-op posts,
+    // and bracket acquires — all places a suspending fiber passes through. A
+    // raced-cancel resume whose continuation never suspends again (a parser
+    // over the handed-back buffer, a thunk loop) used to reach none of them:
+    // the fiber was unkillable, every later interrupt deferred behind the
+    // mask, and shutdown hung with it always runnable. The fairness boundary
+    // now bounds the deferral at one budget of work.
+    let landed = Array<String>.fill(1, "")
+    pureLoopProgram(landed).run()
+    assert landed.get(0) == "unwound"
+
+async function spinAfterRead(): Async<Unit, CarriedError> =
+    let _copied = await Async<Array<Uint8>, CarriedError>.streamRead(
+        racingSource([|9u8|], idleWaitable()), 64i32)
+    // Pure interpreter-step loop: thunks and frame traffic, no suspension.
+    let mutable spinning = true
+    while spinning do
+        await Async<Unit, CarriedError>.thunk(() => ())
+    ()
+
+async function pureLoopProgram(landed: Array<String>): Async<Unit, Never> =
+    let spinner: Fiber<Unit, CarriedError> = await spinAfterRead().fork()
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    await spinner.interrupt()
+    await spinner.join().foldCause<Unit, Never>(
+        (_: Cause<CarriedError>) => Async.thunk(() => landed.set(0, "unwound")),
+        (_: Unit) => Async.thunk(() => landed.set(0, "finished"))
+    )
+
+// --- a pending interrupt survives a mask that exits through its failure path --
+
+@timeout(10000)
+test "a pending interrupt is delivered when a mask exits via a typed failure" =
+    // An interrupt landing on a fiber parked inside `uninterruptible` sets only
+    // `interruptPending` — no safe-point mask, the fiber carries nothing. The
+    // success arm delivers it at the mask's pop; the FAILURE arm used to
+    // restore `interruptible` and keep unwinding without looking, so a masked
+    // region that exited with a typed error into a `catchAll` below the mask
+    // walked off still owing the interrupt. Every remaining delivery point
+    // requires the safe-point mask, so the recovered continuation parked
+    // immune — here on `other`, forever — and the interrupter's scope-close
+    // drained into the stall panic. The in-tree shape is `Switchable.replace`
+    // (a masked swap whose acquire can fail typed) recovered by
+    // `FileSink.rotate`'s `catchAll`.
+    let landed = Array<String>.fill(1, "")
+    maskFailureExitProgram(landed).run()
+    assert landed.get(0) == "interrupted"
+
+/// The failing-mask fiber, in exactly the shape under test: a masked await that
+/// fails typed, recovered below the mask by a `catchAll` that parks again.
+function maskedAwaitThenRecover(
+    p: Promise<Unit, CarriedError>,
+    other: Promise<Unit, Never>
+): Async<Unit, Never> =
+    p.awaitPromise().uninterruptible().catchAll<Never>(
+        (_: CarriedError) => other.awaitPromise())
+
+async function maskFailureExitProgram(landed: Array<String>): Async<Unit, Never> =
+    let p: Promise<Unit, CarriedError> = await Async<Unit, CarriedError>.makePromise()
+    let other: Promise<Unit, Never> = await Async<Unit, Never>.makePromise()
+    let runner: Fiber<Unit, Never> = await maskedAwaitThenRecover(p, other).fork()
+    // Parked on `p` INSIDE the mask before the interrupt lands, so the
+    // interrupt is recorded as pending rather than delivered.
+    await Async<Unit, Never>.sleep(Duration.ofMillis(50i64))
+    await runner.interrupt()
+    // Now make the masked region exit through its failure path: the awaited
+    // promise FAILS, so the unwind pops the mask carrying a typed error.
+    let _failed = await p.failWith(CarriedError.Broken)
+    // Fixed runtime: the mask's pop delivers the interrupt, which supersedes
+    // the typed failure, passes the `catchAll` untouched (it handles only
+    // typed errors), and the join reports interruption. Broken runtime: the
+    // `catchAll` runs, parks on `other` immune to interruption, and this join
+    // deadlocks the run into the stall panic.
+    await runner.join().foldCause<Unit, Never>(
+        (cause: Cause<Never>) =>
+            match cause with
+                case Cause.Interrupted(_) => Async.thunk(() => landed.set(0, "interrupted"))
+                case _ => Async.thunk(() => landed.set(0, "failed otherwise"))
+        ,
+        (_: Unit) => Async.thunk(() => landed.set(0, "finished"))
+    )

@@ -1,0 +1,6 @@
+package standard.prelude
+
+public newtype ByName<out T> private = () => T
+
+module ByName<T> =
+    public property get(self): T = self.value()

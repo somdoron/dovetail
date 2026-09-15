@@ -1,0 +1,172 @@
+package standard.collection
+
+import standard.prelude.Option
+
+/// A mutable FIFO (first-in, first-out) queue backed by a circular array buffer.
+public class MutableQueue<T>(
+    internal mutable data: Array<T>,
+    internal mutable head: Int32,
+    internal mutable tail: Int32,
+    internal mutable count: Int32
+) implements Iterable<T> where T: Default =
+    /// Adds a value to the back of the queue, growing capacity if needed.
+    public function enqueue(self, value: T): Unit =
+        if self.count >= self.data.length then self.grow()
+        self.data.set(self.tail, value)
+        self.tail = (self.tail + 1) % self.data.length
+        self.count = self.count + 1
+
+    /// Removes and returns the front element, or None if the queue is empty.
+    public function dequeue(self): Option<T> =
+        if self.count == 0 then None
+        else
+            let value = self.data.get(self.head)
+            self.head = (self.head + 1) % self.data.length
+            self.count = self.count - 1
+            Some(value)
+
+    /// Returns the front element without removing it, or None if empty.
+    public property peek(self): Option<T> =
+        if self.count == 0 then None
+        else Some(self.data.get(self.head))
+
+    /// The number of elements in the queue.
+    public property length(self): Int32 = self.count
+
+    /// Creates a new empty MutableQueue.
+    public function new(): MutableQueue<T> =
+        MutableQueue(Array.fill(8, T.default), 0, 0, 0)
+
+    /// True if the queue contains no elements.
+    public property isEmpty(self): Bool = self.count == 0
+
+    /// Returns an iterator over the elements of the queue in FIFO order.
+    public function iterator(self): Iterator<T> = MutableQueueIterator(self, 0)
+
+    function grow(self): Unit =
+        let old_cap = self.data.length
+        let new_cap = old_cap * 2
+        let new_data = Array.fill(new_cap, T.default)
+        let mutable i = 0
+        while i < self.count do
+            new_data.set(i, self.data.get((self.head + i) % old_cap))
+            i = i + 1
+        self.data = new_data
+        self.head = 0
+        self.tail = self.count
+
+implement <T> Default for MutableQueue<T> where T: Default =
+    public property default: MutableQueue<T> = MutableQueue.new()
+
+class MutableQueueIterator<T>(queue: MutableQueue<T>, mutable index: Int32) implements Iterator<T> where T: Default =
+    public function next(self): Option<T> =
+        if self.index >= self.queue.count then None
+        else
+            let pos = (self.queue.head + self.index) % self.queue.data.length
+            let value = self.queue.data.get(pos)
+            self.index = self.index + 1
+            Some(value)
+
+test "MutableQueue new is empty" =
+    let q = MutableQueue<Int32>.new()
+    assert q.isEmpty == true
+    assert q.length == 0
+
+test "MutableQueue enqueue" =
+    let q = MutableQueue<Int32>.new()
+    q.enqueue(1)
+    q.enqueue(2)
+    q.enqueue(3)
+    assert q.length == 3
+    assert q.isEmpty == false
+
+test "MutableQueue peek" =
+    let q = MutableQueue<Int32>.new()
+    q.enqueue(10)
+    q.enqueue(20)
+    assert q.peek.isSome
+    assert q.peek.require == 10
+
+test "MutableQueue peek empty" =
+    let q = MutableQueue<Int32>.new()
+    assert q.peek.isNone
+
+test "MutableQueue dequeue" =
+    let q = MutableQueue<Int32>.new()
+    q.enqueue(10)
+    q.enqueue(20)
+    let val = q.dequeue()
+    assert val.isSome
+    assert val.require == 10
+    assert q.length == 1
+
+test "MutableQueue dequeue empty" =
+    let q = MutableQueue<Int32>.new()
+    assert q.dequeue().isNone
+
+test "MutableQueue FIFO order" =
+    let q = MutableQueue<Int32>.new()
+    q.enqueue(1)
+    q.enqueue(2)
+    q.enqueue(3)
+    let r1 = q.dequeue()
+    assert r1.isSome
+    assert r1.require == 1
+    let r2 = q.dequeue()
+    assert r2.isSome
+    assert r2.require == 2
+    let r3 = q.dequeue()
+    assert r3.isSome
+    assert r3.require == 3
+    assert q.dequeue().isNone
+
+test "MutableQueue enqueue after dequeue" =
+    let q = MutableQueue<Int32>.new()
+    q.enqueue(1)
+    q.enqueue(2)
+    q.dequeue()
+    q.enqueue(3)
+    assert q.length == 2
+    let r1 = q.dequeue()
+    assert r1.isSome
+    assert r1.require == 2
+    let r2 = q.dequeue()
+    assert r2.isSome
+    assert r2.require == 3
+
+test "MutableQueue grows capacity" =
+    let q = MutableQueue<Int32>.new()
+    let mutable i = 0
+    while i < 20 do
+        q.enqueue(i)
+        i = i + 1
+    assert q.length == 20
+    let r1 = q.dequeue()
+    assert r1.isSome
+    assert r1.require == 0
+    let r2 = q.dequeue()
+    assert r2.isSome
+    assert r2.require == 1
+
+test "MutableQueue iterator FIFO order" =
+    let q = MutableQueue<Int32>.new()
+    q.enqueue(10)
+    q.enqueue(20)
+    q.enqueue(30)
+    let mutable sum = 0
+    let mutable first = 0
+    let mutable count = 0
+    for x in q do
+        if count == 0 then first = x
+        sum = sum + x
+        count = count + 1
+    assert sum == 60
+    assert first == 10
+    assert count == 3
+
+test "MutableQueue iterator empty" =
+    let q = MutableQueue<Int32>.new()
+    let mutable count = 0
+    for x in q do
+        count = count + 1
+    assert count == 0

@@ -1,0 +1,243 @@
+package standard.io.net
+
+import standard.wasi.net.NetworkError
+import standard.wasi.net.IpAddressFamily
+import standard.wasi.net.IpAddress
+import standard.wasi.net.SocketAddress
+import standard.wasi.tcp.TcpSocket
+import standard.wasi.ComponentStreamRead
+import standard.wasi.OpenFlag
+import standard.io.Async
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.Resource
+import standard.io.Mutex
+import standard.time.Duration
+
+/// An established TCP connection — a paired byte stream over the network.
+public record TcpStream =
+    socket: TcpSocket
+    input: AsyncInputStream<NetworkError>
+    output: AsyncOutputStream<NetworkError>
+
+module TcpStream =
+
+    public function localAddress(self): Async<String, NetError> =
+        netCall<SocketAddress>(() => self.socket.localAddress()).map<String>((a: SocketAddress) => formatWasiSocketAddress(a))
+
+    public function remoteAddress(self): Async<String, NetError> =
+        netCall<SocketAddress>(() => self.socket.remoteAddress()).map<String>((a: SocketAddress) => formatWasiSocketAddress(a))
+
+    // --- Socket options -----------------------------------------------------
+    //
+    // Thin wrappers over the synchronous wasi:sockets options. They are `Async`
+    // only for uniformity with the rest of this surface — none of them blocks.
+    // A host is free to answer `NetError.NotSupported` for any of them, so
+    // treat a failure as "this knob is unavailable here", not as a broken
+    // connection.
+
+    /// Whether TCP keep-alive probing is on for this connection.
+    public function keepAliveEnabled(self): Async<Bool, NetError> =
+        netCall<Bool>(() => self.socket.keepAliveEnabled())
+
+    public function setKeepAliveEnabled(self, value: Bool): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setKeepAliveEnabled(value))
+
+    /// Idle time before the first keep-alive probe.
+    public function keepAliveIdleTime(self): Async<Duration, NetError> =
+        netCall<Int64>(() => self.socket.keepAliveIdleTime()).map<Duration>((n: Int64) => Duration.ofNanos(n))
+
+    public function setKeepAliveIdleTime(self, value: Duration): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setKeepAliveIdleTime(durationToNanos(value)))
+
+    /// Interval between successive keep-alive probes.
+    public function keepAliveInterval(self): Async<Duration, NetError> =
+        netCall<Int64>(() => self.socket.keepAliveInterval()).map<Duration>((n: Int64) => Duration.ofNanos(n))
+
+    public function setKeepAliveInterval(self, value: Duration): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setKeepAliveInterval(durationToNanos(value)))
+
+    /// Unanswered probes tolerated before the connection is dropped.
+    public function keepAliveCount(self): Async<Int32, NetError> =
+        netCall<Int32>(() => self.socket.keepAliveCount())
+
+    public function setKeepAliveCount(self, value: Int32): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setKeepAliveCount(value))
+
+    /// IP time-to-live / hop limit for outbound packets.
+    public function hopLimit(self): Async<Int32, NetError> =
+        netCall<Int32>(() => self.socket.hopLimit())
+
+    public function setHopLimit(self, value: Int32): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setHopLimit(value))
+
+    /// Kernel receive buffer size, in bytes.
+    public function receiveBufferSize(self): Async<Int64, NetError> =
+        netCall<Int64>(() => self.socket.receiveBufferSize())
+
+    public function setReceiveBufferSize(self, value: Int64): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setReceiveBufferSize(value))
+
+    /// Kernel send buffer size, in bytes.
+    public function sendBufferSize(self): Async<Int64, NetError> =
+        netCall<Int64>(() => self.socket.sendBufferSize())
+
+    public function setSendBufferSize(self, value: Int64): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setSendBufferSize(value))
+
+/// A bound, listening TCP socket. `acceptStream` is the p3 stream of inbound
+/// sockets returned by `listen()`.
+///
+/// `closed` is latched (via `openFlag`) before the accept stream is dropped on
+/// release. The accept lock hands off to whoever is queued behind the fiber
+/// that was parked on the accept, and without the latch that grantee posts an
+/// `acceptStart` on a handle that no longer exists.
+public class TcpListener(
+    public socket: TcpSocket,
+    public acceptStream: Int32,
+    /// The accept stream as a component-model read, built ONCE per listener
+    /// rather than once per accept: it is closures over one handle that
+    /// lives exactly as long as this object, so nothing it captures can change
+    /// while the listener exists — and an accept loop that serves a connection
+    /// per iteration built a set of them per connection.
+    public source: ComponentStreamRead<Option<TcpSocket>, NetError>,
+    /// The liveness bit `source.stillOpen` probes — a flag rather than a Bool
+    /// field here because the record is built BEFORE this object and must be
+    /// able to answer without it (see `OpenFlag`). `closed` below is the
+    /// readable spelling of it; flipping it is what latches the listener.
+    public openFlag: OpenFlag,
+    /// Held across the `closed` check and the accept copy. Non-reentrant: an
+    /// accept inside an accept is a bug in this package, not a caller's problem.
+    /// See `acceptAsync`.
+    public acceptLock: Mutex
+)
+
+module TcpListener =
+
+    /// Whether this listener has stopped accepting — its accept stream ended,
+    /// or its release has begun. The readable face of `openFlag`.
+    public property closed(self): Bool = !self.openFlag.open
+
+    /// The address this listener is bound to, formatted as "host:port".
+    public function localAddress(self): Async<String, NetError> =
+        netCall<SocketAddress>(() => self.socket.localAddress()).map<String>((a: SocketAddress) => formatWasiSocketAddress(a))
+
+    /// True once the socket is listening — always the case for a `TcpListener`
+    /// handed out by `Tcp.bind`, so this is a diagnostic rather than a guard.
+    public function isListening(self): Async<Bool, NetError> =
+        Async.thunk(() => self.socket.isListening())
+
+    /// Set how many completed connections the kernel may queue before the
+    /// accept loop picks them up. Must be set before the socket starts
+    /// listening on some hosts, so a failure here is not fatal.
+    public function setBacklogSize(self, size: Int64): Async<Unit, NetError> =
+        netCall<Unit>(() => self.socket.setListenBacklogSize(size))
+
+    /// Accept one inbound stream. The returned `Resource` owns the accepted
+    /// socket and its two stream wrappers.
+    public function accept(self): Resource<TcpStream, NetError> =
+        let acceptedRes: Resource<TcpSocket, NetError> =
+            Resource.make(() => acceptAsync(self), (s: TcpSocket) => Async.thunk(() => s.close()))
+        acceptedRes.andThen<TcpStream>(socketToTcpStream)
+
+module Tcp =
+
+    /// Connect to `host:port`. An IPv4-literal `host` is used directly;
+    /// anything else is resolved through `Dns.resolveFirst`.
+    public function connect(host: String, port: Uint16): Resource<TcpStream, NetError> =
+        tcpSocketResource(IpAddressFamily.Ipv4)
+            .andThen<TcpStream>((socket: TcpSocket) => connectAndWrap(socket, host, port))
+
+    /// Bind + listen on `address` (formatted as "host:port"). Returns a
+    /// `TcpListener` ready for `accept()`.
+    public function bind(address: String): Resource<TcpListener, NetError> =
+        tcpSocketResource(IpAddressFamily.Ipv4)
+            .andThen<TcpListener>((socket: TcpSocket) => bindResource(socket, address))
+
+// --- Internal helpers ------------------------------------------------------
+
+/// wasi:sockets expresses keep-alive timings as a nanosecond `duration`.
+function durationToNanos(d: Duration): Int64 =
+    d.seconds * 1000000000i64 + d.nanos.toInt64()
+
+// --- Internal Resource builders -------------------------------------------
+
+/// Build a `TcpStream` from a connected socket by opening its send/receive
+/// byte streams. LIFO release: output stream → input stream → socket.
+function socketToTcpStream(socket: TcpSocket): Resource<TcpStream, NetError> =
+    let inputRes = inputStreamFromSocket(socket)
+    let outputRes = outputStreamFromSocket(socket)
+    inputRes.andThen<TcpStream>((input: AsyncInputStream<NetworkError>) =>
+        outputRes.map<TcpStream>((output: AsyncOutputStream<NetworkError>) =>
+            TcpStream { socket = socket; input = input; output = output }
+        )
+    )
+
+function connectAndWrap(socket: TcpSocket, host: String, port: Uint16): Resource<TcpStream, NetError> =
+    let doConnect: () => Async<Unit, NetError> = async () =>
+        let wasiSockAddr = await resolveSingleAddress(host, port)
+        let result = await connectAsync(socket, wasiSockAddr)
+        await Async.fromResult(result.mapError(mapWasiNetError))
+    let connectRes = Resource.make(doConnect, (_: Unit) => Async.succeed(()))
+    connectRes.andThen<TcpStream>((_: Unit) => socketToTcpStream(socket))
+
+function bindResource(socket: TcpSocket, address: String): Resource<TcpListener, NetError> =
+    let doBindListen: () => Async<TcpListener, NetError> = async () =>
+        let wasiSockAddr = match parseSocketAddressString(address) with
+            case Some(parsed) => parsed
+            case None => await Async.fail(NetError.InvalidAddress)
+        let bindResult = await Async.thunk(() => socket.bind(wasiSockAddr))
+        await Async.fromResult(bindResult.mapError(mapWasiNetError))
+        let listenResult = await Async.thunk(() => socket.listen())
+        let acceptStream = await Async.fromResult(listenResult.mapError(mapWasiNetError))
+        let acceptLock = await Mutex.make()
+        // Flag first, record's probe over it, listener around both — the same
+        // construction-order wiring as `WasiInputStream.resource`.
+        let openFlag = OpenFlag(true)
+        TcpListener(socket, acceptStream, acceptSource(acceptStream, openFlag), openFlag, acceptLock)
+    // The accept stream lives as long as the listener; drop it on release.
+    //
+    // No cancel and no queue drain, which a finalizer never needs: by the time
+    // one runs its scope has unwound every fiber it owns, and interrupting a
+    // fiber both cancels that fiber's own accept and gives up its place in the
+    // accept stream's lock queue. So nothing is posted on the handle and nothing
+    // is queued for it. (`CancelStream` is the answer for the other case — an
+    // explicit close, with live siblings still on the handle.)
+    //
+    // `closed` is latched before the drop anyway, for the one acceptor a scope
+    // cannot account for: one that reaches `acceptAsync` from a finalizer of its
+    // own, which by definition is not unwound by this scope. It fails cleanly
+    // instead of posting on a handle on its way out. And because that acceptor's
+    // check and its post are separate interpreter steps, the same flag is what
+    // the accept stream's `stillOpen` probe reads — the runtime re-asks it
+    // INSIDE the posting step, which is what actually closes the window this
+    // latch can only narrow.
+    // Through the stream's own `dropEnd` rather than a second hand-written copy
+    // of it: one definition of which handles the accept stream owns.
+    let release: (TcpListener) => Async<Unit, Never> = (listener: TcpListener) =>
+        Async.thunk(() => listener.openFlag.open = false)
+            .andThen<Unit>((_: Unit) => Async.thunk(() => listener.source.dropEnd()))
+    Resource.make(doBindListen, release)
+
+/// Resolve `host` to a single wasi SocketAddress on `port`. Parses IPv4
+/// literals directly; anything else goes through `Dns.resolveFirst`.
+async function resolveSingleAddress(host: String, port: Uint16): Async<SocketAddress, NetError> =
+    match parseIpv4String(host) with
+        case Some(wasiIp) => buildSocketAddressFromIp(wasiIp, port)
+        case None =>
+            // Scan ALL resolved addresses for the first IPv4-usable one rather than taking
+            // only the first record: a hostname whose first DNS answer is IPv6 (which this
+            // v1 stack cannot yet dial) but which also has a usable IPv4 address would
+            // otherwise fail as unresolvable even though a connectable address exists.
+            let all = await Dns.resolve(host)
+            let mutable chosen: Option<IpAddress> = None
+            for addressString in all do
+                match chosen with
+                    case Some(_) => ()
+                    case None =>
+                        match parseIpv4String(addressString) with
+                            case Some(wasiIp) => chosen = Some(wasiIp)
+                            case None => ()
+            match chosen with
+                case Some(wasiIp) => buildSocketAddressFromIp(wasiIp, port)
+                case None => await Async.fail(NetError.HostnameNotResolvable)

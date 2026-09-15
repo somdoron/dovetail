@@ -1,0 +1,131 @@
+package standard.io.http
+
+import standard.collection.ArrayList
+import standard.uri.Uri
+import standard.http.Headers
+import standard.http.normalizeAndValidate
+import standard.io.Async
+import standard.json.JsonEncoder
+
+/// Fluent client-side request builder. No type parameters — body is always
+/// raw bytes by the time `send()` runs, with `Content-Type` carried as a
+/// separate field so the assembly path can decide whether to inject it.
+/// Decoding the response is the caller's job (`resp.bodyAsString()` /
+/// `resp.jsonBody<T>()`).
+///
+/// Immutable / copy semantics so chain steps don't mutate parent
+/// builders.
+public record RequestBuilder =
+    method: Method
+    uri: Uri
+    headers: ArrayList<(String, String)>
+    body: Array<Uint8>
+    contentType: Option<String>
+
+module RequestBuilder =
+    /// Append a header. Repeated names accumulate.
+    public function header(self, name: String, value: String): RequestBuilder =
+        let newHeaders = cloneHeaders(self.headers)
+        newHeaders.add((name, value))
+        RequestBuilder {
+            method = self.method
+            uri = self.uri
+            headers = newHeaders
+            body = self.body
+            contentType = self.contentType
+        }
+
+    /// Replace the URI (e.g. after rewriting host/path for forwarding).
+    public function withUri(self, uri: Uri): RequestBuilder =
+        RequestBuilder {
+            method = self.method
+            uri = uri
+            headers = self.headers
+            body = self.body
+            contentType = self.contentType
+        }
+
+    /// Set the body as raw bytes; doesn't touch `Content-Type` (caller
+    /// may add one explicitly via `.header`).
+    public function body(self, b: Array<Uint8>): RequestBuilder =
+        RequestBuilder {
+            method = self.method
+            uri = self.uri
+            headers = self.headers
+            body = b
+            contentType = self.contentType
+        }
+
+    /// Set the body to a UTF-8 string and stage `text/plain; charset=utf-8`
+    /// as the Content-Type (only emitted if the caller didn't supply one).
+    public function text(self, s: String): RequestBuilder =
+        RequestBuilder {
+            method = self.method
+            uri = self.uri
+            headers = self.headers
+            body = s.bytes()
+            contentType = Some("text/plain; charset=utf-8")
+        }
+
+    /// JSON-encode `value` and stage `application/json` as the Content-Type.
+    public function json<T>(self, value: T): RequestBuilder where T: JsonEncoder =
+        RequestBuilder {
+            method = self.method
+            uri = self.uri
+            headers = self.headers
+            body = value.toJson().encode().bytes()
+            contentType = Some("application/json")
+        }
+
+    /// Issue the request. Builds a `Request`, dispatches via
+    /// `HttpClient.send`, returns the flat `Response`.
+    public async function send(self): Async<Response, HttpClientError> =
+        let typedHeaders = await Async.fromResult(
+            buildHeadersForBuilder(self.headers, self.contentType)
+        )
+        let req: Request = Request {
+            method = self.method
+            uri = self.uri
+            headers = typedHeaders
+            body = self.body
+        }
+        await HttpClient.send(req)
+
+/// Shallow-copy a list of header pairs so chain steps don't mutate
+/// parent builders.
+function cloneHeaders(src: ArrayList<(String, String)>): ArrayList<(String, String)> =
+    let copy = ArrayList<(String, String)>.new()
+    let mutable i = 0
+    while i < src.length do
+        copy.add(src.get(i))
+        i = i + 1
+    copy
+
+/// Materialize the builder's accumulated header pairs into a validated
+/// `Headers` record, optionally injecting `Content-Type` from the body
+/// helper if the caller didn't supply one. `Host`, `Connection: close`,
+/// and `Content-Length` are added later by `HttpClient.send`'s assembly
+/// path.
+function buildHeadersForBuilder(
+    pairs: ArrayList<(String, String)>,
+    contentType: Option<String>
+): Result<Headers, HttpClientError> =
+    let mutable hasContentType = false
+    let mutable i = 0
+    while i < pairs.length do
+        if pairs.get(i)._0.toLowerCase() == "content-type" then
+            hasContentType = true
+        i = i + 1
+    let merged = ArrayList<(String, String)>.new()
+    let mutable j = 0
+    while j < pairs.length do
+        merged.add(pairs.get(j))
+        j = j + 1
+    match contentType with
+        case Some(ct) =>
+            if !hasContentType then
+                merged.add(("Content-Type", ct))
+        case None => ()
+    match normalizeAndValidate(merged.toArray().toList()) with
+        case Error(e) => Error(HttpClientError.ProtocolError(e))
+        case Ok(h) => Ok(h)

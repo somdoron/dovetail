@@ -1,0 +1,94 @@
+package standard.time
+
+/// Represents a month-day combination, such as March 15th, without a year.
+@derive(Equatable)
+public record MonthDay =
+    month: Month
+    day: Day
+
+function lengthOfMonthForYear(month: Int32, year: Int32): Int32 =
+    if month == 1 then 31
+    else if month == 2 then
+        if Year.of(year).isLeap() then 29 else 28
+    else if month == 3 then 31
+    else if month == 4 then 30
+    else if month == 5 then 31
+    else if month == 6 then 30
+    else if month == 7 then 31
+    else if month == 8 then 31
+    else if month == 9 then 30
+    else if month == 10 then 31
+    else if month == 11 then 30
+    else 31
+
+function clampMonthDay(month: Int32, day: Int32): MonthDay =
+    let m = if month < 1 then 1 else if month > 12 then 12 else month
+    let maxD = lengthOfMonthForYear(m, 2024)
+    let d = if day < 1 then 1 else if day > maxD then maxD else day
+    MonthDay { month = monthFromValue(m); day = Day(d) }
+
+/// Factory methods and operations for MonthDay.
+module MonthDay =
+    /// Creates a MonthDay, clamping month and day to valid ranges.
+    public function of(month: Int32, day: Int32): MonthDay =
+        clampMonthDay(month, day)
+
+    /// Returns a LocalDate by combining this month-day with the given year.
+    public function atYear(self, year: Int32): LocalDate =
+        LocalDate.of(year, self.month.value, self.day.value)
+
+implement Display for MonthDay =
+    /// Formats this month-day as MM-dd.
+    public function format(self: MonthDay): String =
+        padMonthDay(self.month.value) ++ "-" ++ padMonthDay(self.day.value)
+
+function padMonthDay(n: Int32): String =
+    let s = n.format()
+    let len = s.length
+    if len >= 2 then s
+    else "0" ++ s
+
+test "MonthDay of" =
+    let md = MonthDay.of(3, 15)
+    assert md.month.value == 3
+    assert md.day.value == 15
+
+test "MonthDay of clamps month" =
+    let md = MonthDay.of(13, 15)
+    assert md.month.value == 12
+
+test "MonthDay of clamps day" =
+    let md = MonthDay.of(2, 30)
+    assert md.day.value == 29
+
+test "MonthDay atYear" =
+    let md = MonthDay.of(6, 15)
+    let d = md.atYear(2024)
+    assert d.year.value == 2024
+    assert d.month.value == 6
+    assert d.day.value == 15
+
+test "MonthDay atYear feb leap" =
+    let md = MonthDay.of(2, 29)
+    let d = md.atYear(2024)
+    assert d.day.value == 29
+
+test "MonthDay atYear feb non-leap" =
+    let md = MonthDay.of(2, 29)
+    let d = md.atYear(2023)
+    assert d.day.value == 28
+
+test "MonthDay equals" =
+    let a = MonthDay.of(6, 15)
+    let b = MonthDay.of(6, 15)
+    let c = MonthDay.of(6, 16)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "MonthDay display" =
+    let md = MonthDay.of(3, 5)
+    assert md.format() == "03-05"
+
+test "MonthDay display double digit" =
+    let md = MonthDay.of(12, 25)
+    assert md.format() == "12-25"

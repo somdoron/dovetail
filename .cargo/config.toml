@@ -1,0 +1,6 @@
+# Deep-recursion compiler paths (typechecker inference, codegen over large
+# ASTs) can overflow the default thread stack in plain `cargo test` /
+# `cargo run`. Set a repo-wide floor so every cargo-spawned process gets a
+# 16 MiB stack without each invocation having to remember the env var.
+[env]
+RUST_MIN_STACK = "16777216"

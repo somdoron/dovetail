@@ -1,0 +1,438 @@
+package test
+
+import standard.sqlite.FromRow
+import standard.sqlite.FromSqlValue
+import standard.sqlite.Query
+import standard.sqlite.Row
+import standard.sqlite.SqlBuilder
+import standard.sqlite.SqlValue
+import standard.sqlite.sql
+import standard.sqlite.SqliteError
+import standard.sqlite.ToSqlValue
+import standard.time.Instant
+
+// Pure tests for the query layer: builder rendering, fragment composition, the
+// three conversion traits, and their derives. Nothing here touches a database —
+// the async, real-component tests live in sqliteTest.dove.
+
+// --- test fixtures -------------------------------------------------------
+
+@derive(ToSqlValue)
+@derive(FromSqlValue)
+@derive(FromRow)
+newtype UserId = Int64
+
+@derive(ToSqlValue)
+@derive(FromSqlValue)
+@derive(FromRow)
+enum Status =
+    Active
+    Inactive
+    Pending
+
+@derive(FromRow)
+record Person =
+    name: String
+    age: Int32
+    status: Status
+
+// Interpolated by the `Query.append` test below; `$ident` binds a bare name, so
+// these are globals rather than locals of the test.
+let one: Int64 = 1i64
+let two: String = "two"
+
+function integerOf(value: SqlValue): Int64 =
+    match value with
+        case SqlValue.Integer(n) => n
+        case _ => panic "expected an Integer"
+
+function textOf(value: SqlValue): String =
+    match value with
+        case SqlValue.Text(s) => s
+        case _ => panic "expected Text"
+
+function errorOf<T>(result: Result<T, SqliteError>): SqliteError =
+    match result with
+        case Ok(_) => panic "expected an Error"
+        case Error(e) => e
+
+function okOf<T>(result: Result<T, SqliteError>): T =
+    match result with
+        case Ok(value) => value
+        case Error(e) => panic "expected Ok, got " ++ e.format()
+
+// --- SqlBuilder ----------------------------------------------------------
+
+test "builder renders a value as an anonymous placeholder" =
+    let q = SqlBuilder.empty().literal("WHERE id = ").value(7i64).build()
+    assert q.text == "WHERE id = ?"
+    assert q.params.length == 1
+    assert integerOf(q.params.get(0)) == 7i64
+
+test "builder renders values in interpolation order" =
+    let q =
+        SqlBuilder.empty()
+            .literal("a = ").value(1i64).literal(" AND b = ").value("two").build()
+    assert q.text == "a = ? AND b = ?"
+    assert q.params.length == 2
+    assert integerOf(q.params.get(0)) == 1i64
+    assert textOf(q.params.get(1)) == "two"
+
+test "builder spread renders one placeholder per element" =
+    let ids: List<Int64> = [1i64, 2i64, 3i64]
+    let q = SqlBuilder.empty().literal("id IN (").spread(ids).literal(")").build()
+    assert q.text == "id IN (?, ?, ?)"
+    assert q.params.length == 3
+    assert integerOf(q.params.get(2)) == 3i64
+
+test "builder spread of an empty list renders NULL and binds nothing" =
+    let ids: List<Int64> = List.empty
+    let q = SqlBuilder.empty().literal("id IN (").spread(ids).literal(")").build()
+    assert q.text == "id IN (NULL)"
+    assert q.params.length == 0
+
+// --- sql"..." literal ----------------------------------------------------
+
+test "sql literal binds values rather than splicing them into the text" =
+    let name = "'; DROP TABLE users; --"
+    let q = sql"SELECT * FROM users WHERE name = $name"
+    assert q.text == "SELECT * FROM users WHERE name = ?"
+    assert q.params.length == 1
+    assert textOf(q.params.get(0)) == name
+
+test "sql literal spreads an array" =
+    let ids: List<Int64> = [4i64, 5i64]
+    let q = sql"SELECT * FROM t WHERE id IN ($..ids)"
+    assert q.text == "SELECT * FROM t WHERE id IN (?, ?)"
+    assert q.params.length == 2
+
+test "sql literal interpolates a braced expression" =
+    let n = 10
+    let q = sql"LIMIT ${n * 2}"
+    assert q.text == "LIMIT ?"
+    assert integerOf(q.params.get(0)) == 20i64
+
+test "multi-line sql literal keeps its interior text" =
+    let minTotal = 100i64
+    let q = sql"""
+SELECT id
+FROM orders
+WHERE total > $minTotal
+"""
+    assert q.text == "SELECT id\nFROM orders\nWHERE total > ?\n"
+    assert q.params.length == 1
+
+// --- Query composition ---------------------------------------------------
+
+test "Query.empty renders nothing" =
+    let q = Query.empty()
+    assert q.text == ""
+    assert q.params.length == 0
+
+test "Query.append concatenates text and parameters in order" =
+    let a = sql"WHERE a = $one"
+    let b = sql" AND b = $two"
+    let joined = a.append(b)
+    assert joined.text == "WHERE a = ? AND b = ?"
+    assert joined.params.length == 2
+    assert integerOf(joined.params.get(0)) == 1i64
+    assert textOf(joined.params.get(1)) == "two"
+
+test "the ++ operator concatenates fragments" =
+    let joined = sql"SELECT * FROM users" ++ Query.whereSome(Some("alice"), (n: String) => sql"name = $n")
+    assert joined.text == "SELECT * FROM users WHERE (name = ?)"
+    assert joined.params.length == 1
+    assert textOf(joined.params.get(0)) == "alice"
+
+test "++ agrees with append and is left-associative" =
+    let a = sql"a = $one"
+    let b = sql" AND b = $two"
+    let c = sql" AND c"
+    assert (a ++ b).text == a.append(b).text
+    assert (a ++ b ++ c).text == a.append(b).append(c).text
+    assert (a ++ b ++ c).params.length == 2
+
+test "++ concatenates strings" =
+    assert "left" ++ "right" == "leftright"
+
+test "Query.parenthesized wraps a fragment" =
+    assert sql"a = $one".parenthesized().text == "(a = ?)"
+
+test "Query.andAll parenthesizes each part and the whole" =
+    let joined = Query.andAll([sql"a = $one", sql"b = $two"])
+    assert joined.text == "((a = ?) AND (b = ?))"
+    assert joined.params.length == 2
+
+test "Query.orAll joins with OR" =
+    assert Query.orAll([sql"a", sql"b"]).text == "((a) OR (b))"
+
+test "Query joiners are empty for no parts" =
+    let none: List<Query> = List.empty
+    assert Query.andAll(none).text == ""
+    assert Query.orAll(none).text == ""
+    assert Query.commaSeparated(none).text == ""
+
+test "Query.commaSeparated does not parenthesize list items" =
+    assert Query.commaSeparated([sql"a", sql"b"]).text == "a, b"
+
+test "Query.whereAnd emits a leading space and no outer parens" =
+    let clause = Query.whereAnd([sql"a = $one", sql"b = $two"])
+    assert clause.text == " WHERE (a = ?) AND (b = ?)"
+    assert clause.params.length == 2
+
+test "Query.whereAnd of nothing emits nothing at all" =
+    let none: List<Query> = List.empty
+    assert Query.whereAnd(none).text == ""
+
+test "Query.whereAndSome drops absent filters — no WHERE 1=1 needed" =
+    let nameFilter: Option<String> = Some("alice")
+    let ageFilter: Option<Int32> = None
+    let q =
+        sql"SELECT id FROM users"
+            ++ Query.whereAndSome([
+                nameFilter.map<Query>((n: String) => sql"name = $n"),
+                ageFilter.map<Query>((a: Int32) => sql"age >= $a")
+            ])
+    assert q.text == "SELECT id FROM users WHERE (name = ?)"
+    assert q.params.length == 1
+    assert textOf(q.params.get(0)) == "alice"
+
+test "Query.whereAndSome with every filter absent leaves the query untouched" =
+    let nameFilter: Option<String> = None
+    let q =
+        sql"SELECT id FROM users"
+            .append(Query.whereAndSome([nameFilter.map<Query>((n: String) => sql"name = $n")]))
+    assert q.text == "SELECT id FROM users"
+    assert q.params.length == 0
+
+test "Query.whereOrSome joins the present filters with OR" =
+    let a: Option<String> = Some("x")
+    let b: Option<String> = Some("y")
+    let q = Query.whereOrSome([
+        a.map<Query>((v: String) => sql"name = $v"),
+        b.map<Query>((v: String) => sql"label = $v")
+    ])
+    assert q.text == " WHERE (name = ?) OR (label = ?)"
+
+test "Query.whereSome is the single-filter shorthand" =
+    let present: Option<String> = Some("alice")
+    let absent: Option<String> = None
+    assert Query.whereSome(present, (n: String) => sql"name = $n").text == " WHERE (name = ?)"
+    assert Query.whereSome(absent, (n: String) => sql"name = $n").text == ""
+
+test "Query.set builds an UPDATE assignment list" =
+    let clause = Query.set([sql"name = $two", sql"age = $one"])
+    assert clause.text == " SET name = ?, age = ?"
+    assert clause.params.length == 2
+
+test "Query.setSome is None when there is nothing to update" =
+    let nothing: List<Option<Query>> = [None, None]
+    assert Query.setSome(nothing).isNone
+    let something: Option<String> = Some("alice")
+    match Query.setSome([something.map<Query>((n: String) => sql"name = $n")]) with
+        case Some(clause) => assert clause.text == " SET name = ?"
+        case None => panic "expected a SET clause"
+
+test "Query.orderBy is omitted when there is no sort" =
+    let none: List<Query> = List.empty
+    assert Query.orderBy(none).text == ""
+    assert Query.orderBy([sql"createdAt DESC"]).text == " ORDER BY createdAt DESC"
+
+test "Query.whenSome includes the fragment for Some and omits it for None" =
+    // `whenSome` is the general "include this fragment conditionally" primitive,
+    // for positions the clause builders don't cover — an optional LIMIT here.
+    // For optional WHERE filters, reach for `whereAndSome` instead: it drops the
+    // absent ones and omits the keyword entirely, so no `1=1` is needed.
+    let limit: Option<Int32> = Some(10)
+    let offset: Option<Int32> = None
+    let q =
+        sql"SELECT * FROM users"
+            ++ Query.whenSome(limit, (n: Int32) => sql" LIMIT $n")
+            ++ Query.whenSome(offset, (n: Int32) => sql" OFFSET $n")
+    assert q.text == "SELECT * FROM users LIMIT ?"
+    assert q.params.length == 1
+    assert integerOf(q.params.get(0)) == 10i64
+
+
+// --- ToSqlValue ----------------------------------------------------------
+
+test "ToSqlValue maps primitives onto storage classes" =
+    assert integerOf(true.toSqlValue()) == 1i64
+    assert integerOf(false.toSqlValue()) == 0i64
+    assert integerOf(7i32.toSqlValue()) == 7i64
+    assert integerOf(7i64.toSqlValue()) == 7i64
+    assert integerOf(7u32.toSqlValue()) == 7i64
+    assert textOf("hi".toSqlValue()) == "hi"
+    match 1.5.toSqlValue() with
+        case SqlValue.Real(x) => assert x == 1.5
+        case _ => panic "expected Real"
+    let bytes: Array<Uint8> = [|1u8, 2u8|]
+    match bytes.toSqlValue() with
+        case SqlValue.Blob(b) => assert b.length == 2
+        case _ => panic "expected Blob"
+
+test "ToSqlValue writes an Instant as whole epoch seconds" =
+    assert integerOf(Instant.ofEpochSecond(1000i64).toSqlValue()) == 1000i64
+
+test "ToSqlValue maps None to NULL and delegates for Some" =
+    let absent: Option<Int64> = None
+    match absent.toSqlValue() with
+        case SqlValue.Null => ()
+        case _ => panic "expected Null"
+    let present: Option<Int64> = Some(3i64)
+    assert integerOf(present.toSqlValue()) == 3i64
+
+// --- FromSqlValue --------------------------------------------------------
+
+test "FromSqlValue decodes primitives" =
+    assert okOf(Int64.fromSqlValue(SqlValue.Integer(5i64))) == 5i64
+    assert okOf(String.fromSqlValue(SqlValue.Text("x"))) == "x"
+    assert okOf(Bool.fromSqlValue(SqlValue.Integer(1i64))) == true
+    assert okOf(Float64.fromSqlValue(SqlValue.Real(2.5))) == 2.5
+
+test "FromSqlValue widens an Integer cell to a float" =
+    assert okOf(Float64.fromSqlValue(SqlValue.Integer(3i64))) == 3.0
+
+test "FromSqlValue reports a storage-class mismatch" =
+    let e = errorOf(Int64.fromSqlValue(SqlValue.Text("x")))
+    assert e.code == 20
+    assert e.message == "expected Integer, got Text"
+
+test "FromSqlValue range-checks a narrowing decode" =
+    let e = errorOf(Int32.fromSqlValue(SqlValue.Integer(2147483648i64)))
+    assert e.code == 20
+    assert okOf(Int32.fromSqlValue(SqlValue.Integer(2147483647i64))) == 2147483647
+
+test "FromSqlValue decodes NULL as None" =
+    let decoded: Option<Int64> = okOf(Option<Int64>.fromSqlValue(SqlValue.Null))
+    assert decoded.isNone
+
+test "FromSqlValue reads an Instant back" =
+    assert okOf(Instant.fromSqlValue(SqlValue.Integer(1000i64))).epochSecond == 1000i64
+
+// --- Row -----------------------------------------------------------------
+
+function sampleRow(): Row =
+    Row.make([|"name", "age"|], [|SqlValue.Text("alice"), SqlValue.Integer(30i64)|])
+
+test "Row.column finds a column by name" =
+    assert textOf(okOf(sampleRow().column("name"))) == "alice"
+
+test "Row.column errors on an unknown column" =
+    let e = errorOf(sampleRow().column("nope"))
+    assert e.code == 25
+    assert e.message == "no such column: nope"
+
+test "Row.at reads by position and errors out of range" =
+    assert integerOf(okOf(sampleRow().at(1))) == 30i64
+    assert errorOf(sampleRow().at(5)).code == 25
+
+test "Row.scalar requires a single-column row" =
+    let single = Row.make([|"n"|], [|SqlValue.Integer(1i64)|])
+    assert integerOf(okOf(single.scalar())) == 1i64
+    assert errorOf(sampleRow().scalar()).code == 25
+    assert sampleRow().width == 2
+
+// --- scalar FromRow ------------------------------------------------------
+
+test "scalar FromRow decodes a single-column row" =
+    let row = Row.make([|"count"|], [|SqlValue.Integer(42i64)|])
+    assert okOf(Int64.fromRow(row)) == 42i64
+
+test "scalar FromRow rejects a row of the wrong width" =
+    assert errorOf(String.fromRow(sampleRow())).code == 25
+
+// --- positional (tuple) FromRow ------------------------------------------
+
+test "tuple FromRow decodes columns by position" =
+    let decoded = okOf((String, Int32).fromRow(sampleRow()))
+    assert decoded._0 == "alice"
+    assert decoded._1 == 30
+
+test "tuple FromRow decodes wider arities" =
+    let row =
+        Row.make(
+            [|"a", "b", "c", "d", "e", "f"|],
+            [|
+                SqlValue.Integer(1i64),
+                SqlValue.Text("two"),
+                SqlValue.Integer(3i64),
+                SqlValue.Text("four"),
+                SqlValue.Integer(5i64),
+                SqlValue.Text("six")
+            |]
+        )
+    let decoded = okOf((Int64, String, Int64, String, Int64, String).fromRow(row))
+    assert decoded._0 == 1i64
+    assert decoded._5 == "six"
+
+test "tuple FromRow rejects a row of the wrong width" =
+    // Positional decoding cannot tell a widened SELECT list from an intended
+    // one, so it insists on an exact match rather than dropping columns.
+    let e = errorOf((String, Int32, Int32).fromRow(sampleRow()))
+    assert e.code == 25
+    assert e.message == "expected 3 columns, got 2"
+
+test "tuple FromRow reports a mismatch on the offending column" =
+    let e = errorOf((Int64, Int32).fromRow(sampleRow()))
+    assert e.code == 20
+    assert e.message == "expected Integer, got Text"
+
+test "tuple FromRow ignores column names entirely" =
+    // The same values under different names decode identically — the point of
+    // the positional mode, for joins whose column names collide.
+    let named = Row.make([|"users.id", "orders.id"|], [|SqlValue.Integer(1i64), SqlValue.Integer(2i64)|])
+    let decoded = okOf((Int64, Int64).fromRow(named))
+    assert decoded._0 == 1i64
+    assert decoded._1 == 2i64
+
+// --- derives -------------------------------------------------------------
+
+test "derived ToSqlValue on a newtype delegates to the inner type" =
+    assert integerOf(UserId(9i64).toSqlValue()) == 9i64
+
+test "derived FromSqlValue on a newtype re-wraps" =
+    assert okOf(UserId.fromSqlValue(SqlValue.Integer(9i64))).value == 9i64
+
+test "derived ToSqlValue on an enum writes the variant name as text" =
+    assert textOf(Status.Active.toSqlValue()) == "Active"
+    assert textOf(Status.Pending.toSqlValue()) == "Pending"
+
+test "derived FromSqlValue on an enum reads the variant name" =
+    match okOf(Status.fromSqlValue(SqlValue.Text("Inactive"))) with
+        case Status.Inactive => ()
+        case _ => panic "expected Inactive"
+
+test "derived FromSqlValue on an enum rejects an unknown variant name" =
+    let e = errorOf(Status.fromSqlValue(SqlValue.Text("Nope")))
+    assert e.code == 20
+    assert e.message == "unknown Status variant: Nope"
+
+test "derived FromRow on a record maps field names to columns" =
+    let row =
+        Row.make(
+            [|"name", "age", "status"|],
+            [|SqlValue.Text("alice"), SqlValue.Integer(30i64), SqlValue.Text("Active")|]
+        )
+    let person = okOf(Person.fromRow(row))
+    assert person.name == "alice"
+    assert person.age == 30
+    match person.status with
+        case Status.Active => ()
+        case _ => panic "expected Active"
+
+test "derived FromRow on a record reports a missing column" =
+    let row = Row.make([|"name"|], [|SqlValue.Text("alice")|])
+    let e = errorOf(Person.fromRow(row))
+    assert e.code == 25
+    assert e.message == "no such column: age"
+
+test "derived FromRow on a newtype reads a single column" =
+    let row = Row.make([|"id"|], [|SqlValue.Integer(11i64)|])
+    assert okOf(UserId.fromRow(row)).value == 11i64
+
+test "an interpolated newtype binds through its derived ToSqlValue" =
+    let id = UserId(3i64)
+    let q = sql"WHERE id = $id"
+    assert q.text == "WHERE id = ?"
+    assert integerOf(q.params.get(0)) == 3i64

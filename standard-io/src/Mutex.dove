@@ -1,0 +1,146 @@
+package standard.io
+
+import standard.collection.MutableQueue
+
+// =============================================================================
+// Mutual exclusion between fibers.
+//
+// This is NOT what serializes operations on a stream or future end — the runtime
+// does that itself, per handle, because it is an ABI invariant rather than a
+// caller's choice (see `lockForCopy`). A `Mutex` is for the cases where the thing
+// being protected is not a handle at all: a whole write-and-retry loop that must
+// not interleave, a TLS session's record state, a line buffer over stdin.
+//
+// Two types rather than one with a flag, because the difference shows up in the
+// error type and nowhere else:
+//
+//   `Mutex`          — re-acquiring from the fiber that already holds it is a
+//                      bug, and is reported as `MutexError.AlreadyHeld`. It
+//                      cannot deadlock, so it does not.
+//   `ReentrantMutex` — re-acquiring is free and nests; the lock is handed on when
+//                      the OUTERMOST hold exits. Cannot fail, so `acquire` is
+//                      `Resource<Unit, Never>` and callers write no error path.
+//
+// Both hand off in FIFO order, and both are reclaimed if the holding fiber is
+// interrupted or dies, so a mutex is never stranded.
+//
+// `acquire` returns a `Resource`, so `use` releases on every exit — success,
+// failure, interruption. That bracket is also a fiber scope, which means fibers
+// forked while holding a mutex are finalized BEFORE it is released, for the same
+// reason a resource is never released under a fiber still using it.
+// =============================================================================
+
+public enum MutexError =
+    /// This fiber already holds this `Mutex`. Waiting would deadlock against
+    /// itself, so it is reported instead. Use `ReentrantMutex` if nesting is
+    /// intended.
+    AlreadyHeld
+
+/// The mutable half of a mutex. `Mutex` and `ReentrantMutex` are two views of
+/// this one shape, so the runtime drives a single set of nodes.
+///
+/// `depth` is only ever above 1 for a `ReentrantMutex`: a `Mutex` errors rather
+/// than nesting.
+public class MutexState(
+    public mutable owner: Option<FiberId>,
+    public mutable depth: Int32,
+    public queue: MutableQueue<FiberId>
+)
+
+/// A non-reentrant mutex. Acquiring one this fiber already holds fails.
+public record Mutex =
+    state: MutexState
+
+/// A mutex that may be re-acquired by the fiber holding it.
+public record ReentrantMutex =
+    state: MutexState
+
+/// A fresh, unheld mutex state.
+function freshState(): MutexState =
+    let owner: Option<FiberId> = None
+    MutexState(owner, 0, MutableQueue<FiberId>.new())
+
+// --- Making one --------------------------------------------------------------
+//
+// Two constructors, because "a fresh mutex" is an effect and there is exactly one
+// context in which it is not.
+//
+// `make` is an `Async`, like `makePromise` and `Queue.make`. Building an `Async`
+// is not the same as running it: a plain function would be evaluated where the
+// program is DESCRIBED, so a program built once and run twice would get one mutex
+// and the two runs would silently serialize against each other. Wrapping the
+// allocation in a `thunk` moves it to where the program RUNS, which is the only
+// place that can know how many mutexes are wanted.
+//
+// `makeProcessWide` is the one exception, and it has exactly three callers: the
+// stdio streams and the stdin line buffer in `Console`. Those are module-level
+// globals — the process IS their scope, nothing ever releases them — and a global
+// initializer cannot run an `Async`, so requiring a fiber would mean they could
+// not hold a lock at all. Everything else, including every stream handed out by
+// `WasiOutputStream.resource`, is built inside an `acquire` and uses `make`.
+//
+// Internal, so that "I need a mutex outside a fiber" stays a decision someone
+// reviews rather than a convenience anyone can reach for. `ReentrantMutex` has
+// no process-wide constructor at all, deliberately: every reentrant hold in the
+// library turned out not to nest outside a fiber, and a twin kept only for
+// symmetry is a door nobody reviews — it can exist the day it has a caller.
+
+module Mutex =
+    /// A fresh, unheld mutex, allocated when this `Async` runs.
+    public function make(): Async<Mutex, Never> =
+        Async.thunk(() => Mutex { state = freshState() })
+
+    /// For a process-wide singleton built outside any fiber. See the note above;
+    /// use `make` for everything else.
+    internal function makeProcessWide(): Mutex = Mutex { state = freshState() }
+
+    /// Hold the mutex for the duration of a `use` block.
+    ///
+    /// Fails with `MutexError.AlreadyHeld` if this fiber already holds it —
+    /// promptly, rather than queueing behind itself forever.
+    public function acquire(self): Resource<Unit, MutexError> =
+        // INTERRUPTIBLE, punching back through the mask every acquire runs under
+        // (see `Async.bracket`). Taking a mutex is not a resource coming into
+        // existence — nothing is stranded if this never completes — and the wait
+        // is unbounded by definition: it ends when some other fiber releases.
+        // Masked, a fiber queued behind a holder could not be cancelled, so the
+        // scope tearing that holder down would wait on it forever. The grant
+        // itself is a single interpreter step and needs no mask.
+        let acquire: () => Async<Unit, MutexError> = () => Interruptible<Unit, MutexError>(AcquireMutex(self.state))
+        let release: (Unit) => Async<Unit, Never> = (_: Unit) => ReleaseMutex(self.state)
+        Resource<Unit, MutexError>.make(acquire, release)
+
+module ReentrantMutex =
+    /// A fresh, unheld reentrant mutex, allocated when this `Async` runs.
+    public function make(): Async<ReentrantMutex, Never> =
+        Async.thunk(() => ReentrantMutex { state = freshState() })
+
+    /// Hold the mutex for the duration of a `use` block. Nesting is free: an
+    /// inner acquire returns immediately and the lock is handed on only when the
+    /// outermost `use` exits.
+    public function acquire(self): Resource<Unit, Never> =
+        // Interruptible for the same reason as `Mutex.acquire` above.
+        let acquire: () => Async<Unit, Never> = () => Interruptible<Unit, Never>(AcquireReentrantMutex(self.state))
+        let release: (Unit) => Async<Unit, Never> = (_: Unit) => ReleaseMutex(self.state)
+        Resource<Unit, Never>.make(acquire, release)
+
+// --- Mutex unit tests ---------------------------------------------------------
+
+/// Take a mutex and give it straight back, inside a run of its own.
+async function takeAndRelease(mutex: Mutex): Async<Unit, Never> =
+    let _held = use mutex.acquire().orPanicWith((_: MutexError) => "takeAndRelease re-entered its own mutex")
+    ()
+
+test "Mutex: two mutexes never share an identity, across runs as well as within one" =
+    let first = freshState()
+    let second = freshState()
+    // Two separate programs, so two separate runtimes. The retained mutexes
+    // remain distinct across both executions.
+    takeAndRelease(Mutex { state = first }).run()
+    takeAndRelease(Mutex { state = second }).run()
+    assert !ClassIdentity.equals(first, second)
+
+test "Mutex: identity exists before the mutex is taken" =
+    let a = freshState()
+    let b = freshState()
+    assert !ClassIdentity.equals(a, b)

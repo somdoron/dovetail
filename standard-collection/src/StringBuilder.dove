@@ -1,0 +1,130 @@
+package standard.collection
+
+/// A mutable, growable byte buffer for efficiently building strings.
+///
+/// StringBuilder accumulates UTF-8 bytes in an internal buffer that
+/// doubles in capacity when full, giving amortized O(1) appends.
+/// The final string is constructed only when `toString` is called.
+///
+/// All mutating methods modify the builder in place. `append` and
+/// `appendChar` return `self` so calls can be chained.
+public class StringBuilder(
+    public mutable buffer: Array<Uint8>,
+    public mutable len: Int32
+) =
+    /// Creates an empty StringBuilder with a default capacity of 64 bytes.
+    public function new(): StringBuilder =
+        StringBuilder(Array.fill(64, 0u8), 0)
+
+    /// Creates an empty StringBuilder with at least the given capacity.
+    /// The actual capacity will be at least 16 bytes.
+    public function withCapacity(n: Int32): StringBuilder =
+        let cap = if n < 16 then 16 else n
+        StringBuilder(Array.fill(cap, 0u8), 0)
+
+    /// Appends a string to this builder. Returns self for chaining.
+    public function append(self, s: String): StringBuilder =
+        let bytes = s.bytes()
+        let needed = self.len + bytes.length
+        self.ensureCapacity(needed)
+        let mutable i = 0
+        while i < bytes.length do
+            self.buffer.set(self.len + i, bytes.get(i))
+            i = i + 1
+        self.len = needed
+        self
+
+    /// Appends a single character to this builder. Returns self for chaining.
+    public function appendChar(self, c: Char): StringBuilder =
+        let bytes = String.fromChar(c).bytes()
+        let needed = self.len + bytes.length
+        self.ensureCapacity(needed)
+        let mutable i = 0
+        while i < bytes.length do
+            self.buffer.set(self.len + i, bytes.get(i))
+            i = i + 1
+        self.len = needed
+        self
+
+    /// Builds and returns the accumulated string.
+    public function toString(self): String =
+        if self.len == 0 then ""
+        else String.fromBytes(self.buffer, 0, self.len)
+
+    /// The number of bytes written so far.
+    public property length(self): Int32 = self.len
+
+    /// The current buffer capacity in bytes.
+    public property capacity(self): Int32 = self.buffer.length
+
+    /// Resets the builder to empty without releasing the buffer.
+    public function clear(self): Unit =
+        self.len = 0
+
+    function ensureCapacity(self, needed: Int32): Unit =
+        if needed > self.buffer.length then
+            let mutable newCap = self.buffer.length * 2
+            if newCap < needed then newCap = needed
+            self.buffer = self.buffer.extend(0u8, newCap)
+
+test "StringBuilder new is empty" =
+    let sb = StringBuilder.new()
+    assert sb.length == 0
+    assert sb.toString() == ""
+
+test "StringBuilder append" =
+    let sb = StringBuilder.new()
+    sb.append("hello")
+    assert sb.toString() == "hello"
+    sb.append(" world")
+    assert sb.toString() == "hello world"
+
+test "StringBuilder append chaining" =
+    let sb = StringBuilder.new()
+    sb.append("a").append("b").append("c")
+    assert sb.toString() == "abc"
+
+test "StringBuilder appendChar" =
+    let sb = StringBuilder.new()
+    sb.appendChar('h').appendChar('i')
+    assert sb.toString() == "hi"
+
+test "StringBuilder length" =
+    let sb = StringBuilder.new()
+    assert sb.length == 0
+    sb.append("hello")
+    assert sb.length == 5
+
+test "StringBuilder clear" =
+    let sb = StringBuilder.new()
+    sb.append("hello")
+    sb.clear()
+    assert sb.length == 0
+    assert sb.toString() == ""
+
+test "StringBuilder withCapacity" =
+    let sb = StringBuilder.withCapacity(100)
+    assert sb.length == 0
+    assert sb.capacity >= 100
+    sb.append("test")
+    assert sb.toString() == "test"
+
+test "StringBuilder grows beyond initial capacity" =
+    let sb = StringBuilder.withCapacity(4)
+    sb.append("hello world, this is a longer string")
+    assert sb.toString() == "hello world, this is a longer string"
+    assert sb.capacity >= 36
+
+test "StringBuilder many appends" =
+    let sb = StringBuilder.new()
+    let mutable i = 0
+    while i < 100 do
+        sb.append("x")
+        i = i + 1
+    assert sb.length == 100
+    assert sb.toString().length == 100
+
+test "StringBuilder mixed append and appendChar" =
+    let sb = StringBuilder.new()
+    sb.append("key").appendChar('=').append("value")
+    assert sb.toString() == "key=value"

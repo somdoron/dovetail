@@ -1,0 +1,24 @@
+package standard.io
+
+/// Access to environment variables and command-line arguments of the
+/// component. Populated by the host runtime — under `dovetail run`, see the
+/// `--inherit-env`, `--env KEY=VALUE`, and trailing `--` flags. By default
+/// components see empty env and empty argv.
+public module Environment =
+
+    /// All environment variables as (key, value) pairs, in the order the
+    /// host provided them.
+    public property variables: List<(String, String)> =
+        // The intrinsic hands back an array at the WASI boundary; the list
+        // starts on this side of it.
+        wasiEnvironmentVariables().toList()
+
+    /// Command-line arguments. Empty unless the user passed args via the
+    /// trailing `--` separator to `dovetail run`.
+    public property arguments: List<String> =
+        wasiEnvironmentArguments().toList()
+
+    /// Look up a single environment variable by key. Returns the first
+    /// match, or `None` if absent.
+    public function get(key: String): Option<String> =
+        Environment.variables.find(pair => pair._0 == key).map(pair => pair._1)

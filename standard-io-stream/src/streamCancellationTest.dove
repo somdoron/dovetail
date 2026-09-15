@@ -1,0 +1,30 @@
+package standard.io.stream
+
+import standard.io.Async
+import standard.io.Cause
+import standard.time.Duration
+
+@timeout(5000)
+test "Stream: pending pull cancellation preserves nested cleanup panic" =
+    let mutable pulling = false
+    let mutable released = false
+    let release: Async<Unit, Never> = async do
+        released = true
+        await Async<Unit, Never>.failPanic("pending pull cleanup")
+    let pending: Async<Unit, String> = async do
+        pulling = true
+        await Async<Unit, Never>.sleep(Duration.ofMillis(10000i64))
+    let source = Stream<Unit, String>.bracket(Async.succeed(()), (_: Unit) => release)
+        .flatMap((_: Unit) => Stream<Unit, String>.fromAsync(pending))
+    let program: Async<Unit, Never> = async do
+        let worker = await source.drain().forkBackground()
+        while !pulling do await Async.yieldNow()
+        await worker.interrupt()
+        await worker.join().foldCause<Unit, Never>(
+            (cause: Cause<String>) => Async.thunk(() => match cause with
+                case Cause.Panicked(message, _) => assert message == "pending pull cleanup"
+                case _ => panic "nested cleanup panic was lost"
+            ),
+            (_: Unit) => Async.thunk(() => panic "expected cleanup panic"))
+        assert released
+    program.run()

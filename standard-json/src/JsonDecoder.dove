@@ -1,0 +1,248 @@
+package standard.json
+
+/// Trait for types that can be reconstructed from a Json value.
+///
+/// `fromJson` is a static method — call it through the type, e.g.
+/// `Int32.fromJson(json)` or `String.fromJson(json)`. Returns a
+/// `TypeError` when the JSON value's shape doesn't match.
+public trait JsonDecoder =
+    function fromJson(json: Json): Result<Self, JsonError>
+
+implement JsonDecoder for Bool =
+    public function fromJson(json: Json): Result<Bool, JsonError> =
+        match json with
+            case Json.Boolean(b) => Ok(b)
+            case _ => Error(JsonError.TypeError("Boolean", json.typeName()))
+
+implement JsonDecoder for Int32 =
+    public function fromJson(json: Json): Result<Int32, JsonError> =
+        match json with
+            case Json.Number(n) => Ok(n.toInt32())
+            case _ => Error(JsonError.TypeError("Number", json.typeName()))
+
+implement JsonDecoder for Int64 =
+    public function fromJson(json: Json): Result<Int64, JsonError> =
+        match json with
+            case Json.Number(n) => Ok(n.toInt64())
+            case _ => Error(JsonError.TypeError("Number", json.typeName()))
+
+implement JsonDecoder for Float64 =
+    public function fromJson(json: Json): Result<Float64, JsonError> =
+        match json with
+            case Json.Number(n) => Ok(n)
+            case _ => Error(JsonError.TypeError("Number", json.typeName()))
+
+implement JsonDecoder for String =
+    public function fromJson(json: Json): Result<String, JsonError> =
+        match json with
+            case Json.Str(s) => Ok(s)
+            case _ => Error(JsonError.TypeError("String", json.typeName()))
+
+/// Decodes a `Json.Array` element-wise into `Array<T>`. Returns the first
+/// element decoding failure, if any.
+implement <T> JsonDecoder for Array<T> where T: JsonDecoder =
+    public function fromJson(json: Json): Result<Array<T>, JsonError> =
+        match List<T>.fromJson(json) with
+            case Ok(items) => Ok(items.toArray())
+            case Error(e) => Error(e)
+
+/// Decodes a `Json.Array` element-wise into `List<T>`. Returns the first
+/// element decoding failure, if any.
+implement <T> JsonDecoder for List<T> where T: JsonDecoder =
+    public function fromJson(json: Json): Result<List<T>, JsonError> =
+        match json with
+            case Json.Array(items) =>
+                let mutable decoded: List<T> = List.empty
+                let mutable err: Option<JsonError> = None
+                for item in items do
+                    if err.isNone then
+                        match T.fromJson(item) with
+                            case Ok(v) => decoded = decoded.prepend(v)
+                            case Error(e) => err = Some(e)
+                match err with
+                    case Some(e) => Error(e)
+                    case None => Ok(decoded.reverse())
+            case _ => Error(JsonError.TypeError("Array", json.typeName()))
+
+/// Decodes a `Json.Array` of length 2 into a 2-tuple.
+implement <A, B> JsonDecoder for (A, B) where A: JsonDecoder, B: JsonDecoder =
+    public function fromJson(json: Json): Result<(A, B), JsonError> =
+        match json with
+            case Json.Array([j0, j1]) =>
+                let a = try A.fromJson(j0)
+                let b = try B.fromJson(j1)
+                Ok((a, b))
+            case Json.Array(_) =>
+                Error(JsonError.Custom("expected array of length 2 for 2-tuple"))
+            case _ => Error(JsonError.TypeError("Array", json.typeName()))
+
+/// Decodes a `Json.Array` of length 3 into a 3-tuple.
+implement <A, B, C> JsonDecoder for (A, B, C) where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder =
+    public function fromJson(json: Json): Result<(A, B, C), JsonError> =
+        match json with
+            case Json.Array([j0, j1, j2]) =>
+                let a = try A.fromJson(j0)
+                let b = try B.fromJson(j1)
+                let c = try C.fromJson(j2)
+                Ok((a, b, c))
+            case Json.Array(_) =>
+                Error(JsonError.Custom("expected array of length 3 for 3-tuple"))
+            case _ => Error(JsonError.TypeError("Array", json.typeName()))
+
+/// Decodes a `Json.Array` of length 4 into a 4-tuple.
+implement <A, B, C, D> JsonDecoder for (A, B, C, D)
+    where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder, D: JsonDecoder =
+    public function fromJson(json: Json): Result<(A, B, C, D), JsonError> =
+        match json with
+            case Json.Array([j0, j1, j2, j3]) =>
+                let a = try A.fromJson(j0)
+                let b = try B.fromJson(j1)
+                let c = try C.fromJson(j2)
+                let d = try D.fromJson(j3)
+                Ok((a, b, c, d))
+            case Json.Array(_) =>
+                Error(JsonError.Custom("expected array of length 4 for 4-tuple"))
+            case _ => Error(JsonError.TypeError("Array", json.typeName()))
+
+/// Decodes a `Json.Array` of length 5 into a 5-tuple.
+implement <A, B, C, D, E> JsonDecoder for (A, B, C, D, E)
+    where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder, D: JsonDecoder, E: JsonDecoder =
+    public function fromJson(json: Json): Result<(A, B, C, D, E), JsonError> =
+        match json with
+            case Json.Array([j0, j1, j2, j3, j4]) =>
+                let a = try A.fromJson(j0)
+                let b = try B.fromJson(j1)
+                let c = try C.fromJson(j2)
+                let d = try D.fromJson(j3)
+                let e = try E.fromJson(j4)
+                Ok((a, b, c, d, e))
+            case Json.Array(_) =>
+                Error(JsonError.Custom("expected array of length 5 for 5-tuple"))
+            case _ => Error(JsonError.TypeError("Array", json.typeName()))
+
+/// Decodes a `Json.Array` of length 6 into a 6-tuple.
+implement <A, B, C, D, E, F> JsonDecoder for (A, B, C, D, E, F)
+    where A: JsonDecoder, B: JsonDecoder, C: JsonDecoder, D: JsonDecoder, E: JsonDecoder, F: JsonDecoder =
+    public function fromJson(json: Json): Result<(A, B, C, D, E, F), JsonError> =
+        match json with
+            case Json.Array([j0, j1, j2, j3, j4, j5]) =>
+                let a = try A.fromJson(j0)
+                let b = try B.fromJson(j1)
+                let c = try C.fromJson(j2)
+                let d = try D.fromJson(j3)
+                let e = try E.fromJson(j4)
+                let f = try F.fromJson(j5)
+                Ok((a, b, c, d, e, f))
+            case Json.Array(_) =>
+                Error(JsonError.Custom("expected array of length 6 for 6-tuple"))
+            case _ => Error(JsonError.TypeError("Array", json.typeName()))
+
+test "JsonDecoder Bool" =
+    assert Bool.fromJson(Json.Boolean(true)).require == true
+    assert Bool.fromJson(Json.Boolean(false)).require == false
+    assert Bool.fromJson(Json.Null).isError
+
+test "JsonDecoder Int32" =
+    assert Int32.fromJson(Json.Number(42.0)).require == 42
+    assert Int32.fromJson(Json.Number(3.7)).require == 3
+    assert Int32.fromJson(Json.Null).isError
+    assert Int32.fromJson(Json.Str("x")).isError
+
+test "JsonDecoder Int64" =
+    assert Int64.fromJson(Json.Number(42.0)).require == 42i64
+    assert Int64.fromJson(Json.Null).isError
+
+test "JsonDecoder Float64" =
+    assert Float64.fromJson(Json.Number(3.14)).require == 3.14
+    assert Float64.fromJson(Json.Str("x")).isError
+
+test "JsonDecoder String" =
+    assert String.fromJson(Json.Str("hi")).require == "hi"
+    assert String.fromJson(Json.Str("")).require == ""
+    assert String.fromJson(Json.Number(1.0)).isError
+
+test "JsonDecoder TypeError carries Json type name" =
+    match Bool.fromJson(Json.Number(1.0)) with
+        case Error(JsonError.TypeError(expected, got)) =>
+            assert expected == "Boolean"
+            assert got == "Number"
+        case _ => assert false
+
+test "JsonDecoder Array<Int32>" =
+    let parsed = Json.parse("[1,2,3]").require
+    let result = Array<Int32>.fromJson(parsed)
+    assert result.isOk
+    let arr = result.require
+    assert arr.length == 3
+    assert arr.get(0) == 1
+    assert arr.get(1) == 2
+    assert arr.get(2) == 3
+
+test "JsonDecoder empty Array<Int32>" =
+    let result = Array<Int32>.fromJson(Json.parse("[]").require)
+    assert result.isOk
+    assert result.require.length == 0
+
+test "JsonDecoder Array element error propagates" =
+    let parsed = Json.parse("[1,\"oops\",3]").require
+    let result = Array<Int32>.fromJson(parsed)
+    assert result.isError
+
+test "JsonDecoder Array wrong root type" =
+    assert Array<Int32>.fromJson(Json.Number(5.0)).isError
+
+test "JsonDecoder 2-tuple direct" =
+    let parsed = Json.parse("[5,\"hi\"]").require
+    let result = (Int32, String).fromJson(parsed)
+    assert result.isOk
+    let t = result.require
+    assert t._0 == 5
+    assert t._1 == "hi"
+
+test "JsonDecoder 3-tuple direct" =
+    let parsed = Json.parse("[1,\"a\",true]").require
+    let result = (Int32, String, Bool).fromJson(parsed)
+    assert result.isOk
+    let t = result.require
+    assert t._0 == 1
+    assert t._1 == "a"
+    assert t._2 == true
+
+test "JsonDecoder 6-tuple direct" =
+    let parsed = Json.parse("[1,2,3,4,5,6]").require
+    let result = (Int32, Int32, Int32, Int32, Int32, Int32).fromJson(parsed)
+    assert result.isOk
+    let t = result.require
+    assert t._0 == 1
+    assert t._5 == 6
+
+test "JsonDecoder tuple wrong arity is an error" =
+    let parsed = Json.parse("[1,2]").require
+    let result = (Int32, Int32, Int32).fromJson(parsed)
+    assert result.isError
+
+test "JsonDecoder tuple wrong root type" =
+    let parsed = Json.parse("{\"x\":1}").require
+    let result = (Int32, String).fromJson(parsed)
+    assert result.isError
+
+// Reach the tuple impls through Array<(...)> too — exercises the
+// type-parameter trait dispatch path.
+test "JsonDecoder Array of 2-tuples" =
+    let parsed = Json.parse("[[1,\"a\"],[2,\"b\"]]").require
+    let result = Array<(Int32, String)>.fromJson(parsed)
+    assert result.isOk
+    let arr = result.require
+    assert arr.length == 2
+    assert arr.get(0)._1 == "a"
+
+test "JsonDecoder nested tuple direct" =
+    // ((Int32, Int32), Bool) — the recursive type-as-expr helper walks
+    // into nested tuple literals.
+    let parsed = Json.parse("[[1,2],true]").require
+    let result = ((Int32, Int32), Bool).fromJson(parsed)
+    assert result.isOk
+    let t = result.require
+    assert t._0._0 == 1
+    assert t._0._1 == 2
+    assert t._1 == true

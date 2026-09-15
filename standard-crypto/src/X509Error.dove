@@ -1,0 +1,23 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.String
+
+/// Errors from X.509 certificate parsing and chain validation.
+public enum X509Error =
+    /// The DER encoding was malformed or unexpected.
+    MalformedCertificate(String)
+    /// An algorithm OID we do not support.
+    UnsupportedAlgorithm(Array<Uint8>)
+    /// A certificate signature did not verify against its issuer.
+    SignatureVerificationFailed
+    /// The certificate's notAfter is in the past.
+    CertificateExpired
+    /// The certificate's notBefore is in the future.
+    CertificateNotYetValid
+    /// The chain exceeded the configured maximum depth.
+    ChainTooLong(Int32)
+    /// No trust anchor matched the top of the chain.
+    MissingTrustAnchor
+    /// A basic-constraints / CA / path-length rule was violated.
+    ConstraintViolation(String)

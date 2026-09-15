@@ -1,0 +1,994 @@
+package standard.tls
+
+import standard.prelude.Array
+import standard.prelude.Option
+import standard.prelude.Result
+import standard.prelude.String
+
+import standard.collection.MutableQueue
+
+import standard.crypto.SecretKey
+import standard.crypto.PublicKey
+import standard.crypto.SymmetricKey
+import standard.crypto.X509Certificate
+import standard.crypto.ConstantTime
+import standard.time.Instant
+
+/// The sans-I/O TLS 1.3 client (RFC 8446). Bytes received from the network are
+/// fed in via `receiveData`; bytes to transmit are pulled via `dataToSend`;
+/// protocol progress is observed via `nextEvent`. The engine never performs
+/// I/O, reads no clock, and draws randomness only from `config.randomSeed`.
+///
+/// This implements the full 1-RTT handshake (no PSK, no HelloRetryRequest yet).
+
+public class TlsClient(
+    config: TlsClientConfig,
+    mutable state: ClientState,
+    recordLayer: RecordLayer,
+    mutable suite: Option<CipherSuite>,
+    mutable keySchedule: Option<KeySchedule>,
+    transcriptRaw: ByteWriter,
+    mutable group: Option<KeyExchangeGroup>,
+    mutable ephemeralSecret: Option<SecretKey>,
+    inputBuffer: ChunkBuffer,
+    handshakeBuffer: ChunkBuffer,
+    mutable outputBuffer: Array<Uint8>,
+    events: MutableQueue<TlsEvent>,
+    mutable entropyOffset: Int32,
+    mutable peerCertificates: List<X509Certificate>,
+    mutable negotiatedAlpn: Option<String>,
+    mutable serverScheme: Option<SignatureScheme>,
+    mutable writeAppSecret: Option<SymmetricKey>,
+    mutable readAppSecret: Option<SymmetricKey>,
+    mutable offeredPsk: Option<SymmetricKey>,
+    mutable pskAccepted: Bool,
+    mutable resumptionMaster: Option<SymmetricKey>,
+    mutable receivedTickets: List<StoredTicket>,
+    // KeyUpdates received since the last application-data delivery (C4 flood cap).
+    mutable keyUpdatesReceived: Int32,
+    // The legacy_session_id sent in our ClientHello, to check the ServerHello
+    // legacy_session_id_echo against (D2, RFC 8446 §4.1.3).
+    mutable sentSessionId: Array<Uint8>
+) =
+    /// Create a client and produce its ClientHello (available via `dataToSend`).
+    public function make(config: TlsClientConfig): TlsClient =
+        let client = TlsClient(
+            config, ClientState.Start, RecordLayer.make(), None, None, ByteWriter.make(),
+            None, None, ChunkBuffer.make(), ChunkBuffer.make(), Array<Uint8>.empty(),
+            MutableQueue<TlsEvent>.new(), 0, List<X509Certificate>.empty, None, None, None, None,
+            None, false, None, List<StoredTicket>.empty, 0, Array<Uint8>.empty())
+        client.generateClientHello()
+        client
+
+    /// Resumption tickets received from the server (offer one via config to
+    /// resume on a later connection).
+    public function newSessionTickets(self): List<StoredTicket> =
+        self.receivedTickets
+
+    // --- public API -------------------------------------------------------
+
+    /// Feed bytes received from the peer.
+    public function receiveData(self, data: Array<Uint8>): Unit =
+        self.inputBuffer.append(data)
+        self.processRecords()
+
+    /// Whether an incomplete ciphertext record is still buffered — i.e. the peer
+    /// stopped in the middle of a record. A socket EOF in this state is a
+    /// truncation (a mid-record cut), not a clean close at a record boundary.
+    public property hasPartialRecord(self): Bool = self.inputBuffer.pending > 0
+
+    /// Pull and clear the bytes queued for transmission.
+    public function dataToSend(self): Array<Uint8> =
+        let pending = self.outputBuffer
+        self.outputBuffer = Array<Uint8>.empty()
+        pending
+
+    /// Dequeue the next protocol event, if any.
+    public function nextEvent(self): Option<TlsEvent> =
+        self.events.dequeue()
+
+    /// Whether the handshake has completed.
+    public property isHandshakeComplete(self): Bool =
+        match self.state with
+            case Connected => true
+            case _ => false
+
+    /// Whether this connection resumed a previous session via PSK.
+    public property isResumed(self): Bool = self.pskAccepted
+
+    /// Encrypt and queue application data (only valid once connected).
+    public function sendApplicationData(self, data: ReadonlySlice<Uint8>): Unit =
+        match self.state with
+            case Connected =>
+                match self.recordLayer.sealRecord(ContentType.ApplicationData, data) with
+                    case Ok(bytes) => self.outputBuffer = self.outputBuffer.concat(bytes)
+                    case Error(e) => self.fail(e)
+            case _ => ()
+
+    // --- handshake generation ---------------------------------------------
+
+    function nextEntropy(self, n: Int32): Array<Uint8> =
+        let seed = self.config.randomSeed
+        let result = Array<Uint8>.fill(n, 0u8)
+        let mutable i = 0
+        while i < n do
+            let b = if seed.length > 0 then seed.get((self.entropyOffset + i) % seed.length) else 0u8
+            result.set(i, b)
+            i = i + 1
+        self.entropyOffset = self.entropyOffset + n
+        result
+
+    function generateClientHello(self): Unit =
+        // Configs always carry at least one group; `head` documents that.
+        let group = self.config.keyExchangeGroups.head
+        let kx = keyExchangeFor(group)
+        let secretBytes = self.nextEntropy(kx.secretKeySize)
+        let secret = match kx.secretKeyFromBytes(secretBytes) with
+            case Some(s) => s
+            case None => SecretKey(secretBytes)
+        let publicKey = kx.derivePublicKey(secret)
+        self.group = Some(group)
+        self.ephemeralSecret = Some(secret)
+        let random = self.nextEntropy(32)
+        let sessionId = self.nextEntropy(32)
+        // Remember the sent legacy_session_id so the ServerHello's
+        // legacy_session_id_echo can be checked against it (D2, RFC 8446 §4.1.3).
+        // Both the fresh and resumed paths below serialize this same `sessionId`.
+        self.sentSessionId = sessionId
+        // RFC 6066 §3 forbids IP literals in SNI: omit server_name for an IP
+        // literal serverName, but keep it for DNS names.
+        let coreExts = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.SupportedGroups(self.config.keyExchangeGroups),
+            Extension.SignatureAlgorithms(self.config.signatureAlgorithms),
+            Extension.KeyShare([KeyShareEntry { group = group; keyExchange = publicKey.value }]),
+        ]
+        let baseExts = if isIpLiteral(self.config.serverName) then
+                coreExts
+            else
+                [Extension.ServerName(self.config.serverName)].concat(coreExts)
+        let exts = if !self.config.alpnProtocols.isEmpty then
+                baseExts.append(Extension.Alpn(self.config.alpnProtocols))
+            else
+                baseExts
+        let chBytes = match self.config.resumptionTicket with
+            case Some(ticket) => self.buildResumedClientHello(exts, ticket, random, sessionId)
+            case None =>
+                serializeHandshake(HandshakeMessage.ClientHello(ClientHelloMessage {
+                    random = random
+                    legacySessionId = sessionId
+                    cipherSuites = self.config.cipherSuites
+                    extensions = exts
+                }))
+        self.transcriptRaw.putBytes(chBytes)
+        self.outputBuffer = self.outputBuffer.concat(self.recordLayer.framePlaintext(ContentType.Handshake, chBytes))
+        // middlebox-compatibility ChangeCipherSpec
+        self.outputBuffer = self.outputBuffer.concat(self.recordLayer.framePlaintext(ContentType.ChangeCipherSpec, [|0x01u8|]))
+        self.state = ClientState.WaitServerHello
+
+    /// Build a resumed ClientHello: append `psk_key_exchange_modes` and a
+    /// `pre_shared_key` (always last), then compute and patch in the binder over
+    /// the truncated message (RFC 8446 §4.2.11.2).
+    function buildResumedClientHello(self, exts: List<Extension>, ticket: StoredTicket, random: Array<Uint8>, sessionId: Array<Uint8>): Array<Uint8> =
+        self.offeredPsk = Some(ticket.psk)
+        let hash = hashFor(ticket.cipherSuite)
+        let identity = PskIdentity { identity = ticket.identity; obfuscatedTicketAge = ticket.ageAdd }
+        let allExts = exts
+            .append(Extension.PskKeyExchangeModes([pskModeDheKe]))
+            .append(Extension.PreSharedKey([identity], [placeholderBinder(hash)]))
+        let placeholder = serializeHandshake(HandshakeMessage.ClientHello(ClientHelloMessage {
+            random = random
+            legacySessionId = sessionId
+            cipherSuites = self.config.cipherSuites
+            extensions = allExts
+        }))
+        let truncated = subArray(placeholder, 0, placeholder.length - bindersOverhead(hash))
+        let binder = computeBinder(hash, ticket.psk, truncated)
+        let chBytes = placeholder.clone()
+        binder.copy(0, chBytes, chBytes.length - binder.length, binder.length)
+        chBytes
+
+    function transcriptHash(self): Array<Uint8> =
+        hashFor(self.suite.require).hash(self.transcriptRaw.toBytes())
+
+    function pushEvent(self, e: TlsEvent): Unit =
+        self.events.enqueue(e)
+
+    function fail(self, e: TlsError): Unit =
+        self.outputBuffer = self.outputBuffer.concat(Alert.fatalRecord(self.recordLayer, e))
+        self.events.enqueue(TlsEvent.Error(e))
+        self.state = ClientState.Closed
+
+    /// Send a `close_notify` and stop. The peer's `close_notify` is surfaced as
+    /// a `ConnectionClosed` event.
+    public function initiateClose(self): Unit =
+        match self.state with
+            case Closed => ()
+            case _ =>
+                self.outputBuffer = self.outputBuffer.concat(Alert.closeNotifyRecord(self.recordLayer))
+                self.state = ClientState.Closed
+
+    /// Rotate our write traffic key and tell the peer (RFC 8446 §4.6.3). When
+    /// `requestUpdate` is set, the peer is asked to update its own key in turn.
+    public function sendKeyUpdate(self, requestUpdate: Bool): Unit =
+        match self.state with
+            case Connected =>
+                let bytes = serializeHandshake(HandshakeMessage.KeyUpdate(requestUpdate))
+                match self.recordLayer.sealRecord(ContentType.Handshake, bytes.readonly) with
+                    case Error(e) => self.fail(e)
+                    case Ok(sealedBytes) =>
+                        self.outputBuffer = self.outputBuffer.concat(sealedBytes)
+                        self.rotateWriteKey()
+            case _ => ()
+
+    function rotateWriteKey(self): Unit =
+        let ks = self.keySchedule.require
+        let next = ks.updateTrafficSecret(self.writeAppSecret.require)
+        self.writeAppSecret = Some(next)
+        self.recordLayer.installWriteKeys(aeadFor(self.suite.require), ks.deriveTrafficKeys(next))
+
+    function rotateReadKey(self): Unit =
+        let ks = self.keySchedule.require
+        let next = ks.updateTrafficSecret(self.readAppSecret.require)
+        self.readAppSecret = Some(next)
+        self.recordLayer.installReadKeys(aeadFor(self.suite.require), ks.deriveTrafficKeys(next))
+
+    function handleKeyUpdate(self, requestUpdate: Bool): Result<Unit, TlsError> =
+        match self.state with
+            case Connected =>
+                // C4 (RFC 8446 §4.6.3): rate-limit KeyUpdates to stop a flood. The
+                // counter resets whenever application data is delivered (see
+                // handleRecord), so a legitimate occasional rekey is unaffected while
+                // back-to-back KeyUpdates with no intervening progress are aborted.
+                self.keyUpdatesReceived = self.keyUpdatesReceived + 1
+                if keyUpdateWithinLimit(self.keyUpdatesReceived) == false then
+                    Error(TlsError.UnexpectedMessage("excessive KeyUpdate"))
+                else
+                    self.rotateReadKey()
+                    if requestUpdate then
+                        self.sendKeyUpdate(false)
+                    Ok(())
+            case _ => Error(TlsError.UnexpectedMessage("KeyUpdate before connected"))
+
+    // --- record / handshake processing ------------------------------------
+
+    function processRecords(self): Unit =
+        let buf = self.inputBuffer
+        let mutable stop = false
+        while stop == false && buf.pending >= 5 do
+            let length = (buf.byteAt(3).toInt32() << 8) | buf.byteAt(4).toInt32()
+            if length > maxCiphertext then
+                // A TLSCiphertext fragment longer than 2^14+256 is a record_overflow
+                // (RFC 8446 §5.2). Reject before buffering the rest of the fragment.
+                self.fail(TlsError.RecordOverflow)
+                stop = true
+            else if 5 + length > buf.pending then
+                stop = true                          // partial record: stays buffered
+            else
+                let contentType = buf.byteAt(0).toInt32()
+                let fragment = buf.slice(5, 5 + length)
+                buf.consume(5 + length)
+                match self.handleRecord(contentType, fragment) with
+                    case Ok(_) => ()
+                    case Error(e) =>
+                        self.fail(e)
+                        stop = true
+
+    function handleRecord(self, contentType: Int32, fragment: Array<Uint8>): Result<Unit, TlsError> =
+        // ChangeCipherSpec is a plaintext no-op in TLS 1.3 (middlebox compat) and is
+        // tolerated in any epoch. Everything else is dispatched by read epoch: once the
+        // record layer holds read keys, only protected records (outer type 23) are legal
+        // — a plaintext handshake (22) or alert (21) at that point is an injected packet
+        // an on-path attacker forges without the keys, so it must be rejected rather than
+        // fed to the transcript or allowed to tear the connection down (RFC 8446 §5).
+        if contentType == 20 then
+            // RFC 8446 §5: the compatibility change_cipher_spec must be a single 0x01
+            // byte and only appears mid-handshake. Reject a malformed or post-handshake
+            // one as unexpected_message rather than silently ignoring it.
+            if fragment.length == 1 && fragment.get(0) == 0x01u8 && self.isHandshakeComplete == false then
+                Ok(())
+            else
+                Error(TlsError.UnexpectedMessage("invalid change_cipher_spec"))
+        else if self.recordLayer.canReadProtected then
+            if contentType == 23 then
+                let rec = try self.recordLayer.openRecord(RawRecord { contentType = contentType; fragment = fragment })
+                match rec.contentType with
+                    case Handshake =>
+                        self.handshakeBuffer.appendSlice(rec.payload, 0, rec.contentLength)
+                        self.processHandshakeBuffer()
+                    case ApplicationData =>
+                        // Application data is valid only after the handshake completes; before
+                        // Connected the peer is not yet authenticated (CertificateVerify and
+                        // Finished not checked), so injected app data must never reach the
+                        // application (RFC 8446 §5.1). After a closure alert, late in-flight
+                        // app data MUST be ignored rather than answered with an alert (§6.1).
+                        if clientAppDataAllowed(self.state) then
+                            // Application progress resets the KeyUpdate flood counter (C4).
+                            self.keyUpdatesReceived = 0
+                            self.pushEvent(TlsEvent.ApplicationData(rec.payload, rec.contentLength))
+                            Ok(())
+                        else
+                            match self.state with
+                                case Closed => Ok(())
+                                case _ => Error(TlsError.UnexpectedMessage("application data before handshake complete"))
+                    case Alert => self.handleAlert(rec.payload, rec.contentLength)
+                    // RFC 8446 §5: a change_cipher_spec inside a protected record is illegal.
+                    case ChangeCipherSpec => Error(TlsError.UnexpectedMessage("protected change_cipher_spec"))
+            else
+                Error(TlsError.UnexpectedMessage("plaintext record after keys established"))
+        else if contentType == 22 then
+            self.handshakeBuffer.append(fragment)
+            self.processHandshakeBuffer()
+        else if contentType == 21 then
+            self.handleAlert(fragment, fragment.length)
+        else if contentType == 23 then
+            Error(TlsError.UnexpectedMessage("application data before keys"))
+        else
+            Error(TlsError.UnexpectedMessage("unknown record type"))
+
+    function handleAlert(self, payload: Array<Uint8>, contentLength: Int32): Result<Unit, TlsError> =
+        if contentLength < 2 then
+            Error(TlsError.DecodeError("truncated alert"))
+        else if isOrderlyClose(payload) then
+            self.pushEvent(TlsEvent.ConnectionClosed)
+            self.state = ClientState.Closed
+            Ok(())
+        else if isIgnorableWarning(payload) then
+            Ok(())                                   // warning user_canceled: tolerate
+        else
+            Error(TlsError.UnexpectedMessage("fatal alert from peer"))
+
+    function processHandshakeBuffer(self): Result<Unit, TlsError> =
+        let mutable cont = true
+        let mutable outcome: Result<Unit, TlsError> = Ok(())
+        while cont do
+            match pendingHandshakeLength(self.handshakeBuffer) with
+                case None => cont = false
+                case Some(len) =>
+                    if self.handshakeBuffer.pending < len then
+                        cont = false
+                    else
+                        let msgBytes = self.handshakeBuffer.slice(0, len)
+                        self.handshakeBuffer.consume(len)
+                        match parseHandshake(msgBytes) with
+                            case Error(e) =>
+                                outcome = Error(e)
+                                cont = false
+                            case Ok(msg) =>
+                                match self.handleHandshakeMessage(msg, msgBytes) with
+                                    case Error(e) =>
+                                        outcome = Error(e)
+                                        cont = false
+                                    case Ok(_) => ()
+        outcome
+
+    function handleHandshakeMessage(self, msg: HandshakeMessage, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        match msg with
+            case ServerHello(sh) =>
+                match self.state with
+                    case WaitServerHello => self.handleServerHello(sh, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("ServerHello"))
+            case EncryptedExtensions(exts) =>
+                match self.state with
+                    case WaitEncryptedExtensions => self.handleEncryptedExtensions(exts, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("EncryptedExtensions"))
+            case Certificate(c) =>
+                match self.state with
+                    case WaitCertificateOrFinished => self.handleCertificate(c, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("Certificate"))
+            case CertificateVerify(cv) =>
+                match self.state with
+                    case WaitCertificateVerify => self.handleCertificateVerify(cv, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("CertificateVerify"))
+            case Finished(vd) =>
+                match self.state with
+                    case WaitFinished => self.handleServerFinished(vd, msgBytes)
+                    case _ => Error(TlsError.UnexpectedMessage("Finished"))
+            case NewSessionTicket(t) => self.handleNewSessionTicket(t)
+            case KeyUpdate(req) => self.handleKeyUpdate(req)
+            case ClientHello(_) => Error(TlsError.UnexpectedMessage("client received ClientHello"))
+
+    function handleNewSessionTicket(self, t: NewSessionTicketMessage): Result<Unit, TlsError> =
+        // C3: a NewSessionTicket is only legal post-handshake (RFC 8446 §4.6.1). A
+        // pre-Connected ticket was previously a silent no-op; reject it as
+        // unexpected_message. Once Connected, resumptionMaster is always set.
+        match self.state with
+            case Connected =>
+                // RFC 8446 §4.6.1: ticket_lifetime MUST NOT exceed 7 days (604800s).
+                if t.ticketLifetime > maxTicketLifetimeSeconds then
+                    Error(TlsError.IllegalParameter("NewSessionTicket lifetime exceeds 7 days"))
+                else
+                    let rms = self.resumptionMaster.require
+                    let psk = derivePsk(hashFor(self.suite.require), rms, t.ticketNonce)
+                    // Bound retained tickets: keep only the most recent
+                    // `maxRetainedTickets` so a hostile server flooding tickets cannot
+                    // force unbounded memory/CPU (the old O(n^2) concat-per-ticket).
+                    self.receivedTickets = appendCappedTicket(self.receivedTickets, StoredTicket {
+                        identity = t.ticket
+                        psk = psk
+                        cipherSuite = self.suite.require
+                        ageAdd = t.ticketAgeAdd
+                    }, maxRetainedTickets)
+                    Ok(())
+            case _ => Error(TlsError.UnexpectedMessage("NewSessionTicket before handshake complete"))
+
+    function handleServerHello(self, sh: ServerHelloMessage, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        if isHelloRetryRequest(sh) then
+            Error(TlsError.HandshakeFailure("HelloRetryRequest not supported"))
+        else if isDowngradeSentinel(sh.random) then
+            // RFC 8446 §4.1.3: a genuine TLS 1.3 server never plants the downgrade
+            // sentinel in the last 8 bytes of ServerHello.random. Its presence
+            // means a downgrade was attempted -> abort with illegal_parameter.
+            Error(TlsError.IllegalParameter("TLS 1.3 downgrade sentinel in ServerHello.random"))
+        else if negotiatedVersionIsTls13(sh.extensions) == false then
+            // RFC 8446 §4.2.1: a TLS 1.3 ServerHello selects 1.3 via
+            // supported_versions (legacy_version stays 0x0303). Absent or any
+            // other selected version is a protocol_version failure.
+            Error(TlsError.ProtocolVersion)
+        else if cipherSuiteOffered(self.config.cipherSuites, sh.cipherSuite) == false then
+            // RFC 8446 §4.1.3: the server must pick a cipher suite the client
+            // offered; otherwise abort with illegal_parameter.
+            Error(TlsError.IllegalParameter("server selected a cipher suite the client did not offer"))
+        else if ConstantTime.equal(sh.legacySessionId, self.sentSessionId) == false then
+            // RFC 8446 §4.1.3: the ServerHello legacy_session_id_echo MUST equal the
+            // legacy_session_id the client sent; a mismatch is illegal_parameter.
+            Error(TlsError.IllegalParameter("ServerHello legacy_session_id_echo does not match"))
+        else
+            match findKeyShare(sh.extensions) with
+                case None => Error(TlsError.MissingExtension("key_share"))
+                case Some([]) => Error(TlsError.MissingExtension("key_share"))
+                case Some(serverShare :: _) =>
+                    // FIX 4 / RFC 8446 §4.2.8: the server-selected group must equal
+                    // the group the client generated its ephemeral secret for.
+                    // This client offers a single group and does NOT implement
+                    // HelloRetryRequest (rejected above), so a differing group is
+                    // never a legitimate HRR re-selection — it is always
+                    // illegal_parameter. Without this check a mismatched group would
+                    // feed the ephemeral into the wrong curve's computeSharedSecret.
+                    if groupCode(serverShare.group) != groupCode(self.group.require) then
+                        Error(TlsError.IllegalParameter("server selected a key_share group the client did not offer"))
+                    else
+                        self.suite = Some(sh.cipherSuite)
+                        let kx = keyExchangeFor(serverShare.group)
+                        match kx.computeSharedSecret(self.ephemeralSecret.require, PublicKey(serverShare.keyExchange)) with
+                            case Error(_) => Error(TlsError.HandshakeFailure("ECDHE failed"))
+                            case Ok(shared) =>
+                                self.transcriptRaw.putBytes(msgBytes)
+                                let cs = sh.cipherSuite
+                                let ks = KeySchedule.make(cs)
+                                // Set up the early secret from any server pre_shared_key
+                                // selection. A server MUST NOT send pre_shared_key unless the
+                                // client offered one (RFC 8446 §4.1.3), and selected_identity
+                                // must index an offered identity (§4.2.11). This ServerHello is
+                                // an unauthenticated plaintext record, so an unsolicited or
+                                // out-of-range selection must be a clean error — never an
+                                // `offeredPsk.require` trap, which would be a pre-auth remote
+                                // DoS on every non-resuming client (offeredPsk is None then).
+                                let earlyPsk = try self.selectedEarlyPsk(sh.extensions)
+                                ks.initEarly(earlyPsk)
+                                ks.initHandshake(shared, self.transcriptHash())
+                                self.keySchedule = Some(ks)
+                                let aead = aeadFor(cs)
+                                self.recordLayer.installReadKeys(aead, ks.deriveTrafficKeys(ks.serverHandshakeTrafficSecret()))
+                                self.recordLayer.installWriteKeys(aead, ks.deriveTrafficKeys(ks.clientHandshakeTrafficSecret()))
+                                self.state = ClientState.WaitEncryptedExtensions
+                                Ok(())
+
+    /// Resolve the early-secret PSK from a ServerHello's pre_shared_key selection.
+    /// `None` when the server accepted no PSK; the offered key when it selected the
+    /// single identity this client offered; an error when the selection is
+    /// unsolicited (client offered no PSK) or out of range (RFC 8446 §4.1.3, §4.2.11).
+    function selectedEarlyPsk(self, exts: List<Extension>): Result<Option<SymmetricKey>, TlsError> =
+        match findSelectedIdentity(exts) with
+            case None => Ok(None)
+            case Some(index) =>
+                match self.offeredPsk with
+                    case None => Error(TlsError.IllegalParameter("server sent an unsolicited pre_shared_key"))
+                    case Some(psk) =>
+                        if index != 0 then
+                            Error(TlsError.IllegalParameter("server selected_identity out of range"))
+                        else
+                            self.pskAccepted = true
+                            Ok(Some(psk))
+
+    function handleEncryptedExtensions(self, exts: List<Extension>, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        self.transcriptRaw.putBytes(msgBytes)
+        let mutable outcome: Result<Unit, TlsError> = Ok(())
+        for ext in exts do
+            if outcome.isOk then
+                match ext with
+                    case Alpn(protocols) =>
+                        // RFC 7301: the server selects exactly ONE protocol, and it MUST be one
+                        // the client offered — never adopt an unoffered/ambiguous ALPN selection.
+                        match protocols with
+                            case [selected] =>
+                                if alpnOffered(self.config.alpnProtocols, selected) == false then
+                                    outcome = Error(TlsError.IllegalParameter("server selected an ALPN protocol the client did not offer"))
+                                else
+                                    self.negotiatedAlpn = Some(selected)
+                            case _ =>
+                                outcome = Error(TlsError.IllegalParameter("ALPN selection must name exactly one protocol"))
+                    // Extensions that are never legal in EncryptedExtensions (RFC 8446 §4.3.1):
+                    // these belong to ServerHello or the ClientHello only.
+                    case KeyShare(_) => outcome = Error(TlsError.IllegalParameter("key_share not allowed in EncryptedExtensions"))
+                    case SupportedVersions(_) => outcome = Error(TlsError.IllegalParameter("supported_versions not allowed in EncryptedExtensions"))
+                    case PreSharedKey(_, _) => outcome = Error(TlsError.IllegalParameter("pre_shared_key not allowed in EncryptedExtensions"))
+                    case PskSelectedIdentity(_) => outcome = Error(TlsError.IllegalParameter("pre_shared_key not allowed in EncryptedExtensions"))
+                    case _ => ()
+        try outcome
+        // a resumed (PSK) handshake omits Certificate/CertificateVerify
+        self.state = if self.pskAccepted then ClientState.WaitFinished else ClientState.WaitCertificateOrFinished
+        Ok(())
+
+    function handleCertificate(self, certMsg: CertificateMessage, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        self.transcriptRaw.putBytes(msgBytes)
+        let chain = try validateChain(certMsg.certificates, self.config.trustAnchors, self.config.currentTime, self.config.serverName)
+        self.peerCertificates = chain
+        self.state = ClientState.WaitCertificateVerify
+        Ok(())
+
+    function handleCertificateVerify(self, cv: CertificateVerifyMessage, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        // RFC 8446 §4.4.3: the CertificateVerify scheme MUST be one the client
+        // advertised in signature_algorithms. Reject an unoffered scheme with
+        // illegal_parameter BEFORE verifying (never verify under an algorithm we
+        // never agreed to accept).
+        if schemeOffered(self.config.signatureAlgorithms, cv.algorithm) == false then
+            Error(TlsError.IllegalParameter("CertificateVerify scheme was not offered in signature_algorithms"))
+        else if schemeMatchesKey(cv.algorithm, self.peerCertificates.head.publicKeyAlgorithm, self.peerCertificates.head.publicKeyCurve) == false then
+            // RFC 8446 §4.4.3: the signature algorithm MUST be compatible with the
+            // key in the leaf certificate. A CV scheme whose key family does not
+            // match the leaf's SPKI algorithm (and named curve, for ECDSA) is an
+            // illegal_parameter — reject it before verifying under the wrong key.
+            Error(TlsError.IllegalParameter("CertificateVerify scheme incompatible with certificate key"))
+        else
+            let th = self.transcriptHash()
+            let leaf = leafPublicKey(self.peerCertificates)
+            let input = signedContentInput(serverVerifyContext, th)
+            if verifyCertificateSignature(cv.algorithm, leaf, input, cv.signature) == false then
+                Error(TlsError.DecryptError)
+            else
+                self.serverScheme = Some(cv.algorithm)
+                self.transcriptRaw.putBytes(msgBytes)
+                self.state = ClientState.WaitFinished
+                Ok(())
+
+    function handleServerFinished(self, verifyData: Array<Uint8>, msgBytes: Array<Uint8>): Result<Unit, TlsError> =
+        let ks = self.keySchedule.require
+        let th = self.transcriptHash()
+        let expected = ks.finishedVerifyData(ks.serverHandshakeTrafficSecret(), th)
+        if ConstantTime.equal(expected, verifyData) == false then
+            Error(TlsError.DecryptError)
+        else
+            self.transcriptRaw.putBytes(msgBytes)
+            let thSf = self.transcriptHash()
+            ks.initApplication(thSf)
+            let clientVd = ks.finishedVerifyData(ks.clientHandshakeTrafficSecret(), thSf)
+            let finBytes = serializeHandshake(HandshakeMessage.Finished(clientVd))
+            let sealedRecord = try self.recordLayer.sealRecord(ContentType.Handshake, finBytes.readonly)
+            self.outputBuffer = self.outputBuffer.concat(sealedRecord)
+            self.transcriptRaw.putBytes(finBytes)
+            self.resumptionMaster = Some(ks.resumptionSecret(self.transcriptHash()))
+            let aead = aeadFor(self.suite.require)
+            self.recordLayer.installWriteKeys(aead, ks.deriveTrafficKeys(ks.clientApplicationTrafficSecret()))
+            self.recordLayer.installReadKeys(aead, ks.deriveTrafficKeys(ks.serverApplicationTrafficSecret()))
+            self.writeAppSecret = Some(ks.clientApplicationTrafficSecret())
+            self.readAppSecret = Some(ks.serverApplicationTrafficSecret())
+            self.state = ClientState.Connected
+            self.pushEvent(TlsEvent.HandshakeComplete(self.buildParams()))
+            Ok(())
+
+    function buildParams(self): NegotiatedParams =
+        NegotiatedParams {
+            cipherSuite = self.suite.require
+            keyExchangeGroup = self.group.require
+            signatureScheme = match self.serverScheme with
+                case Some(s) => s
+                case None => SignatureScheme.Ed25519
+            peerCertificates = self.peerCertificates
+            alpnProtocol = self.negotiatedAlpn
+            serverName = self.config.serverName
+        }
+
+/// The most resumption tickets a client retains. A hostile server can send an
+/// unbounded stream of NewSessionTicket messages; we keep only the most recent
+/// few so retention (and per-append cost) stays bounded (C3, RFC 8446 §4.6.1).
+let maxRetainedTickets: Int32 = 8
+
+/// RFC 8446 §4.6.1: a NewSessionTicket's ticket_lifetime MUST NOT exceed 7 days.
+let maxTicketLifetimeSeconds: Int64 = 604800i64
+
+/// Append `ticket` to `existing`, retaining at most `cap` of the most recent
+/// tickets (dropping the oldest).
+///
+/// Order is oldest-first, which `newSessionTickets` hands to callers — hence
+/// `append` and a drop from the front rather than the cheaper prepend, which
+/// would reverse it. Cost stays bounded because `existing` never exceeds `cap`.
+function appendCappedTicket(existing: List<StoredTicket>, ticket: StoredTicket, cap: Int32): List<StoredTicket> =
+    let appended = existing.append(ticket)
+    let excess = appended.length - cap
+    if excess <= 0 then appended
+    else appended.drop(excess)
+
+/// Whether `protocol` is among the ALPN protocols the client offered.
+function alpnOffered(offered: List<String>, protocol: String): Bool =
+    offered.contains(protocol)
+
+/// Whether an inbound protected application_data record may be surfaced to the
+/// application: only once the handshake has completed (`Connected`). Before that
+/// the server is not yet authenticated (CertificateVerify/Finished unchecked), so
+/// injected application data must be rejected rather than delivered (RFC 8446 §5.1).
+function clientAppDataAllowed(state: ClientState): Bool =
+    match state with
+        case Connected => true
+        case _ => false
+
+// --- ServerHello / CertificateVerify negotiation-integrity checks ----------
+
+/// Whether the last 8 bytes of a ServerHello.random carry the RFC 8446 §4.1.3
+/// TLS 1.3 downgrade-protection sentinel: the ASCII "DOWNGRD" followed by 0x01
+/// (a TLS 1.2 server) or 0x00 (TLS 1.1 or below). A real TLS 1.3 server never
+/// sets it, so a client that sees it must abort.
+function isDowngradeSentinel(random: Array<Uint8>): Bool =
+    if random.length < 8 then
+        false
+    else
+        // "DOWNGRD"
+        let prefix = [|0x44u8, 0x4fu8, 0x57u8, 0x4eu8, 0x47u8, 0x52u8, 0x44u8|]
+        let base = random.length - 8
+        let mutable matches = true
+        let mutable i = 0
+        while i < 7 do
+            if random.get(base + i) != prefix.get(i) then matches = false
+            i = i + 1
+        let last = random.get(base + 7)
+        matches && (last == 0x00u8 || last == 0x01u8)
+
+/// Whether a ServerHello's extensions select TLS 1.3 via supported_versions
+/// (RFC 8446 §4.2.1). The ServerHello form carries a single selected version.
+function negotiatedVersionIsTls13(exts: List<Extension>): Bool =
+    let mutable ok = false
+    for ext in exts do
+        match ext with
+            case SupportedVersions(versions) =>
+                for v in versions do
+                    if v == versionTls13 then ok = true
+            case _ => ()
+    ok
+
+/// Whether `cs` is among the cipher suites the client offered.
+function cipherSuiteOffered(offered: List<CipherSuite>, cs: CipherSuite): Bool =
+    let mutable found = false
+    for c in offered do
+        if cipherSuiteCode(c) == cipherSuiteCode(cs) then found = true
+    found
+
+/// Whether `scheme` is among the signature schemes the client advertised.
+function schemeOffered(offered: List<SignatureScheme>, scheme: SignatureScheme): Bool =
+    let mutable found = false
+    for s in offered do
+        if sigSchemeCode(s) == sigSchemeCode(scheme) then found = true
+    found
+
+test "tls client emits a well-formed ClientHello followed by CCS" =
+    let config = TlsClientConfig {
+        serverName = "example.com"
+        cipherSuites = [CipherSuite.Aes128GcmSha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519]
+        signatureAlgorithms = [SignatureScheme.Ed25519, SignatureScheme.EcdsaSecp256r1Sha256]
+        trustAnchors = List<X509Certificate>.empty
+        alpnProtocols = ["h2"]
+        currentTime = Instant.ofEpochSecond(1600000000i64)
+        randomSeed = Array<Uint8>.fill(128, 0x07u8)
+        resumptionTicket = None
+    }
+    let client = TlsClient.make(config)
+    assert client.isHandshakeComplete == false
+    let firstFlight = client.dataToSend()
+    assert firstFlight.get(0) == 22u8
+    let recLen = (firstFlight.get(3).toInt32() << 8) | firstFlight.get(4).toInt32()
+    let chBytes = subArray(firstFlight, 5, 5 + recLen)
+    match parseHandshake(chBytes).require with
+        case ClientHello(ch) =>
+            assert ch.cipherSuites.length == 1
+            assert ch.legacySessionId.length == 32
+            assert ch.random.length == 32
+            match findKeyShare(ch.extensions) with
+                case Some(entry :: _) => assert entry.keyExchange.length == 32
+                case _ => assert false
+        case _ => assert false
+    // a ChangeCipherSpec record follows the ClientHello
+    assert firstFlight.get(5 + recLen) == 20u8
+    // draining again yields nothing
+    assert client.dataToSend().length == 0
+
+// --- negative tests: hostile / non-conformant server input -----------------
+
+/// A client config offering exactly one suite (AES-128), one group (X25519) and
+/// Ed25519 signatures, for the ServerHello-integrity tests below.
+function integrityTestConfig(serverName: String): TlsClientConfig =
+    TlsClientConfig {
+        serverName = serverName
+        cipherSuites = [CipherSuite.Aes128GcmSha256]
+        keyExchangeGroups = [KeyExchangeGroup.X25519]
+        signatureAlgorithms = [SignatureScheme.Ed25519]
+        trustAnchors = List<X509Certificate>.empty
+        alpnProtocols = ["h2"]
+        currentTime = Instant.ofEpochSecond(1600000000i64)
+        randomSeed = Array<Uint8>.fill(128, 0x07u8)
+        resumptionTicket = None
+    }
+
+/// The first `TlsEvent.Error` a client surfaced, if any.
+function firstClientError(client: TlsClient): Option<TlsError> =
+    let mutable found: Option<TlsError> = None
+    let mutable cont = true
+    while cont do
+        match client.nextEvent() with
+            case None => cont = false
+            case Some(TlsEvent.Error(e)) =>
+                found = Some(e)
+                cont = false
+            case Some(_) => ()
+    found
+
+/// Make a fresh client (ClientHello drained) and feed it a crafted plaintext
+/// ServerHello record, returning the client for inspection.
+function clientFedServerHello(sh: ServerHelloMessage): TlsClient =
+    let client = TlsClient.make(integrityTestConfig("example.com"))
+    client.dataToSend()
+    let shBytes = serializeHandshake(HandshakeMessage.ServerHello(sh))
+    let shRecord = [|22u8, 0x03u8, 0x03u8, (shBytes.length >> 8).toUint8(), shBytes.length.toUint8()|].concat(shBytes)
+    client.receiveData(shRecord)
+    client
+
+/// A conformant ServerHello selecting AES-128 / X25519 / TLS 1.3, used as the
+/// base each negative test perturbs one field of.
+function baseServerHello(): ServerHelloMessage =
+    ServerHelloMessage {
+        random = Array<Uint8>.fill(32, 0x01u8)
+        legacySessionId = Array<Uint8>.fill(32, 0x07u8)
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        extensions = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x02u8) }]),
+        ]
+    }
+
+test "tls client hasPartialRecord flags a mid-record truncation (FIX C3)" =
+    // The TLS-stream layer uses this to tell a truncation (peer cut mid-record) from a
+    // benign close at a record boundary. A fresh client has nothing buffered; a partial
+    // record header (fewer than the 5 header bytes) stays buffered and flags a partial.
+    let client = TlsClient.make(integrityTestConfig("example.com"))
+    client.dataToSend()
+    assert client.hasPartialRecord == false
+    client.receiveData([|23u8, 0x03u8, 0x03u8|])
+    assert client.hasPartialRecord
+
+test "tls client rejects an over-length record with RecordOverflow (FIX 1)" =
+    let client = TlsClient.make(integrityTestConfig("example.com"))
+    client.dataToSend()
+    // header claims 0x4200 = 16896 bytes (> 2^14+256 = 16640): record_overflow
+    client.receiveData([|23u8, 0x03u8, 0x03u8, 0x42u8, 0x00u8|])
+    match firstClientError(client) with
+        case Some(TlsError.RecordOverflow) => assert true
+        case _ => assert false
+    // and a fatal alert was queued for the peer
+    assert client.dataToSend().length > 0
+
+test "tls client rejects a ServerHello selecting an unoffered cipher suite (FIX 3a)" =
+    let sh = ServerHelloMessage {
+        random = Array<Uint8>.fill(32, 0x01u8)
+        legacySessionId = Array<Uint8>.fill(32, 0x07u8)
+        cipherSuite = CipherSuite.Aes256GcmSha384
+        extensions = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x02u8) }]),
+        ]
+    }
+    let client = clientFedServerHello(sh)
+    match firstClientError(client) with
+        case Some(TlsError.IllegalParameter(_)) => assert true
+        case _ => assert false
+    assert client.isHandshakeComplete == false
+
+test "tls client rejects a ServerHello that does not negotiate TLS 1.3 (FIX 3b)" =
+    let sh = ServerHelloMessage {
+        random = Array<Uint8>.fill(32, 0x01u8)
+        legacySessionId = Array<Uint8>.fill(32, 0x07u8)
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        extensions = [
+            // supported_versions selects TLS 1.2, not 1.3
+            Extension.SupportedVersions([0x0303]),
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x02u8) }]),
+        ]
+    }
+    let client = clientFedServerHello(sh)
+    match firstClientError(client) with
+        case Some(TlsError.ProtocolVersion) => assert true
+        case _ => assert false
+
+test "tls client rejects a ServerHello carrying the TLS 1.3 downgrade sentinel (FIX 3c)" =
+    let random = Array<Uint8>.fill(32, 0x01u8)
+    // last 8 bytes = "DOWNGRD" ‖ 0x01 (TLS 1.2 downgrade sentinel, RFC 8446 §4.1.3)
+    let sentinel = [|0x44u8, 0x4fu8, 0x57u8, 0x4eu8, 0x47u8, 0x52u8, 0x44u8, 0x01u8|]
+    sentinel.copy(0, random, 24, 8)
+    let sh = ServerHelloMessage {
+        random = random
+        legacySessionId = Array<Uint8>.fill(32, 0x07u8)
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        extensions = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x02u8) }]),
+        ]
+    }
+    let client = clientFedServerHello(sh)
+    match firstClientError(client) with
+        case Some(TlsError.IllegalParameter(_)) => assert true
+        case _ => assert false
+
+test "tls client rejects a ServerHello key_share group it did not offer (FIX 4)" =
+    let sh = ServerHelloMessage {
+        random = Array<Uint8>.fill(32, 0x01u8)
+        legacySessionId = Array<Uint8>.fill(32, 0x07u8)
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        extensions = [
+            Extension.SupportedVersions([versionTls13]),
+            // client generated an X25519 secret but the server selected secp256r1
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.SecP256R1; keyExchange = Array<Uint8>.fill(65, 0x04u8) }]),
+        ]
+    }
+    let client = clientFedServerHello(sh)
+    match firstClientError(client) with
+        case Some(TlsError.IllegalParameter(_)) => assert true
+        case _ => assert false
+
+test "tls client accepts a conformant ServerHello (positive control)" =
+    let client = clientFedServerHello(baseServerHello())
+    // a well-formed ServerHello produces no error and advances the handshake
+    match firstClientError(client) with
+        case Some(_) => assert false
+        case None => assert true
+
+test "tls client rejects a ServerHello whose legacy_session_id_echo differs (D2)" =
+    // RFC 8446 §4.1.3: the ServerHello must echo the client's legacy_session_id.
+    // The integrity-test client sends 32 bytes of 0x07; a differing echo is
+    // illegal_parameter. This otherwise-conformant ServerHello only perturbs
+    // legacy_session_id_echo.
+    let sh = ServerHelloMessage {
+        random = Array<Uint8>.fill(32, 0x01u8)
+        legacySessionId = Array<Uint8>.fill(32, 0x09u8)
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        extensions = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x02u8) }]),
+        ]
+    }
+    let client = clientFedServerHello(sh)
+    match firstClientError(client) with
+        case Some(TlsError.IllegalParameter(_)) => assert true
+        case _ => assert false
+
+test "tls client rejects an unsolicited pre_shared_key in ServerHello (FIX D1)" =
+    // A non-resuming client (offeredPsk = None) must reject a server that selects a PSK it
+    // never offered — not crash on offeredPsk.require. The ServerHello is an unauthenticated
+    // plaintext record, so unwrapping there is a pre-auth remote DoS (RFC 8446 §4.1.3/§4.2.11).
+    let sh = ServerHelloMessage {
+        random = Array<Uint8>.fill(32, 0x01u8)
+        legacySessionId = Array<Uint8>.fill(32, 0x07u8)
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        extensions = [
+            Extension.SupportedVersions([versionTls13]),
+            Extension.KeyShare([KeyShareEntry { group = KeyExchangeGroup.X25519; keyExchange = Array<Uint8>.fill(32, 0x02u8) }]),
+            Extension.PskSelectedIdentity(0),
+        ]
+    }
+    let client = clientFedServerHello(sh)
+    match firstClientError(client) with
+        case Some(TlsError.IllegalParameter(_)) => assert true
+        case _ => assert false
+
+test "tls client omits SNI for an IP-literal serverName but keeps it for DNS (FIX 6)" =
+    // IP literal: no server_name extension (RFC 6066 §3)
+    let ipClient = TlsClient.make(integrityTestConfig("127.0.0.1"))
+    assert hasServerNameExtension(ipClient) == false
+    // DNS name: server_name extension present
+    let dnsClient = TlsClient.make(integrityTestConfig("example.com"))
+    assert hasServerNameExtension(dnsClient)
+
+/// Parse a client's ClientHello and report whether it carries a server_name
+/// extension.
+function hasServerNameExtension(client: TlsClient): Bool =
+    let flight = client.dataToSend()
+    let recLen = (flight.get(3).toInt32() << 8) | flight.get(4).toInt32()
+    let chBytes = subArray(flight, 5, 5 + recLen)
+    match parseHandshake(chBytes).require with
+        case ClientHello(ch) =>
+            let mutable found = false
+            for ext in ch.extensions do
+                match ext with
+                    case ServerName(_) => found = true
+                    case _ => ()
+            found
+        case _ => false
+
+test "tls client treats a fatal close_notify as an error, not a clean close (FIX 5)" =
+    let client = TlsClient.make(integrityTestConfig("example.com"))
+    client.dataToSend()
+    // plaintext alert record: level = fatal(2), description = close_notify(0)
+    client.receiveData([|21u8, 0x03u8, 0x03u8, 0x00u8, 0x02u8, 0x02u8, 0x00u8|])
+    // must surface as an error, never ConnectionClosed
+    match firstClientError(client) with
+        case Some(_) => assert true
+        case None => assert false
+
+test "tls client treats a warning close_notify as an orderly close (FIX 5 positive)" =
+    let client = TlsClient.make(integrityTestConfig("example.com"))
+    client.dataToSend()
+    // plaintext alert record: level = warning(1), description = close_notify(0)
+    client.receiveData([|21u8, 0x03u8, 0x03u8, 0x00u8, 0x02u8, 0x01u8, 0x00u8|])
+    let mutable closed = false
+    let mutable sawError = false
+    let mutable cont = true
+    while cont do
+        match client.nextEvent() with
+            case None => cont = false
+            case Some(TlsEvent.ConnectionClosed) => closed = true
+            case Some(TlsEvent.Error(_)) => sawError = true
+            case Some(_) => ()
+    assert closed
+    assert sawError == false
+
+test "tls client rejects a plaintext alert once read keys are installed (FIX 7)" =
+    // After ServerHello the read epoch holds keys; a plaintext warning alert — which a
+    // keyless client tolerates as a no-op (see the FIX 5 positive test) — is now a
+    // forgeable injected packet and must be rejected: post-key records must be protected
+    // (RFC 8446 §5).
+    let client = clientFedServerHello(baseServerHello())
+    assert client.isHandshakeComplete == false
+    client.receiveData([|21u8, 0x03u8, 0x03u8, 0x00u8, 0x02u8, 0x01u8, 0x00u8|])
+    match firstClientError(client) with
+        case Some(_) => assert true
+        case None => assert false
+
+test "tls client surfaces application data only once Connected (FIX 7)" =
+    // The gate `handleRecord` applies to a decrypted application_data record: before
+    // the handshake completes the server is unauthenticated (CertificateVerify/Finished
+    // unchecked), so app data in any pre-Connected state must be rejected, not delivered
+    // (RFC 8446 §5.1). Only the terminal Connected state may pass it through.
+    assert clientAppDataAllowed(ClientState.Connected)
+    assert clientAppDataAllowed(ClientState.Start) == false
+    assert clientAppDataAllowed(ClientState.WaitServerHello) == false
+    assert clientAppDataAllowed(ClientState.WaitEncryptedExtensions) == false
+    assert clientAppDataAllowed(ClientState.WaitCertificateOrFinished) == false
+    assert clientAppDataAllowed(ClientState.WaitCertificateVerify) == false
+    assert clientAppDataAllowed(ClientState.WaitFinished) == false
+    assert clientAppDataAllowed(ClientState.Closed) == false
+
+test "tls client caps retained NewSessionTickets to the most recent N (C3)" =
+    // Feeding more than the cap keeps only the most recent `maxRetainedTickets`,
+    // and the retained window slides so the newest ticket is always kept.
+    let mkTicket = (n: Int32) => StoredTicket {
+        identity = [|n.toUint8()|]
+        psk = SymmetricKey(Array<Uint8>.fill(32, 0u8))
+        cipherSuite = CipherSuite.Aes128GcmSha256
+        ageAdd = 0i64
+    }
+    let mutable tickets = List<StoredTicket>.empty
+    let mutable i = 0
+    while i < maxRetainedTickets + 5 do
+        tickets = appendCappedTicket(tickets, mkTicket(i), maxRetainedTickets)
+        i = i + 1
+    assert tickets.length == maxRetainedTickets
+    // oldest kept is ticket (count - cap); newest is the last one appended
+    let count = maxRetainedTickets + 5
+    assert tickets.head.identity.get(0) == (count - maxRetainedTickets).toUint8()
+    match tickets.last with
+        case Some(newest) => assert newest.identity.get(0) == (count - 1).toUint8()
+        case None => assert false
+    // under the cap, everything is retained in order
+    let small = appendCappedTicket(appendCappedTicket(List<StoredTicket>.empty, mkTicket(0), maxRetainedTickets), mkTicket(1), maxRetainedTickets)
+    match small with
+        case [first, second] =>
+            assert first.identity.get(0) == 0u8
+            assert second.identity.get(0) == 1u8
+        case _ => assert false

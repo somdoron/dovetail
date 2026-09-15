@@ -1,0 +1,14 @@
+/target
+/build
+.dovetail/
+# Legacy cache retained during migration.
+.domain/
+
+# VS Code extension
+vscode-dovetail/node_modules/
+vscode-dovetail/out/
+vscode-dovetail/*.vsix
+vscode-dovetail/package-lock.json
+
+# Private planning notes
+[Bb]acklog.md

@@ -1,0 +1,564 @@
+package standard.http
+
+/// The role of a connection party.
+public enum Role =
+    /// The HTTP client (sends requests, receives responses).
+    Client
+    /// The HTTP server (receives requests, sends responses).
+    Server
+
+/// The state of one side of an HTTP connection.
+public enum ConnectionState =
+    /// Ready to send/receive the next request or response.
+    Idle
+    /// Server is ready to send a response (after receiving a request).
+    SendResponse
+    /// Sending/receiving the message body.
+    SendBody
+    /// The message is complete.
+    Done
+    /// Connection must be closed (keep-alive disabled or peer closed).
+    MustClose
+    /// Connection has been closed.
+    Closed
+    /// An error occurred; no further events allowed.
+    Error
+    /// Waiting for server to accept/reject a protocol switch.
+    MightSwitchProtocol
+    /// Protocol has been switched (e.g., WebSocket).
+    SwitchedProtocol
+
+/// Protocol switch types proposed by the client.
+public enum SwitchType =
+    /// HTTP Upgrade (e.g., WebSocket via 101 Switching Protocols).
+    Upgrade
+    /// HTTP CONNECT tunnel.
+    Connect
+
+/// The HTTP connection state machine.
+/// Tracks client state, server state, keep-alive, and pending switch proposals.
+public class StateMachine(
+    public mutable clientState: ConnectionState,
+    public mutable serverState: ConnectionState,
+    public mutable keepAlive: Bool,
+    public mutable pendingUpgrade: Bool,
+    public mutable pendingConnect: Bool,
+    public mutable lastError: Option<HttpError>
+) =
+    /// Create a new state machine with both sides in Idle state.
+    public function new(): StateMachine =
+        StateMachine(ConnectionState.Idle, ConnectionState.Idle, true, false, false, None)
+
+    /// Get the state for a given role.
+    public function getState(self, role: Role): ConnectionState =
+        match role with
+            case Client => self.clientState
+            case Server => self.serverState
+
+    /// Set the state for a given role.
+    function setState(self, role: Role, state: ConnectionState): Unit =
+        match role with
+            case Client => self.clientState = state
+            case Server => self.serverState = state
+
+    /// Process an error for a given role.
+    public function processError(self, role: Role): Unit =
+        self.setState(role, ConnectionState.Error)
+        self.fireStateTriggeredTransitions()
+
+    /// Disable keep-alive (e.g., Connection: close or HTTP/1.0).
+    public function processKeepAliveDisabled(self): Unit =
+        self.keepAlive = false
+        self.fireStateTriggeredTransitions()
+
+    /// Record a client switch proposal (CONNECT or Upgrade).
+    public function processClientSwitchProposal(self, switchType: SwitchType): Unit =
+        match switchType with
+            case Upgrade => self.pendingUpgrade = true
+            case Connect => self.pendingConnect = true
+        self.fireStateTriggeredTransitions()
+
+    /// Whether there are any pending switch proposals.
+    public property hasPendingSwitchProposals(self): Bool =
+        self.pendingUpgrade || self.pendingConnect
+
+    /// Whether a specific switch type is pending.
+    public function hasPendingSwitch(self, switchType: SwitchType): Bool =
+        match switchType with
+            case Upgrade => self.pendingUpgrade
+            case Connect => self.pendingConnect
+
+    /// Process an event, updating the state machine.
+    /// Returns true if successful, false if invalid. Check lastError for details.
+    public function processEvent(
+        self,
+        role: Role,
+        evtType: EventType,
+        serverSwitchEvent: Option<SwitchType>
+    ): Bool =
+        self.lastError = None
+        // Check server switch event validity
+        let mutable switchError = false
+        match serverSwitchEvent with
+            case Some(switchType) =>
+                if !self.hasPendingSwitch(switchType) then
+                    switchError = true
+            case None =>
+                // A regular Response clears pending switch proposals
+                if isResponseType(evtType) then
+                    self.pendingUpgrade = false
+                    self.pendingConnect = false
+
+        if switchError then
+            self.setState(role, ConnectionState.Error)
+            self.lastError = Some(HttpError.local("Received server switch event without a pending proposal"))
+            false
+        else
+            // Fire event-triggered transitions
+            let state = self.getState(role)
+            let newState = eventTriggeredTransition(role, state, evtType, serverSwitchEvent)
+            match newState with
+                case None =>
+                    let evtName = eventTypeName(evtType)
+                    let rn = roleName(role)
+                    let sn = connectionStateName(state)
+                    self.lastError = Some(HttpError.local("can't handle event type " ++ evtName ++ " when role=" ++ rn ++ " and state=" ++ sn))
+                    false
+                case Some(s) =>
+                    self.setState(role, s)
+                    // Special case: server sees client Request events
+                    let mutable ok = true
+                    if isRequestType(evtType) then
+                        if isClientRole(role) then
+                            let serverState = self.serverState
+                            match serverState with
+                                case Idle =>
+                                    self.serverState = ConnectionState.SendResponse
+                                case _ =>
+                                    self.lastError = Some(HttpError.local("can't handle event type Request when role=Server and state=" ++ connectionStateName(serverState)))
+                                    ok = false
+                    if ok then
+                        self.fireStateTriggeredTransitions()
+                    ok
+
+    /// Fire state-triggered transitions until a fixed point is reached.
+    function fireStateTriggeredTransitions(self): Unit =
+        let mutable changed = true
+        while changed do
+            let startClient = self.clientState
+            let startServer = self.serverState
+
+            // Protocol switch: DONE -> MIGHT_SWITCH_PROTOCOL
+            if self.hasPendingSwitchProposals then
+                match self.clientState with
+                    case Done => self.clientState = ConnectionState.MightSwitchProtocol
+                    case _ => ()
+
+            // No pending switches: MIGHT_SWITCH_PROTOCOL -> DONE
+            if !self.hasPendingSwitchProposals then
+                match self.clientState with
+                    case MightSwitchProtocol => self.clientState = ConnectionState.Done
+                    case _ => ()
+
+            // Keep-alive disabled: DONE -> MUST_CLOSE
+            if !self.keepAlive then
+                match self.clientState with
+                    case Done => self.clientState = ConnectionState.MustClose
+                    case _ => ()
+                match self.serverState with
+                    case Done => self.serverState = ConnectionState.MustClose
+                    case _ => ()
+
+            // Tabular state-triggered transitions
+            self.applyStateTriggeredTransitions()
+
+            // Check for fixed point
+            changed = !sameState(self.clientState, startClient) || !sameState(self.serverState, startServer)
+
+    /// Apply tabular state-triggered transitions.
+    function applyStateTriggeredTransitions(self): Unit =
+        // (MIGHT_SWITCH_PROTOCOL, SWITCHED_PROTOCOL) -> CLIENT: SWITCHED_PROTOCOL
+        if sameState(self.clientState, ConnectionState.MightSwitchProtocol) then
+            if sameState(self.serverState, ConnectionState.SwitchedProtocol) then
+                self.clientState = ConnectionState.SwitchedProtocol
+
+        // (CLOSED, DONE) -> SERVER: MUST_CLOSE
+        if sameState(self.clientState, ConnectionState.Closed) then
+            if sameState(self.serverState, ConnectionState.Done) then
+                self.serverState = ConnectionState.MustClose
+
+        // (CLOSED, IDLE) -> SERVER: MUST_CLOSE
+        if sameState(self.clientState, ConnectionState.Closed) then
+            if sameState(self.serverState, ConnectionState.Idle) then
+                self.serverState = ConnectionState.MustClose
+
+        // (ERROR, DONE) -> SERVER: MUST_CLOSE
+        if sameState(self.clientState, ConnectionState.Error) then
+            if sameState(self.serverState, ConnectionState.Done) then
+                self.serverState = ConnectionState.MustClose
+
+        // (DONE, CLOSED) -> CLIENT: MUST_CLOSE
+        if sameState(self.serverState, ConnectionState.Closed) then
+            if sameState(self.clientState, ConnectionState.Done) then
+                self.clientState = ConnectionState.MustClose
+
+        // (IDLE, CLOSED) -> CLIENT: MUST_CLOSE
+        if sameState(self.serverState, ConnectionState.Closed) then
+            if sameState(self.clientState, ConnectionState.Idle) then
+                self.clientState = ConnectionState.MustClose
+
+        // (DONE, ERROR) -> CLIENT: MUST_CLOSE
+        if sameState(self.serverState, ConnectionState.Error) then
+            if sameState(self.clientState, ConnectionState.Done) then
+                self.clientState = ConnectionState.MustClose
+
+    /// Reset states for the next request/response cycle.
+    /// Returns true if successful, false otherwise.
+    public function startNextCycle(self): Bool =
+        self.lastError = None
+        if sameState(self.clientState, ConnectionState.Done) then
+            if sameState(self.serverState, ConnectionState.Done) then
+                // Defensive checks: can't reach DONE/DONE with keep_alive disabled
+                // or pending switch proposals, but verify anyway.
+                if !self.keepAlive then
+                    self.lastError = Some(HttpError.local("not in a reusable state: keep_alive is disabled"))
+                    false
+                else if self.hasPendingSwitchProposals then
+                    self.lastError = Some(HttpError.local("not in a reusable state: pending switch proposals"))
+                    false
+                else
+                    self.clientState = ConnectionState.Idle
+                    self.serverState = ConnectionState.Idle
+                    true
+            else
+                self.lastError = Some(HttpError.local("not in a reusable state"))
+                false
+        else
+            self.lastError = Some(HttpError.local("not in a reusable state"))
+            false
+
+/// Check if an EventType is RequestType.
+function isRequestType(evtType: EventType): Bool =
+    match evtType with
+        case RequestType => true
+        case _ => false
+
+/// Check if an EventType is ResponseType.
+function isResponseType(evtType: EventType): Bool =
+    match evtType with
+        case ResponseType => true
+        case _ => false
+
+/// Check if a Role is Client.
+function isClientRole(role: Role): Bool =
+    match role with
+        case Client => true
+        case Server => false
+
+/// Look up the event-triggered transition for a given role, state, and event type.
+function eventTriggeredTransition(
+    role: Role,
+    state: ConnectionState,
+    evtType: EventType,
+    serverSwitchEvent: Option<SwitchType>
+): Option<ConnectionState> =
+    match role with
+        case Client => clientTransition(state, evtType)
+        case Server => serverTransition(state, evtType, serverSwitchEvent)
+
+/// Client event-triggered transitions.
+function clientTransition(state: ConnectionState, evtType: EventType): Option<ConnectionState> =
+    match state with
+        case Idle =>
+            match evtType with
+                case RequestType => Some(ConnectionState.SendBody)
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case SendBody =>
+            match evtType with
+                case DataType => Some(ConnectionState.SendBody)
+                case EndOfMessageType => Some(ConnectionState.Done)
+                case _ => None
+        case Done =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case MustClose =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case Closed =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case MightSwitchProtocol => None
+        case SwitchedProtocol => None
+        case Error => None
+        case SendResponse => None
+
+/// Server event-triggered transitions.
+function serverTransition(
+    state: ConnectionState,
+    evtType: EventType,
+    serverSwitchEvent: Option<SwitchType>
+): Option<ConnectionState> =
+    match state with
+        case Idle =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case ResponseType => Some(ConnectionState.SendBody)
+                case _ => None
+        case SendResponse =>
+            match serverSwitchEvent with
+                case Some(Upgrade) =>
+                    match evtType with
+                        case InformationalResponseType => Some(ConnectionState.SwitchedProtocol)
+                        case _ => None
+                case Some(Connect) =>
+                    match evtType with
+                        case ResponseType => Some(ConnectionState.SwitchedProtocol)
+                        case _ => None
+                case None =>
+                    match evtType with
+                        case InformationalResponseType => Some(ConnectionState.SendResponse)
+                        case ResponseType => Some(ConnectionState.SendBody)
+                        case _ => None
+        case SendBody =>
+            match evtType with
+                case DataType => Some(ConnectionState.SendBody)
+                case EndOfMessageType => Some(ConnectionState.Done)
+                case _ => None
+        case Done =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case MustClose =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case Closed =>
+            match evtType with
+                case ConnectionClosedType => Some(ConnectionState.Closed)
+                case _ => None
+        case SwitchedProtocol => None
+        case Error => None
+        case MightSwitchProtocol => None
+
+/// Compare two ConnectionState values for equality.
+function sameState(a: ConnectionState, b: ConnectionState): Bool =
+    connectionStateOrd(a) == connectionStateOrd(b)
+
+/// Map ConnectionState to an ordinal for comparison.
+function connectionStateOrd(s: ConnectionState): Int32 =
+    match s with
+        case Idle => 0
+        case SendResponse => 1
+        case SendBody => 2
+        case Done => 3
+        case MustClose => 4
+        case Closed => 5
+        case Error => 6
+        case MightSwitchProtocol => 7
+        case SwitchedProtocol => 8
+
+/// Get a name for a ConnectionState (for error messages).
+public function connectionStateName(s: ConnectionState): String =
+    match s with
+        case Idle => "IDLE"
+        case SendResponse => "SEND_RESPONSE"
+        case SendBody => "SEND_BODY"
+        case Done => "DONE"
+        case MustClose => "MUST_CLOSE"
+        case Closed => "CLOSED"
+        case Error => "ERROR"
+        case MightSwitchProtocol => "MIGHT_SWITCH_PROTOCOL"
+        case SwitchedProtocol => "SWITCHED_PROTOCOL"
+
+/// Get a name for a Role.
+public function roleName(role: Role): String =
+    match role with
+        case Client => "CLIENT"
+        case Server => "SERVER"
+
+/// Get a name for an EventType.
+public function eventTypeName(evtType: EventType): String =
+    match evtType with
+        case RequestType => "Request"
+        case InformationalResponseType => "InformationalResponse"
+        case ResponseType => "Response"
+        case DataType => "Data"
+        case EndOfMessageType => "EndOfMessage"
+        case ConnectionClosedType => "ConnectionClosed"
+
+// Tests
+
+test "StateMachine new" =
+    let cs = StateMachine.new()
+    assert sameState(cs.clientState, ConnectionState.Idle)
+    assert sameState(cs.serverState, ConnectionState.Idle)
+
+/// Helper: call processEvent and assert it succeeds.
+function processEventOk(sm: StateMachine, role: Role, evtType: EventType): Unit =
+    let result = sm.processEvent(role, evtType, None)
+    assert result
+
+test "StateMachine client request" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    assert sameState(cs.clientState, ConnectionState.SendBody)
+    assert sameState(cs.serverState, ConnectionState.SendResponse)
+
+function processEventShouldFail(sm: StateMachine, role: Role, evtType: EventType): Unit =
+    let result = sm.processEvent(role, evtType, None)
+    assert !result
+
+function processEventWithSwitch(sm: StateMachine, role: Role, evtType: EventType, sw: SwitchType): Unit =
+    assert sm.processEvent(role, evtType, Some(sw))
+
+function processEventWithSwitchFails(sm: StateMachine, role: Role, evtType: EventType, sw: SwitchType): Unit =
+    assert !sm.processEvent(role, evtType, Some(sw))
+
+function assertStartNextCycleOk(sm: StateMachine): Unit =
+    assert sm.startNextCycle()
+
+function assertStartNextCycleFails(sm: StateMachine): Unit =
+    assert !sm.startNextCycle()
+
+test "StateMachine illegal double request" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventShouldFail(cs, Role.Client, EventType.RequestType)
+
+test "StateMachine informational response" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Server, EventType.InformationalResponseType)
+    assert sameState(cs.serverState, ConnectionState.SendResponse)
+
+test "StateMachine full cycle" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    processEventOk(cs, Role.Server, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.Done)
+    assert sameState(cs.serverState, ConnectionState.Done)
+
+test "StateMachine state-triggered close" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    processEventOk(cs, Role.Server, EventType.EndOfMessageType)
+    // Both DONE
+    processEventOk(cs, Role.Server, EventType.ConnectionClosedType)
+    assert sameState(cs.clientState, ConnectionState.MustClose)
+    assert sameState(cs.serverState, ConnectionState.Closed)
+
+test "StateMachine keep-alive disabled" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    cs.processKeepAliveDisabled()
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.MustClose)
+
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    processEventOk(cs, Role.Server, EventType.EndOfMessageType)
+    assert sameState(cs.serverState, ConnectionState.MustClose)
+
+test "StateMachine keep-alive disabled in DONE" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.Done)
+    cs.processKeepAliveDisabled()
+    assert sameState(cs.clientState, ConnectionState.MustClose)
+
+test "StateMachine switch denied" =
+    let cs = StateMachine.new()
+    cs.processClientSwitchProposal(SwitchType.Upgrade)
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Client, EventType.DataType)
+    assert sameState(cs.clientState, ConnectionState.SendBody)
+    assert sameState(cs.serverState, ConnectionState.SendResponse)
+    assert cs.pendingUpgrade
+
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.MightSwitchProtocol)
+
+    // Server denies with regular Response
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    assert sameState(cs.clientState, ConnectionState.Done)
+    assert !cs.pendingUpgrade
+
+test "StateMachine switch accepted (Upgrade)" =
+    let cs = StateMachine.new()
+    cs.processClientSwitchProposal(SwitchType.Upgrade)
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.MightSwitchProtocol)
+    assert sameState(cs.serverState, ConnectionState.SendResponse)
+
+    processEventWithSwitch(cs, Role.Server, EventType.InformationalResponseType, SwitchType.Upgrade)
+    assert sameState(cs.clientState, ConnectionState.SwitchedProtocol)
+    assert sameState(cs.serverState, ConnectionState.SwitchedProtocol)
+
+test "StateMachine switch accepted (Connect)" =
+    let cs = StateMachine.new()
+    cs.processClientSwitchProposal(SwitchType.Connect)
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.MightSwitchProtocol)
+
+    processEventWithSwitch(cs, Role.Server, EventType.ResponseType, SwitchType.Connect)
+    assert sameState(cs.clientState, ConnectionState.SwitchedProtocol)
+    assert sameState(cs.serverState, ConnectionState.SwitchedProtocol)
+
+test "StateMachine inconsistent switch" =
+    let cs = StateMachine.new()
+    // No client proposal, but server tries to switch
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventWithSwitchFails(cs, Role.Server, EventType.ResponseType, SwitchType.Connect)
+
+test "StateMachine startNextCycle" =
+    let cs = StateMachine.new()
+    // Not in reusable state
+    assertStartNextCycleFails(cs)
+
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assertStartNextCycleFails(cs)
+
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    processEventOk(cs, Role.Server, EventType.EndOfMessageType)
+    assertStartNextCycleOk(cs)
+    assert sameState(cs.clientState, ConnectionState.Idle)
+    assert sameState(cs.serverState, ConnectionState.Idle)
+
+test "StateMachine reuse after keep-alive disabled fails" =
+    let cs = StateMachine.new()
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    cs.processKeepAliveDisabled()
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    processEventOk(cs, Role.Server, EventType.EndOfMessageType)
+    assertStartNextCycleFails(cs)
+
+test "StateMachine server cannot send Request" =
+    let cs = StateMachine.new()
+    processEventShouldFail(cs, Role.Server, EventType.RequestType)
+
+test "StateMachine keepalive vs switch interaction" =
+    let cs = StateMachine.new()
+    cs.processClientSwitchProposal(SwitchType.Upgrade)
+    processEventOk(cs, Role.Client, EventType.RequestType)
+    cs.processKeepAliveDisabled()
+    processEventOk(cs, Role.Client, EventType.DataType)
+
+    // Protocol switch wins over keep-alive
+    processEventOk(cs, Role.Client, EventType.EndOfMessageType)
+    assert sameState(cs.clientState, ConnectionState.MightSwitchProtocol)
+
+    // Server denies, keep-alive kicks in
+    processEventOk(cs, Role.Server, EventType.ResponseType)
+    assert sameState(cs.clientState, ConnectionState.MustClose)

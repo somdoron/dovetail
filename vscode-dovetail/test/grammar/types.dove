@@ -1,0 +1,35 @@
+package a
+
+// Records
+public record Point =
+    x: Int32
+    y: Int32
+
+record Color =
+    r: Uint8
+    g: Uint8
+    b: Uint8
+
+// Enums
+public enum Shape =
+    Circle(radius: Float64)
+    Rectangle(width: Float64, height: Float64)
+    Empty
+
+// Classes
+class Animal(name: String) =
+    getName(): String = name
+
+class Dog(breed: String) extends Animal("dog") =
+    getBreed(): String = breed
+
+// Traits
+trait Printable =
+    print(): String
+
+implement Printable for Point =
+    print(): String = "Point"
+
+// Interfaces
+interface Drawable =
+    draw(): String

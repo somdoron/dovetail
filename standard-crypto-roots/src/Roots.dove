@@ -1,0 +1,34 @@
+package standard.crypto.roots
+
+import standard.prelude.Array
+import standard.crypto.X509
+import standard.crypto.X509Certificate
+import standard.crypto.Pem
+
+/// Mozilla-derived trust anchors. The CA bundle (curl's `cacert.pem`, extracted
+/// from NSS `certdata.txt`) is embedded as a passive WASM data segment via
+/// `EmbeddedResource.bytes` — codegen runs `array.new_data` once at module init,
+/// with zero host I/O. See `tools/refresh-ca-roots.sh` for provenance.
+module Roots =
+    /// Parse every PEM block in the embedded bundle into an `X509Certificate`,
+    /// skipping any block that fails to parse (so one odd cert can't sink the
+    /// whole store). Memoized at module scope: the ~120-cert parse runs once.
+    let roots: List<X509Certificate> = parseBundle(EmbeddedResource.bytes("roots/cacert.pem"))
+
+    private function parseBundle(pem: Array<Uint8>): List<X509Certificate> =
+        let mutable result: List<X509Certificate> = List.empty
+        for block in Pem.decodeAll(pem) do
+            match X509.parseCertificate(block) with
+                case Ok(cert) => result = result.prepend(cert)
+                case Error(_) => ()
+        result.reverse()
+
+    /// The embedded Mozilla CA root certificates, ready to pass as trust anchors
+    /// to `X509.validate`.
+    public function mozillaRoots(): List<X509Certificate> = roots
+
+test "mozillaRoots parses the embedded bundle" =
+    let roots = Roots.mozillaRoots()
+    // The curl/Mozilla bundle ships ~120 roots; require a healthy lower bound so
+    // a truncated or empty embed is caught, without pinning an exact count.
+    assert roots.length >= 100

@@ -1,0 +1,136 @@
+package standard.collection
+
+import standard.prelude.Hashable
+import standard.prelude.Equatable
+
+/// A mutable hash set using open addressing with linear probing.
+/// Wraps a MutableMap<T, Bool> internally, providing set semantics
+/// with O(1) amortized add, contains, and remove.
+public class MutableSet<T>(
+    internal inner: MutableMap<T, Bool>) implements Iterable<T> where T: Hashable, T: Equatable, T: Default =
+    /// Creates a new empty MutableSet.
+    public function new(): MutableSet<T> =
+        let inner: MutableMap<T, Bool> = MutableMap.new()
+        MutableSet(inner)
+
+    /// Adds a value to the set.
+    public function add(self, value: T): Unit =
+        self.inner.put(value, true)
+
+    /// Returns true if the set contains the given value.
+    public function contains(self, value: T): Bool =
+        self.inner.contains(value)
+
+    /// Removes a value from the set. Does nothing if not present.
+    public function remove(self, value: T): Unit =
+        self.inner.remove(value)
+
+    /// Removes all elements.
+    public function clear(self): Unit = self.inner.clear()
+
+    /// The number of elements in the set.
+    public property length(self): Int32 = self.inner.length
+
+    /// True if the set contains no elements.
+    public property isEmpty(self): Bool = self.inner.isEmpty
+
+    /// Returns an iterator over the elements of the set.
+    public function iterator(self): Iterator<T> = MutableSetIterator<T>(self, 0)
+
+implement <T> Default for MutableSet<T> where T: Hashable, T: Equatable, T: Default =
+    public property default: MutableSet<T> = MutableSet.new()
+
+class MutableSetIterator<T>(set: MutableSet<T>, mutable index: Int32) implements Iterator<T> where T: Hashable, T: Equatable, T: Default =
+    public function next(self): Option<T> =
+        let mutable result: Option<T> = None
+        while true do
+            if self.index >= self.set.inner.capacity then
+                result = None
+                break
+            else if self.set.inner.occupied.get(self.index) && !self.set.inner.deleted.get(self.index) then
+                let value = self.set.inner.keys.get(self.index)
+                self.index = self.index + 1
+                result = Some(value)
+                break
+            else
+                self.index = self.index + 1
+        result
+
+test "MutableSet new is empty" =
+    let s = MutableSet<String>.new()
+    assert s.isEmpty == true
+    assert s.length == 0
+
+test "MutableSet add and contains" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.add("b")
+    assert s.contains("a") == true
+    assert s.contains("b") == true
+    assert s.contains("c") == false
+    assert s.length == 2
+
+test "MutableSet add duplicate" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.add("a")
+    assert s.length == 1
+    assert s.contains("a") == true
+
+test "MutableSet remove" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.add("b")
+    s.remove("a")
+    assert s.contains("a") == false
+    assert s.contains("b") == true
+    assert s.length == 1
+
+test "MutableSet remove missing" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.remove("z")
+    assert s.length == 1
+    assert s.contains("a") == true
+
+test "MutableSet clear" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.add("b")
+    s.add("c")
+    s.clear()
+    assert s.isEmpty == true
+    assert s.length == 0
+    assert s.contains("a") == false
+
+test "MutableSet many entries" =
+    let s = MutableSet<Int32>.new()
+    let mutable i = 0
+    while i < 100 do
+        s.add(i)
+        i = i + 1
+    assert s.length == 100
+    assert s.contains(0) == true
+    assert s.contains(50) == true
+    assert s.contains(99) == true
+    assert s.contains(100) == false
+
+test "MutableSet remove then re-add" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.add("b")
+    s.remove("a")
+    assert s.contains("a") == false
+    s.add("a")
+    assert s.contains("a") == true
+    assert s.length == 2
+
+test "MutableSet iterator" =
+    let s = MutableSet<String>.new()
+    s.add("a")
+    s.add("b")
+    s.add("c")
+    let mutable str = ""
+    for value in s do
+        str = str ++ value
+    assert str == "abc"

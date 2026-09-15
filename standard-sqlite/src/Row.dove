@@ -1,0 +1,69 @@
+package standard.sqlite
+
+// =============================================================================
+// One result row with its column names attached.
+//
+// `Connection.queryWith` hands back bare `Array<SqlValue>` rows, which is all a
+// positional reader needs. `FromRow` needs names, so `Connection.queryRows`
+// produces these instead: the names array is fetched once per statement and
+// shared by reference across every row of the result set.
+// =============================================================================
+
+/// A single result row: the result set's column names alongside this row's
+/// values, positionally aligned.
+public record Row =
+    names: Array<String>
+    values: Array<SqlValue>
+
+module Row =
+    /// A row from a column-name array and a value array of the same length.
+    public function make(names: Array<String>, values: Array<SqlValue>): Row =
+        Row { names = names; values = values }
+
+    /// The value of the column called `name`. Errors if the result set has no
+    /// such column — alias with `AS` in the query when the column name and the
+    /// field name differ.
+    public function column(self, name: String): Result<SqlValue, SqliteError> =
+        let mutable found: Option<SqlValue> = None
+        let mutable i = 0
+        while i < self.names.length do
+            if self.names.get(i) == name then
+                found = Some(self.values.get(i))
+                i = self.names.length
+            else i = i + 1
+        match found with
+            case Some(value) => Ok(value)
+            case None => Error(rangeError("no such column: " ++ name))
+
+    /// The value at a zero-based column position.
+    public function at(self, index: Int32): Result<SqlValue, SqliteError> =
+        if index < 0 || index >= self.values.length then
+            Error(rangeError("column index out of range: " ++ index.format()))
+        else Ok(self.values.get(index))
+
+    /// Fail unless the row is exactly `expected` columns wide.
+    ///
+    /// Positional decoding checks this first, so a widened `SELECT` list is an
+    /// error rather than silently dropping the extra columns.
+    public function expectWidth(self, expected: Int32): Result<Unit, SqliteError> =
+        if self.values.length == expected then Ok(())
+        else
+            Error(rangeError(
+                "expected " ++ expected.format() ++ " columns, got "
+                    ++ self.values.length.format()
+            ))
+
+    /// The sole value of a single-column row — what the scalar `FromRow`
+    /// implementations read, so `fetchOne<Int64>` over `SELECT COUNT(*)` works.
+    /// Errors if the row is any other width, since silently taking column 0 of
+    /// a wider row would hide a mistaken query.
+    public function scalar(self): Result<SqlValue, SqliteError> =
+        try self.expectWidth(1)
+        Ok(self.values.get(0))
+
+    /// The number of columns in this row.
+    public property width(self): Int32 = self.values.length
+
+/// SQLITE_RANGE (25) — a column was addressed that the result set doesn't have.
+function rangeError(message: String): SqliteError =
+    SqliteError { code = 25; message = message }

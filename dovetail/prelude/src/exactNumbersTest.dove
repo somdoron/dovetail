@@ -1,0 +1,80 @@
+package standard.prelude
+
+private let exactGlobal = 123456789012345678901234567890big
+
+function exactNegate<T>(value: T): T where T: Neg = -value
+function exactFresh(): BigInt = 12345678901234567890big
+
+test "exact literal construction and bases" =
+    assert exactGlobal.format() == "123456789012345678901234567890"
+    assert 0xFFbig == 255big
+    assert 0b101010big == 42big
+    assert 0o755big == 493big
+    assert 0xFFFFFFFFFFFFFFFFFFFFFFFFbig.format() == "79228162514264337593543950335"
+    assert 0big.format() == "0"
+    assert (-0big).format() == "0"
+    assert (-12345678901234567890big).format() == "-12345678901234567890"
+    let values = [1big, 2big]
+    assert values.head == 1big
+
+test "bigint arithmetic operators and generic negation" =
+    let value = 999999999999999999big
+    assert value + 1big == 1000000000000000000big
+    assert value - 1000000000000000000big == -1big
+    assert 12345678901234567890big * 98765432109876543210big == 1219326311370217952237463801111263526900big
+    assert -value == -999999999999999999big
+    assert exactNegate(value) == -value
+    assert 1big < 2big
+    assert -2big < -1big
+    assert value.abs() == value
+
+test "bigint signed conversion boundaries" =
+    assert BigInt.fromInt64(-9223372036854775808i64) == -9223372036854775808big
+    assert BigInt.fromInt64(9223372036854775807i64) == 9223372036854775807big
+    assert (-9223372036854775808big).toInt64().require == -9223372036854775808i64
+    assert 9223372036854775807big.toInt64().require == 9223372036854775807i64
+    assert 9223372036854775808big.toInt64().isNone
+    assert (-9223372036854775809big).toInt64().isNone
+    assert BigInt.fromInt32(-2147483648).toInt32().require == -2147483648
+    assert BigInt.fromInt32(2147483647).toInt32().require == 2147483647
+
+test "decimal exact arithmetic and normalization" =
+    assert 0.1dec + 0.2dec == 0.3dec
+    assert 1.20dec == 1.2dec
+    assert 1.200dec.scale == 1
+    assert 1.200dec.unscaled == 12big
+    assert 1.200dec.format() == "1.2"
+    assert 0.000dec.format() == "0"
+    assert (-0.000dec).format() == "0"
+    assert 1.25e3dec.format() == "1250"
+    assert 1.25e-3dec.format() == "0.00125"
+    assert 42dec.format() == "42"
+    assert 100000000000000000000000000000.1dec + 0.9dec == 100000000000000000000000000001dec
+    assert 1.5dec * 2dec == 3dec
+    assert (1.5dec * 2dec).scale == 0
+    assert 2dec - 3.25dec == -1.25dec
+    assert 2dec > 1.999dec
+    let value = 3.25dec
+    assert -value == -3.25dec
+    assert exactNegate(value) == -value
+    assert (-value).abs() == value
+
+test "decimal constructors formatting and hash equality" =
+    assert Decimal.of(1200big, 3) == 1.2dec
+    assert Decimal.of(1200big, 3).scale == 1
+    assert Decimal.fromInt32(42) == 42dec
+    assert Decimal.fromInt64(-9223372036854775808i64).format() == "-9223372036854775808"
+    assert Decimal.zero() == 0dec
+    assert Decimal.one() == 1dec
+    let raw = Decimal { unscaled = 1200big; scale = 3 }
+    assert raw == 1.2dec
+    assert raw.hash() == 1.2dec.hash()
+    assert raw.format() == "1.2"
+    assert Decimal { unscaled = 0big; scale = 8 }.hash() == 0dec.hash()
+    assert (-0.00001dec).format() == "-0.00001"
+    assert 1000.000dec.format() == "1000"
+
+test "literal magnitude arrays are fresh on each evaluation" =
+    let first = exactFresh()
+    first.magnitude.set(0, 0)
+    assert exactFresh() == 12345678901234567890big

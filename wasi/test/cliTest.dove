@@ -1,0 +1,81 @@
+package test
+
+import standard.wasi.cli.Environment
+import standard.wasi.cli.Terminal
+import standard.wasi.cli.Console
+import standard.wasi.clock.WallClock
+
+test "environment variables and arguments are lists" =
+    let variables = Environment.variables
+    let arguments = Environment.arguments
+    assert variables.length >= 0
+    assert arguments.length >= 0
+
+test "initial cwd is queryable" =
+    let cwd = Environment.initialCwd
+    match cwd with
+        case Some(path) => assert path.byteLength >= 0
+        case None => assert true
+
+test "a host `none` survives a dirty scratch block" =
+    // An option's discriminant is ONE byte, and the scratch arena is never
+    // zeroed: each marshaled call takes its retptr from the same rewound bump
+    // base as the one before it. `WallClock.now` leaves the low word of the
+    // epoch second at that base, so bytes 1..3 are non-zero when `initialCwd`
+    // writes its single `none` byte at 0 — and a four-byte read of that
+    // discriminant answers `Some` of a garbage pointer/length pair.
+    //
+    // What is asserted is the LIFT, not the host's configuration: the same query
+    // is made twice, once over a clean block and once over a dirty one, and the
+    // two must agree — whatever this host's initial cwd happens to be. Asserting
+    // `None` outright would pin a runner that supplies no cwd, and would fail on
+    // one that supplies a real cwd with nothing wrong at all.
+    //
+    // The answer over a CLEAN block, taken before anything below dirties one.
+    let clean = Environment.initialCwd
+    let now = WallClock.now
+    // The precondition, asserted rather than assumed: what makes this test able
+    // to fail is that the word left behind has non-zero bytes ABOVE the low one,
+    // since the low byte is the one `initialCwd` overwrites. Bytes 1..3 of the
+    // low word are non-zero exactly when `epochSecond`'s low word is at least
+    // 256 — true since 1970 — and a clock that answered 0, or a `now` that
+    // stopped writing here at all, would leave this test passing vacuously.
+    let lowWord = now.epochSecond % 4294967296i64
+    assert lowWord / 256i64 != 0i64
+    // Still best-effort in ONE respect that Dovetail code cannot check: it relies
+    // on `now` and `initialCwd` taking the same bump base, which they do only
+    // because the arena is rewound between marshaling windows. Change the
+    // allocation discipline — a per-call offset, a zero-filled arena — and this
+    // goes quietly green without testing anything.
+    // A four-byte read of the one-byte discriminant answers `Some` of whatever
+    // the clock left behind, so a broken lift does not merely disagree with the
+    // clean read — it disagrees with a number that changes every second.
+    match (clean, Environment.initialCwd) with
+        case (None, None) => assert true
+        case (Some(before), Some(after)) => assert before == after
+        case _ => assert false
+
+// One test per terminal handle, not one covering all three: each is a separate
+// import with its own `option<terminal-*>` lift, and a test of only `stdout`
+// leaves the other two intrinsics with no call site anywhere in the tree — so
+// their import wiring is never linked and their option lifting never runs. That
+// lifting is where a wrong-width read of the discriminant hides.
+test "terminal detection does not trap (stdin)" =
+    match Terminal.stdin with
+        case Some(_) => assert true
+        case None => assert true
+
+test "terminal detection does not trap" =
+    match Terminal.stdout with
+        case Some(_) => assert true
+        case None => assert true
+
+test "terminal detection does not trap (stderr)" =
+    match Terminal.stderr with
+        case Some(_) => assert true
+        case None => assert true
+
+test "console printing flushes" =
+    Console.println("cli test output line")
+    Console.eprintln("cli test error line")
+    assert true

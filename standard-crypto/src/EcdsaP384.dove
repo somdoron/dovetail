@@ -1,0 +1,333 @@
+package standard.crypto
+
+import standard.prelude.Array
+import standard.prelude.Option
+
+/// NIST P-384 point arithmetic and ECDSA (SHA-384, RFC 6979 deterministic
+/// nonces). Field arithmetic uses the variable-length `Bignum` Montgomery
+/// routines with the P-384 prime; the curve has a = -3, so the same
+/// Renes-Costello-Batina complete addition formula as P-256 applies.
+module P384 =
+    /// Field prime p = 2^384 - 2^128 - 2^96 + 2^32 - 1.
+    function p(): Array<Uint64> =
+        [|0x00000000ffffffffu64, 0xffffffff00000000u64, 0xfffffffffffffffeu64,
+         0xffffffffffffffffu64, 0xffffffffffffffffu64, 0xffffffffffffffffu64|]
+
+    /// Group order n.
+    function nOrder(): Array<Uint64> =
+        [|0xecec196accc52973u64, 0x581a0db248b0a77au64, 0xc7634d81f4372ddfu64,
+         0xffffffffffffffffu64, 0xffffffffffffffffu64, 0xffffffffffffffffu64|]
+
+    private function niP(): Uint64 = Bignum.n0inv(p())
+
+    private function fmul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        Bignum.montMul(a, b, p(), niP())
+
+    private function fadd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        Bignum.add(a, b, p())
+
+    private function fsub(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        Bignum.sub(a, b, p())
+
+    private function fone(): Array<Uint64> = Bignum.montOne(p(), niP())
+
+    private function fzero(): Array<Uint64> = Array<Uint64>.fill(6, 0u64)
+
+    /// Curve constant b in Montgomery form.
+    function bMont(): Array<Uint64> =
+        let b = [|0x2a85c8edd3ec2aefu64, 0xc656398d8a2ed19du64, 0x0314088f5013875au64,
+                 0x181d9c6efe814112u64, 0x988e056be3f82d19u64, 0xb3312fa7e23ee7e4u64|]
+        Bignum.toMont(b, p(), niP())
+
+    /// Base point G in projective Montgomery form.
+    function basePoint(): P384Point =
+        let gx = [|0x3a545e3872760ab7u64, 0x5502f25dbf55296cu64, 0x59f741e082542a38u64,
+                  0x6e1d3b628ba79b98u64, 0x8eb1c71ef320ad74u64, 0xaa87ca22be8b0537u64|]
+        let gy = [|0x7a431d7c90ea0e5fu64, 0x0a60b1ce1d7e819du64, 0xe9da3113b5f0b8c0u64,
+                  0xf8f41dbd289a147cu64, 0x5d9e98bf9292dc29u64, 0x3617de4a96262c6fu64|]
+        P384Point { x = Bignum.toMont(gx, p(), niP()); y = Bignum.toMont(gy, p(), niP()); z = fone() }
+
+    private function identity(): P384Point =
+        P384Point { x = fzero(); y = fone(); z = fzero() }
+
+    /// Complete addition (Renes-Costello-Batina Algorithm 4, a = -3).
+    function pointAdd(p1: P384Point, p2: P384Point, b: Array<Uint64>): P384Point =
+        let t0 = fmul(p1.x, p2.x)
+        let t1 = fmul(p1.y, p2.y)
+        let t2 = fmul(p1.z, p2.z)
+        let mutable t3 = fadd(p1.x, p1.y)
+        let mutable t4 = fadd(p2.x, p2.y)
+        t3 = fmul(t3, t4)
+        t4 = fadd(t0, t1)
+        t3 = fsub(t3, t4)
+        t4 = fadd(p1.y, p1.z)
+        let mutable x3 = fadd(p2.y, p2.z)
+        t4 = fmul(t4, x3)
+        x3 = fadd(t1, t2)
+        t4 = fsub(t4, x3)
+        x3 = fadd(p1.x, p1.z)
+        let mutable y3 = fadd(p2.x, p2.z)
+        x3 = fmul(x3, y3)
+        y3 = fadd(t0, t2)
+        y3 = fsub(x3, y3)
+        let mutable z3 = fmul(b, t2)
+        x3 = fsub(y3, z3)
+        z3 = fadd(x3, x3)
+        x3 = fadd(x3, z3)
+        z3 = fsub(t1, x3)
+        x3 = fadd(t1, x3)
+        y3 = fmul(b, y3)
+        let mutable u1 = fadd(t2, t2)
+        let u2 = fadd(u1, t2)
+        y3 = fsub(y3, u2)
+        y3 = fsub(y3, t0)
+        u1 = fadd(y3, y3)
+        y3 = fadd(u1, y3)
+        u1 = fadd(t0, t0)
+        let mutable t0b = fadd(u1, t0)
+        t0b = fsub(t0b, u2)
+        let r1 = fmul(t4, y3)
+        let r2 = fmul(t0b, y3)
+        y3 = fmul(x3, z3)
+        y3 = fadd(y3, r2)
+        x3 = fmul(t3, x3)
+        x3 = fsub(x3, r1)
+        z3 = fmul(t4, z3)
+        let r3 = fmul(t3, t0b)
+        z3 = fadd(z3, r3)
+        P384Point { x = x3; y = y3; z = z3 }
+
+    private function feCSelect(bit: Uint64, a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let mask = 0u64 - bit
+        let r = Array<Uint64>.fill(6, 0u64)
+        let mutable i = 0
+        while i < 6 do
+            r.set(i, (a.get(i) & mask) | (b.get(i) & (~mask)))
+            i = i + 1
+        r
+
+    private function pointCSelect(bit: Uint64, a: P384Point, b: P384Point): P384Point =
+        P384Point {
+            x = feCSelect(bit, a.x, b.x)
+            y = feCSelect(bit, a.y, b.y)
+            z = feCSelect(bit, a.z, b.z)
+        }
+
+    /// Constant-time scalar multiplication (left-to-right double-and-add).
+    function scalarMult(scalar: Array<Uint64>, point: P384Point, b: Array<Uint64>): P384Point =
+        let mutable r = identity()
+        let mutable i = 383
+        while i >= 0 do
+            r = pointAdd(r, r, b)
+            let bit = (scalar.get(i / 64) >> (i % 64).toUint64()) & 1u64
+            let q = pointAdd(r, point, b)
+            r = pointCSelect(bit, q, r)
+            i = i - 1
+        r
+
+    /// Affine x (normal, non-Montgomery limbs).
+    function affineX(pt: P384Point): Array<Uint64> =
+        let zinv = Bignum.modExp(Bignum.fromMont(pt.z, p(), niP()), Bignum.subSmall(p(), 2u64), p())
+        // zinv is plain; convert to Montgomery to multiply the Montgomery x.
+        let zinvM = Bignum.toMont(zinv, p(), niP())
+        Bignum.fromMont(fmul(pt.x, zinvM), p(), niP())
+
+    /// 48 big-endian bytes at `off` -> 6 little-endian limbs.
+    function beToLimbs(bytes: Array<Uint8>, off: Int32): Array<Uint64> =
+        let r = Array<Uint64>.fill(6, 0u64)
+        let mutable i = 0
+        while i < 6 do
+            let mutable w = 0u64
+            let mutable j = 0
+            while j < 8 do
+                w = (w << 8u64) | bytes.get(off + (5 - i) * 8 + j).toUint64()
+                j = j + 1
+            r.set(i, w)
+            i = i + 1
+        r
+
+    /// 6 little-endian limbs -> 48 big-endian bytes.
+    function limbsToBe(a: Array<Uint64>): Array<Uint8> =
+        let r = Array<Uint8>.fill(48, 0u8)
+        let mutable i = 0
+        while i < 6 do
+            let w = a.get(5 - i)
+            let mutable j = 0
+            while j < 8 do
+                r.set(i * 8 + j, (w >> ((7 - j) * 8).toUint64()).toUint8())
+                j = j + 1
+            i = i + 1
+        r
+
+    /// Encode SEC1 uncompressed: 0x04 ‖ X ‖ Y (97 bytes).
+    function encode(pt: P384Point): Array<Uint8> =
+        let res = Array<Uint8>.fill(97, 0u8)
+        res.set(0, 0x04u8)
+        P384.limbsToBe(P384.affineX(pt)).copy(res, 1)
+        // affine y
+        let zinv = Bignum.modExp(Bignum.fromMont(pt.z, p(), niP()), Bignum.subSmall(p(), 2u64), p())
+        let zinvM = Bignum.toMont(zinv, p(), niP())
+        let yAff = Bignum.fromMont(fmul(pt.y, zinvM), p(), niP())
+        P384.limbsToBe(yAff).copy(res, 49)
+        res
+
+    /// Decode a SEC1 uncompressed point into projective Montgomery form.
+    function decode(bytes: Array<Uint8>): P384Point =
+        P384Point {
+            x = Bignum.toMont(beToLimbs(bytes, 1), p(), niP())
+            y = Bignum.toMont(beToLimbs(bytes, 49), p(), niP())
+            z = fone()
+        }
+
+/// A P-384 point in projective coordinates (X:Y:Z), Montgomery form.
+record P384Point =
+    x: Array<Uint64>
+    y: Array<Uint64>
+    z: Array<Uint64>
+
+module EcdsaP384Impl =
+    private function niN(): Uint64 = Bignum.n0inv(P384.nOrder())
+
+    private function nMul(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        let n = P384.nOrder()
+        Bignum.fromMont(Bignum.montMul(Bignum.toMont(a, n, niN()), Bignum.toMont(b, n, niN()), n, niN()), n, niN())
+
+    private function nAdd(a: Array<Uint64>, b: Array<Uint64>): Array<Uint64> =
+        Bignum.add(a, b, P384.nOrder())
+
+    private function nInv(a: Array<Uint64>): Array<Uint64> =
+        Bignum.modExp(a, Bignum.subSmall(P384.nOrder(), 2u64), P384.nOrder())
+
+    private function hmac(key: Array<Uint8>, message: Array<Uint8>): Array<Uint8> =
+        HmacCore.compute(Sha384, key, message)
+
+    /// RFC 6979 deterministic nonce (qlen = 384, hLen = 48).
+    private function rfc6979(privKey: Array<Uint8>, zMod: Array<Uint64>): Array<Uint64> =
+        let n = P384.nOrder()
+        let h1oct = P384.limbsToBe(zMod)
+        let mutable v = Array<Uint8>.fill(48, 0x01u8)
+        let mutable k = Array<Uint8>.fill(48, 0x00u8)
+        k = hmac(k, v.concat([|0x00u8|]).concat(privKey).concat(h1oct))
+        v = hmac(k, v)
+        k = hmac(k, v.concat([|0x01u8|]).concat(privKey).concat(h1oct))
+        v = hmac(k, v)
+        let mutable result = Array<Uint64>.fill(6, 0u64)
+        let mutable found = false
+        while found == false do
+            v = hmac(k, v)
+            let cand = P384.beToLimbs(v, 0)
+            if (Bignum.isZero(cand) == false) && Bignum.lessThan(cand, n) then
+                result = cand
+                found = true
+            else
+                k = hmac(k, v.concat([|0x00u8|]))
+                v = hmac(k, v)
+        result
+
+    function sign(privKey: Array<Uint8>, message: Array<Uint8>): Array<Uint8> =
+        let n = P384.nOrder()
+        let zMod = Bignum.reduceOnce(P384.beToLimbs(Sha384.hash(message), 0), n)
+        let kNonce = rfc6979(privKey, zMod)
+        let bm = P384.bMont()
+        let rPoint = P384.scalarMult(kNonce, P384.basePoint(), bm)
+        let r = Bignum.reduceOnce(P384.affineX(rPoint), n)
+        let d = P384.beToLimbs(privKey, 0)
+        let s = nMul(nInv(kNonce), nAdd(zMod, nMul(r, d)))
+        P384.limbsToBe(r).concat(P384.limbsToBe(s))
+
+    function verify(pubKey: Array<Uint8>, message: Array<Uint8>, signature: Array<Uint8>): Bool =
+        // A truncated issuer key would trap in P384.decode (reads index 96);
+        // require the full 97-byte SEC1 uncompressed key before decoding.
+        if (signature.length != 96) || (pubKey.length != 97) then
+            false
+        else
+            let n = P384.nOrder()
+            let r = P384.beToLimbs(signature, 0)
+            let s = P384.beToLimbs(signature, 48)
+            if Bignum.isZero(r) || Bignum.isZero(s)
+                || (Bignum.lessThan(r, n) == false) || (Bignum.lessThan(s, n) == false) then
+                false
+            else
+                let zMod = Bignum.reduceOnce(P384.beToLimbs(Sha384.hash(message), 0), n)
+                let w = nInv(s)
+                let u1 = nMul(zMod, w)
+                let u2 = nMul(r, w)
+                let bm = P384.bMont()
+                let r1 = P384.scalarMult(u1, P384.basePoint(), bm)
+                let r2 = P384.scalarMult(u2, P384.decode(pubKey), bm)
+                let rx = Bignum.reduceOnce(P384.affineX(P384.pointAdd(r1, r2, bm)), n)
+                Bignum.equal(rx, r)
+
+/// ECDSA over NIST P-384 (SHA-384, RFC 6979). 48-byte key, 97-byte uncompressed
+/// public key, 96-byte signature.
+class EcdsaP384Algorithm() implements SignatureAlgorithm =
+    public property signatureSize(self): Int32 = 96
+    public property secretKeySize(self): Int32 = 48
+    public property publicKeySize(self): Int32 = 97
+
+    public function derivePublicKey(self, secret: SecretKey): PublicKey =
+        let pub = P384.scalarMult(P384.beToLimbs(secret.value, 0), P384.basePoint(), P384.bMont())
+        PublicKey(P384.encode(pub))
+
+    public function sign(self, key: SecretKey, message: Array<Uint8>): Array<Uint8> =
+        EcdsaP384Impl.sign(key.value, message)
+
+    public function verify(self, key: PublicKey, message: Array<Uint8>, signature: Array<Uint8>): Bool =
+        EcdsaP384Impl.verify(key.value, message, signature)
+
+    // The P-384 private key must be a scalar in [1, n-1]; reject otherwise.
+    public function secretKeyFromBytes(self, bytes: Array<Uint8>): Option<SecretKey> =
+        let s = P384.beToLimbs(bytes, 0)
+        if (Bignum.isZero(s) == false) && Bignum.lessThan(s, P384.nOrder()) then
+            Some(SecretKey(bytes))
+        else
+            None
+
+/// The ECDSA-P384 signature algorithm.
+public let EcdsaP384: SignatureAlgorithm = EcdsaP384Algorithm()
+
+test "ECDSA-P384 RFC 6979 A.2.6 sign+verify (sample)" =
+    let privKey = SecretKey([|
+        0x6bu8, 0x9du8, 0x3du8, 0xadu8, 0x2eu8, 0x1bu8, 0x8cu8, 0x1cu8,
+        0x05u8, 0xb1u8, 0x98u8, 0x75u8, 0xb6u8, 0x65u8, 0x9fu8, 0x4du8,
+        0xe2u8, 0x3cu8, 0x3bu8, 0x66u8, 0x7bu8, 0xf2u8, 0x97u8, 0xbau8,
+        0x9au8, 0xa4u8, 0x77u8, 0x40u8, 0x78u8, 0x71u8, 0x37u8, 0xd8u8,
+        0x96u8, 0xd5u8, 0x72u8, 0x4eu8, 0x4cu8, 0x70u8, 0xa8u8, 0x25u8,
+        0xf8u8, 0x72u8, 0xc9u8, 0xeau8, 0x60u8, 0xd2u8, 0xedu8, 0xf5u8,
+    |])
+    let message = "sample".bytes()
+    let sig = EcdsaP384.sign(privKey, message)
+    let expected = [|
+        // r
+        0x94u8, 0xedu8, 0xbbu8, 0x92u8, 0xa5u8, 0xecu8, 0xb8u8, 0xaau8,
+        0xd4u8, 0x73u8, 0x6eu8, 0x56u8, 0xc6u8, 0x91u8, 0x91u8, 0x6bu8,
+        0x3fu8, 0x88u8, 0x14u8, 0x06u8, 0x66u8, 0xceu8, 0x9fu8, 0xa7u8,
+        0x3du8, 0x64u8, 0xc4u8, 0xeau8, 0x95u8, 0xadu8, 0x13u8, 0x3cu8,
+        0x81u8, 0xa6u8, 0x48u8, 0x15u8, 0x2eu8, 0x44u8, 0xacu8, 0xf9u8,
+        0x6eu8, 0x36u8, 0xddu8, 0x1eu8, 0x80u8, 0xfau8, 0xbeu8, 0x46u8,
+        // s
+        0x99u8, 0xefu8, 0x4au8, 0xebu8, 0x15u8, 0xf1u8, 0x78u8, 0xceu8,
+        0xa1u8, 0xfeu8, 0x40u8, 0xdbu8, 0x26u8, 0x03u8, 0x13u8, 0x8fu8,
+        0x13u8, 0x0eu8, 0x74u8, 0x0au8, 0x19u8, 0x62u8, 0x45u8, 0x26u8,
+        0x20u8, 0x3bu8, 0x63u8, 0x51u8, 0xd0u8, 0xa3u8, 0xa9u8, 0x4fu8,
+        0xa3u8, 0x29u8, 0xc1u8, 0x45u8, 0x78u8, 0x6eu8, 0x67u8, 0x9eu8,
+        0x7bu8, 0x82u8, 0xc7u8, 0x1au8, 0x38u8, 0x62u8, 0x8au8, 0xc8u8,
+    |]
+    assert sig.length == 96
+    let mutable i = 0
+    let mutable ok = true
+    while i < 96 do
+        if sig.get(i) != expected.get(i) then ok = false
+        i = i + 1
+    assert ok
+    let pub = EcdsaP384.derivePublicKey(privKey)
+    assert EcdsaP384.verify(pub, message, sig)
+    assert EcdsaP384.verify(pub, "Sample".bytes(), sig) == false
+
+// B-2: a truncated issuer public key must fail verification cleanly, not trap in
+// P384.decode (which reads index 96, needing a 97-byte SEC1 key). Revert the
+// `pubKey.length != 97` guard in EcdsaP384Impl.verify to reintroduce the trap.
+test "ECDSA-P384 verify rejects a truncated public key (no OOB trap)" =
+    let shortKey = Array<Uint8>.fill(10, 0x04u8)
+    let sig = Array<Uint8>.fill(96, 0x01u8)
+    assert EcdsaP384Impl.verify(shortKey, "msg".bytes(), sig) == false

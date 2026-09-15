@@ -1,0 +1,259 @@
+package standard.io.http
+
+import standard.collection.ArrayList
+import standard.http.Connection
+import standard.http.Headers
+import standard.http.HttpEvent
+import standard.http.HttpRequest
+import standard.http.HttpResponse
+import standard.http.HttpError
+import standard.http.NextEventResult
+import standard.http.normalizeAndValidate
+import standard.io.Async
+import standard.io.ByteBuffer
+import standard.io.Cause
+import standard.io.AsyncInputStream
+import standard.io.AsyncOutputStream
+import standard.io.net.TcpStream
+import standard.io.net.NetError
+import standard.uri.Uri
+import standard.wasi.IoError
+import standard.wasi.net.NetworkError
+import standard.io.crypto.TlsIoError
+
+/// Drive a `standard.http.Connection` in `server()` mode over a single
+/// `TcpStream`. Thin wrapper over the generic `serveExchange` with the plain-TCP
+/// error mapping.
+public async function handleConnection(
+    stream: TcpStream,
+    handler: (Context) => Async<Response, ServerError>,
+    config: ServerConfig
+): Async<Unit, ServerError> =
+    await serveExchange(stream.input, stream.output, netServerMapErr, handler, config)
+
+/// Map a plain-TCP socket error into a `ServerError` (via `NetError`).
+function netServerMapErr(e: NetworkError): ServerError =
+    ServerError.from(NetError.from(e))
+
+/// Map a TLS stream error into a `ServerError`: an underlying transport failure
+/// stays a `NetworkError`; a protocol failure or mid-exchange close is `TlsError`.
+function tlsServerMapErr(e: TlsIoError): ServerError =
+    match e with
+        case TlsIoError.Transport(n) => ServerError.NetworkError(NetError.from(n))
+        case TlsIoError.Protocol(_) => ServerError.TlsError(e)
+        case TlsIoError.Closed => ServerError.TlsError(e)
+        case TlsIoError.Canceled => ServerError.TlsError(e)
+        case TlsIoError.Truncated => ServerError.TlsError(e)
+
+/// Drive one HTTP request/response exchange over an arbitrary async stream pair:
+/// plain TCP (`E = NetworkError`) or TLS (`E = TlsIoError`). Read the request
+/// frame, build a `Context`, call the handler, encode the `Response`, write it
+/// back. Stream errors are funneled through `mapErr`. Never re-throws out of the
+/// handler — handler failures become wire responses. The caller owns the streams.
+public async function serveExchange<E>(
+    input: AsyncInputStream<E>,
+    output: AsyncOutputStream<E>,
+    mapErr: (E) => ServerError,
+    handler: (Context) => Async<Response, ServerError>,
+    config: ServerConfig
+): Async<Unit, ServerError> where E : IoError =
+    let conn = Connection.server()
+
+    // Phase 1 — read the request line, headers, and body bytes.
+    let collected = await readWireRequest(input, conn, config, mapErr)
+    let req = await Async.fromResult(buildRequestFromWire(collected))
+
+    // Build the context (path params start empty; routing populates them).
+    let ctx = Context {
+        request = req
+        pathParams = PathParams.empty()
+        queryParams = QueryParams.parse(req.uri.query)
+    }
+
+    // Phase 2 — run the handler. Failures map to wire responses below;
+    // we never re-throw out of `serveExchange`.
+    let resp = await handler(ctx).foldCause(
+        (c: Cause<ServerError>) => Async.succeed(errorToResponse(causeToServerError(c))),
+        (r: Response) => Async.succeed(r)
+    )
+
+    // Phase 3 — emit the response.
+    await writeWireResponse(output, conn, resp, mapErr)
+
+    // Phase 4 — end the stream and find out what the transport made of it.
+    //
+    // Not redundant with phase 3. A `write` resolves when the host ACCEPTS the
+    // bytes, not when the peer receives them, so a connection reset after the
+    // last accepted write is invisible to it — the exchange would log a 200 for
+    // a response that never arrived. The failure lands on the stream's result
+    // future, which only resolves once the stream has ended, and ending it is
+    // exactly what `close` does. `flush` is not enough here and says so itself:
+    // it deliberately never spends that one-shot read.
+    //
+    // Reported as a `ServerError` on the same channel a failed `writeWireResponse`
+    // uses, because it is the same event arriving late — delivery of the response
+    // failed. It is emphatically not the handler's error: the handler ran, and its
+    // failures were already folded into a wire response above. Turning this into a
+    // 500 would mean writing a second response down a stream that just closed.
+    //
+    // One exchange per connection here, so ending the write half is honest.
+    await output.close().mapError(mapErr)
+
+/// Buffered request bytes plus the framed `HttpRequest` (status line +
+/// headers). Body comes from accumulating `HttpEvent.Data`s.
+record WireRequest =
+    req: HttpRequest
+    body: Array<Uint8>
+
+/// Read the input stream until `Connection.nextEvent` reports
+/// `Request` followed by `Data*` and finally `EndOfMessage`. Returns the
+/// assembled `WireRequest` or a `ServerError` on protocol / I/O failure.
+async function readWireRequest<E>(
+    input: AsyncInputStream<E>,
+    conn: Connection,
+    config: ServerConfig,
+    mapErr: (E) => ServerError
+): Async<WireRequest, ServerError> where E : IoError =
+    let mutable request: Option<HttpRequest> = None
+    // Accumulated in a buffer, not by re-concatenating: a large request body
+    // would otherwise copy everything received so far on every chunk.
+    let bodyBytes = ByteBuffer.make()
+    let mutable done = false
+    let mutable err: Option<ServerError> = None
+
+    while !done do
+        if err.isSome then done = true
+        else
+            let evt = conn.nextEvent()
+            match evt with
+                case NextEventResult.NeedData =>
+                    let chunk = await input
+                        .read(receiveChunkBytes)
+                        .mapError(mapErr)
+                    conn.receiveData(chunk)
+                case NextEventResult.Paused =>
+                    done = true
+                case NextEventResult.Event(event) =>
+                    match event with
+                        case HttpEvent.Request(r) =>
+                            request = Some(r)
+                        case HttpEvent.Data(chunk) =>
+                            let newLen = bodyBytes.length + chunk.length
+                            if newLen > config.maxBodyBytes then
+                                err = Some(ServerError.BadRequest("body exceeds maxBodyBytes"))
+                            else
+                                bodyBytes.append(chunk)
+                        case HttpEvent.EndOfMessage(_) =>
+                            done = true
+                        case HttpEvent.ConnectionClosed =>
+                            if request.isNone then
+                                err = Some(ServerError.BadRequest("connection closed before request"))
+                            done = true
+                        case _ => ()
+                case NextEventResult.Error(e) =>
+                    err = Some(ServerError.BadRequest(e.message))
+                case _ => ()
+
+    match err with
+        case Some(e) => await Async.fail(e)
+        case None =>
+            match request with
+                case Some(r) => WireRequest { req = r; body = bodyBytes.toArray() }
+                case None => await Async.fail(ServerError.BadRequest("incomplete request"))
+
+/// Reconstruct the application-level `Request` from the codec's wire
+/// frame. Builds the full URI from `"http://" + Host header + target`;
+/// maps wire-form method strings back to the `Method` enum.
+function buildRequestFromWire(w: WireRequest): Result<Request, ServerError> =
+    let host = findHeader(w.req.headers, "host")
+    let hostStr = match host with
+        case Some(h) => h
+        case None => "localhost"
+    let target = if w.req.target.length == 0 then "/" else w.req.target
+    let urlStr = "http://" ++ hostStr ++ target
+    match Uri.parse(urlStr) with
+        case Error(_) => Error(ServerError.BadRequest("malformed request URI: " ++ urlStr))
+        case Ok(uri) =>
+            Ok(Request {
+                method = Method.parse(w.req.method)
+                uri = uri
+                headers = w.req.headers
+                body = w.body
+            })
+
+/// Encode the response and push the resulting bytes onto the TCP output
+/// stream. Forces `Connection: close` and adds an explicit `Content-Length`
+/// (Content-Length framing is the v1 wire convention).
+async function writeWireResponse<E>(
+    output: AsyncOutputStream<E>,
+    conn: Connection,
+    resp: Response,
+    mapErr: (E) => ServerError
+): Async<Unit, ServerError> where E : IoError =
+    let body = resp.body
+    let preparedHeaders = await Async.fromResult(
+        prepareResponseHeaders(resp.headers, body.length)
+    )
+    let httpResp = HttpResponse {
+        statusCode = resp.statusCode
+        headers = preparedHeaders
+        httpVersion = "1.1"
+        reason = if resp.reason.length == 0 then "OK" else resp.reason
+    }
+    await sendEvent(output, conn, HttpEvent.Response(httpResp), mapErr)
+    if body.length > 0 then
+        await sendEvent(output, conn, HttpEvent.Data(body), mapErr)
+    await sendEvent(output, conn, HttpEvent.EndOfMessage(Headers.empty()), mapErr)
+
+function prepareResponseHeaders(userHeaders: Headers, bodyLength: Int32): Result<Headers, ServerError> =
+    let pairs = ArrayList<(String, String)>.new()
+    pairs.add(("Connection", "close"))
+    pairs.add(("Content-Length", bodyLength.format()))
+    for item in userHeaders.items do
+        if item.name != "connection" && item.name != "content-length" then
+            pairs.add((item.rawName, item.value))
+    match normalizeAndValidate(pairs.toArray().toList()) with
+        case Ok(h) => Ok(h)
+        case Error(e) => Error(ServerError.EmitFailed(e))
+
+async function sendEvent<E>(
+    output: AsyncOutputStream<E>,
+    conn: Connection,
+    event: HttpEvent,
+    mapErr: (E) => ServerError
+): Async<Unit, ServerError> where E : IoError =
+    let sendResult = conn.send(event)
+    let bytesOpt = await Async.fromResult(sendResult.mapError((e: HttpError) => ServerError.EmitFailed(e)))
+    match bytesOpt with
+        case Some(bytes) =>
+            if bytes.length > 0 then
+                await output.write(bytes.readonly)
+                    .mapError(mapErr)
+        case None => ()
+
+function findHeader(headers: Headers, lowerName: String): Option<String> =
+    headers.items.find(item => item.name == lowerName).map(item => item.value)
+
+/// Build a minimal `Response` for an internal `ServerError`. Used by
+/// `handleConnection`'s `foldCause` to map handler / routing failures to
+/// wire responses without re-throwing.
+function errorToResponse(e: ServerError): Response =
+    let (status, reason) = match e with
+        case ServerError.BadRequest(_) => (400, "Bad Request")
+        case ServerError.RouteNotFound => (404, "Not Found")
+        case ServerError.HandlerPanicked(_) => (500, "Internal Server Error")
+        case ServerError.EmitFailed(_) => (500, "Internal Server Error")
+        case ServerError.NetworkError(_) => (500, "Internal Server Error")
+        case ServerError.TlsError(_) => (500, "Internal Server Error")
+    Response {
+        statusCode = status
+        reason = reason
+        headers = Headers.empty()
+        body = Array<Uint8>.empty()
+    }
+
+function causeToServerError(cause: Cause<ServerError>): ServerError =
+    match cause with
+        case Cause.Failed(e, _) => e
+        case Cause.Panicked(msg, _) => ServerError.HandlerPanicked(msg)
+        case Cause.Interrupted(_) => ServerError.HandlerPanicked("interrupted")

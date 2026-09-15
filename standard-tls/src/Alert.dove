@@ -1,0 +1,102 @@
+package standard.tls
+
+import standard.prelude.Array
+
+/// TLS 1.3 alert protocol (RFC 8446 §6). Alerts are two bytes — a legacy level
+/// and a description — carried in an `alert` record. In TLS 1.3 the level is
+/// advisory: every alert except `close_notify`/`user_canceled` is treated as
+/// fatal regardless. `close_notify` signals an orderly half-close. Alerts are
+/// internal protocol mechanics; failures surface to the application as a
+/// `TlsError` on a `TlsEvent.Error`.
+
+record Alert =
+    level: AlertLevel
+    description: AlertDescription
+
+/// Classify a received 2-byte alert payload (level byte, description byte).
+///
+/// RFC 8446 §6 makes the legacy `level` byte advisory in TLS 1.3: the alert
+/// *type* determines severity. Only two "closure" alerts are non-fatal —
+/// `close_notify` (orderly half-close) and `user_canceled` — and every other
+/// alert is fatal. We deliberately do NOT accept a `close_notify`/`user_canceled`
+/// that arrives with a `fatal` level byte: such a record is malformed/hostile
+/// and must NOT be turned into a clean EOF, so it falls through to the fatal path
+/// and surfaces to the application as a `TlsError`. Concretely:
+///   - warning(1) + close_notify(0)  -> orderly close (ConnectionClosed)
+///   - warning(1) + user_canceled(90) -> tolerated warning (ignored)
+///   - anything else (incl. fatal + close_notify) -> fatal error
+
+/// Whether the alert is a well-formed warning `close_notify` (orderly half-close).
+function isOrderlyClose(payload: Array<Uint8>): Bool =
+    payload.length >= 2
+        && payload.get(0).toInt32() == alertLevelCode(AlertLevel.Warning)
+        && payload.get(1).toInt32() == alertDescriptionCode(AlertDescription.CloseNotify)
+
+/// Whether the alert is a well-formed warning `user_canceled` (safely ignored).
+function isIgnorableWarning(payload: Array<Uint8>): Bool =
+    payload.length >= 2
+        && payload.get(0).toInt32() == alertLevelCode(AlertLevel.Warning)
+        && payload.get(1).toInt32() == alertDescriptionCode(AlertDescription.UserCanceled)
+
+module Alert =
+    /// Serialise this alert to its two wire bytes.
+    function serialize(self): Array<Uint8> =
+        [|alertLevelCode(self.level).toUint8(), alertDescriptionCode(self.description).toUint8()|]
+
+    /// Whether an alert payload is a `close_notify` (description byte 0).
+    function isCloseNotify(payload: Array<Uint8>): Bool =
+        payload.length >= 2 && payload.get(1) == 0u8
+
+    /// Build an alert record for the current epoch of `recordLayer` — sealed if
+    /// traffic keys are installed, otherwise a plaintext record.
+    function toRecord(recordLayer: RecordLayer, level: AlertLevel, description: AlertDescription): Array<Uint8> =
+        let bytes = Alert { level = level; description = description }.serialize()
+        if recordLayer.canWriteProtected then
+            match recordLayer.sealRecord(ContentType.Alert, bytes.readonly) with
+                case Ok(sealedBytes) => sealedBytes
+                case Error(_) => recordLayer.framePlaintext(ContentType.Alert, bytes)
+        else
+            recordLayer.framePlaintext(ContentType.Alert, bytes)
+
+    /// The bytes of a `close_notify` alert record.
+    function closeNotifyRecord(recordLayer: RecordLayer): Array<Uint8> =
+        Alert.toRecord(recordLayer, AlertLevel.Warning, AlertDescription.CloseNotify)
+
+    /// The bytes of a fatal alert record for a `TlsError`.
+    function fatalRecord(recordLayer: RecordLayer, error: TlsError): Array<Uint8> =
+        Alert.toRecord(recordLayer, AlertLevel.Fatal, alertFor(error))
+
+test "tls alert serialises level and description" =
+    let alert = Alert { level = AlertLevel.Fatal; description = AlertDescription.BadRecordMac }
+    let bytes = alert.serialize()
+    assert bytes.get(0) == 2u8      // fatal
+    assert bytes.get(1) == 20u8     // bad_record_mac
+
+test "tls close_notify detection" =
+    assert Alert.isCloseNotify([|1u8, 0u8|])
+    assert Alert.isCloseNotify([|2u8, 40u8|]) == false
+
+test "tls alert orderly-close requires warning level and close_notify" =
+    // warning + close_notify -> orderly half-close
+    assert isOrderlyClose([|1u8, 0u8|])
+    // fatal + close_notify(0) is malformed/hostile: NOT an orderly close
+    assert isOrderlyClose([|2u8, 0u8|]) == false
+    // warning + a non-closure description is not an orderly close
+    assert isOrderlyClose([|1u8, 40u8|]) == false
+    // truncated payload
+    assert isOrderlyClose([|0u8|]) == false
+
+test "tls alert user_canceled is an ignorable warning only at warning level" =
+    assert isIgnorableWarning([|1u8, 90u8|])
+    assert isIgnorableWarning([|2u8, 90u8|]) == false
+    assert isIgnorableWarning([|1u8, 0u8|]) == false
+
+test "tls fatal alert record is plaintext before keys" =
+    let rl = RecordLayer.make()
+    let bytes = Alert.fatalRecord(rl, TlsError.BadRecordMac)
+    // plaintext alert record: type 21, version 0x0303, length 2
+    assert bytes.get(0) == 21u8
+    assert bytes.get(3) == 0u8
+    assert bytes.get(4) == 2u8
+    assert bytes.get(5) == 2u8      // fatal
+    assert bytes.get(6) == 20u8     // bad_record_mac

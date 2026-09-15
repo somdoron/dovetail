@@ -1,0 +1,400 @@
+package standard.io
+
+import standard.collection.MutableQueue
+import standard.wasi.ComponentFuture
+import standard.wasi.ComponentStreamRead
+import standard.wasi.ComponentStreamWrite
+import standard.wasi.ComponentSubtask
+import standard.wasi.Waitable
+
+// --- Supporting types ---
+
+public enum Cause<out E> =
+    Failed(E, List<SourceLocation>)
+    Panicked(String, List<SourceLocation>)
+    Interrupted(List<SourceLocation>)
+
+public newtype FiberId = Int32
+
+module FiberId =
+    property zero: FiberId = FiberId(0)
+    property next(self): FiberId = FiberId(self.value + 1)
+
+implement Default for FiberId =
+    public property default: FiberId = FiberId(0)
+
+implement Hashable for FiberId =
+    function hash(self): Int64 = self.value.toInt64()
+
+implement Equatable for FiberId =
+    function equals(self, other: FiberId): Bool = self.value == other.value
+
+public class Fiber<out T, out E>(public id: FiberId) = 
+    let mutable result: Option<FiberResult> = None
+
+    internal property completedResult(self): Option<FiberResult> = self.result
+
+    internal function setResult(self, result: FiberResult): Unit =
+        self.result = Some(result)
+    
+/// Identifies one fiber scope: a fiber's whole body (its *root* scope) or one
+/// `use`/`bracket` block nested inside it. Fibers forked while a scope is open
+/// belong to it, and the scope does not finish — a `use` does not release its
+/// resource — until every one of them has finalized. See `Async.fork`.
+///
+/// Internal: scopes are a property of `use`/`bracket` and `fork`, not something
+/// callers name. Nothing outside this package should be handling scope ids, and
+/// making one public would be committing to an API before there is a use for it.
+internal newtype ScopeId = Int32
+
+implement Default for ScopeId =
+    public property default: ScopeId = ScopeId(-1)
+
+implement Hashable for ScopeId =
+    function hash(self): Int64 = self.value.toInt64()
+
+implement Equatable for ScopeId =
+    function equals(self, other: ScopeId): Bool = self.value == other.value
+
+public enum PromiseState<T, E> =
+    Pending
+    Completed(Result<T, Cause<E>>)
+
+public class Promise<T, E>(signal: Waiter, public mutable state: PromiseState<T, E>)
+
+// --- Async free monad (sealed class hierarchy) ---
+// Variants are final classes extending the sealed-abstract parent. Cross-instantiation
+// variance falls out of full type erasure: every `Async<T, E>` lowers to the same WASM
+// struct regardless of T/E, so widening `Async<T, Never>` to `Async<T, E>` is a no-op.
+
+public sealed abstract class Async<out T, out E>()
+
+public final class Succeed<out T>(public value: T) extends Async<T, Never>()
+
+public final class FailCause<out E>(public cause: Cause<E>) extends Async<Never, E>()
+
+public final class Map<out T, out E>(
+    public inner: Async<Any, Any>,
+    public f: (Any) => Any,
+    public trace: SourceLocation
+) extends Async<T, E>()
+
+public final class AndThen<out T, out E>(
+    public inner: Async<Any, Any>,
+    public f: (Any) => Async<Any, Any>,
+    public trace: SourceLocation
+) extends Async<T, E>()
+
+public final class Fold<out T, out E>(
+    public inner: Async<Any, Any>,
+    public onFailure: (Any) => Async<Any, Any>,
+    public onSuccess: (Any) => Async<Any, Any>
+) extends Async<T, E>()
+
+public final class FoldCause<out T, out E>(
+    public inner: Async<Any, Any>,
+    public onCause: (Cause<Any>) => Async<Any, Any>,
+    public onSuccess: (Any) => Async<Any, Any>
+) extends Async<T, E>()
+
+public final class Fork<out T, out E>(
+    public source: Async<Any, Any>,
+    public makeHandle: (FiberId) => Fiber<Any, Any>
+) extends Async<Fiber<T, E>, Never>()
+
+public final class ForkBackground<out T, out E>(
+    public source: Async<Any, Any>,
+    public makeHandle: (FiberId) => Fiber<Any, Any>
+) extends Async<Fiber<T, E>, Never>()
+
+public final class Join<out T, out E>(public target: Fiber<Any, Any>) extends Async<T, E>()
+
+// --- Component-model operations ---
+//
+// Four nodes, one per async primitive the component model has. Each carries a
+// `standard.wasi` record describing the whole operation, and the runtime drives
+// it: post, park, lift, release. Nothing above the runtime writes a canonical-ABI
+// step, and nothing above the runtime can get the interruption windows wrong,
+// because there are none left to get wrong — posting and arming the cleanup
+// happen in a single interpreter step, and delivery consumes the operation in the
+// same breath as it retires the suspension.
+//
+// That is what these replaced: `callThen` and `streamOperation` spread one host
+// operation across four or five steps of a bracket, and every boundary between
+// them was an interrupt window that had to be closed with a mutable flag.
+
+/// Start an async component call and park until its subtask returns.
+public final class RunSubtask<out T, out E>(
+    public call: ComponentSubtask<Any, Any>
+) extends Async<T, E>()
+
+/// Park until a `future<T>` resolves, then take its value.
+public final class ReadFutureValue<out T, out E>(
+    public future: ComponentFuture<Any, Any>
+) extends Async<T, E>()
+
+/// Copy up to `capacity` elements from a stream's readable end. Yields the
+/// `CopyResult` alongside the elements: whether `Dropped` means end-of-input or a
+/// failure is the library's call, not the ABI's.
+public final class ReadStream<out T, out E>(
+    public read: ComponentStreamRead<Any, Any>,
+    public capacity: Int32
+) extends Async<T, E>()
+
+/// Copy the bounded `bytes` view into a stream's writable end, yielding the `CopyResult`
+/// and how many elements the host accepted (which may be fewer than offered).
+public final class WriteStream<out T, out E>(
+    public write: ComponentStreamWrite<Any>,
+    public bytes: ReadonlySlice<Uint8>
+) extends Async<T, E>()
+
+/// Detach every fiber from `waitable` (a stream or future end) so that the
+/// handle can be dropped: cancel the copy in flight on it, and empty the queue
+/// of fibers waiting their turn on it. Each of them is failed with
+/// `canceledError` — the origin's `Canceled` — rather than resumed, because the
+/// handle they were queued for is about to stop existing.
+///
+/// Both halves are needed, and for the same reason. A p3 stream permits one
+/// outstanding copy per end, so a second fiber wanting the same end is parked in
+/// this handle's lock queue; if only the in-flight copy were cancelled, the drop
+/// would hand the lock to the next fiber in that queue and it would post a copy
+/// on a handle that no longer exists. Handle indices are reused after a drop, so
+/// that copy does not fail — it lands on whatever stream was given the index
+/// next. The runtime has seen both ends of this: "cannot drop busy stream" when
+/// the in-flight copy is left alone, "unknown handle index N" when the queue is.
+///
+/// For the EXPLICIT `close`, never for a Resource finalizer. A finalizer runs
+/// after the scope has unwound every fiber it owns, and interrupting a fiber
+/// both cancels its own copy (`releaseSuspensionsForFiber`) and gives up its
+/// place in any queue (`forgetAwaitingLock`) — so a finalizer never meets either
+/// half of this and needs nothing here. An explicit close has no such guarantee:
+/// a sibling fiber is still live and may be mid-copy.
+///
+/// Cancel rather than wait, because waiting is not a general answer. A write
+/// blocked on a peer that never drains, or a read on a peer that never sends,
+/// would never complete — so there is no in-flight op that closing can safely
+/// promise to outlive.
+///
+/// The canceller deliberately comes from the *suspension*, not from the caller:
+/// only the parked fiber's closure captured the `CopyOperation` whose pinned
+/// buffer must be freed.
+///
+/// Detaching is all this does; dropping the handle is the caller's next step.
+/// The detached fibers are only ENQUEUED here, and none of them touches the
+/// handle again on its way out, so there is nothing for the drop to race with.
+/// What the caller must do first is stop NEW operations — see
+/// `WasiInputStream.close`, which latches before it cancels.
+/// Untyped, as every node is. The typed way in is `Async.cancelStreamRead` /
+/// `cancelStreamWrite`, which take the `ComponentStreamRead`/`Write` whole — so
+/// the handle and the error raised on it come from one record, typed by one `E`,
+/// and cannot be paired with each other's.
+public final class CancelStream(
+    public waitable: Waitable,
+    public canceledError: Any
+) extends Async<Unit, Never>()
+
+/// Take a non-reentrant mutex, or queue behind its holder. Fails immediately if
+/// this fiber is the holder — see `MutexError.AlreadyHeld`.
+public final class AcquireMutex(
+    public state: MutexState
+) extends Async<Unit, MutexError>()
+
+/// Take a reentrant mutex, or queue behind its holder. Re-acquiring from the
+/// holding fiber just deepens the hold, so this cannot fail.
+public final class AcquireReentrantMutex(
+    public state: MutexState
+) extends Async<Unit, Never>()
+
+/// Give up one level of a mutex hold, handing the mutex to the longest-waiting
+/// fiber once the outermost level exits. Always paired with an acquire through a
+/// bracket, so unwinding on failure or interruption still releases.
+public final class ReleaseMutex(
+    public state: MutexState
+) extends Async<Unit, Never>()
+
+public final class Thunk<out T>(public f: () => T) extends Async<T, Never>()
+
+/// Yield control to the event loop once: the running fiber is re-enqueued
+/// behind every other ready fiber, then resumes with `Unit`. A cooperative
+/// fairness point with no host round-trip — see `Async.yieldNow`.
+public final class Yield() extends Async<Unit, Never>()
+
+public final class Await<out T, out E>(
+    public signal: Waiter,
+    public check: Async<Option<Any>, Any>
+) extends Async<T, E>()
+
+public final class Wake(public signal: Waiter) extends Async<Unit, Never>()
+
+public final class Uninterruptible<out T, out E>(public inner: Async<T, E>) extends Async<T, E>()
+
+/// Run `inner` interruptibly inside a region that is not — ZIO's `restore`, the
+/// half of `uninterruptibleMask` that hands interruptibility back.
+///
+/// The one thing that needs it is the WAITING part of an acquire. An acquire is
+/// masked (see `Bracket`), which is what makes the resource reach its owner
+/// atomically; but an acquire that parks for an unbounded time — an accept
+/// waiting for a connection that may never come — must still be cancellable, or
+/// the scope that owns it can never be torn down. Wrap the park, not the
+/// hand-off: the fiber is interruptible while it waits and masked again from the
+/// moment it holds something.
+public final class Interruptible<out T, out E>(public inner: Async<T, E>) extends Async<T, E>()
+
+public final class Interrupt(public target: Fiber<Any, Any>) extends Async<Unit, Never>()
+
+/// Every bracket opens a fiber scope, starting at `acquire`: fibers forked
+/// inside it are finalized before `release` runs, so a resource is never
+/// released under a fiber still using it. A scope that never forks allocates
+/// nothing — it costs a counter bump and one failed lookup when it closes — so
+/// there is no cheaper unscoped form to reach for.
+public final class Bracket<out T, out E>(
+    public acquire: Async<Any, Any>,
+    // `release` receives the acquired resource AND the body's outcome:
+    // `Ok(value)` when `useFn` succeeded, `Error(cause)` when it failed,
+    // panicked, or was interrupted. Plain `Async.bracket` discards the outcome;
+    // `Async.bracketWithResult` passes it through.
+    public release: (Any, Result<Any, Cause<Any>>) => Async<Unit, Never>,
+    public useFn: (Any) => Async<Any, Any>
+) extends Async<T, E>()
+
+/// Acquire a resource and hand its finalizer to the fiber's INNERMOST OPEN
+/// SCOPE — the enclosing `use`/`bracket` block, or the whole fiber body when
+/// there is none — instead of opening a scope of its own the way `Bracket`
+/// does. Lowering target for `Resource.attachToScope`.
+///
+/// The finalizer runs when that scope closes: after the scope's fibers have
+/// drained, masked, LIFO against everything else attached to the same scope,
+/// and BEFORE that scope's own bracket release. So a resource attached inside a
+/// `use` is released before the `use`'s own resource — the global rule,
+/// finalizers run in reverse acquisition order, restated for a resource whose
+/// scope it does not own.
+///
+/// `acquire` yields whatever a `Resource`'s acquisition yields (a
+/// `(value, Finalizer)` pair) and `finalizerOf` projects the finalizer out of
+/// it, because the runtime is fully erased and cannot destructure the pair
+/// itself. The node resumes with the acquired pair UNCHANGED;
+/// `Resource.attachToScope` maps it down to its value half one node further out.
+///
+/// `acquire` runs MASKED, exactly as a bracket's does, so the resource cannot
+/// be stranded between existing and being owned; an acquisition that IS an
+/// unbounded wait opts its park back in with `Interruptible`. The one-step
+/// window between the acquire producing a resource and the registration that
+/// owns it is closed by `settlePendingAcquire`, the same way the bracket's is.
+public final class Attach<out T, out E>(
+    public acquire: Async<Any, Any>,
+    public finalizerOf: (Any) => Finalizer
+) extends Async<T, E>()
+
+/// Run `left` and `right` concurrently; the first to COMPLETE — success or
+/// failure — decides the race's outcome, the other is interrupted, and the
+/// race does not resume its caller until the loser has finished unwinding.
+/// A runtime node rather than a fork/Promise composition so the decision is
+/// step-atomic: the interpreter takes it inside the losing-versus-winning
+/// fiber's own finalization step, with no scheduler window in which both
+/// racers have completed but neither has claimed anything. The racers run in
+/// a dedicated fiber scope (the same machinery as `Bracket`), which is what
+/// guarantees the loser's finalizers complete before the race returns.
+public final class Race<out T, out E>(
+    public left: Async<Any, Any>,
+    public right: Async<Any, Any>
+) extends Async<T, E>()
+
+public type Task<T> = Async<T, Never>
+
+public class Queue<T>(
+    takeWaiter: Waiter,
+    offerWaiter: Waiter,
+    buffer: MutableQueue<T>,
+    capacity: Option<Int32>
+) where T: Default
+
+// --- Resource (acquire-with-finalizer over Async) ---
+
+/// A finalizer that has already captured its resource, so it runs with no
+/// arguments. Internal: the cleanup half of a `Resource`'s acquisition.
+internal type Finalizer = () => Async<Unit, Never>
+
+/// A scoped resource of type `T` whose acquisition may fail with `E`.
+///
+/// A `Resource` describes how to acquire a value and how to release it when
+/// done. Nothing happens until you `use` it; `use` acquires the value, runs
+/// your code with it, and guarantees the release runs on the way out — whether
+/// your code succeeds, fails, or panics. Compose resources with `map`,
+/// `andThen`, and `zip`; nested resources release in reverse acquisition order.
+public newtype Resource<out T, out E> private = Async<(T, Finalizer), E>
+
+// --- Switchable (a Resource handle whose held value can be swapped) ---
+//
+// Holds a currently-acquired resource value plus its finalizer.
+// `replace` acquires a new resource, swaps, then runs the old finalizer — so
+// a transient failure in acquiring the new resource leaves the existing one
+// untouched.
+//
+// Constructed via `Resource.switchable(initial)`. Not safe under concurrent
+// `replace` calls from multiple fibers — the typical use case is a single
+// consumer that swaps its underlying handle on demand.
+//
+// `currentFinalizer` is the release action for the currently-held resource. It
+// is consumed exactly once (either by `replace` swapping it out or by the
+// outer scope releasing the `Switchable`).
+
+public class Switchable<T, E>(
+    mutable currentValue: T,
+    internal mutable currentFinalizer: Finalizer
+)
+
+// --- Tests ---
+
+test "Cause Failed" =
+    let trace: List<SourceLocation> = List.empty
+    let c: Cause<String> = Cause.Failed("err", trace)
+    match c with
+    case Cause.Failed(e, _) => assert e == "err"
+    case _ => panic "expected Failed"
+
+test "Cause Panicked" =
+    let trace: List<SourceLocation> = List.empty
+    let c: Cause<String> = Cause.Panicked("boom", trace)
+    match c with
+    case Cause.Panicked(msg, _) => assert msg == "boom"
+    case _ => panic "expected Panicked"
+
+test "Cause Interrupted" =
+    let trace: List<SourceLocation> = List.empty
+    let c: Cause<String> = Cause.Interrupted(trace)
+    match c with
+    case Cause.Interrupted(_) => ()
+    case _ => panic "expected Interrupted"
+
+test "PromiseState Pending" =
+    let s: PromiseState<Int32, String> = PromiseState.Pending
+    match s with
+    case PromiseState.Pending => ()
+    case _ => panic "expected Pending"
+
+test "PromiseState Completed" =
+    let r: Result<Int32, Cause<String>> = Ok(42)
+    let s: PromiseState<Int32, String> = PromiseState.Completed(r)
+    match s with
+    case PromiseState.Completed(Ok(v)) => assert v == 42
+    case _ => panic "expected Completed Ok"
+
+// --- Demand-driven producer execution ---
+
+public class Producer<out A, out E> internal (
+    internal fiber: FiberId,
+    internal creator: FiberId
+)
+
+internal final class CreateProducer<out S, out A, out E>(
+    public acquire: Async<S, E>,
+    public pull: (Any) => Async<A, Option<E>>,
+    public release: (Any) => Async<Unit, Never>,
+    public makeHandle: (FiberId, FiberId) => Producer<A, E>
+) extends Async<Producer<A, E>, E>()
+
+internal final class Pull<out A, out E>(public producer: Producer<A, E>) extends Async<A, Option<E>>()
+internal final class InterruptProducer<out A, out E>(public producer: Producer<A, E>) extends Async<Unit, Never>()
+
+internal final class ProducerAcquired(public producer: ProducerState, public value: Any) extends Async<Unit, Never>()
+internal final class ProducerIdle(public producer: ProducerState) extends Async<Unit, Never>()

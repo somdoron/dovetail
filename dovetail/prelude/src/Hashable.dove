@@ -1,0 +1,97 @@
+package standard.prelude
+
+public trait Hashable =
+    function hash(self): Int64
+
+module Hashable =
+    public function combine(seed: Int64, value: Int64): Int64 =
+        let h = seed + value * 2654435761i64
+        let s = h / 65536i64
+        (h + s) * 2246822519i64 + 1i64
+
+implement Hashable for Bool =
+    public function hash(self: Bool): Int64 =
+        if self then 1i64 else 0i64
+
+implement Hashable for Int8 =
+    public function hash(self: Int8): Int64 = self.toInt64()
+
+implement Hashable for Int16 =
+    public function hash(self: Int16): Int64 = self.toInt64()
+
+implement Hashable for Int32 =
+    public function hash(self: Int32): Int64 = self.toInt64()
+
+implement Hashable for Int64 =
+    public function hash(self: Int64): Int64 =
+        let v = self * 2654435761i64
+        let s = v / 65536i64
+        v + s
+
+implement Hashable for Uint8 =
+    public function hash(self: Uint8): Int64 = self.toInt64()
+
+implement Hashable for Uint16 =
+    public function hash(self: Uint16): Int64 = self.toInt64()
+
+implement Hashable for Uint32 =
+    public function hash(self: Uint32): Int64 = self.toInt64()
+
+implement Hashable for Uint64 =
+    public function hash(self: Uint64): Int64 = self.toInt64()
+
+implement Hashable for Float32 =
+    public function hash(self: Float32): Int64 = self.toBits().toInt64()
+
+implement Hashable for Float64 =
+    public function hash(self: Float64): Int64 = self.toBits()
+
+implement Hashable for Char =
+    public function hash(self: Char): Int64 = String.fromChar(self).hash()
+
+implement Hashable for String =
+    public function hash(self: String): Int64 =
+        let bytes = self.bytes()
+        let mutable h = 5381i64
+        let mutable i = 0
+        while i < bytes.length do
+            h = h * 33i64 + bytes.get(i).toInt64()
+            i = i + 1
+        h
+
+implement <A, B> Hashable for (A, B) where A: Hashable, B: Hashable =
+    public function hash(self: (A, B)): Int64 =
+        Hashable.combine(self._0.hash(), self._1.hash())
+
+implement <T, U> Hashable for T ~ U where T: Tuple, T: Hashable, U: Hashable =
+    public function hash(self: T ~ U): Int64 =
+        Hashable.combine(self.init.hash(), self.last.hash())
+
+test "Hashable Int32 deterministic" =
+    assert 42i32.hash() == 42i32.hash()
+    assert 0i32.hash() == 0i32.hash()
+
+test "Hashable String deterministic" =
+    assert "hello".hash() == "hello".hash()
+    assert "".hash() == "".hash()
+
+test "Hashable Bool" =
+    assert true.hash() == 1i64
+    assert false.hash() == 0i64
+
+test "Hashable different values differ" =
+    assert (1i32.hash() == 2i32.hash()) == false
+    assert ("hello".hash() == "world".hash()) == false
+
+test "Hashable.combine deterministic" =
+    let h1 = Hashable.combine(0i64, 1i64)
+    let h2 = Hashable.combine(0i64, 1i64)
+    assert h1 == h2
+
+test "Hashable Char deterministic" =
+    assert 'a'.hash() == 'a'.hash()
+    assert ('a'.hash() == 'b'.hash()) == false
+
+test "Hashable tuple" =
+    let h = (1i32, 2i32).hash()
+    assert h == (1i32, 2i32).hash()

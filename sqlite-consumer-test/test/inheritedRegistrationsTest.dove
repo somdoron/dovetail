@@ -1,0 +1,105 @@
+package test
+
+import standard.io.Async
+import standard.sqlite.Connection
+import standard.sqlite.FromRow
+import standard.sqlite.FromSqlValue
+import standard.sqlite.Query
+import standard.sqlite.Row
+import standard.sqlite.SqlValue
+import standard.sqlite.sql
+import standard.sqlite.SqliteError
+import standard.sqlite.ToSqlValue
+
+// Regression: this project depends on `standard-sqlite` but declares NO
+// `[[project.literal]]` and NO `[[project.macro]]` of its own. Both kinds of
+// registration must be inherited from the dependency:
+//
+//   * `sql"..."` — the prefix→builder binding reaches this project through the
+//     registry's literal table, merged in from the dependency.
+//   * `@derive(ToSqlValue)` and friends — the macro registry is threaded
+//     through the dependency chain in the pipeline.
+//
+// They travel by two different mechanisms, so each needs its own guard. If
+// either regresses, this file stops compiling — which is the point: the failure
+// is at build time, not a silently skipped test.
+
+@derive(ToSqlValue)
+@derive(FromSqlValue)
+@derive(FromRow)
+newtype WidgetId = Int64
+
+@derive(ToSqlValue)
+@derive(FromSqlValue)
+enum Condition =
+    New
+    Used
+
+@derive(FromRow)
+record Widget =
+    id: Int64
+    label: String
+    condition: Condition
+
+test "inherited literal registration: sql\"...\" works without declaring the prefix" =
+    let id = WidgetId(7i64)
+    let q = sql"SELECT * FROM widgets WHERE id = $id"
+    assert q.text == "SELECT * FROM widgets WHERE id = ?"
+    assert q.params.length == 1
+    match q.params.get(0) with
+        case SqlValue.Integer(n) => assert n == 7i64
+        case _ => panic "the derived ToSqlValue should bind an Integer"
+
+test "inherited literal registration: spread interpolation works too" =
+    let ids: List<Int64> = [1i64, 2i64]
+    let q = sql"SELECT * FROM widgets WHERE id IN ($..ids)"
+    assert q.text == "SELECT * FROM widgets WHERE id IN (?, ?)"
+    assert q.params.length == 2
+
+test "inherited macro registration: derives run without declaring the macros" =
+    match Condition.New.toSqlValue() with
+        case SqlValue.Text(tag) => assert tag == "New"
+        case _ => panic "the derived ToSqlValue should bind Text"
+    let row = Row.make([|"id"|], [|SqlValue.Integer(3i64)|])
+    match WidgetId.fromRow(row) with
+        case Ok(decoded) => assert decoded.value == 3i64
+        case Error(e) => panic "expected Ok, got " ++ e.format()
+
+test "inherited registrations reach a real database end to end" =
+    let mutable label = ""
+    let mutable count: Int32 = -1
+    let program: Async<Unit, SqliteError> = widgetProgram(
+        (l: String) => label = l,
+        (c: Int32) => count = c
+    )
+    program.run()
+    assert label == "left-handed"
+    assert count == 2
+
+/// Literal, derives, and the transitively composed component, all in one path:
+/// a `sql"..."` fragment carrying derived parameters, executed against the real
+/// shim, decoded through a derived `FromRow`.
+async function widgetProgram(setLabel: (String) => Unit, setCount: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("inheritedRegistrations.db")
+    await conn.execute("CREATE TABLE widgets (id INTEGER PRIMARY KEY, label TEXT, condition TEXT)")
+
+    let label = "left-handed"
+    let condition = Condition.New
+    await sql"INSERT INTO widgets (label, condition) VALUES ($label, $condition)".execute(conn)
+    let second = "right-handed"
+    let used = Condition.Used
+    await sql"INSERT INTO widgets (label, condition) VALUES ($second, $used)".execute(conn)
+
+    let wanted = Condition.New
+    let found: Widget =
+        await sql"SELECT id, label, condition FROM widgets WHERE condition = $wanted"
+            .fetchOne<Widget>(conn)
+    setLabel(found.label)
+    match found.condition with
+        case Condition.New => ()
+        case _ => panic "the derived FromRow should decode the condition"
+
+    let ids: List<Int64> = [1i64, 2i64]
+    let all: List<Widget> =
+        await sql"SELECT id, label, condition FROM widgets WHERE id IN ($..ids)".fetchAll<Widget>(conn)
+    setCount(all.length)

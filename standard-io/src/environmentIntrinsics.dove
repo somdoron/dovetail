@@ -1,0 +1,11 @@
+package standard.io
+
+// Thin pass-through to wasi:cli/environment. Lives in a sibling file so the
+// `import` of the wasi `Environment` module doesn't shadow our public
+// `Environment` declaration in `Environment.dove`. Package-private — only
+// `standard.io.Environment` should call these.
+
+import standard.wasi.cli.Environment
+
+function wasiEnvironmentVariables(): Array<(String, String)> = Environment.variables
+function wasiEnvironmentArguments(): Array<String> = Environment.arguments

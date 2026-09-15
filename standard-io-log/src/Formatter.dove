@@ -1,0 +1,96 @@
+package standard.io.log
+
+import standard.collection.StringBuilder
+import standard.time.DateTimeFormatter
+import standard.time.TimeZone
+
+/// Pure rendering functions from `LogRecord` to wire-format strings. Sinks
+/// pick a formatter at construction time; the formatter never touches I/O.
+///
+/// `logfmt` is the only built-in formatter. Custom formats are supplied by
+/// passing a `(LogRecord) => String` to the sink's `withFormatter` /
+/// `openWith` constructor.
+module Formatter =
+
+    /// Render an event in logfmt form: a sequence of `key=value` pairs on a
+    /// single line, in the order:
+    /// `ts level logger span msg <span-fields> <logger-fields>`. Keys are
+    /// always bare; values are bare when they consist only of
+    /// `[A-Za-z0-9_.\-/]`, otherwise double-quoted with `"` and `\` escaped
+    /// (and `\n`, `\t`, `\r` rendered as their two-character escape).
+    ///
+    /// The trailing newline is the caller's responsibility.
+    public function logfmt(event: LogRecord): String =
+        let builder = StringBuilder.new()
+        builder.append("ts=")
+        builder.append(DateTimeFormatter.isoInstant.format(event.timestamp, TimeZone.utc))
+        builder.append(" level=")
+        builder.append(event.level.format())
+        if event.loggerName != "" then
+            builder.append(" logger=")
+            appendValue(builder, event.loggerName)
+        else builder
+        if event.spans.length > 0 then
+            builder.append(" span=")
+            appendDottedSpanNames(builder, event.spans)
+        else builder
+        builder.append(" msg=")
+        appendValue(builder, event.message)
+        for span in event.spans do
+            for field in span.fields do
+                builder.append(" ").append(field.key).append("=")
+                appendValue(builder, field.value)
+                ()
+        for field in event.fields do
+            builder.append(" ").append(field.key).append("=")
+            appendValue(builder, field.value)
+            ()
+        builder.toString()
+
+// --- Internal helpers (package-private) -------------------------------------
+
+// Helpers return `StringBuilder` (the same builder passed in) so the body
+// can end with the most recent builder expression — matching the convention
+// in `standard-json/src/Json.dove`. Intermediate `.append(...)` calls are
+// auto-discarded by Dovetail's block rules.
+
+function appendDottedSpanNames(builder: StringBuilder, spans: List<LogSpan>): StringBuilder =
+    // A separator that starts empty, rather than an index compared to 0 —
+    // there is no index to compare once the walk is by element.
+    let mutable separator = ""
+    for span in spans do
+        builder.append(separator)
+        builder.append(span.name)
+        separator = "."
+    builder
+
+function appendValue(builder: StringBuilder, value: String): StringBuilder =
+    if isBare(value) then builder.append(value)
+    else appendQuoted(builder, value)
+
+function isBare(value: String): Bool =
+    let length = value.length
+    let mutable index = 0
+    let mutable bare = true
+    while bare && index < length do
+        if !isBareChar(value.getChar(index)) then bare = false
+        index = index + 1
+    bare
+
+function isBareChar(c: Char): Bool =
+    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.' || c == '-' || c == '/'
+
+function appendQuoted(builder: StringBuilder, value: String): StringBuilder =
+    let length = value.length
+    builder.append("\"")
+    let mutable index = 0
+    while index < length do
+        let c = value.getChar(index)
+        if c == '"' then builder.append("\\\"")
+        else if c == '\\' then builder.append("\\\\")
+        else if c == '\n' then builder.append("\\n")
+        else if c == '\t' then builder.append("\\t")
+        else if c == '\r' then builder.append("\\r")
+        else builder.appendChar(c)
+        index = index + 1
+    builder.append("\"")

@@ -1,0 +1,118 @@
+package test
+
+import standard.io.log.FileSink
+import standard.io.log.Logger
+import standard.io.log.LogSink
+import standard.io.Async
+import standard.io.fs.File
+import standard.io.fs.FileStreamError
+import standard.io.fs.Path
+import standard.io.fs.Directory
+import standard.io.fs.DirEntry
+import standard.io.fs.EntryType
+import standard.text.Charset
+
+async function listFileSinkSegments(dirPath: Path, stem: String): Async<List<DirEntry>, FileStreamError> =
+    let entries = await Directory.entries(dirPath)
+    entries.filter(entry =>
+        let isFile = match entry.entryType with
+            case EntryType.File => true
+            case _ => false
+        isFile && entry.name.startsWith(stem ++ "-") && entry.name.endsWith(".log")
+    )
+
+async function cleanupSegments(dirPath: Path, stem: String): Async<Unit, FileStreamError> =
+    let segments = await listFileSinkSegments(dirPath, stem)
+    for segment in segments do
+        await File.remove(dirPath.join(segment.name))
+
+test "FileSink.open opens a resource and writes one record" =
+    let program: Async<Unit, FileStreamError> =
+        let sink = use FileSink.open(Path.of("filesink-smoke.log"))
+        let log = Logger.make(sink)
+        log.info("smoke")
+    program.run()
+    let cleanup: Async<Unit, FileStreamError> = cleanupSegments(Path.of("."), "filesink-smoke")
+    cleanup.run()
+
+async function writeThreeRecords(basePath: Path): Async<Unit, FileStreamError> =
+    let sink = use FileSink.open(basePath)
+    let log = Logger.make(sink)
+    await log.info("one")
+    await log.info("two")
+    await log.info("three")
+
+test "FileSink.open writes records to a unique timestamped file" =
+    let mutable readBack: String = ""
+    let mutable createdCount: Int32 = 0
+    let dir = Path.of(".")
+    let stem = "filesink-roundtrip"
+    let basePath = Path.of(stem ++ ".log")
+    cleanupSegments(dir, stem).run()
+    writeThreeRecords(basePath).run()
+    inspectSegments(dir, stem, (n: Int32) => createdCount = n, (s: String) => readBack = s).run()
+    cleanupSegments(dir, stem).run()
+    assert createdCount == 1
+    assert readBack.contains("msg=one")
+    assert readBack.contains("msg=two")
+    assert readBack.contains("msg=three")
+    assert readBack.contains("level=info")
+
+async function inspectSegments(
+    dir: Path,
+    stem: String,
+    setCount: (Int32) => Unit,
+    setContent: (String) => Unit
+): Async<Unit, FileStreamError> =
+    let segments = await listFileSinkSegments(dir, stem)
+    setCount(segments.length)
+    match segments with
+        case [only] =>
+            let written = await File.readString(dir.join(only.name), Charset.Utf8)
+            setContent(written)
+        case _ => ()
+
+async function writeManyRecords(basePath: Path, maxBytes: Int64): Async<Unit, FileStreamError> =
+    let sink = use FileSink.openLimited(basePath, maxBytes)
+    let log = Logger.make(sink)
+    // 10 records, each well over the tiny limit, so each forces a rotation.
+    await log.info("alpha")
+    await log.info("bravo")
+    await log.info("charlie")
+    await log.info("delta")
+    await log.info("echo")
+    await log.info("foxtrot")
+    await log.info("golf")
+    await log.info("hotel")
+    await log.info("india")
+    await log.info("juliet")
+
+// Count total non-empty lines across every segment file for `stem`.
+async function totalLinesAcrossSegments(dir: Path, stem: String, set: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let segments = await listFileSinkSegments(dir, stem)
+    let mutable total = 0
+    for segment in segments do
+        let content = await File.readString(dir.join(segment.name), Charset.Utf8)
+        total = total + (content.split("\n").length - 1)
+    set(total)
+
+test "FileSink.openLimited rotates into new segment files past maxBytes" =
+    let mutable segmentCount: Int32 = 0
+    let mutable totalLines: Int32 = 0
+    let dir = Path.of(".")
+    let stem = "filesink-limited"
+    let basePath = Path.of(stem ++ ".log")
+    cleanupSegments(dir, stem).run()
+    // 1ms timestamp precision keeps segment names distinct across rotations.
+    writeManyRecords(basePath, 8i64).run()
+    countSegments(dir, stem, (n: Int32) => segmentCount = n).run()
+    totalLinesAcrossSegments(dir, stem, (n: Int32) => totalLines = n).run()
+    cleanupSegments(dir, stem).run()
+    // Each oversized record rolls a new file → more than one segment on disk.
+    assert segmentCount > 1
+    // No records are lost across rotations.
+    assert totalLines == 10
+
+async function countSegments(dir: Path, stem: String, set: (Int32) => Unit): Async<Unit, FileStreamError> =
+    let segments = await listFileSinkSegments(dir, stem)
+    set(segments.length)

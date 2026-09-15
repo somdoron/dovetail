@@ -1,0 +1,121 @@
+package standard.wasi.net
+
+import standard.wasi.IoError
+import standard.wasi.AsyncCall
+
+public enum IpAddressFamily =
+    Ipv4
+    Ipv6
+
+public record Ipv4Address =
+    a: Uint8
+    b: Uint8
+    c: Uint8
+    d: Uint8
+
+public record Ipv6Address =
+    a: Uint16
+    b: Uint16
+    c: Uint16
+    d: Uint16
+    e: Uint16
+    f: Uint16
+    g: Uint16
+    h: Uint16
+
+public enum IpAddress =
+    V4(Ipv4Address)
+    V6(Ipv6Address)
+
+public record Ipv4SocketAddress =
+    port: Uint16
+    address: Ipv4Address
+
+public record Ipv6SocketAddress =
+    port: Uint16
+    flowInfo: Uint32
+    address: Ipv6Address
+    scopeId: Uint32
+
+public enum SocketAddress =
+    V4(Ipv4SocketAddress)
+    V6(Ipv6SocketAddress)
+
+/// p3 wasi:sockets/types error-code. The `other` case's optional host message
+/// (the host's one piece of explanatory text for an error its enum cannot
+/// name) is carried through as `Other`'s payload.
+///
+/// `Canceled` is the one variant the host never produces: it is raised locally
+/// when an explicit `close` aborts an operation that was still in flight, so
+/// that "somebody closed this under me" is distinguishable from any transport
+/// failure. Nothing lifts a wire code into it.
+public enum NetworkError =
+    AccessDenied
+    NotSupported
+    InvalidArgument
+    OutOfMemory
+    Timeout
+    InvalidState
+    AddressNotBindable
+    AddressInUse
+    RemoteUnreachable
+    ConnectionRefused
+    ConnectionBroken
+    ConnectionReset
+    ConnectionAborted
+    DatagramTooLarge
+    Canceled
+    Other(Option<String>)
+
+implement IoError for NetworkError
+
+/// One-line rendering of a socket error code. Carried up through `TlsIoError`
+/// so a TLS transport failure names the underlying cause (a reset, a refused
+/// connection) rather than a constant phrase.
+implement Display for NetworkError =
+    public function format(self: NetworkError): String =
+        match self with
+            case NetworkError.AccessDenied => "access denied"
+            case NetworkError.NotSupported => "operation not supported"
+            case NetworkError.InvalidArgument => "invalid argument"
+            case NetworkError.OutOfMemory => "out of memory"
+            case NetworkError.Timeout => "operation timed out"
+            case NetworkError.InvalidState => "invalid state"
+            case NetworkError.AddressNotBindable => "address not bindable"
+            case NetworkError.AddressInUse => "address in use"
+            case NetworkError.RemoteUnreachable => "remote unreachable"
+            case NetworkError.ConnectionRefused => "connection refused"
+            case NetworkError.ConnectionBroken => "connection broken"
+            case NetworkError.ConnectionReset => "connection reset"
+            case NetworkError.ConnectionAborted => "connection aborted"
+            case NetworkError.DatagramTooLarge => "datagram too large"
+            case NetworkError.Canceled => "canceled by close"
+            case NetworkError.Other(detail) =>
+                match detail with
+                    case Some(message) => "socket error: " ++ message
+                    case None => "unspecified socket error"
+
+/// p3 `wasi:sockets/ip-name-lookup` error-code — a DIFFERENT variant list from
+/// the sockets `error-code` above (name resolution has its own failure modes),
+/// so it gets its own type and its own lift. The `other` case's optional host
+/// message is carried through as its payload, matching `NetworkError`.
+public enum DnsError =
+    AccessDenied
+    InvalidArgument
+    NameUnresolvable
+    TemporaryResolverFailure
+    PermanentResolverFailure
+    Other(Option<String>)
+
+implement IoError for DnsError
+
+/// `wasi:sockets/ip-name-lookup`. One async call returns every address — no
+/// resolve-stream and no readiness polling (unlike p2). Never succeeds with an
+/// empty list: it either fails or yields at least one address. An IP-literal
+/// `name` is parsed and returned as-is with no network round-trip (it still
+/// requires the host's `ip-name-lookup` permission).
+module NameLookup =
+    /// Start resolving `name`. Await the returned call, then `resolveFinish`.
+    public function resolveStart(name: String): AsyncCall = intrinsic
+    /// Lift the resolved address list and free the call's pinned buffers.
+    public function resolveFinish(call: AsyncCall): Result<Array<IpAddress>, DnsError> = intrinsic

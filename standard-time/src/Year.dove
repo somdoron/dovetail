@@ -1,0 +1,79 @@
+package standard.time
+
+/// Represents a year in the ISO-8601 calendar system.
+public newtype Year = Int32
+
+function yearLengthImpl(year: Int32): Int32 =
+    if isLeapYearImpl(year) then 366 else 365
+
+/// Factory methods and operations for Year.
+module Year =
+    /// Creates a Year from the given integer value.
+    public function of(value: Int32): Year =
+        Year(value)
+
+    /// Returns true if this year is a leap year.
+    public function isLeap(self): Bool =
+        isLeapYearImpl(self.value)
+
+    /// Returns the number of days in this year (365 or 366).
+    public function length(self): Int32 =
+        yearLengthImpl(self.value)
+
+implement Equatable for Year =
+    /// Returns true if both Years have the same value.
+    public function equals(self: Year, other: Year): Bool =
+        self.value == other.value
+
+implement Comparable for Year =
+    /// Compares two Years numerically.
+    public function compare(self: Year, other: Year): Ordering =
+        if self.value < other.value then Ordering.Less
+        else if self.value > other.value then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for Year =
+    /// Formats this Year as its numeric string representation.
+    public function format(self: Year): String =
+        self.value.format()
+
+test "Year of" =
+    let y = Year.of(2024)
+    assert y.value == 2024
+
+test "Year isLeap" =
+    assert Year.of(2024).isLeap()
+    assert Year.of(2000).isLeap()
+    assert Year.of(2023).isLeap() == false
+    assert Year.of(1900).isLeap() == false
+    assert Year.of(2100).isLeap() == false
+
+test "Year length leap" =
+    assert Year.of(2024).length() == 366
+
+test "Year length non-leap" =
+    assert Year.of(2023).length() == 365
+
+test "Year equals" =
+    let a = Year.of(2024)
+    let b = Year.of(2024)
+    let c = Year.of(2025)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "Year compare" =
+    let a = Year.of(2020)
+    let b = Year.of(2024)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "Year display" =
+    assert Year.of(2024).format() == "2024"
+    assert Year.of(1999).format() == "1999"
+
+test "Year leap century rule" =
+    assert Year.of(400).isLeap()
+    assert Year.of(800).isLeap()
+    assert Year.of(100).isLeap() == false
+    assert Year.of(200).isLeap() == false

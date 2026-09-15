@@ -1,0 +1,139 @@
+package standard.time
+
+/// Represents a time without a date or time-zone, such as 14:30:45.
+@derive(Equatable)
+public record LocalTime =
+    /// The hour of the day (0-23).
+    hour: Int32
+    /// The minute of the hour (0-59).
+    minute: Int32
+    /// The second of the minute (0-59).
+    second: Int32
+    /// The nanosecond within the second (0 to 999,999,999).
+    nano: Int32
+
+function normalizeTime(h: Int32, m: Int32, s: Int32, ns: Int32): LocalTime =
+    let mutable sec = s + ns / 1000000000
+    let mutable nano = ns % 1000000000
+    if nano < 0 then
+        sec = sec - 1
+        nano = nano + 1000000000
+    let mutable min = m + sec / 60
+    sec = sec % 60
+    if sec < 0 then
+        min = min - 1
+        sec = sec + 60
+    let mutable hr = h + min / 60
+    min = min % 60
+    if min < 0 then
+        hr = hr - 1
+        min = min + 60
+    hr = hr % 24
+    if hr < 0 then hr = hr + 24
+    LocalTime { hour = hr; minute = min; second = sec; nano = nano }
+
+/// Factory methods and operations for LocalTime.
+module LocalTime =
+    /// Creates a LocalTime from hour, minute, and second components.
+    public function of(h: Int32, m: Int32, s: Int32): LocalTime =
+        normalizeTime(h, m, s, 0)
+
+    /// Creates a LocalTime from hour, minute, second, and nanosecond components.
+    public function ofNano(h: Int32, m: Int32, s: Int32, nano: Int32): LocalTime =
+        normalizeTime(h, m, s, nano)
+
+    /// Returns a LocalTime representing midnight (00:00:00).
+    public function midnight(): LocalTime =
+        LocalTime { hour = 0; minute = 0; second = 0; nano = 0 }
+
+    /// Returns a new LocalTime with the given hours added, wrapping around 24 hours.
+    public function plusHours(self, h: Int32): LocalTime =
+        normalizeTime(self.hour + h, self.minute, self.second, self.nano)
+
+    /// Returns a new LocalTime with the given minutes added, wrapping as needed.
+    public function plusMinutes(self, m: Int32): LocalTime =
+        normalizeTime(self.hour, self.minute + m, self.second, self.nano)
+
+    /// Returns a new LocalTime with the given seconds added, wrapping as needed.
+    public function plusSeconds(self, s: Int32): LocalTime =
+        normalizeTime(self.hour, self.minute, self.second + s, self.nano)
+
+implement Comparable for LocalTime =
+    /// Compares two times chronologically.
+    public function compare(self: LocalTime, other: LocalTime): Ordering =
+        if self.hour < other.hour then Ordering.Less
+        else if self.hour > other.hour then Ordering.Greater
+        else if self.minute < other.minute then Ordering.Less
+        else if self.minute > other.minute then Ordering.Greater
+        else if self.second < other.second then Ordering.Less
+        else if self.second > other.second then Ordering.Greater
+        else if self.nano < other.nano then Ordering.Less
+        else if self.nano > other.nano then Ordering.Greater
+        else Ordering.Equal
+
+implement Display for LocalTime =
+    /// Formats this time as HH:mm:ss.
+    public function format(self: LocalTime): String =
+        padZero(self.hour, 2) ++ ":" ++ padZero(self.minute, 2) ++ ":" ++ padZero(self.second, 2)
+
+test "LocalTime of" =
+    let t = LocalTime.of(14, 30, 45)
+    assert t.hour == 14
+    assert t.minute == 30
+    assert t.second == 45
+
+test "LocalTime midnight" =
+    let t = LocalTime.midnight()
+    assert t.hour == 0
+    assert t.minute == 0
+    assert t.second == 0
+    assert t.nano == 0
+
+test "LocalTime ofNano" =
+    let t = LocalTime.ofNano(10, 20, 30, 500000000)
+    assert t.hour == 10
+    assert t.nano == 500000000
+
+test "LocalTime plusHours" =
+    let t = LocalTime.of(10, 0, 0)
+    let t2 = t.plusHours(5)
+    assert t2.hour == 15
+
+test "LocalTime plusHours wraps" =
+    let t = LocalTime.of(22, 0, 0)
+    let t2 = t.plusHours(5)
+    assert t2.hour == 3
+
+test "LocalTime plusMinutes" =
+    let t = LocalTime.of(10, 50, 0)
+    let t2 = t.plusMinutes(20)
+    assert t2.hour == 11
+    assert t2.minute == 10
+
+test "LocalTime plusSeconds" =
+    let t = LocalTime.of(10, 0, 50)
+    let t2 = t.plusSeconds(20)
+    assert t2.minute == 1
+    assert t2.second == 10
+
+test "LocalTime equals" =
+    let a = LocalTime.of(12, 30, 0)
+    let b = LocalTime.of(12, 30, 0)
+    let c = LocalTime.of(12, 31, 0)
+    assert a.equals(b)
+    assert a.equals(c) == false
+
+test "LocalTime compare" =
+    let a = LocalTime.of(8, 0, 0)
+    let b = LocalTime.of(16, 0, 0)
+    assert a.compare(b) == Ordering.Less
+    assert b.compare(a) == Ordering.Greater
+    assert a.compare(a) == Ordering.Equal
+
+test "LocalTime display" =
+    let t = LocalTime.of(9, 5, 3)
+    assert t.format() == "09:05:03"
+
+test "LocalTime display padding" =
+    let t = LocalTime.of(14, 30, 59)
+    assert t.format() == "14:30:59"

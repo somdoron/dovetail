@@ -1,0 +1,18 @@
+module standard.io.Producer<A, E>
+
+/// Each execution creates a fresh producer owned by the creating fiber's scope.
+/// Acquire and pull run on its child fiber; S stays private to that execution.
+/// Acquisition and release use ordinary bracket masking. Pull is demand-driven.
+/// A pull failure of None means EOF; Some(error) means a typed failure.
+public function make<S>(acquire: Async<S, E>, pull: (S) => Async<A, Option<E>>, release: (S) => Async<Unit, Never>): Async<Producer<A, E>, E> =
+    CreateProducer<S, A, E>(acquire,
+        (value: Any) => pull(value as S),
+        (value: Any) => release(value as S),
+        (fiber: FiberId, creator: FiberId) => Producer<A, E>(fiber, creator))
+
+/// Request one value. EOF and failures are returned after the producer closes.
+/// Only the creating fiber may request values from a live producer.
+public function next(self): Async<A, Option<E>> = Pull<A, E>(self)
+/// Close this owned producer and await cleanup. Repeated close is harmless.
+/// Only the creating fiber may explicitly close a live producer.
+public function interrupt(self): Async<Unit, Never> = InterruptProducer<A, E>(self)

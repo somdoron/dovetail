@@ -1,0 +1,392 @@
+package test
+
+import standard.io.Async
+import standard.sqlite.Connection
+import standard.sqlite.FromRow
+import standard.sqlite.FromSqlValue
+import standard.sqlite.Query
+import standard.sqlite.Row
+import standard.sqlite.SqlValue
+import standard.sqlite.sql
+import standard.sqlite.SqliteError
+import standard.sqlite.ToSqlValue
+import standard.time.Instant
+
+// The query layer against the real composed sqlite component: `sql"..."`
+// fragments executed through `execute` / `fetchAll` / `fetchOne` /
+// `fetchOptional`, decoded through derived `FromRow`. Each test uses its own
+// database file in the runner's writable tempdir.
+
+@derive(ToSqlValue)
+@derive(FromSqlValue)
+@derive(FromRow)
+newtype AccountId = Int64
+
+@derive(FromRow)
+record Account =
+    id: Int64
+    owner: String
+    balance: Int64
+
+test "execute reports the affected row count" =
+    let mutable affected: Int64 = -1i64
+    executeProgram((n: Int64) => affected = n).run()
+    assert affected == 1i64
+
+async function executeProgram(setAffected: (Int64) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryExecute.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    let owner = "alice"
+    let balance = 100i64
+    let affected = await sql"INSERT INTO accounts (owner, balance) VALUES ($owner, $balance)".execute(conn)
+    setAffected(affected)
+
+test "fetchAll decodes rows through a derived FromRow record" =
+    let mutable owners: String = ""
+    let mutable count: Int32 = 0
+    fetchAllProgram((o: String) => owners = o, (c: Int32) => count = c).run()
+    assert count == 3
+    assert owners == "alice,bob,carol,"
+
+async function fetchAllProgram(setOwners: (String) => Unit, setCount: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryFetchAll.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 20), ('carol', 30)")
+    let accounts: List<Account> = await sql"SELECT id, owner, balance FROM accounts ORDER BY id".fetchAll<Account>(conn)
+    setCount(accounts.length)
+    let mutable joined = ""
+    accounts.forEach((a: Account) => joined = joined ++ a.owner ++ ",")
+    setOwners(joined)
+
+test "fetchOne returns the single row and errors on the wrong cardinality" =
+    let mutable balance: Int64 = 0i64
+    let mutable noneCode: Int32 = 0
+    let mutable manyCode: Int32 = 0
+    fetchOneProgram(
+        (b: Int64) => balance = b,
+        (c: Int32) => noneCode = c,
+        (c: Int32) => manyCode = c
+    ).run()
+    assert balance == 20i64
+    assert noneCode == 1
+    assert manyCode == 1
+
+async function fetchOneProgram(
+    setBalance: (Int64) => Unit,
+    setNoneCode: (Int32) => Unit,
+    setManyCode: (Int32) => Unit
+): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryFetchOne.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 20)")
+
+    let owner = "bob"
+    let found: Account = await sql"SELECT id, owner, balance FROM accounts WHERE owner = $owner".fetchOne<Account>(conn)
+    setBalance(found.balance)
+
+    // Zero rows and more than one row are both cardinality errors. Scalar
+    // fetches here so the recovery handler has an easy fallback value.
+    let missing = "nobody"
+    let recordNone: (SqliteError) => Async<Int64, Never> = (e: SqliteError) =>
+        setNoneCode(e.code)
+        Async.succeed(-1i64)
+    await sql"SELECT balance FROM accounts WHERE owner = $missing"
+        .fetchOne<Int64>(conn)
+        .catchAll<Never>(recordNone)
+
+    let recordMany: (SqliteError) => Async<Int64, Never> = (e: SqliteError) =>
+        setManyCode(e.code)
+        Async.succeed(-1i64)
+    await sql"SELECT balance FROM accounts".fetchOne<Int64>(conn).catchAll<Never>(recordMany)
+    ()
+
+test "fetchOptional distinguishes no row from one row" =
+    let mutable absent = false
+    let mutable presentOwner = ""
+    fetchOptionalProgram((a: Bool) => absent = a, (o: String) => presentOwner = o).run()
+    assert absent
+    assert presentOwner == "alice"
+
+async function fetchOptionalProgram(setAbsent: (Bool) => Unit, setOwner: (String) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryFetchOptional.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10)")
+    let missing = "nobody"
+    let none: Option<Account> =
+        await sql"SELECT id, owner, balance FROM accounts WHERE owner = $missing".fetchOptional<Account>(conn)
+    setAbsent(none.isNone)
+    let present = "alice"
+    let some: Option<Account> =
+        await sql"SELECT id, owner, balance FROM accounts WHERE owner = $present".fetchOptional<Account>(conn)
+    match some with
+        case Some(a) => setOwner(a.owner)
+        case None => panic "expected a row"
+
+test "a scalar fetchOne reads a single-column row" =
+    let mutable total: Int64 = -1i64
+    scalarProgram((n: Int64) => total = n).run()
+    assert total == 2i64
+
+async function scalarProgram(setTotal: (Int64) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryScalar.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 20)")
+    setTotal(await sql"SELECT COUNT(*) AS n FROM accounts".fetchOne<Int64>(conn))
+
+test "spread matches an IN clause, and an empty spread matches nothing" =
+    let mutable matched: Int32 = -1
+    let mutable empty: Int32 = -1
+    spreadProgram((n: Int32) => matched = n, (n: Int32) => empty = n).run()
+    assert matched == 2
+    assert empty == 0
+
+async function spreadProgram(setMatched: (Int32) => Unit, setEmpty: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("querySpread.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 20), ('carol', 30)")
+
+    let wanted: List<Int64> = [1i64, 3i64]
+    let some: List<Account> =
+        await sql"SELECT id, owner, balance FROM accounts WHERE id IN ($..wanted) ORDER BY id".fetchAll<Account>(conn)
+    setMatched(some.length)
+
+    // `IN (NULL)` is valid SQL that matches no rows — the point of rendering an
+    // empty spread as NULL rather than emitting the syntax error `IN ()`.
+    let none: List<Int64> = List.empty
+    let empty: List<Account> =
+        await sql"SELECT id, owner, balance FROM accounts WHERE id IN ($..none)".fetchAll<Account>(conn)
+    setEmpty(empty.length)
+
+test "appended fragments bind their parameters in order" =
+    let mutable owner = ""
+    let mutable count: Int32 = -1
+    appendProgram((o: String) => owner = o, (c: Int32) => count = c).run()
+    assert count == 1
+    assert owner == "bob"
+
+/// The real-database half of the anonymous-`?` composition claim: if
+/// placeholders ever needed renumbering, the appended fragments would bind
+/// against the wrong parameters and this would fail loudly.
+async function appendProgram(setOwner: (String) => Unit, setCount: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryAppend.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 20), ('carol', 30)")
+
+    let ownerFilter: Option<String> = Some("bob")
+    let balanceFilter: Option<Int64> = Some(15i64)
+    let unusedFilter: Option<Int64> = None
+    let query =
+        sql"SELECT id, owner, balance FROM accounts"
+            .append(Query.whereAndSome([
+                ownerFilter.map<Query>((o: String) => sql"owner = $o"),
+                balanceFilter.map<Query>((b: Int64) => sql"balance > $b"),
+                unusedFilter.map<Query>((i: Int64) => sql"id = $i")
+            ]))
+    let found: List<Account> = await query.fetchAll<Account>(conn)
+    setCount(found.length)
+    match found.headOption with
+        case Some(a) => setOwner(a.owner)
+        case None => panic "expected a row"
+
+test "queryRows carries column names, honoring AS aliases" =
+    let mutable label = ""
+    let mutable missingCode: Int32 = 0
+    aliasProgram((s: String) => label = s, (c: Int32) => missingCode = c).run()
+    assert label == "alice"
+    assert missingCode == 25
+
+async function aliasProgram(setLabel: (String) => Unit, setMissing: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryAlias.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10)")
+    let row: Row = await sql"SELECT owner AS label FROM accounts".fetchOne<Row>(conn)
+    match row.column("label") with
+        case Ok(value) => setLabel(String.fromSqlValue(value).require)
+        case Error(_) => panic "expected the aliased column"
+    match row.column("owner") with
+        case Ok(_) => panic "the original column name should not resolve"
+        case Error(e) => setMissing(e.code)
+
+test "a decode mismatch surfaces as a typed error" =
+    let mutable code: Int32 = 0
+    mismatchProgram((c: Int32) => code = c).run()
+    assert code == 20
+
+async function mismatchProgram(setCode: (Int32) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryMismatch.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10)")
+    let handler: (SqliteError) => Async<Int64, Never> = (e: SqliteError) =>
+        setCode(e.code)
+        Async.succeed(-1i64)
+    await sql"SELECT owner FROM accounts".fetchOne<Int64>(conn).catchAll<Never>(handler)
+    ()
+
+test "queries compose inside a transaction and roll back on failure" =
+    let mutable committed: Int64 = -1i64
+    let mutable rolledBack: Int64 = -1i64
+    transactionProgram((n: Int64) => committed = n, (n: Int64) => rolledBack = n).run()
+    assert committed == 2i64
+    assert rolledBack == 2i64
+
+async function transactionProgram(setCommitted: (Int64) => Unit, setRolledBack: (Int64) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryTransaction.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+
+    let body: (Connection) => Async<Unit, SqliteError> = async (tx: Connection) =>
+        let alice = "alice"
+        let bob = "bob"
+        await sql"INSERT INTO accounts (owner, balance) VALUES ($alice, 10)".execute(tx)
+        await sql"INSERT INTO accounts (owner, balance) VALUES ($bob, 20)".execute(tx)
+        ()
+    await conn.transaction<Unit, SqliteError>(body)
+    setCommitted(await sql"SELECT COUNT(*) AS n FROM accounts".fetchOne<Int64>(conn))
+
+    let failing: (Connection) => Async<Unit, SqliteError> = async (tx: Connection) =>
+        let carol = "carol"
+        await sql"INSERT INTO accounts (owner, balance) VALUES ($carol, 30)".execute(tx)
+        await Async.fail(SqliteError { code = 1; message = "deliberate" })
+    let swallow: (SqliteError) => Async<Unit, Never> = (_: SqliteError) => Async.succeed(())
+    await conn.transaction<Unit, SqliteError>(failing).catchAll<Never>(swallow)
+    setRolledBack(await sql"SELECT COUNT(*) AS n FROM accounts".fetchOne<Int64>(conn))
+
+test "composed clauses run against a real database" =
+    let mutable everyone: Int32 = -1
+    let mutable filtered = ""
+    let mutable sorted = ""
+    let mutable updated: Int64 = -1i64
+    clauseProgram(
+        (n: Int32) => everyone = n,
+        (s: String) => filtered = s,
+        (s: String) => sorted = s,
+        (n: Int64) => updated = n
+    ).run()
+    assert everyone == 3
+    assert filtered == "bob"
+    assert sorted == "carol,bob,alice,"
+    assert updated == 1i64
+
+/// The clause builders end-to-end: an absent filter really does leave no
+/// `WHERE` behind (so the statement is still valid without a `1=1` placeholder),
+/// a present one really does bind, and `SET`/`ORDER BY` compose the same way.
+async function clauseProgram(
+    setEveryone: (Int32) => Unit,
+    setFiltered: (String) => Unit,
+    setSorted: (String) => Unit,
+    setUpdated: (Int64) => Unit
+): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryClauses.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 20), ('carol', 30)")
+
+    // Every filter absent: no WHERE clause is emitted at all, and the statement
+    // is still valid SQL.
+    let noOwner: Option<String> = None
+    let noBalance: Option<Int64> = None
+    let unfiltered =
+        sql"SELECT id, owner, balance FROM accounts"
+            .append(Query.whereAndSome([
+                noOwner.map<Query>((o: String) => sql"owner = $o"),
+                noBalance.map<Query>((b: Int64) => sql"balance > $b")
+            ]))
+    assert unfiltered.text == "SELECT id, owner, balance FROM accounts"
+    let all: List<Account> = await unfiltered.fetchAll<Account>(conn)
+    setEveryone(all.length)
+
+    // One filter present, one absent.
+    let someOwner: Option<String> = Some("bob")
+    let filtered: Account =
+        await sql"SELECT id, owner, balance FROM accounts"
+            .append(Query.whereAndSome([
+                someOwner.map<Query>((o: String) => sql"owner = $o"),
+                noBalance.map<Query>((b: Int64) => sql"balance > $b")
+            ]))
+            .fetchOne<Account>(conn)
+    setFiltered(filtered.owner)
+
+    // A dynamic sort, built the same way.
+    let sortedRows: List<Account> =
+        await sql"SELECT id, owner, balance FROM accounts"
+            .append(Query.orderBy([sql"balance DESC"]))
+            .fetchAll<Account>(conn)
+    let mutable names = ""
+    sortedRows.forEach((a: Account) => names = names ++ a.owner ++ ",")
+    setSorted(names)
+
+    // `setSome` over a partial update: only the present assignment is written.
+    let newBalance: Option<Int64> = Some(99i64)
+    let newOwner: Option<String> = None
+    match Query.setSome([
+        newBalance.map<Query>((b: Int64) => sql"balance = $b"),
+        newOwner.map<Query>((o: String) => sql"owner = $o")
+    ]) with
+        case Some(assignments) =>
+            let target = "alice"
+            setUpdated(
+                await sql"UPDATE accounts"
+                    .append(assignments)
+                    .append(Query.whereSome(Some(target), (o: String) => sql"owner = $o"))
+                    .execute(conn)
+            )
+        case None => panic "expected something to update"
+
+test "a tuple fetch decodes a join whose column names collide" =
+    let mutable owner = ""
+    let mutable label = ""
+    let mutable total: Int64 = -1i64
+    let mutable maximum: Int64 = -1i64
+    joinProgram(
+        (o: String) => owner = o,
+        (l: String) => label = l,
+        (t: Int64) => total = t,
+        (m: Int64) => maximum = m
+    ).run()
+    assert owner == "alice"
+    assert label == "widget"
+    assert total == 2i64
+    assert maximum == 30i64
+
+/// The two queries by-name decoding cannot express, both handled positionally:
+/// a join where both tables contribute an `id` column, and a projection of
+/// computed columns that have no names of their own.
+async function joinProgram(
+    setOwner: (String) => Unit,
+    setLabel: (String) => Unit,
+    setTotal: (Int64) => Unit,
+    setMaximum: (Int64) => Unit
+): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryJoin.db")
+    await conn.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, owner TEXT, balance INTEGER)")
+    await conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, accountId INTEGER, label TEXT)")
+    await conn.execute("INSERT INTO accounts (owner, balance) VALUES ('alice', 10), ('bob', 30)")
+    await conn.execute("INSERT INTO items (accountId, label) VALUES (1, 'widget')")
+
+    // Both `a.id` and `i.id` come back named `id`, so a record keyed on names
+    // could not tell them apart without aliasing every column.
+    let joined: (Int64, String, Int64, String) =
+        await sql"""
+SELECT a.id, a.owner, i.id, i.label
+FROM accounts a JOIN items i ON i.accountId = a.id
+"""
+            .fetchOne<(Int64, String, Int64, String)>(conn)
+    setOwner(joined._1)
+    setLabel(joined._3)
+
+    // Computed columns have no name to match on.
+    let stats: (Int64, Int64) =
+        await sql"SELECT COUNT(*), MAX(balance) FROM accounts".fetchOne<(Int64, Int64)>(conn)
+    setTotal(stats._0)
+    setMaximum(stats._1)
+
+test "an Instant round-trips through an INTEGER column" =
+    let mutable seconds: Int64 = -1i64
+    instantProgram((n: Int64) => seconds = n).run()
+    assert seconds == 1700000000i64
+
+async function instantProgram(setSeconds: (Int64) => Unit): Async<Unit, SqliteError> =
+    let conn = use Connection.open("queryInstant.db")
+    await conn.execute("CREATE TABLE events (at INTEGER)")
+    let at = Instant.ofEpochSecond(1700000000i64)
+    await sql"INSERT INTO events (at) VALUES ($at)".execute(conn)
+    let readBack: Instant = await sql"SELECT at FROM events".fetchOne<Instant>(conn)
+    setSeconds(readBack.epochSecond)

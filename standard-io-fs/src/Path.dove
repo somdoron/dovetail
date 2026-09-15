@@ -1,0 +1,194 @@
+package standard.io.fs
+
+/// A filesystem path as a pure value — never touches the disk. `Absolute` paths
+/// start at the root (e.g. `/etc/hosts`); `Relative` paths are interpreted
+/// against a `Directory` capability (typically the cwd preopen).
+///
+/// Bare root: `Path.Absolute([])` represents `/`. Empty relative: `Path.Relative([])`
+/// represents the current directory `.`.
+public enum Path =
+    Absolute(Array<String>)
+    Relative(Array<String>)
+
+// --- Internal helpers ---
+
+function splitSegments(raw: String): Array<String> =
+    let mutable result: Array<String> = [||]
+    for seg in raw.split("/") do
+        if seg.length > 0 then
+            result = result.concat(Array<String>.fill(1, seg))
+    result
+
+function joinSegments(left: Array<String>, right: Array<String>): Array<String> =
+    left.concat(right)
+
+function lastIndexOfChar(s: String, c: Char): Option<Int32> =
+    s.lastIndexOf(String.fromChar(c))
+
+function stemOf(name: String): String =
+    match lastIndexOfChar(name, '.') with
+    case Some(i) =>
+        if i == 0 then name        // ".bashrc" — no stem split
+        else name.substring(0, i)
+    case None => name
+
+function extensionOf(name: String): Option<String> =
+    match lastIndexOfChar(name, '.') with
+    case Some(i) =>
+        if i == 0 then None         // ".bashrc" — no extension
+        else Some(name.substring(i + 1, name.length))
+    case None => None
+
+function arrayDropLast(segs: Array<String>): Array<String> =
+    if segs.length <= 1 then [||]
+    else
+        let mutable result: Array<String> = Array<String>.fill(segs.length - 1, "")
+        let mutable i: Int32 = 0
+        while i < segs.length - 1 do
+            result.set(i, segs.get(i))
+            i = i + 1
+        result
+
+function arrayWithLastReplaced(segs: Array<String>, last: String): Array<String> =
+    if segs.length == 0 then Array<String>.fill(1, last)
+    else
+        let mutable result: Array<String> = segs.clone()
+        result.set(segs.length - 1, last)
+        result
+
+function normalizeSegments(segs: Array<String>, allowAboveRoot: Bool): Array<String> =
+    // Drop "." and collapse ".." against the previous segment. For absolute
+    // paths (allowAboveRoot = false), leading ".." is dropped (can't go above
+    // root). For relative, leading ".." is preserved.
+    let mutable result: Array<String> = [||]
+    for seg in segs do
+        if seg == "." then ()
+        else if seg == ".." then
+            if result.length > 0 && result.get(result.length - 1) != ".." then
+                result = arrayDropLast(result)
+            else if allowAboveRoot then
+                result = result.concat(Array<String>.fill(1, ".."))
+            else
+                ()  // discard ".." at root
+        else
+            result = result.concat(Array<String>.fill(1, seg))
+    result
+
+// --- Module ---
+
+module Path =
+    // --- Constructors ---
+
+    /// Parse a string into a `Path`. A leading `/` yields `Absolute`; anything
+    /// else yields `Relative`. Empty segments (consecutive `/`) are dropped.
+    public function of(s: String): Path =
+        if s.startsWith("/") then
+            Path.Absolute(splitSegments(s.substring(1, s.length)))
+        else
+            Path.Relative(splitSegments(s))
+
+    /// Build an `Absolute` path directly from segments. Caller is responsible
+    /// for not including separator characters within a segment.
+    public function absolute(segs: Array<String>): Path = Path.Absolute(segs)
+
+    /// Build a `Relative` path directly from segments.
+    public function relative(segs: Array<String>): Path = Path.Relative(segs)
+
+    // --- Properties ---
+
+    /// The path's segments, regardless of variant.
+    public property segments(self): Array<String> =
+        match self with
+        case Path.Absolute(segs) => segs
+        case Path.Relative(segs) => segs
+
+    /// True for `Absolute`, false for `Relative`.
+    public property isAbsolute(self): Bool =
+        match self with
+        case Path.Absolute(_) => true
+        case Path.Relative(_) => false
+
+    /// The last segment, or `None` for empty / bare-root paths.
+    public property name(self): Option<String> =
+        let segs = self.segments
+        if segs.length == 0 then None
+        else Some(segs.get(segs.length - 1))
+
+    /// `name` with extension stripped, or `None` if there is no name.
+    public property stem(self): Option<String> =
+        match self.name with
+        case Some(n) => Some(stemOf(n))
+        case None => None
+
+    /// The substring after the last `.` in `name`, or `None` if there is no
+    /// extension or no name. Dotfiles (`.bashrc`) have no extension.
+    public property ext(self): Option<String> =
+        match self.name with
+        case Some(n) => extensionOf(n)
+        case None => None
+
+    /// All segments except the last, or `None` for empty / bare-root paths.
+    public property parent(self): Option<Path> =
+        let segs = self.segments
+        if segs.length == 0 then None
+        else
+            let dropped = arrayDropLast(segs)
+            match self with
+            case Path.Absolute(_) => Some(Path.Absolute(dropped))
+            case Path.Relative(_) => Some(Path.Relative(dropped))
+
+    // --- Methods ---
+
+    /// Append a single segment. Empty segment is appended as-is (no filtering).
+    public function join(self, segment: String): Path =
+        let segs = self.segments
+        let appended = segs.concat(Array<String>.fill(1, segment))
+        match self with
+        case Path.Absolute(_) => Path.Absolute(appended)
+        case Path.Relative(_) => Path.Relative(appended)
+
+    /// Append a relative `Path`. Panics if `other` is `Absolute` — joining with
+    /// an absolute is almost always a bug; use `Path.of` if you wanted that.
+    public function joinPath(self, other: Path): Path =
+        match other with
+        case Path.Absolute(_) => panic "Path.join: cannot append an Absolute path"
+        case Path.Relative(otherSegs) =>
+            let combined = self.segments.concat(otherSegs)
+            match self with
+            case Path.Absolute(_) => Path.Absolute(combined)
+            case Path.Relative(_) => Path.Relative(combined)
+
+    /// Replace the last segment. Adds it if the path is empty.
+    public function withName(self, n: String): Path =
+        let segs = self.segments
+        let updated = arrayWithLastReplaced(segs, n)
+        match self with
+        case Path.Absolute(_) => Path.Absolute(updated)
+        case Path.Relative(_) => Path.Relative(updated)
+
+    /// Replace (or add) the extension on the last segment.
+    public function withExtension(self, ext: String): Path =
+        match self.name with
+        case Some(n) =>
+            let base = stemOf(n)
+            let newName = if ext.length == 0 then base else base ++ "." ++ ext
+            self.withName(newName)
+        case None => self
+
+    /// Collapse `.` and `..` segments purely syntactically. For absolute paths,
+    /// leading `..` segments are discarded (cannot escape root); for relative
+    /// paths they are preserved.
+    public function normalize(self): Path =
+        match self with
+        case Path.Absolute(segs) => Path.Absolute(normalizeSegments(segs, false))
+        case Path.Relative(segs) => Path.Relative(normalizeSegments(segs, true))
+
+// --- Operator overloads ---
+
+implement Div<String> for Path =
+    type Output = Path
+    function div(self: Path, rhs: String): Path = self.join(rhs)
+
+implement Div<Path> for Path =
+    type Output = Path
+    function div(self: Path, rhs: Path): Path = self.joinPath(rhs)

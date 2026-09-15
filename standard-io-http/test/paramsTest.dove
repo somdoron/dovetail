@@ -1,0 +1,83 @@
+package test
+
+import standard.io.http.PathParams
+import standard.io.http.QueryParams
+import standard.io.http.ParamDecodeError
+
+// PathParams + QueryParams accessor behavior. No router, no I/O.
+
+// --- PathParams -------------------------------------------------------------
+
+test "PathParams.empty: get returns None" =
+    let p = PathParams.empty()
+    assert p.get("id").isNone
+
+test "PathParams.getInt32: missing → Missing" =
+    let p = PathParams.empty()
+    let r = p.getInt32("id")
+    assert r.isError
+    match r with
+        case Error(ParamDecodeError.Missing(name)) => assert name == "id"
+        case _ => assert false
+
+// --- QueryParams ------------------------------------------------------------
+
+test "QueryParams.parse: None query string" =
+    let q = QueryParams.parse(None)
+    assert q.get("foo").isNone
+
+test "QueryParams.parse: simple key=value" =
+    let q = QueryParams.parse(Some("foo=bar"))
+    assert q.get("foo").require == "bar"
+
+test "QueryParams.parse: multiple distinct keys" =
+    let q = QueryParams.parse(Some("foo=bar&baz=qux"))
+    assert q.get("foo").require == "bar"
+    assert q.get("baz").require == "qux"
+
+test "QueryParams.parse: repeated key returns first via get, all via getAll" =
+    let q = QueryParams.parse(Some("foo=a&foo=b&foo=c"))
+    assert q.get("foo").require == "a"
+    let all = q.getAll("foo")
+    assert all.length == 3
+    assert all.get(0) == "a"
+    assert all.get(1) == "b"
+    assert all.get(2) == "c"
+
+test "QueryParams.parse: percent decoding" =
+    let q = QueryParams.parse(Some("name=Ada%20Lovelace"))
+    assert q.get("name").require == "Ada Lovelace"
+
+test "QueryParams.parse: + as space (legacy form encoding)" =
+    let q = QueryParams.parse(Some("name=Ada+Lovelace"))
+    assert q.get("name").require == "Ada Lovelace"
+
+test "QueryParams.parse: key without value" =
+    let q = QueryParams.parse(Some("flag"))
+    assert q.get("flag").require == ""
+
+test "QueryParams.parse: empty string" =
+    let q = QueryParams.parse(Some(""))
+    assert q.get("foo").isNone
+
+test "QueryParams.getInt32: valid" =
+    let q = QueryParams.parse(Some("limit=42"))
+    let r = q.getInt32("limit")
+    assert r.isOk
+    assert r.require == 42
+
+test "QueryParams.getInt32: invalid format" =
+    let q = QueryParams.parse(Some("limit=abc"))
+    let r = q.getInt32("limit")
+    assert r.isError
+    match r with
+        case Error(ParamDecodeError.InvalidFormat(name, exp)) =>
+            assert name == "limit"
+            assert exp == "Int32"
+        case _ => assert false
+
+test "QueryParams.getInt64: valid large value" =
+    let q = QueryParams.parse(Some("ts=1234567890123"))
+    let r = q.getInt64("ts")
+    assert r.isOk
+    assert r.require == 1234567890123i64

@@ -1,0 +1,4 @@
+package standard.prelude
+
+public trait From<T> =
+    function from(value: T): Self

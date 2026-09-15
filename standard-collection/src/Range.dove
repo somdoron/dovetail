@@ -1,0 +1,145 @@
+package standard.collection
+
+import standard.prelude.Iterable
+import standard.prelude.Iterator
+import standard.prelude.Option
+
+/// An immutable range of integers with a start, end, and step. Implements Iterable.
+public record Range =
+    /// The inclusive lower bound.
+    start: Int32
+    /// The exclusive upper bound.
+    end: Int32
+    /// The increment between successive values.
+    step: Int32
+
+module Range =
+    /// Creates a half-open range [start, end) with step 1.
+    public function new(start: Int32, end: Int32): Range =
+        Range { start = start; end = end; step = 1 }
+
+    /// Creates a closed range [start, end] with step 1.
+    public function inclusive(start: Int32, end: Int32): Range =
+        Range { start = start; end = end + 1; step = 1 }
+
+    /// Returns a new range with the given step size.
+    public function withStep(self, step: Int32): Range =
+        Range { start = self.start; end = self.end; step = step }
+
+    /// The number of values in the range, accounting for the step.
+    public property length(self): Int32 =
+        if self.step > 0 then
+            if self.start >= self.end then 0
+            else (self.end - self.start + self.step - 1) / self.step
+        else if self.step < 0 then
+            if self.start <= self.end then 0
+            else (self.start - self.end - self.step - 1) / (0 - self.step)
+        else 0
+
+    /// True if the range contains no values.
+    public property isEmpty(self): Bool = self.length == 0
+
+    /// Returns true if the value falls within the range and aligns with the step.
+    public function contains(self, value: Int32): Bool =
+        if self.step > 0 then
+            value >= self.start && value < self.end && (value - self.start) % self.step == 0
+        else if self.step < 0 then
+            value <= self.start && value > self.end && (self.start - value) % (0 - self.step) == 0
+        else false
+
+class RangeIterator(mutable current: Int32, end: Int32, step: Int32) implements Iterator<Int32> =
+    public function next(self): Option<Int32> =
+        if self.isDone then None
+        else
+            let value = self.current
+            self.current = self.current + self.step
+            Some(value)
+
+    property isDone(self): Bool =
+        if self.step > 0 then self.current >= self.end
+        else if self.step < 0 then self.current <= self.end
+        else true
+
+implement Iterable<Int32> for Range =
+    /// Returns an iterator that yields each value in the range.
+    public function iterator(self): Iterator<Int32> =
+        RangeIterator(self.start, self.end, self.step)
+
+test "Range new" =
+    let r = Range.new(0, 5)
+    assert r.start == 0
+    assert r.end == 5
+    assert r.step == 1
+
+test "Range inclusive" =
+    let r = Range.inclusive(1, 5)
+    assert r.start == 1
+    assert r.end == 6
+    assert r.length == 5
+
+test "Range length" =
+    assert Range.new(0, 10).length == 10
+    assert Range.new(0, 0).length == 0
+    assert Range.new(5, 3).length == 0
+
+test "Range isEmpty" =
+    assert Range.new(0, 0).isEmpty == true
+    assert Range.new(0, 1).isEmpty == false
+    assert Range.new(5, 3).isEmpty == true
+
+test "Range contains" =
+    let r = Range.new(0, 10)
+    assert r.contains(0) == true
+    assert r.contains(5) == true
+    assert r.contains(9) == true
+    assert r.contains(10) == false
+    assert r.contains(-1) == false
+
+test "Range withStep" =
+    let r = Range.new(0, 10).withStep(2)
+    assert r.step == 2
+    assert r.length == 5
+    assert r.contains(0) == true
+    assert r.contains(2) == true
+    assert r.contains(3) == false
+
+test "Range withStep 3" =
+    let r = Range.new(0, 10).withStep(3)
+    assert r.length == 4
+    assert r.contains(0) == true
+    assert r.contains(3) == true
+    assert r.contains(6) == true
+    assert r.contains(9) == true
+
+test "Range iterator" =
+    let r = Range.new(0, 3)
+    let iter = r.iterator()
+    let r1 = iter.next()
+    assert r1.isSome
+    assert r1.require == 0
+    let r2 = iter.next()
+    assert r2.isSome
+    assert r2.require == 1
+    let r3 = iter.next()
+    assert r3.isSome
+    assert r3.require == 2
+    assert iter.next().isNone
+
+test "Range iterator with step" =
+    let r = Range.new(0, 6).withStep(2)
+    let iter = r.iterator()
+    let r1 = iter.next()
+    assert r1.isSome
+    assert r1.require == 0
+    let r2 = iter.next()
+    assert r2.isSome
+    assert r2.require == 2
+    let r3 = iter.next()
+    assert r3.isSome
+    assert r3.require == 4
+    assert iter.next().isNone
+
+test "Range empty iterator" =
+    let r = Range.new(5, 5)
+    let iter = r.iterator()
+    assert iter.next().isNone

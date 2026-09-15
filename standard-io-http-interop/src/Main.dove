@@ -1,0 +1,129 @@
+package interop.http
+
+import standard.io.http.HttpClient
+import standard.io.http.HttpClientError
+import standard.io.http.HttpServer
+import standard.io.http.Response
+import standard.io.http.Request
+import standard.io.http.Method
+import standard.io.http.Route
+import standard.io.http.Context
+import standard.io.http.ServerError
+import standard.io.Async
+import standard.io.Environment
+import standard.io.fs.Path
+import standard.crypto.X509Certificate
+import standard.io.crypto.ServerKey
+import standard.io.crypto.CertificateFile
+import standard.io.crypto.PrivateKeyFile
+import standard.io.crypto.CertLoadError
+import standard.io.crypto.PrivateKeyError
+import standard.http.Headers
+import standard.uri.Uri
+import standard.prelude.Array
+import standard.prelude.Option
+
+/// Interop smoke test entry point. Switches on the `MODE` env var:
+///   - `MODE=client` makes a `GET` against `URL`, expects status 200 and body
+///     `"hello from rust"` (plain HTTP, raw-Rust counterparty).
+///   - `MODE=server` binds `127.0.0.1:PORT` and serves `/hello` -> `"hello from
+///     domain"` (plain HTTP). Runs until interrupted.
+///   - `MODE=client-tls` makes a `GET` against `URL` (an `https://` URL),
+///     trusting the single CA certificate at `CA` (PEM). Expects status 200 —
+///     drives the Dovetail HTTPS client against a real `openssl s_server`.
+///   - `MODE=server-tls` binds `127.0.0.1:PORT` and serves `/hello` over TLS,
+///     loading its certificate chain from `CERT` and signing key from `KEY`
+///     (both PEM) — drives the Dovetail HTTPS server against a real `openssl
+///     s_client`.
+/// The Rust integration tests drive every direction.
+
+async function requireEnv(name: String): Async<String, Never> =
+    match Environment.get(name) with
+        case Some(v) => v
+        case None => await Async.failPanic("missing " ++ name ++ " env var")
+
+async function clientMain(): Async<Unit, HttpClientError> =
+    let url = await requireEnv("URL")
+    let resp = await HttpClient.get(url).send()
+    if resp.statusCode != 200 then
+        await Async.failPanic("expected 200, got " ++ resp.statusCode.format())
+    else ()
+    let body = resp.bodyAsString()
+    if body != "hello from rust" then
+        await Async.failPanic("expected body 'hello from rust', got '" ++ body ++ "'")
+    else ()
+    ()
+
+/// HTTPS client against a real `openssl s_server`: trust the CA at `CA`, GET
+/// `URL`, expect 200.
+async function clientTlsMain(): Async<Unit, HttpClientError> =
+    let url = await requireEnv("URL")
+    let caPath = Path.of(await requireEnv("CA"))
+    let ca = await X509Certificate.loadPem(caPath).attachToScope().catchAll(
+        (e: CertLoadError) => Async<X509Certificate, Never>.failPanic("CA load: " ++ e.format()))
+    let uri = match Uri.parse(url) with
+        case Ok(u) => u
+        case Error(_) => await Async.failPanic("bad URL: " ++ url)
+    let req = Request {
+        method = Method.Get
+        uri = uri
+        headers = Headers.empty()
+        body = Array<Uint8>.empty()
+    }
+    let resp = await HttpClient.sendWithTrust(req, Some([ca]))
+    if resp.statusCode != 200 then
+        await Async.failPanic("expected 200 over TLS, got " ++ resp.statusCode.format())
+    else ()
+    ()
+
+function helloHandler(_: Context): Async<Response, ServerError> =
+    Async.succeed(Response.text("hello from dovetail"))
+
+function helloApp(): Route =
+    Route.choose([|
+        Route.get("/hello", helloHandler),
+    |])
+
+async function serverMain(): Async<Unit, ServerError> =
+    let port = await requireEnv("PORT")
+    await HttpServer.serve("127.0.0.1:" ++ port, helloApp())
+
+/// HTTPS server against a real `openssl s_client`: load cert chain + key, serve
+/// `/hello` over TLS.
+async function serverTlsMain(): Async<Unit, ServerError> =
+    let port = await requireEnv("PORT")
+    let certPath = Path.of(await requireEnv("CERT"))
+    let keyPath = Path.of(await requireEnv("KEY"))
+    let chain = await X509Certificate.loadChainPem(certPath).attachToScope().catchAll(
+        (e: CertLoadError) => Async<List<X509Certificate>, Never>.failPanic("cert load: " ++ e.format()))
+    let key = await ServerKey.loadPrivateKeyPem(keyPath).attachToScope().catchAll(
+        (e: PrivateKeyError) => Async<ServerKey, Never>.failPanic("key load: " ++ e.format()))
+    let tls = await HttpServer.tlsServerConfig(chain, key)
+    await HttpServer.serveTls("127.0.0.1:" ++ port, helloApp(), tls)
+
+function main(): Unit =
+    let mode = match Environment.get("MODE") with
+        case Some(m) => m
+        case None => panic "missing MODE env var (expected 'client'/'server'/'client-tls'/'server-tls')"
+    if mode == "client" then
+        clientMain().fold(
+            (e: HttpClientError) => Async<Unit, Never>.failPanic("HTTP client error: " ++ e.format()),
+            (_: Unit) => Async.succeed(())
+        ).run()
+    else if mode == "server" then
+        serverMain().fold(
+            (e: ServerError) => Async<Unit, Never>.failPanic("HTTP server error: " ++ e.format()),
+            (_: Unit) => Async.succeed(())
+        ).run()
+    else if mode == "client-tls" then
+        clientTlsMain().fold(
+            (e: HttpClientError) => Async<Unit, Never>.failPanic("HTTPS client error: " ++ e.format()),
+            (_: Unit) => Async.succeed(())
+        ).run()
+    else if mode == "server-tls" then
+        serverTlsMain().fold(
+            (e: ServerError) => Async<Unit, Never>.failPanic("HTTPS server error: " ++ e.format()),
+            (_: Unit) => Async.succeed(())
+        ).run()
+    else
+        panic "unknown MODE: '" ++ mode ++ "' (expected 'client'/'server'/'client-tls'/'server-tls')"
