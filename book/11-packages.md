@@ -14,7 +14,7 @@ Every Dovetail source file must start with a **package declaration**. This ident
 package hello
 
 function main() =
-    println("Hello, World!")
+    debug("Hello, World!")
 ```
 
 For a library with a deeper structure:
@@ -392,9 +392,9 @@ The [Git dependencies design](../docs/github-dependencies-design.md) describes t
 
 - Every file starts with a **package** declaration; the package path must match the directory structure.
 - Use **imports** to bring in types and functions from other packages; one import per line, no wildcards. Use **aliased imports** when names clash or you want a shorter name.
-- **Extensions** and **trait implementations** in the same package are available automatically with the type; cross-package extensions must be named and explicitly imported.
+- **Named extensions** must be explicitly imported, including within the same package. Trait implementations follow their own visibility and coherence rules.
 - **Visibility** is controlled by `public`, `private`, and `internal` so you can hide implementation details and expose a clear API.
 - **Git dependencies** are declared once per repository and revision, selected through project `depends`, and pinned in `Dovetail.lock`. Package imports keep their original names.
 - **Circular dependencies** are disallowed; the compiler enforces a DAG of package (and project) dependencies, which keeps builds and design predictable.
 
-In the next part, we’ll look at async programming and the `.andWait` operator.
+In the next part, we’ll look at async programming and the `await` operator.

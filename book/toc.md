@@ -8,12 +8,13 @@
 
 - 1.1 Introduction to Dovetail
   - What is Dovetail?
-  - Why another language? (TODO)
+  - Why another language?
   - Design philosophy and principles
   - Target platform (WasmGC)
   - Comparison with other languages
 - 1.2 Installation and Setup
   - Prerequisites (Rust toolchain, cargo)
+  - Installing with Cargo
   - Installing from source
   - Verifying the installation
 - 1.3 Editor Setup
@@ -34,6 +35,7 @@
 - 2.1 The Dovetail CLI
 - 2.2 Project Structure
 - 2.3 Dependency Management
+- 2.4 CI and Local Compiler Development
 
 ---
 
@@ -59,7 +61,7 @@
 ### [Part 5: Functions](05-functions.md)
 
 - 5.1 Function Definitions
-- 5.2 Named and Default Arguments
+- 5.2 Positional Arguments and Configuration
 - 5.3 Closures and Lambdas
 - 5.4 First-Class Function References
 - 5.5 Method References
@@ -165,6 +167,7 @@
 - 11.3 Visibility
   - Type visibility and private construction
 - 11.4 No Circular Dependencies
+- 11.5 GitHub Dependencies
 
 ---
 
@@ -332,7 +335,8 @@
 - 22.6 Networking
 - 22.7 Time
 - 22.8 JSON
-- 22.9 Random
+- 22.9 Randomness and Crypto
+- 22.10 Streams and SQLite
 
 ---
 
@@ -388,7 +392,9 @@
 
 ### Appendix
 
-- [A. Grammar Reference](a-grammar.md)
-- [B. Operator Precedence Table](b-operators.md)
-- [C. Reserved Keywords](c-keywords.md)
-- [D. Standard Library Quick Reference](d-stdlib-reference.md)
+- [A. Grammar Reference](../grammar.md)
+- [B. Operator Precedence Table](../grammar.md#operator-precedence-table)
+- [C. Reserved Keywords](../grammar.md#keywords)
+- [D. Standard Library Quick Reference](22-stdlib.md)
+
+[How this book is validated](validation.md)

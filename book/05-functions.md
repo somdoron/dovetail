@@ -35,14 +35,14 @@ Functions that don't return a meaningful value return `Unit`:
 
 ```dovetail
 function greet(name: String): Unit =
-    println("Hello, $name!")
+    debug("Hello, $name!")
 ```
 
 You can omit the return type annotation for `Unit`:
 
 ```dovetail
 function greet(name: String) =
-    println("Hello, $name!")
+    debug("Hello, $name!")
 ```
 
 ### Multi-Line Function Bodies
@@ -58,7 +58,8 @@ function calculateTotal(price: Float64, quantity: Int32): Float64 =
 
 ### Visibility
 
-By default, functions are private to their package. Use `public` to make them accessible from other packages:
+Top-level functions default to `internal` (package visibility). Use `public` to
+make them accessible from other packages, or `private` for file-local helpers:
 
 ```dovetail
 public function add(a: Int32, b: Int32): Int32 =
@@ -67,74 +68,26 @@ public function add(a: Int32, b: Int32): Int32 =
 
 ---
 
-## 5.2 Named and Default Arguments
+## 5.2 Positional Arguments and Configuration
 
-### Named Arguments
-
-When calling a function, you can use named arguments for clarity:
-
-```dovetail
-function createUser(name: String, age: Int32, email: String): User =
-    User { name = name; age = age; email = email }
-
-// Using named arguments
-let user = createUser(name = "Alice", age = 30, email = "alice@example.com")
-```
-
-Named arguments can be in any order:
+Function calls use positional arguments. Named arguments and default parameter
+values are not implemented. For explicit configuration, use record fields and a
+function that constructs the default configuration:
 
 ```dovetail
-let user = createUser(email = "bob@example.com", name = "Bob", age = 25)
+record Config =
+    host: String
+    port: Int32
+
+function defaultConfig(host: String): Config =
+    Config { host = host; port = 8080 }
+
+let local = defaultConfig("localhost")
+let custom = local with port = 3000
 ```
 
-You can mix positional and named arguments, but positional arguments must come first:
-
-```dovetail
-let user = createUser("Charlie", age = 28, email = "charlie@example.com")
-```
-
-### Default Parameter Values
-
-Parameters can have default values:
-
-```dovetail
-function greet(name: String, greeting: String = "Hello"): String =
-    "$greeting, $name!"
-
-greet("Alice")           // "Hello, Alice!"
-greet("Bob", "Hi")       // "Hi, Bob!"
-greet("Charlie", greeting = "Hey")  // "Hey, Charlie!"
-```
-
-Parameters with defaults must come after required parameters:
-
-```dovetail
-function createConfig(
-    host: String,
-    port: Int32 = 8080,
-    timeout: Int32 = 30,
-    debug: Bool = false
-): Config =
-    Config { host = host; port = port; timeout = timeout; debug = debug }
-
-// Use defaults
-let config1 = createConfig("localhost")
-
-// Override some defaults
-let config2 = createConfig("localhost", port = 3000, debug = true)
-```
-
-### Formatter and Named Arguments
-
-The Dovetail formatter will automatically add named arguments when a function has more than 2 parameters, improving code readability:
-
-```dovetail
-// You write:
-createUser("John", 30, "john@example.com")
-
-// Formatter transforms it to:
-createUser(name = "John", age = 30, email = "john@example.com")
-```
+Record field assignments are distinct from function arguments. The formatter
+preserves that distinction; it does not introduce named arguments.
 
 ---
 
@@ -148,11 +101,11 @@ Closures (anonymous functions) use the `=>` arrow:
 // With type annotations (via expected type)
 let multiply: (Int32, Int32) => Int32 = (a, b) => a * b
 
-// Single parameter - no parentheses needed (coming soon: type inference from usage)
-let double = x => x * 2
+// Single parameter - no parentheses needed
+let double = (x: Int32) => x * 2
 
-// Multiple parameters - parentheses required (coming soon: type inference from usage)
-let add = (a, b) => a + b
+// Multiple parameters - parentheses required
+let add = (a: Int32, b: Int32) => a + b
 ```
 
 ### Multi-Line Closures
@@ -172,7 +125,7 @@ Closures can capture variables from their surrounding scope:
 
 ```dovetail
 let multiplier = 3
-let scale = x => x * multiplier
+let scale = (x: Int32) => x * multiplier
 
 scale(5)  // 15
 ```
@@ -201,7 +154,7 @@ Function types describe the signature of a function:
 let operation: (Int32, Int32) => Int32 = (a, b) => a + b
 
 // A function that takes no arguments and returns Unit
-let action: () => Unit = () => println("Hello!")
+let action: () => Unit = () => debug("Hello!")
 
 // A function that takes a String and returns a Bool
 let predicate: (String) => Bool = s => s.length > 0
@@ -339,7 +292,7 @@ Higher-order functions are functions that take other functions as parameters or 
 function applyTwice(f: (Int32) => Int32, x: Int32): Int32 =
     f(f(x))
 
-let double = x => x * 2
+let double = (x: Int32) => x * 2
 applyTwice(double, 5)  // 20 (5 * 2 * 2)
 ```
 
@@ -358,14 +311,14 @@ let doubled = numbers.map(x => x * 2)  // [2, 4, 6, 8, 10]
 
 ```dovetail
 let numbers = [1, 2, 3, 4, 5]
-let evens = numbers.filter(x => x mod 2 == 0)  // [2, 4]
+let evens = numbers.filter(x => x % 2 == 0)  // [2, 4]
 ```
 
-**fold** - Reduce to a single value:
+**foldLeft** - Reduce to a single value:
 
 ```dovetail
 let numbers = [1, 2, 3, 4, 5]
-let sum = numbers.fold(0, (acc, x) => acc + x)  // 15
+let sum = numbers.foldLeft(0, (acc, x) => acc + x)  // 15
 ```
 
 ### Returning Functions
@@ -388,14 +341,14 @@ Higher-order functions enable a clean pipeline style:
 let result = numbers
     .filter(x => x > 0)
     .map(x => x * 2)
-    .fold(0, (acc, x) => acc + x)
+    .foldLeft(0, (acc, x) => acc + x)
 ```
 
 This style is often more readable than nested function calls:
 
 ```dovetail
 // Equivalent but harder to read
-let result = fold(map(filter(numbers, x => x > 0), x => x * 2), 0, (acc, x) => acc + x)
+let result = numbers.filter(x => x > 0).map(x => x * 2).foldLeft(0, (acc, x) => acc + x)
 ```
 
 ---
@@ -403,8 +356,7 @@ let result = fold(map(filter(numbers, x => x > 0), x => x * 2), 0, (acc, x) => a
 ## Summary
 
 - Functions are defined with `function name(params): ReturnType = body`
-- Use named arguments for clarity: `createUser(name = "Alice", age = 30)`
-- Use default parameters for optional values: `function greet(name: String, greeting: String = "Hello")`
+- Use positional arguments and configuration records for explicit options
 - Closures use `=>` syntax: `x => x * 2` or `(a, b) => a + b`
 - Closures capture variables from their environment
 - Function types describe signatures: `(Int32, Int32) => Int32`
@@ -412,4 +364,4 @@ let result = fold(map(filter(numbers, x => x > 0), x => x * 2), 0, (acc, x) => a
 - Bound method references capture self: `let f = point.getX`
 - Unbound method references include self: `let f: Point => Int32 = Point.getX`
 - Higher-order functions take or return other functions
-- Use `map`, `filter`, and `fold` for collection processing
+- Use `map`, `filter`, and `foldLeft` for collection processing

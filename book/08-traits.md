@@ -33,7 +33,7 @@ Trait methods can take parameters:
 
 ```dovetail
 trait Comparable =
-    function compare(self, other: Self): Int32
+    function compare(self, other: Self): Ordering
 ```
 
 The `Self` type refers to the implementing type.
@@ -231,8 +231,8 @@ Once a trait is implemented, you can call its methods:
 
 ```dovetail
 let user = User { name = "Alice"; age = 30 }
-println(user.format())     // "Alice"
-println(user.describe())   // "Alice is 30 years old"
+debug(user.format())     // "Alice"
+debug(user.describe())   // "Alice is 30 years old"
 ```
 
 ### Trait Bounds in Functions
@@ -243,7 +243,7 @@ Use traits as constraints in generic functions:
 function printAll<T>(items: Array<T>): Unit
     where T: Printable =
     for item in items do
-        println(item.format())
+        debug(item.format())
 ```
 
 ### Automatic Import of Implementations
@@ -465,7 +465,7 @@ Enables ordering comparisons (`<`, `>`, `<=`, `>=`):
 
 ```dovetail
 trait Comparable =
-    function compare(self, other: Self): Int32  // -1, 0, or 1
+    function compare(self, other: Self): Ordering  // Less, Equal, or Greater
 ```
 
 Numeric types and strings implement `Comparable` by default.

@@ -122,7 +122,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1, y = 2 }
-    Console.println(p.toJson().stringify())   // {"x":1,"y":2}
+    debug(p.toJson().stringify())   // {"x":1,"y":2}
 ```
 
 ---
@@ -207,7 +207,7 @@ record Cat =
 
 function main(): Unit =
     let c = Cat { age = 3 }
-    Console.println(c.tag())   // Cat
+    debug(c.tag())   // Cat
 ```
 
 ### Generating from Fields and Variants

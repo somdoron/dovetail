@@ -349,7 +349,8 @@ The same boundary applies to named record payload shorthand. If `Placement` has 
 
 ## 19.5 Two Styles: Values or Objects
 
-**Records in Dovetail are always immutable.** Classes carry mutable state. So this is not a per-type decision — it is a choice about what the whole domain layer is written in:
+**Record fields cannot be reassigned.** Referenced arrays or classes can still
+contain mutable state; record immutability is shallow. Classes can carry mutable state. So this is not a per-type decision — it is a choice about what the whole domain layer is written in:
 
 - **Functional.** Aggregates are records. A rule is a function from a value to a new value.
 - **Object-oriented.** Aggregates are classes. A rule is a method that changes the object in place.
@@ -387,7 +388,9 @@ Note the shape of that `match`: because the state machine is an enum (19.2), the
 Why this is the better default in Dovetail:
 
 - **It matches everything else about the language.** No exceptions, rules returning `Result`, a layer with no IO, modules that already separate shape from behavior. `Result<Order, OrderError>` is the same shape as every other fallible operation and composes with `andThen` and `orReturn` like they all do.
-- **There is no aliasing.** Hand an `Order` to three functions and none can change the one you hold.
+- **Immutable contents make sharing safe.** An `Order` made entirely of immutable
+  values can be shared without another function changing it. An array or mutable
+  class stored in a record can still be changed through an alias.
 - **The previous value is still there** — for comparing before and after, auditing what changed, retrying from a known state, or replaying history. Event sourcing stops being an architecture and becomes the natural reading of the model.
 - **The tests are stronger.** You can assert both that the operation produced what it should and that its input was left alone (19.11).
 

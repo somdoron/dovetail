@@ -120,7 +120,7 @@ Swap the bound in the builder and you have changed what the literal accepts. No 
 
 ## 24.5 Writing a builder
 
-A builder is an ordinary type with five methods. Nothing marks it as special except the manifest entry that names it.
+A builder is an ordinary type with five methods. The `@stringLiteral` declaration associates a prefix with its builder.
 
 ```dovetail
 public record Frag =
@@ -153,7 +153,7 @@ module Builder =
 
 Two things are worth getting right:
 
-- **Keep the builder type non-generic; make only `value` and `spread` generic.** Dovetail monomorphizes generics, so a generic *builder* would be re-instantiated at every step of the chain. With a non-generic builder, you get one copy of `value` per interpolated type, deduplicated across the whole program.
+- **Keep the builder type non-generic; make only `value` and `spread` generic.** This keeps the builder state independent of each interpolated value's type, while allowing each value method to express its own trait bounds.
 - **Mutate, don't copy.** Returning `self` after appending to a `StringBuilder` makes an N-part literal cost O(total bytes). Rebuilding an immutable record at each step makes it O(N²).
 
 All five methods must be `public`.

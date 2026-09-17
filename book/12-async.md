@@ -136,8 +136,8 @@ evaluating it, then evaluates it and drives its result on each execution.
 async function greetTwice(): Async<Unit, Never> =
     let first: String = await fetchGreeting()
     let second: String = await fetchGreeting()
-    Console.println(first)
-    Console.println(second)
+    debug(first)
+    debug(second)
 ```
 
 ### Awaiting in Control Flow
@@ -175,7 +175,7 @@ function main(): Unit =
 
 async function app(): Async<Unit, Never> =
     let message: String = await fetchGreeting()
-    Console.println(message)
+    debug(message)
 ```
 
 `Async.run`:
@@ -205,7 +205,7 @@ The standard `Async` API in `standard-io` provides the common building blocks:
 ```dovetail
 async function delayed(): Async<Unit, Never> =
     await Async.sleep(Duration.ofMillis(500i64))
-    Console.println("half a second later")
+    debug("half a second later")
 ```
 
 ---

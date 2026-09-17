@@ -11,7 +11,7 @@ Dovetail uses indentation to define code blocks - no curly braces or semicolons 
 ### The Basics
 
 - Use **spaces** for indentation (tabs cause a compile error)
-- **Two spaces** is the standard
+- **Four spaces** is the formatter standard
 - Code at the same indentation level belongs to the same block
 - Lines can be continued by indenting more than the current block
 
@@ -36,10 +36,10 @@ let result =
 
 ```dovetail
 if x > 0 then
-    println("positive")
+    debug("positive")
     x * 2
 else
-    println("non-positive")
+    debug("non-positive")
     0
 ```
 
@@ -56,7 +56,7 @@ match color with
 
 ```dovetail
 for item in list do
-    println(item)
+    debug(item)
 ```
 
 **After `=>` in lambdas:**
@@ -157,20 +157,21 @@ Documentation comments can be attached to:
 - Type fields
 - Packages (via `README.md` in package directory)
 
-### Doc Tests
+### Testing Documented Behavior
 
-Code blocks in documentation comments are compiled and run as tests:
+Documentation comments are displayed by tooling, but their code blocks are not
+executed by `dovetail test`. Add an explicit test for documented behavior:
 
 ```dovetail
 /// Adds two numbers together.
-///
-/// ```
-/// add(2, 3)  // Returns 5
-/// ```
 function add(a: Int32, b: Int32): Int32 = a + b
+
+test "documented addition" = assert add(2, 3) == 5
 ```
 
-Run doc tests with `dovetail test`.
+The book separately checks marked complete examples in CI; see [Book validation](validation.md).
+The synchronous `debug(value)` calls in examples print diagnostic output. For
+application console I/O, see [the async Console API](22-stdlib.md#225-io).
 
 ---
 
@@ -334,7 +335,7 @@ let b: Any = 42
 let c: Any = true
 ```
 
-To use a value of type `Any`, you need to test or cast it back to a concrete type using `is` and `as` (see [Type Testing and Casting](06-type-system.md#610-type-testing-and-casting)).
+To use a value of type `Any`, you need to test or cast it back to a concrete type using `is` and `as` (see [Type Testing and Casting](06-type-system.md#610-the-any-type-and-type-casting)).
 
 ---
 

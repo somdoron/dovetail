@@ -154,11 +154,11 @@ Integration tests:
 Tests can verify enum behavior and pattern matching:
 
 ```dovetail
-enum Result[T, E] =
+enum Result<T, E> =
     Ok(T)
     Error(E)
 
-function divide(a: Int32, b: Int32): Result[Int32, String] =
+function divide(a: Int32, b: Int32): Result<Int32, String> =
     if b == 0 then
         Error("Division by zero")
     else
@@ -180,16 +180,16 @@ test "division by zero" =
 Tests work with classes just like any other type:
 
 ```dovetail
-class Counter =
+class Counter() =
     let mutable count: Int32 = 0
 
-    function increment(): Unit =
-        this.count = this.count + 1
+    public function increment(self): Unit =
+        self.count = self.count + 1
 
-    function getCount(): Int32 = this.count
+    public function getCount(self): Int32 = self.count
 
 test "counter increments" =
-    let counter = Counter.new()
+    let counter = Counter()
     assert counter.getCount() == 0
     counter.increment()
     assert counter.getCount() == 1
@@ -225,7 +225,7 @@ test "new api test" =
 Skipped tests appear in the output but don't run:
 
 ```
-  SKIP  myapp new api test (Waiting for API v2)
+    ○ new api test (Waiting for API v2)
 ```
 
 ### @panics - Expecting Panics
@@ -250,8 +250,8 @@ You can optionally specify an expected panic message substring:
 ```dovetail
 @panics("out of bounds")
 test "array access panics with message" =
-    let arr = [1, 2, 3]
-    let x = arr.get(100)  // Should panic with "out of bounds"
+    let arr = [|1, 2, 3|]
+    let x = arr[100]  // Should panic with "out of bounds"
 ```
 
 ### @timeout - Test Timeouts
@@ -265,11 +265,7 @@ test "completes quickly" =
     assert result == expected
 ```
 
-If the test takes longer than the timeout, it fails:
-
-```
-  FAIL  myapp completes quickly - timeout after 1000ms
-```
+If the test takes longer than the timeout, it fails with a timeout diagnostic.
 
 ### Combining Attributes
 
@@ -295,33 +291,9 @@ Run all tests in your project:
 dovetail test
 ```
 
-Output shows a summary of test results:
-
-```
-Running 12 tests
-
-test result: ok. 10 passed; 1 failed; 1 skipped; finished in 45.23ms
-```
-
-### Verbose Output
-
-Use `--verbose` or `-v` to see individual test results:
-
-```bash
-dovetail test --verbose
-```
-
-```
-Running 5 tests
-
-  PASS  myapp.math addition works (28.67us)
-  PASS  myapp.math multiplication works (167.00ns)
-  PASS  myapp.math division works (125.00ns)
-  SKIP  myapp.math future feature (Not implemented yet)
-  PASS  myapp.math division by zero panics (panicked as expected, 47.96us)
-
-test result: ok. 4 passed; 0 failed; 1 skipped; finished in 823.00us
-```
+Individual results are shown by default, grouped by project and source file.
+There is no `test --verbose` flag. The summary reports passed, failed, and skipped
+tests. A filter matching no tests exits successfully, so check the count in CI.
 
 ### Filtering Tests
 
@@ -369,28 +341,13 @@ The `dovetail test` command returns:
 This makes it easy to use in CI/CD pipelines:
 
 ```bash
-dovetail test || echo "Tests failed!"
+dovetail test
 ```
 
 ### Test Output Format
 
-Test results show:
-- **PASS** - Test completed successfully
-- **FAIL** - Test assertion failed or unexpected error
-- **SKIP** - Test was skipped with `@skip`
-
-For failed tests, the output includes diagnostic information:
-
-```
-  FAIL  myapp.math broken test - error while executing at wasm backtrace:
-    0:    0x8c9 - <unknown>!<wasm function 47>
-
-Failures:
-  myapp.math broken test - error while executing at wasm backtrace:
-    0:    0x8c9 - <unknown>!<wasm function 47>
-
-test result: FAILED. 4 passed; 1 failed; 0 skipped; finished in 1.06ms
-```
+Results use `✓` for passed tests, `✗` for failures, and `○` for skipped tests.
+Failures include diagnostics and a final failure summary.
 
 ---
 
@@ -403,11 +360,11 @@ Good test names describe the expected behavior:
 ```dovetail
 // Good
 test "returns None when user not found" =
-    assert findUser(999) == None
+    assert findUser(999).isNone
 
 // Less clear
 test "test1" =
-    assert findUser(999) == None
+    assert findUser(999).isNone
 ```
 
 ### One Concept Per Test
@@ -435,20 +392,20 @@ test "list operations" =
 Include tests for boundary conditions and error cases:
 
 ```dovetail
-function safeDivide(a: Int32, b: Int32): Option[Int32] =
+function safeDivide(a: Int32, b: Int32): Option<Int32> =
     if b == 0 then None else Some(a / b)
 
 test "divide positive numbers" =
-    assert safeDivide(10, 2) == Some(5)
+    assert safeDivide(10, 2).require == 5
 
 test "divide by zero returns None" =
-    assert safeDivide(10, 0) == None
+    assert safeDivide(10, 0).isNone
 
 test "divide with negative numbers" =
-    assert safeDivide(-10, 2) == Some(-5)
+    assert safeDivide(-10, 2).require == -5
 
 test "divide zero by nonzero" =
-    assert safeDivide(0, 5) == Some(0)
+    assert safeDivide(0, 5).require == 0
 ```
 
 ### Use Helper Functions
@@ -489,7 +446,6 @@ test "lookup is fast" =
 - Use `@panics` for tests that should panic
 - Use `@timeout` to limit test duration
 - Run tests with `dovetail test`
-- Use `--verbose` for detailed output
 - Use `--filter` to run specific tests
 - Use `--file` to run tests from a specific source file
 - Write descriptive names and test one concept per test

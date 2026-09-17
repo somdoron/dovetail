@@ -2,7 +2,7 @@
 
 Dovetail programs can use libraries written in **other languages** — C, Rust, Go — as long as they are packaged as **WASM components** (the WASI component model). A component is a self-contained `.wasm` file that describes its own interface in **WIT** (WebAssembly Interface Types). Dovetail treats that interface as the boundary: the compiler reads it, generates a low-level Dovetail bindings package for it, and links the component into your program at build time.
 
-There is no foreign function interface, no header files, and no glue code to write. The final artifact is still a single portable component whose only requirements are standard WASI — it runs anywhere `wasmtime run` does.
+There is no foreign function interface, no header files, and no glue code to write. The final artifact is still a single portable component whose only requirements are standard WASI — use the matching Dovetail runtime to provide its required host interfaces.
 
 This part covers *consuming* components. **SQLite** is a full database compiled to WASM and shipped as an artifact of the `standard-sqlite` library. Its Git revision pins both the Dovetail wrapper and the component binary.
 
@@ -84,30 +84,33 @@ Choose a tag whose manifest declares the matching compiler version. You can also
 
 You rarely use `sqlite.raw` directly. The `standard-sqlite` library wraps it into an idiomatic API: connections and statements are **resources** (scoped with `use` — see [Part 13: Resources](13-resources.md)), and every operation that touches the database engine is **async** (see [Part 12: Async](12-async.md)):
 
+**Complete example (checked in CI)** — `depends = ["standard-sqlite", "standard-io"]`:
+
+<!-- book-example: {"name": "sqlite", "depends": ["standard-sqlite", "standard-io"]} -->
 ```dovetail
-package app
+package sqlite
 
 import standard.sqlite.Connection
 import standard.sqlite.SqlValue
+import standard.sqlite.SqliteError
 import standard.io.Async
 
-function main(): Unit =
-    let program: Async<Unit, SqliteError> = app()
-    program.run()
+async function databaseExample(): Async<Unit, SqliteError> =
+    let connection = use Connection.open(":memory:")
+    await connection.execute("CREATE TABLE users (name TEXT)")
+    let inserted = await connection.transaction<Int64, SqliteError>((transaction: Connection) =>
+        transaction.executeWith("INSERT INTO users (name) VALUES (?1)", [|SqlValue.Text("alice")|])
+    )
+    assert inserted == 1i64
+    let rows = await connection.query("SELECT name FROM users")
+    assert rows.length == 1
+    match rows.head[0] with
+        case SqlValue.Text(name) => assert name == "alice"
+        case _ => assert false
 
-async function app(): Async<Unit, SqliteError> =
-    let conn = use Connection.open("data/app.db")
+function main(): Unit = databaseExample().run()
 
-    await conn.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, score REAL)")
-
-    let params: Array<SqlValue> = [SqlValue.Text("alice"), SqlValue.Real(99.5)]
-    await conn.executeWith("INSERT INTO users (name, score) VALUES (?1, ?2)", params)
-
-    let rows = await conn.query("SELECT id, name, score FROM users ORDER BY id")
-    for row in rows do
-        match row.get(1) with
-            case SqlValue.Text(name) => Console.println(name)
-            case _ => ()
+test "a transaction inserts a parameterized row" = main()
 ```
 
 The connection is closed automatically when the `use` scope ends — no manual `close` call, even on early error exits. The main pieces:
@@ -122,12 +125,13 @@ Today each operation completes synchronously under the hood (like the WASI files
 Transactions are a combinator — commit on success, rollback on failure:
 
 ```dovetail
-let outcome = await conn.transaction<Int64>((tx: Connection) =>
+let outcome = await conn.transaction<Int64, SqliteError>((tx: Connection) =>
     tx.execute("INSERT INTO audit (event) VALUES ('signup')")
 )
 ```
 
-The database is a normal SQLite file on the real filesystem — other tools (including the `sqlite3` CLI) can open it. One caveat from the WASI build: **only one process should use a database file at a time** (the build uses dot-file locking, and WAL mode is unavailable).
+The example uses an in-memory database. With a file path instead of `":memory:"`,
+the database is a normal SQLite file on the real filesystem — other tools (including the `sqlite3` CLI) can open it. One caveat from the WASI build: **only one process should use a database file at a time** (the build uses dot-file locking, and WAL mode is unavailable).
 
 ---
 
@@ -135,16 +139,16 @@ The database is a normal SQLite file on the real filesystem — other tools (inc
 
 `dovetail build` produces one self-contained component: your code and every component dependency linked together, with only `wasi:*` imports remaining.
 
-```
-$ dovetail build
-compiled myapp -> build/myapp.wasm
-
-$ wasmtime run --dir=./data build/myapp.wasm
+```bash
+dovetail build myapp
+dovetail run myapp
 ```
 
-The `--dir` flag (or `dovetail run myapp --allow-path ./data`) grants the sandboxed program access to a host directory — that is where SQLite's database file physically lives. No WIT files, no linker flags, and no sidecar `.wasm` files are needed at run time; the component model metadata travels inside the artifact.
-
-Because everything WASI-shaped stays an import, the same artifact runs under any WASI 0.2 runtime — `wasmtime`, or platforms built on it.
+The in-memory example needs no filesystem grants. For a database file under the
+working directory, use `dovetail run myapp --allow-cwd`. Other hosts must support
+the artifact's Wasm features and imported WASI interfaces; WASI version support
+alone does not guarantee compatibility. No sidecar SQLite component is needed at
+runtime because it is composed into the built artifact.
 
 ---
 
@@ -165,6 +169,6 @@ Exporting Dovetail code *as* a component (so other languages can call you) is pl
 - A **component** is a self-describing `.wasm` library; its **WIT interface** is the contract Dovetail compiles against — WIT is Dovetail's FFI.
 - Declare components in `Dovetail.toml` with `[[project.component]]`; `path` loads an artifact from its owning library project.
 - The compiler injects a **virtual low-level bindings package** (resources = handle newtypes + `drop`); wrapper libraries like `standard-sqlite` provide the ergonomic API.
-- `dovetail build` composes everything into one portable artifact that runs on any WASI runtime with just `--dir` for filesystem access.
+- `dovetail build` composes everything into one artifact; the runtime must provide compatible host interfaces and filesystem permissions.
 
 In the next part, we'll tour the standard library.

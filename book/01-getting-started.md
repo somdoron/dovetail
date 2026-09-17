@@ -94,7 +94,7 @@ Dovetail is built around several core principles:
 
 **Fast Compilation**
 
-Compilation should feel instant. Dovetail prioritizes fast feedback loops over maximum runtime optimization. The target competition is Python and Node.js - even unoptimized Dovetail code will be significantly faster than interpreted languages.
+Compilation should feel instant. Dovetail prioritizes fast feedback loops over maximum runtime optimization. The target competition is Python and Node.js: the goal is to pair their productive development experience with the performance opportunities of compiled WebAssembly.
 
 **Beautiful Code**
 
@@ -121,23 +121,28 @@ Dovetail includes excellent tools from day one:
 
 - Integrated package manager and build tool
 - Language Server Protocol (LSP) support
-- Built-in formatter (planned)
+- Built-in formatter with `dovetail fmt` and format-on-save in VS Code
+- Built-in skills for coding agents - Guidance for writing idiomatic Dovetail, applying best practices, and using specialized sub-agents for code review (planned for the public release)
 - REPL for exploration (planned)
 
 ### Target Platform (WasmGC)
 
 Dovetail compiles to WebAssembly with Garbage Collection (WasmGC). This provides:
 
-- **Portability** - Run anywhere WebAssembly runs (browsers, servers, edge)
-- **Performance** - Near-native speed, faster than interpreted languages
+- **Portability** - Target hosts that support WasmGC and the WASI interfaces your program uses
+- **Performance** - Designed for near-native execution through WebAssembly and Wasmtime.
 - **Safety** - WebAssembly's sandboxed execution model
 - **Interoperability** - Use WASI for system access
+
+Dovetail targets WebAssembly 3.0 and WASI Preview 3. `dovetail run` uses Wasmtime for local execution; you can also deploy the compiled component to other hosts that support the required WebAssembly features and WASI interfaces.
 
 Dovetail uses traits for generic behavior and interfaces for contracts that can
 also be stored and passed as values. See [Interfaces and Interface Types](06-type-system.md#611-interfaces-and-interface-types)
 and [Traits and Implementations](08-traits.md).
 
 ### Comparison with Other Languages
+
+This is a high-level comparison of the design choices motivating Dovetail. Fast compilation is a design goal, not a benchmark result; ecosystem consistency is the direction we are building toward.
 
 | Feature | Dovetail | TypeScript | Python | Java | Kotlin | Go | C# | Rust |
 |---------|--------|------------|--------|------|--------|-----|-----|------|
@@ -160,7 +165,7 @@ and [Traits and Implementations](08-traits.md).
 Before installing Dovetail, you need:
 
 - **Rust toolchain** - Install from [rustup.rs](https://rustup.rs/)
-- **Git** - For cloning the repository
+- **Git** - If you want to build from a repository checkout
 
 Verify Rust is installed:
 
@@ -169,9 +174,28 @@ rustc --version
 cargo --version
 ```
 
+### Installing with Cargo
+
+Once the crate is published to crates.io, install the Dovetail CLI with:
+
+```bash
+cargo install dovetail-lang --locked
+```
+
+`dovetail-lang` is the package name; the command you run is `dovetail`. Cargo builds
+and installs the executable in its bin directory (usually `~/.cargo/bin/`). Make
+sure that directory is on your `PATH`. The CLI includes the runtime used by
+`dovetail run`, so you don't need to install Wasmtime separately.
+
+<!-- Release preparation: dovetail-lang matches the current Cargo package name.
+Confirm the published name before release; dovetaillang is another candidate. -->
+
 ### Installing from Source
 
-1. **Fork and clone the repository:**
+To try the current development version or work on the compiler, install from a
+repository checkout instead:
+
+1. **Clone the repository:**
 
 ```bash
 git clone https://github.com/somdoron/dovetail.git
@@ -187,7 +211,7 @@ cargo build --release
 3. **Install the Dovetail CLI:**
 
 ```bash
-cargo install --path dovetail
+cargo install --path dovetail --locked
 ```
 
 This installs the `dovetail` command to your Cargo bin directory (usually `~/.cargo/bin/`).
@@ -197,24 +221,16 @@ This installs the `dovetail` command to your Cargo bin directory (usually `~/.ca
 Verify Dovetail is installed correctly:
 
 ```bash
+dovetail --version
 dovetail --help
 ```
 
-You should see output listing the available commands:
+The help output lists commands including `init`, `projects`, `deps`, `fmt`,
+`build`, `check`, `run`, `test`, and `lsp-server`. Use `dovetail <command> --help`
+for details about a particular command.
 
-```
-Dovetail project compiler
-
-Usage: dovetail <COMMAND>
-
-Commands:
-  init   Initialize a new Dovetail workspace
-  build  Build projects in a workspace
-  check  Type check projects in a workspace
-  run    Build and run projects in a workspace
-  lsp    Start the Language Server Protocol server
-  help   Print this message or the help of the given subcommand(s)
-```
+When working on the compiler itself, use `cargo run -- <command>` from its checkout
+to test the current source. See [Tool Commands](02-tool-commands.md) for more details.
 
 ---
 
@@ -255,6 +271,7 @@ The Dovetail VS Code extension provides:
 - **Hover documentation** - View type information on hover
 - **Find references** - Find all usages of a symbol
 - **Workspace symbols** - Quick navigation to types and functions
+- **Formatting** - Format a document or format automatically on save
 
 ### Configuration Options
 
@@ -263,8 +280,22 @@ The extension can be configured in VS Code settings:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `dovetail.serverPath` | `"dovetail"` | Path to the Dovetail executable |
+| `dovetail.serverConnection` | `"stdio"` | LSP transport (`stdio` or `tcp`) |
 | `dovetail.serverPort` | `9257` | TCP port for LSP when dovetail.serverConnection is tcp |
 | `dovetail.trace.server` | `"off"` | Trace communication with LSP server |
+
+To enable format-on-save:
+
+```json
+{
+  "[dovetail]": {
+    "editor.defaultFormatter": "dovetail-lang.dovetail-language",
+    "editor.formatOnSave": true
+  }
+}
+```
+
+See [Formatting](../docs/formatting.md) for the formatter's style and options.
 
 ---
 
@@ -283,17 +314,16 @@ dovetail init hello
 This creates:
 
 - `Dovetail.toml` - The project manifest
+- `.gitignore` - Excludes the local `.dovetail/` cache
 - `hello/src/main.dove` - The main source file
 
-For a library project, use the `--lib` flag:
-
-```bash
-dovetail init mylib --lib
-```
+For a library project, use `dovetail init mylib` and replace the generated `main`
+with your library declarations. A library has no `main` entry point; `init` does
+not have a separate `--lib` flag.
 
 ### The `Dovetail.toml` Manifest File
 
-The generated `Dovetail.toml` looks like this:
+The generated `Dovetail.toml` looks like this (the compiler version matches the CLI you installed):
 
 ```toml
 compiler-version = "0.1.0"
@@ -318,6 +348,7 @@ After running `dovetail init hello`, your directory looks like:
 
 ```
 my-project/
+├── .gitignore
 ├── Dovetail.toml
 └── hello/
     └── src/
@@ -333,23 +364,45 @@ Convention:
 
 ### Writing "Hello, World!"
 
-Open `hello/src/main.dove`:
+Open `hello/src/main.dove` and replace its contents with this complete example:
 
+<!-- book-example: {"name": "hello", "depends": [], "stdout": "Hello, World!\n"} -->
 ```dovetail
 package hello
 
-function main() =
-    println("Hello, World!")
+function greeting(name: String): String = "Hello, $name!"
+
+function main(): Unit = debug(greeting("World"))
+
+test "greets the supplied name" =
+    assert greeting("Dovetail") == "Hello, Dovetail!"
 ```
 
 Let's break this down:
 
 - `package hello` - Declares this file belongs to the `hello` package
-- `function main()` - The entry point for an application
+- `function greeting(...)` - Builds a greeting using string interpolation
+- `function main(): Unit` - The entry point for an application
 - `=` followed by indented code - The function body
-- `println(...)` - Prints text to the console
+- `debug(...)` - Prints a value and a newline for a quick diagnostic
+- `test "greets the supplied name"` - Checks the greeting with an assertion
+
+This **complete example is checked in CI**. See [Book validation](validation.md)
+for what is checked; other snippets in the book may show only part of a program.
+For application console output with typed I/O errors, see
+[`Console.writeLine` in the library guide](22-stdlib.md#225-io).
 
 ### Building and Running
+
+Run these commands from the directory containing `Dovetail.toml`.
+
+**Format your code:**
+
+```bash
+dovetail fmt
+```
+
+Use `dovetail fmt --check` to check formatting without changing files.
 
 **Build the project:**
 
@@ -357,7 +410,7 @@ Let's break this down:
 dovetail build
 ```
 
-This compiles your code and produces a `.wasm` file.
+This compiles your code and produces `build/hello.wasm`.
 
 **Build and run:**
 
@@ -378,6 +431,15 @@ dovetail check
 ```
 
 This verifies your code is correct without generating a WebAssembly file - useful for quick feedback during development.
+
+**Run the test:**
+
+```bash
+dovetail test
+```
+
+The test checks that `greeting("Dovetail")` returns `"Hello, Dovetail!"`. You'll learn
+more about testing in [Part 15](15-testing.md).
 
 ---
 

@@ -29,3 +29,11 @@ jobs:
       run: cargo run --bin dovetail -- test
       env:
         RUST_MIN_STACK: "16777216"
+    - name: Set up Python for book validation
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: Validate book links and complete examples
+      run: python3 tools/check-book.py
+      env:
+        RUST_MIN_STACK: "16777216"

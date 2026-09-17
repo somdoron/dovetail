@@ -102,8 +102,8 @@ function divide(a: Int32, b: Int32): Option<Int32> =
 
 let result = divide(10, 2)
 match result with
-    case Some(value) => println("Result: $value")
-    case None => println("Cannot divide by zero")
+    case Some(value) => debug("Result: $value")
+    case None => debug("Cannot divide by zero")
 ```
 
 ### Result Type

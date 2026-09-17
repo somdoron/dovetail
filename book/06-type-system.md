@@ -32,7 +32,7 @@ function calculateTotal(price: Float64, quantity: Int32): Float64 =
 
 // Unit return type can be omitted
 function greet(name: String) =
-    println("Hello, $name!")
+    debug("Hello, $name!")
 ```
 
 ---
@@ -115,9 +115,15 @@ Leading `public` controls visibility of the type itself. For generic records, wr
 
 ### Records are Equatable
 
-Records with equatable fields are automatically equatable:
+Records with equatable fields can opt into equality with `@derive(Equatable)`
+on the record declaration:
 
 ```dovetail
+@derive(Equatable)
+record Point =
+    x: Int32
+    y: Int32
+
 let p1 = Point { x = 1; y = 2 }
 let p2 = Point { x = 1; y = 2 }
 p1 == p2  // true
@@ -593,7 +599,7 @@ assert [| 1, 2 |] < [| 1, 3 |]
 
 ```dovetail
 for item in numbers do
-    println(item)
+    debug(item)
 ```
 
 ### Slices: Shared Array Views
@@ -784,7 +790,7 @@ import myapp.UserHelpers  // Must import the extension
 
 function main() =
     let user = User { firstName = "Alice"; lastName = "Smith" }
-    println(user.displayName())  // Works because UserHelpers is imported
+    debug(user.displayName())  // Works because UserHelpers is imported
 ```
 
 For **types in the same package**, instance methods are usually provided by a **module for that type** (a module with the same name as the type), not by an extension. See [Modules](#68-modules) above. Use an **extension** when you want to add methods to a type from another package or when you want a separate, explicitly imported set of methods.

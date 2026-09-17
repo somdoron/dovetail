@@ -29,10 +29,10 @@ let max = if a > b then a else b
 
 ```dovetail
 let result = if user.isActive then
-    println("User is active")
+    debug("User is active")
     user.score * 2
 else
-    println("User is inactive")
+    debug("User is inactive")
     0
 ```
 
@@ -65,7 +65,7 @@ When you don't need a value, you can omit `else`. The expression returns `Unit`:
 
 ```dovetail
 if shouldLog then
-    println("Logging enabled")
+    debug("Logging enabled")
 ```
 
 ### Nested If
@@ -141,7 +141,7 @@ let message = match maybeUser with
 ```dovetail
 match fetchData() with
     case Ok(data) => processData(data)
-    case Error(err) => println("Error: $err")
+    case Error(err) => debug("Error: $err")
 ```
 
 ### Destructuring Records
@@ -238,8 +238,8 @@ Patterns can bind values to names:
 
 ```dovetail
 match result with
-    case Ok(value) => println("Got: $value")
-    case Error(e) => println("Error: $e")
+    case Ok(value) => debug("Got: $value")
+    case Error(e) => debug("Error: $e")
 ```
 
 ### Exhaustiveness
@@ -277,7 +277,7 @@ Iterate over a value that implements `Iterable<T>`, including arrays, lists, sli
 
 ```dovetail
 for item in list do
-    println(item)
+    debug(item)
 ```
 
 **Over a slice:**
@@ -296,24 +296,24 @@ See [Lists, Arrays, and Slices](06-type-system.md#67-lists-arrays-and-slices) fo
 
 ```dovetail
 for (index, item) in list.zipWithIndex() do
-    println("$index: $item")
+    debug("$index: $item")
 ```
 
 **Over a range:**
 
 ```dovetail
 for i in Range.new(0, 10) do
-    println(i)  // 0 to 9
+    debug(i)  // 0 to 9
 
 for i in Range.inclusive(0, 10) do
-    println(i)  // 0 to 10 (inclusive)
+    debug(i)  // 0 to 10 (inclusive)
 ```
 
 **Iterating over maps:**
 
 ```dovetail
 for (key, value) in map do
-    println("$key -> $value")
+    debug("$key -> $value")
 ```
 
 ### While Loops
@@ -323,7 +323,7 @@ Execute while a condition is true:
 ```dovetail
 let mutable count = 0
 while count < 10 do
-    println(count)
+    debug(count)
     count = count + 1
 ```
 
@@ -333,12 +333,12 @@ Loops return `Unit`:
 
 ```dovetail
 let result: Unit = for i in [|0, 1, 2, 3, 4|] do
-    println(i)
+    debug(i)
 ```
 
 ### Early Exit
 
-Use `break` to exit a loop early (coming soon):
+Use `break` to exit a loop early:
 
 ```dovetail
 let mutable found = false
@@ -348,13 +348,13 @@ for item in list do
         break
 ```
 
-Use `continue` to skip to the next iteration (coming soon):
+Use `continue` to skip to the next iteration:
 
 ```dovetail
 for item in list do
     if item < 0 then
         continue  // Skip negative numbers
-    println(item)
+    debug(item)
 ```
 
 ### Functional Alternatives
@@ -390,3 +390,5 @@ Dovetail provides expressive control flow constructs:
 A key principle: prefer pattern matching over long if/else chains, and prefer functional methods (`map`, `filter`, `fold`) over imperative loops when it makes the code clearer.
 
 In the next part, we'll explore functions in depth.
+
+For restrictions on loops that suspend, see [Async Programming](12-async.md).

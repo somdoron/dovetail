@@ -165,7 +165,8 @@ let success: Result<Int32, String> = Ok(42)
 let failure: Result<Int32, String> = Result.error("something went wrong")
 ```
 
-Note that `Ok` is a variant constructor and can be used directly, while `Error` uses `Result.error()` to avoid ambiguity with the variant name.
+`Ok(value)` and `Error(error)` are variant constructors. The module also offers
+`Result.ok(value)` and `Result.error(error)` helpers.
 
 ### Pattern Matching on Result
 
@@ -286,7 +287,7 @@ The example above becomes:
 function processUser(id: Int32): Result<String, String> =
     let user = try lookupUser(id)
     let valid = try validateUser(user)
-    try formatUser(valid)
+    formatUser(valid)
 ```
 
 Or using the postfix form:
@@ -295,7 +296,7 @@ Or using the postfix form:
 function processUser(id: Int32): Result<String, String> =
     let user = lookupUser(id).orReturn
     let valid = validateUser(user).orReturn
-    formatUser(valid).orReturn
+    formatUser(valid)
 ```
 
 ### How They Work
@@ -395,7 +396,9 @@ If any validation fails, `createProfile` immediately returns the first error. No
 
 ### Panic
 
-The `panic` expression causes an **immediate, unrecoverable** program termination:
+The `panic` expression signals a defect. In synchronous application code it
+terminates execution; tests can expect it with `@panics`. Async execution represents
+defects through its cause channel, as described in [Async Programming](12-async.md):
 
 ```dovetail
 panic "something went terribly wrong"

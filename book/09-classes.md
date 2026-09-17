@@ -10,15 +10,14 @@ A class is defined with the `class` keyword, followed by the class name, constru
 
 ```dovetail
 class Point(x: Int32, y: Int32) =
-    function getX(self): Int32 = self.x
-    function getY(self): Int32 = self.y
-    function sum(self): Int32 = self.x + self.y
+    public function getX(self): Int32 = self.x
+    public function getY(self): Int32 = self.y
+    public function sum(self): Int32 = self.x + self.y
 ```
 
 Key points:
 - Constructor parameters define the class fields
 - Methods are defined in the class body
-- Classes must have at least one method
 
 ### Creating Instances
 
@@ -35,8 +34,8 @@ let total = p.sum()  // 7
 Fields can be accessed directly (based on visibility):
 
 ```dovetail
-class Point(x: Int32, y: Int32) =
-    function dummy(self): Int32 = 0
+class Point(public x: Int32, public y: Int32) =
+    public function dummy(self): Int32 = 0
 
 function getX(p: Point): Int32 = p.x  // Direct field access
 ```
@@ -51,8 +50,8 @@ Instance methods take `self` as the first parameter:
 
 ```dovetail
 class Counter(mutable value: Int32) =
-    function getValue(self): Int32 = self.value
-    function increment(self): Unit = self.value = self.value + 1
+    public function getValue(self): Int32 = self.value
+    public function increment(self): Unit = self.value = self.value + 1
 ```
 
 ### Static Methods (Smart Constructors)
@@ -61,31 +60,32 @@ Methods without `self` are static and called on the class itself. Static methods
 
 ```dovetail
 class Point(x: Int32, y: Int32) =
-    function getX(self): Int32 = self.x
-    function origin(): Point = Point(0, 0)           // Smart constructor
-    function fromSingle(v: Int32): Point = Point(v, v)  // Smart constructor
-    function zero(): Int32 = 0                        // Static utility
+    public function getX(self): Int32 = self.x
+    public function origin(): Point = Point(0, 0)           // Smart constructor
+    public function fromSingle(v: Int32): Point = Point(v, v)  // Smart constructor
+    public function zero(): Int32 = 0                        // Static utility
 
-function main(): Int32 =
+function main(): Unit =
     let p1 = Point.origin()       // (0, 0)
     let p2 = Point.fromSingle(5)  // (5, 5)
     let p3 = Point(3, 7)          // Primary constructor
-    0
+    ()
 ```
 
 Smart constructors can also perform validation:
 
 ```dovetail
 class PositiveInt private (value: Int32) =
-    function get(self): Int32 = self.value
+    public function get(self): Int32 = self.value
     
-    function create(n: Int32): Option<PositiveInt> =
+    public function create(n: Int32): Option<PositiveInt> =
         if n > 0 then Some(PositiveInt(n)) else None
 
-function main(): Int32 =
+function main(): Unit =
     match PositiveInt.create(42) with
-        Some(p) => p.get()
-        None => 0
+        case Some(p) => p.get()
+        case None => 0
+    ()
 ```
 
 ---
@@ -103,13 +103,14 @@ class Rectangle(width: Int32, height: Int32) =
     let color: String = "blue"
     let name: String = "rectangle"
 
-    function getColor(self): String = self.color
-    function getName(self): String = self.name
+    public function getColor(self): String = self.color
+    public function getName(self): String = self.name
 
-function main(): Int32 =
+function main(): Unit =
     let r = Rectangle(3, 4)
     r.getColor()  // "blue"
     r.getName()   // "rectangle"
+    ()
 ```
 
 Key points about stored fields:
@@ -128,13 +129,14 @@ class Rectangle(width: Int32, height: Int32) =
     let property area: Int32 = self.width * self.height
     let property perimeter: Int32 = 2 * (self.width + self.height)
 
-    function getArea(self): Int32 = self.area      // Calls generated getter
-    function getPerimeter(self): Int32 = self.perimeter
+    public function getArea(self): Int32 = self.area      // Calls generated getter
+    public function getPerimeter(self): Int32 = self.perimeter
 
-function main(): Int32 =
+function main(): Unit =
     let r = Rectangle(3, 4)
     r.getArea()      // 12 - computed on access
     r.getPerimeter() // 14 - computed on access
+    ()
 ```
 
 Key differences between stored fields and properties:
@@ -147,13 +149,13 @@ Static fields belong to the class itself, not individual instances:
 
 ```dovetail
 class Config(name: String) =
-    let static defaultTimeout: Int32 = 30
-    let static maxRetries: Int32 = 3
+    public let static defaultTimeout: Int32 = 30
+    public let static maxRetries: Int32 = 3
 
-    function dummy(self): Int32 = 0  // Need at least one method
 
-function main(): Int32 =
+function main(): Unit =
     Config.defaultTimeout  // 30 - accessed on class, not instance
+    ()
 ```
 
 Static fields are initialized once when the class is first loaded.
@@ -164,13 +166,14 @@ Static properties are like static fields but computed each time they're accessed
 
 ```dovetail
 class Math(value: Int32) =
-    let static property pi: Float64 = 3.14159265359
-    let static property e: Float64 = 2.71828182846
+    public let static property pi: Float64 = 3.14159265359
+    public let static property e: Float64 = 2.71828182846
 
-    function dummy(self): Int32 = 0
+    public function dummy(self): Int32 = 0
 
-function main(): Int32 =
+function main(): Unit =
     Math.pi  // 3.14159265359 - computed on access
+    ()
 ```
 
 ### Mutable Fields
@@ -181,8 +184,8 @@ Use `let mutable` for fields that can be changed after construction:
 class Counter(initial: Int32) =
     let mutable count: Int32 = initial
 
-    function increment(self): Unit = self.count = self.count + 1
-    function getCount(self): Int32 = self.count
+    public function increment(self): Unit = self.count = self.count + 1
+    public function getCount(self): Int32 = self.count
 ```
 
 ### Chained Fields
@@ -194,7 +197,7 @@ class Stats(base: Int32) =
     let doubled: Int32 = base * 2
     let quadrupled: Int32 = doubled * 2  // Uses earlier field
 
-    function getQuadrupled(self): Int32 = self.quadrupled
+    public function getQuadrupled(self): Int32 = self.quadrupled
 ```
 
 ### Side Effects in Constructor Body
@@ -203,9 +206,9 @@ Any expression in the class body runs during construction:
 
 ```dovetail
 class Logger(name: String) =
-    let _ = println("Creating logger: " ++ name)  // Runs at construction
+    let _ = debug("Creating logger: " ++ name)  // Runs at construction
 
-    function log(self, msg: String): Unit = println(name ++ ": " ++ msg)
+    public function log(self, msg: String): Unit = debug(name ++ ": " ++ msg)
 ```
 
 ### Field Visibility
@@ -221,7 +224,7 @@ class Entity(id: Int32) =
     public let property publicProp: Int32 = self.id * 2
     private let property privateProp: Int32 = self.id * 3
 
-    function dummy(self): Int32 = 0
+    public function dummy(self): Int32 = 0
 ```
 
 ---
@@ -232,14 +235,15 @@ Use the `private` keyword after the class name to make the constructor private:
 
 ```dovetail
 class Singleton private (value: Int32) =
-    function get(self): Int32 = self.value
+    public function get(self): Int32 = self.value
     
-    function instance(): Singleton = Singleton(42)  // Only accessible here
+    public function instance(): Singleton = Singleton(42)  // Only accessible here
 
-function main(): Int32 =
+function main(): Unit =
     // let s = Singleton(10)  // Error: constructor is private
     let s = Singleton.instance()  // OK - use smart constructor
     s.get()
+    ()
 ```
 
 Private constructors are useful for:
@@ -255,25 +259,26 @@ By default, class fields are immutable. Use `mutable` to allow modification:
 
 ```dovetail
 class Counter(mutable value: Int32) =
-    function getValue(self): Int32 = self.value
-    function increment(self): Unit = self.value = self.value + 1
-    function add(self, amount: Int32): Unit = self.value = self.value + amount
+    public function getValue(self): Int32 = self.value
+    public function increment(self): Unit = self.value = self.value + 1
+    public function add(self, amount: Int32): Unit = self.value = self.value + amount
 
-function main(): Int32 =
+function main(): Unit =
     let c = Counter(0)
     c.increment()
     c.increment()
     c.add(10)
     c.getValue()  // 12
+    ()
 ```
 
 You can mix mutable and immutable fields:
 
 ```dovetail
 class Entity(id: Int32, mutable health: Int32) =
-    function getId(self): Int32 = self.id           // id is immutable
-    function getHealth(self): Int32 = self.health
-    function damage(self, amount: Int32): Unit = 
+    public function getId(self): Int32 = self.id           // id is immutable
+    public function getHealth(self): Int32 = self.health
+    public function damage(self, amount: Int32): Unit =
         self.health = self.health - amount          // health is mutable
 ```
 
@@ -287,16 +292,16 @@ Classes can extend other classes using `extends`:
 
 ```dovetail
 class Animal(name: String) =
-    function getName(self): String = self.name
+    public function getName(self): String = self.name
 
 class Dog(name: String, breed: String) extends Animal(name) =
-    function getBreed(self): String = self.breed
+    public function getBreed(self): String = self.breed
 
-function main(): Int32 =
+function main(): Unit =
     let d = Dog("Rex", "German Shepherd")
     d.getName()   // "Rex" - inherited from Animal
     d.getBreed()  // "German Shepherd" - defined in Dog
-    0
+    ()
 ```
 
 The `extends` clause specifies:
@@ -313,16 +318,17 @@ Abstract classes cannot be instantiated directly and can contain abstract method
 
 ```dovetail
 abstract class Shape(name: String) =
-    function getName(self): String = self.name    // Concrete method
-    abstract function area(self): Int32           // Abstract method
+    public function getName(self): String = self.name    // Concrete method
+    public abstract function area(self): Int32           // Abstract method
 
 class Square(name: String, side: Int32) extends Shape(name) =
-    function area(self): Int32 = self.side * self.side  // Must implement
+    public override function area(self): Int32 = self.side * self.side  // Must implement
 
-function main(): Int32 =
+function main(): Unit =
     // let s = Shape("test")  // Error: cannot instantiate abstract class
     let sq = Square("square", 5)
     sq.area()  // 25
+    ()
 ```
 
 Key points:
@@ -410,39 +416,41 @@ Classes can have type parameters:
 
 ```dovetail
 class Box<T>(value: T) =
-    function get(self): T = self.value
+    public function get(self): T = self.value
 
-function main(): Int32 =
+function main(): Unit =
     let intBox = Box(42)
     let strBox = Box("hello")
     intBox.get()  // 42
+    ()
 ```
 
 ### Multiple Type Parameters
 
 ```dovetail
 class Pair<A, B>(first: A, second: B) =
-    function getFirst(self): A = self.first
-    function getSecond(self): B = self.second
+    public function getFirst(self): A = self.first
+    public function getSecond(self): B = self.second
 
-function main(): Int32 =
+function main(): Unit =
     let p = Pair(1, "one")
     p.getFirst()   // 1
     p.getSecond()  // "one"
-    0
+    ()
 ```
 
 ### Mutable Generic Fields
 
 ```dovetail
 class MutableBox<T>(mutable value: T) =
-    function get(self): T = self.value
-    function set(self, newValue: T): Unit = self.value = newValue
+    public function get(self): T = self.value
+    public function set(self, newValue: T): Unit = self.value = newValue
 
-function main(): Int32 =
+function main(): Unit =
     let box = MutableBox(10)
     box.set(20)
     box.get()  // 20
+    ()
 ```
 
 ### Constrained Generic Classes
@@ -451,10 +459,10 @@ Use `where` clauses or inline constraints to restrict type parameters:
 
 ```dovetail
 trait Countable =
-    function count(self): Int32
+    public function count(self): Int32
 
 class Counter<T: Countable>(value: T) =
-    function getCount(self): Int32 = self.value.count()
+    public function getCount(self): Int32 = self.value.count()
 ```
 
 Or with `where` clause:
@@ -463,7 +471,7 @@ Or with `where` clause:
 class Wrapper<T>(value: T)
     where T: Printable
 =
-    function fmt(self): String = self.value.format()
+    public function fmt(self): String = self.value.format()
 ```
 
 ---
@@ -482,11 +490,11 @@ Use `implements` in the class declaration:
 
 ```dovetail
 trait Speakable =
-    function speak(self): String
+    public function speak(self): String
 
 class Dog(name: String) implements Speakable =
-    function speak(self): String = "Woof"
-    function getName(self): String = self.name
+    public function speak(self): String = "Woof"
+    public function getName(self): String = self.name
 ```
 
 ### Multiple Traits
@@ -495,14 +503,14 @@ Use `and` to implement multiple traits:
 
 ```dovetail
 trait Speakable =
-    function speak(self): String
+    public function speak(self): String
 
 trait Nameable =
-    function getName(self): String
+    public function getName(self): String
 
 class Dog(name: String) implements Speakable and Nameable =
-    function speak(self): String = "Woof"
-    function getName(self): String = self.name
+    public function speak(self): String = "Woof"
+    public function getName(self): String = self.name
 ```
 
 ### Combined with Inheritance
@@ -511,8 +519,8 @@ Classes can extend a parent and implement traits:
 
 ```dovetail
 class Dog(name: String) extends Pet(name) implements Speakable and Comparable =
-    function speak(self): String = "Woof"
-    function compare(self, other: Dog): Int32 = 0
+    public function speak(self): String = "Woof"
+    public function compare(self, other: Dog): Int32 = 0
 ```
 
 ### External Implementation
@@ -521,13 +529,13 @@ You can also implement traits for classes externally:
 
 ```dovetail
 trait Speakable =
-    function speak(self): String
+    public function speak(self): String
 
 class Dog(name: String) =
-    function bark(self): String = "Woof"
+    public function bark(self): String = "Woof"
 
 implement Speakable for Dog =
-    function speak(self): String = self.bark()
+    public function speak(self): String = self.bark()
 ```
 
 This is useful when:
@@ -539,137 +547,60 @@ This is useful when:
 
 ## 9.11 Extension Properties
 
-Extensions can add not just methods, but also properties to classes, records, and enums. Extension properties generate getter functions just like class body properties.
+Named extensions add computed properties without adding stored fields. Import the
+extension explicitly, even when it is declared in the same package. Extension
+properties use `property name(self): Type`, while class-body computed fields use
+`let property name: Type`.
 
-### Basic Extension Properties
+**Complete example (checked in CI)** — no extra dependencies:
 
+<!-- book-example: {"name": "classes", "depends": []} -->
 ```dovetail
-class Point(x: Int32, y: Int32) =
-    function getX(self): Int32 = self.x
-    function getY(self): Int32 = self.y
+package classes
 
-extension for Point =
-    let property magnitude: Float64 =
-        let x = self.x.toFloat64()
-        let y = self.y.toFloat64()
-        (x * x + y * y).sqrt()
+import classes.RectangleHelpers
 
-function main(): Int32 =
-    let p = Point(3, 4)
-    p.magnitude  // 5.0 - computed via extension property
+class Rectangle(public width: Int32, public height: Int32) =
+    public function dimensions(self): (Int32, Int32) = (self.width, self.height)
+
+extension RectangleHelpers for Rectangle =
+    property area(self): Int32 = self.width * self.height
+    function scaled(self, factor: Int32): Rectangle =
+        Rectangle(self.width * factor, self.height * factor)
+
+function main(): Unit =
+    let rectangle = Rectangle(3, 4)
+    assert rectangle.area == 12
+    assert rectangle.scaled(2).area == 48
+
+test "extension properties compute from public fields" = main()
 ```
 
-Key points about extension properties:
-- Use `let property name: Type = expression` syntax
-- Properties are evaluated every time they're accessed
-- They can access public fields and methods of the type
-- They respect the extension's visibility modifiers
-
-### Extension Properties for Records
-
-Extension properties work the same way for records:
-
-```dovetail
-record Rectangle =
-    width: Int32
-    height: Int32
-
-extension for Rectangle =
-    let property area: Int32 = self.width * self.height
-    let property perimeter: Int32 = 2 * (self.width + self.height)
-
-function main(): Int32 =
-    let r = Rectangle { width = 3; height = 4 }
-    r.area       // 12
-    r.perimeter  // 14
-```
-
-### Extension Properties for Enums
-
-Extension properties can add computed values to enums:
-
-```dovetail
-enum Color =
-    Red
-    Green
-    Blue
-
-extension for Color =
-    let property hexCode: String =
-        match self with
-            case Red => "#FF0000"
-            case Green => "#00FF00"
-            case Blue => "#0000FF"
-
-function main(): Int32 =
-    let c = Color.Red
-    println(c.hexCode)  // "#FF0000"
-    0
-```
-
-### Visibility of Extension Properties
-
-Extension properties follow the extension's visibility:
-
-```dovetail
-public extension for Point =
-    public let property distance: Float64 = self.magnitude
-    private let property internal: Int32 = 0  // Only visible in this package
-```
-
-### Combining with Extension Methods
-
-Extensions can have both properties and methods:
-
-```dovetail
-extension for Point =
-    let property magnitude: Float64 =
-        let x = self.x.toFloat64()
-        let y = self.y.toFloat64()
-        (x * x + y * y).sqrt()
-
-    function scale(self, factor: Int32): Point =
-        Point(self.x * factor, self.y * factor)
-
-    function normalize(self): Point =
-        let mag = self.magnitude
-        Point(
-            (self.x.toFloat64() / mag).toInt32(),
-            (self.y.toFloat64() / mag).toInt32()
-        )
-```
+Properties are evaluated on access. Extensions follow normal visibility rules and
+cannot use private construction to bypass a type's smart constructors. Records
+and enums can also be extended; see [Extension Methods](06-type-system.md#69-extension-methods).
 
 ---
 
 ## 9.12 Extension Methods for Classes
 
-You can add methods to classes using extensions:
+`RectangleHelpers` above defines both a property and a method. Call its method with
+ordinary receiver syntax, such as `rectangle.scaled(2)`, after importing the named
+extension. An extension does not change the class's inheritance hierarchy.
 
-```dovetail
-class Point(x: Int32, y: Int32) =
-    function getX(self): Int32 = self.x
-    function getY(self): Int32 = self.y
-
-extension for Point =
-    function distance(self): Float64 =
-        let x = self.x.toFloat64()
-        let y = self.y.toFloat64()
-        (x * x + y * y).sqrt()
-    
-    function scale(self, factor: Int32): Point =
-        Point(self.x * factor, self.y * factor)
-```
-
-Extensions can also be generic:
+Generic extensions declare their parameters on the extension name:
 
 ```dovetail
 class Container<T>(value: T) =
     function getValue(self): T = self.value
 
-extension for Container<T> =
-    function map<U>(self, f: (T) => U): Container<U> =
-        Container(f(self.getValue()))
+extension ContainerHelpers<T> for Container<T> =
+    function map<U>(self, transform: T => U): Container<U> =
+        Container(transform(self.getValue()))
 ```
+
+Import `yourPackage.ContainerHelpers` at the call site. See
+[Advanced Generics](26-advanced-generics.md#261-generic-extensions) for bounds.
 
 ---
 
@@ -696,7 +627,7 @@ internal class InternalUtil(data: String) =  // Default visibility
 class Entity(
     public id: Int32,           // Accessible everywhere
     private secret: String,     // Only within this class
-    internal data: Int32        // Within this package (default)
+    internal data: Int32        // Within this package; fields default to private
 ) =
     function getId(self): Int32 = self.id
     function getSecret(self): String = self.secret  // OK - inside class
@@ -705,20 +636,25 @@ class Entity(
 Private fields are not accessible outside the class:
 
 ```dovetail
-function main(): Int32 =
+function main(): Unit =
     let e = Entity(1, "secret", 42)
     e.id      // OK - public
     // e.secret  // Error - private field
     0
+    ()
 ```
 
 ### Method Visibility
+
+Class fields and methods default to `private`. Expose operations with `public` or
+`internal` explicitly. This differs from top-level declarations, which default to
+`internal`.
 
 ```dovetail
 class Calculator(value: Int32) =
     private function helper(self): Int32 = self.value * 2
     public function compute(self): Int32 = self.helper() + 1
-    function internal(self): Int32 = 0  // Default: internal
+    internal function packageHelper(self): Int32 = 0  // Explicit package visibility
 ```
 
 ### Combining with Mutable
@@ -737,7 +673,7 @@ class Counter(private mutable count: Int32) =
 
 | Feature | Class | Record |
 |---------|-------|--------|
-| Methods | Defined in body | Via extensions only |
+| Methods | Defined in body | Via associated modules or named extensions |
 | Mutability | Mutable fields supported | Always immutable |
 | Inheritance | Supported | Not supported |
 | Abstract | Supported | Not supported |
@@ -798,6 +734,6 @@ These primitives require no annotation. Classes still need explicit `Equatable` 
 - **Sealed Abstract Classes**: Use `sealed abstract class` to restrict subclasses to the same package with exhaustive pattern matching
 - **Generic Classes**: Type parameters with `class Name<T>`, constraints with `where T: Trait`
 - **Trait Implementation**: Inline with `implements Trait` or external with `implement Trait for Class`
-- **Extension Properties**: Add properties to classes, records, and enums with `let property` in extensions
-- **Extension Methods**: Add methods to classes with `extension for ClassName`
+- **Extension Properties**: Add computed properties with `property name(self): Type` in named extensions
+- **Extension Methods**: Add methods to classes with `extension Helpers for ClassName`
 - **Visibility**: Control access with `public`, `private`, `internal` on classes, fields, methods, and properties
