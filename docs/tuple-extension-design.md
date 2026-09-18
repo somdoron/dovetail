@@ -162,9 +162,9 @@ module Parser<T> =
     function append<U>(self, other: Parser<U>): Parser<T ~ U> =
         let f: ParserFn<T ~ U> = input =>
             match self.run(input) with
-                case ParseResult.Success {value = v1, remaining = r1} =>
+                case ParseResult.Success {value = v1; remaining = r1} =>
                     match other.run(r1) with
-                        case ParseResult.Success {value = v2, remaining = r2} =>
+                        case ParseResult.Success {value = v2; remaining = r2} =>
                             ParseResult.Success {value = v1 ~ v2; remaining = r2}
                         case ParseResult.Failure(m) => ParseResult.Failure(m)
                 case ParseResult.Failure(m) => ParseResult.Failure(m)

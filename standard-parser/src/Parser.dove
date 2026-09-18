@@ -13,9 +13,9 @@ newtype Parser<T> = Slice<Char> => ParseResult<T>
 implement<T> Equatable for ParseResult<T> where T: Equatable =
     function equals(self: ParseResult<T>, other: ParseResult<T>): Bool =
         match self with
-            case ParseResult.Success { value = v1, remaining = r1 } =>
+            case ParseResult.Success { value = v1; remaining = r1 } =>
                 match other with
-                    case ParseResult.Success { value = v2, remaining = r2 } => v1 == v2 && r1 == r2
+                    case ParseResult.Success { value = v2; remaining = r2 } => v1 == v2 && r1 == r2
                     case _ => false
             case ParseResult.Failure(m1) =>
                 match other with
@@ -29,7 +29,7 @@ module Parser<T> =
         let f: ParserFn<U> =
             input =>
                 match self.run(input) with
-                    case ParseResult.Success { value = v, remaining = r } =>
+                    case ParseResult.Success { value = v; remaining = r } =>
                         ParseResult.Success { value = f(v); remaining = r }
                     case ParseResult.Failure(m) => ParseResult.Failure(m)
         Parser(f)
@@ -41,9 +41,9 @@ module Parser<T> =
         let f: ParserFn<T ~U> =
             input =>
                 match self.run(input) with
-                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                    case ParseResult.Success { value = v1; remaining = r1 } =>
                         match other.run(r1) with
-                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                            case ParseResult.Success { value = v2; remaining = r2 } =>
                                 ParseResult.Success { value = v1 ~ v2; remaining = r2 }
                             case ParseResult.Failure(m) => ParseResult.Failure(m)
                     case ParseResult.Failure(m) => ParseResult.Failure(m)
@@ -53,9 +53,9 @@ module Parser<T> =
         let f: ParserFn<(T, U)> =
             input =>
                 match self.run(input) with
-                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                    case ParseResult.Success { value = v1; remaining = r1 } =>
                         match other.run(r1) with
-                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                            case ParseResult.Success { value = v2; remaining = r2 } =>
                                 ParseResult.Success { value = (v1, v2); remaining = r2 }
                             case ParseResult.Failure(m) => ParseResult.Failure(m)
                     case ParseResult.Failure(m) => ParseResult.Failure(m)
@@ -65,9 +65,9 @@ module Parser<T> =
         let f: ParserFn<T> =
             input =>
                 match self.run(input) with
-                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                    case ParseResult.Success { value = v1; remaining = r1 } =>
                         match other.run(r1) with
-                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                            case ParseResult.Success { value = v2; remaining = r2 } =>
                                 ParseResult.Success { value = v1; remaining = r2 }
                             case ParseResult.Failure(m) => ParseResult.Failure(m)
                     case ParseResult.Failure(m) => ParseResult.Failure(m)
@@ -77,9 +77,9 @@ module Parser<T> =
         let f: ParserFn<U> =
             input =>
                 match self.run(input) with
-                    case ParseResult.Success { value = v1, remaining = r1 } =>
+                    case ParseResult.Success { value = v1; remaining = r1 } =>
                         match other.run(r1) with
-                            case ParseResult.Success { value = v2, remaining = r2 } =>
+                            case ParseResult.Success { value = v2; remaining = r2 } =>
                                 ParseResult.Success { value = v2; remaining = r2 }
                             case ParseResult.Failure(m) => ParseResult.Failure(m)
                     case ParseResult.Failure(m) => ParseResult.Failure(m)
@@ -96,7 +96,7 @@ module Parser<T> =
                 let mutable remaining = input
                 while remaining.length > 0 do
                     match self.run(remaining) with
-                        case ParseResult.Success { value = v, remaining = r } =>
+                        case ParseResult.Success { value = v; remaining = r } =>
                             result = result.prepend(v)
                             remaining = r
                         case ParseResult.Failure(m) => break
@@ -107,7 +107,7 @@ module Parser<T> =
         let f: ParserFn<T> =
             input =>
                 match self.run(input) with
-                    case ParseResult.Success { value = v, remaining = r } =>
+                    case ParseResult.Success { value = v; remaining = r } =>
                         ParseResult.Success { value = v; remaining = r }
                     case ParseResult.Failure(m) => other.run(input)
         Parser(f)

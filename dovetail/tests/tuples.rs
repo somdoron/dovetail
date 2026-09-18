@@ -1271,7 +1271,7 @@ record Seg =
 function main(): Unit =
     let s = Seg { id = 1; span = (4, 9); tag = true }
     match s with
-        case Seg { id = i, span = sp, tag = t } =>
+        case Seg { id = i; span = sp; tag = t } =>
             assert i == 1
             assert sp._0 == 4
             assert sp._1 == 9
@@ -1293,7 +1293,7 @@ record Box =
 
 function main(): Unit =
     let b = Box { a = 1; pair = (2, 3) }
-    let c = b with pair = (8, 9)
+    let c = b with { pair = (8, 9) }
     assert c.a == 1
     assert c.pair._0 == 8
     assert c.pair._1 == 9

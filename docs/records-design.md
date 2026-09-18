@@ -104,21 +104,21 @@ Records are immutable. The `with` expression produces a **new** record that copi
 **Grammar:**
 
 ```
-with_expr   = expression "with" with_body
-with_body   = BEGIN { field_init SEP } field_init [ SEP ] END
+with_expr       = expression "with" "{" field_init_list "}"
+field_init_list = field_init { SEP field_init } [ SEP ]
 ```
 
-So `with_body` uses the same `field_init = IDENT "=" block_expr` as record construction.
+The brace-delimited update list uses the same `field_init = IDENT "=" block_expr` as record construction.
 
 **Examples:**
 
 ```dovetail
-let older = user with age = user.age + 1
-let renamed = user with name = "Bob"
-let moved = origin with x = 10; y = 20
+let older = user with { age = user.age + 1 }
+let renamed = user with { name = "Bob" }
+let moved = origin with { x = 10; y = 20 }
 ```
 
-- The left-hand side is evaluated once; then a new record value is built with all fields from that value except those listed in `with_body`, which are replaced by the given expressions.
+- The left-hand side is evaluated once; then a new record value is built with all fields from that value except those listed in the update list, which are replaced by the given expressions.
 - Only fields of the record type may be overridden; no extra or typo’d field names.
 
 ---
@@ -136,14 +136,18 @@ let moved = origin with x = 10; y = 20
 From [grammar.md](grammar.md):
 
 ```
-record_pattern  = type_name "{" [ field_pattern { "," field_pattern } ] "}"
+record_pattern      = type_name "{" [ field_pattern { record_pattern_sep field_pattern } [ record_pattern_sep ] ] "}"
+record_pattern_sep  = SEP | ","
 field_pattern   = IDENT [ ":" pattern ]
 ```
 
+Semicolons are the canonical inline spelling. The parser also accepts commas
+for compatibility, and the formatter rewrites them as semicolons.
+
 So today a field pattern is either a bare `IDENT` or `IDENT ":" pattern`. That allows:
 
-- `Point { x, y }` — bare identifiers; could be interpreted as “bind x and y”.
-- `Point { x: 0, y: 0 }` — colon form for “x and y must be 0”.
+- `Point { x; y }` — bare identifiers; could be interpreted as “bind x and y”.
+- `Point { x: 0; y: 0 }` — colon form for “x and y must be 0”.
 
 Using `:` for the field–pattern association could conflict with future use of `:` for **type ascription** in patterns (e.g. when matching on enum types or other pattern features). So we want a different token for “field ↔ pattern” in record patterns.
 
@@ -167,7 +171,7 @@ Use **equals** in record patterns, with an optional shorthand when the bound var
   So the `:` form is dropped for record fields. If `= pattern` is present, the field is matched to that pattern; if omitted, it is shorthand for `IDENT = IDENT` (bind the field to a variable with the same name).
 
 - **Semantics:**
-  - **Bare identifier** — `x` alone means `x = x`: match the field and bind its value to that name. So `Point { x, y }` is equivalent to `Point { x = x, y = y }`.
+  - **Bare identifier** — `x` alone means `x = x`: match the field and bind its value to that name. So `Point { x; y }` is equivalent to `Point { x = x; y = y }`.
   - `field = literal` — match only when the record’s field value equals that literal (and the literal’s type matches the field type).
   - `field = variable` — match and bind the field value to that variable (same or different name).
   - `field = _` — match and ignore the field.
@@ -181,10 +185,10 @@ This keeps literals and puns unambiguous: a bare `IDENT` always means “bind fi
 
 ```dovetail
 let quadrant = match point with
-    case Point { x, y } if x > 0 and y > 0 => "Q1"
-    case Point { x, y } if x < 0 and y > 0 => "Q2"
-    case Point { x, y } if x < 0 and y < 0 => "Q3"
-    case Point { x, y } if x > 0 and y < 0 => "Q4"
+    case Point { x; y } if x > 0 and y > 0 => "Q1"
+    case Point { x; y } if x < 0 and y > 0 => "Q2"
+    case Point { x; y } if x < 0 and y < 0 => "Q3"
+    case Point { x; y } if x > 0 and y < 0 => "Q4"
     case _ => "Origin or on axis"
 ```
 
@@ -194,10 +198,10 @@ The form `Point { x = x, y = y }` remains valid and is equivalent.
 
 ```dovetail
 match point with
-    case Point { x = 0, y = 0 } => "origin"
-    case Point { x = 0, y = y } => "on Y axis at $y"
-    case Point { x = x, y = 0 } => "on X axis at $x"
-    case Point { x = x, y = y } => "other"
+    case Point { x = 0; y = 0 } => "origin"
+    case Point { x = 0; y = y } => "on Y axis at $y"
+    case Point { x = x; y = 0 } => "on X axis at $x"
+    case Point { x = x; y = y } => "other"
 ```
 
 **Mix of literal and bind:**
@@ -206,9 +210,9 @@ match point with
 record Config = level: Int32; name: String
 
 match config with
-    case Config { level = 0, name = n } => "off: $n"
-    case Config { level = 1, name = n } => "low: $n"
-    case Config { level = lvl, name = _ } => "level $lvl"
+    case Config { level = 0; name = n } => "off: $n"
+    case Config { level = 1; name = n } => "low: $n"
+    case Config { level = lvl; name = _ } => "level $lvl"
 ```
 
 **Partial patterns (subset of fields):**  
@@ -225,11 +229,12 @@ field_pattern = IDENT [ "=" pattern ]
 So:
 
 ```
-record_pattern = type_name "{" [ field_pattern { "," field_pattern } ] "}"
+record_pattern      = type_name "{" [ field_pattern { record_pattern_sep field_pattern } [ record_pattern_sep ] ] "}"
+record_pattern_sep  = SEP | ","
 field_pattern   = IDENT [ "=" pattern ]
 ```
 
-- **When `= pattern` is omitted:** the pattern is equivalent to `IDENT = IDENT` (bind the field to a variable with the same name). This matches the [control flow book](book/04-control-flow.md) style `case Point { x, y } =>` and is common in Haskell (record puns) and similar languages.
+- **When `= pattern` is omitted:** the pattern is equivalent to `IDENT = IDENT` (bind the field to a variable with the same name). This matches the [control flow book](book/04-control-flow.md) style `case Point { x; y } =>` and is common in Haskell (record puns) and similar languages.
 - **When `= pattern` is present:** the field is matched against that pattern (literal, variable, `_`, or nested pattern).
 
 - In **record construction** and **with**: `field_init = IDENT "=" block_expr` (RHS expression; `=` required).
@@ -285,7 +290,7 @@ Implementation is split into phases so that each delivers a testable slice and b
 | Phase | Scope | Parser | Typechecker | Codegen |
 |-------|--------|--------|-------------|--------|
 | **1** | Record definition, construction, field access | Record decl; record construct `Type { field = expr ... }`; postfix `.field` | Registry + types for records; typecheck construction and field access | WASM-GC record types; struct.new; struct.get |
-| **2** | With expression | `expr with field = expr ...` | Typecheck `with` (LHS record type, fields valid) | New struct, copy + override fields |
+| **2** | With expression | `expr with { field = expr; ... }` | Typecheck `with` (LHS record type, fields valid) | New struct, copy + override fields |
 | **3** | Record patterns in match | Update `field_pattern` to `IDENT [ "=" pattern ]`; record patterns in match arms | Pattern vs record type; bindings; exhaustiveness for record scrutinees | Match on record: extract fields, branch or bind |
 | **4** | Codegen robustness | — | — | Type definition order (topological); recursion groups for cyclic records; non-null when possible |
 
@@ -298,10 +303,10 @@ Implementation is split into phases so that each delivers a testable slice and b
 
 **Phase 2 — With expression**
 
-- **Parser:** `with_expr` and `with_body` (already in grammar); ensure layout/parsing is wired.
+- **Parser:** Parse `with_expr` with a brace-delimited field initializer list.
 - **Typechecker:** Scrutinee must be a record type; overrides must be valid field names and expression types must match field types.
 - **Codegen:** Allocate new struct, copy all fields from LHS, then overwrite with override expressions. Reuse same struct type as LHS.
-- **Tests:** `r with x = e`; multiple overrides; chained `with`.
+- **Tests:** `r with { x = e }`; multiple overrides; chained `with`.
 
 **Phase 3 — Record patterns in match**
 
@@ -309,7 +314,7 @@ Implementation is split into phases so that each delivers a testable slice and b
 - **Parser:** Parse bare `IDENT` and `IDENT = pattern` in record patterns; record pattern as a whole.
 - **Typechecker:** For `case R { ... } =>`, require scrutinee type to be (or unify with) record type R. Typecheck each field pattern against the field type; bind variables in guard and body. Exhaustiveness: record type has one “constructor”; catch-all or full record pattern covers it.
 - **Codegen:** For record match arms: load fields (struct.get), match literals or bind locals; generate branches/joins as for existing match. Support guards that use bound field variables.
-- **Tests:** Match with destructuring only; match with literals in fields; bare-field shorthand (`Point { x, y }`); mix of literal and bind; guards on record patterns.
+- **Tests:** Match with destructuring only; match with literals in fields; bare-field shorthand (`Point { x; y }`); mix of literal and bind; guards on record patterns.
 
 **Phase 4 — Codegen: definition order and recursion groups**
 
@@ -327,7 +332,7 @@ Implementation is split into phases so that each delivers a testable slice and b
 | **Definition** | `record Name =` with `IDENT ":" type` fields. Generic records (type_params) are out of scope. |
 | **Creation** | `TypeName { field = expr; ... }`; all fields required; RHS is expression. |
 | **Field access** | Dot notation: `value.field`. |
-| **With** | `expr with field = expr; ...`; produces new record with overrides. |
+| **With** | `expr with { field = expr; ... }`; produces new record with overrides. |
 | **Match** | `case TypeName { field [ = pattern ]; ... } => body` (bare `field` = bind to same name). |
 | **Field pattern syntax** | `field = pattern` required for literals/nested/`_`; **bare `field`** allowed as shorthand for `field = field` (identifier pun). |
 | **Rationale for `=`** | Matches F#/Haskell; keeps `:` for future use (e.g. type-annotated patterns on enums); consistent with record construction. |

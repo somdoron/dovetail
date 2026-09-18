@@ -87,8 +87,8 @@ let userAge = user.age
 Records are immutable. Use `with` to create a modified copy:
 
 ```dovetail
-let older = user with age = user.age + 1
-let renamed = user with name = "Bob"
+let older = user with { age = user.age + 1 }
+let renamed = user with { name = "Bob" }
 ```
 
 ### Private Construction
@@ -106,7 +106,7 @@ module Account =
 
     public function deposit(self, amount: Int32): Result<Account, String> =
         if amount < 0 then Error("deposit must not be negative")
-        else Ok(self with balance = self.balance + amount)
+        else Ok(self with { balance = self.balance + amount })
 ```
 
 Any caller that can see `Account` can read `account.balance` and destructure an account in a pattern. Only `module Account` in the defining package can write `Account { ... }` or `account with ...`. Sharing the package or file is not enough; trait implementations and extensions must call the module's functions too.
@@ -1153,7 +1153,7 @@ module Account =
 
     public function deposit(self, amount: Int32): Account =
         assert amount >= 0
-        self with balance = self.balance + amount
+        self with { balance = self.balance + amount }
 
 public enum Status private =
     Open

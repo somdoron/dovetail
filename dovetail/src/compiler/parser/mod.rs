@@ -3251,40 +3251,30 @@ impl Parser {
         let start = object.span();
         self.advance(); // consume 'with'
 
+        self.expect(TokenKind::LBrace, "expected '{' after 'with'");
+
         let mut fields = Vec::new();
 
-        if self.at(TokenKind::Begin) {
-            self.advance(); // consume Begin
-            fields.push(self.parse_field_init());
-            while self.at(TokenKind::Sep) {
-                self.advance(); // consume Sep
-                fields.push(self.parse_field_init());
-            }
-            let end = self.peek().span.clone();
-            self.expect(TokenKind::End, "expected end of with block");
-            let span = start.merge(&end);
-            Expr::RecordWith {
-                object: Box::new(object),
-                fields,
-                span,
-            }
+        if self.at(TokenKind::RBrace) {
+            self.error_at_current("expected at least one field in with expression");
         } else {
-            // Same-line: only `;` separates fields (Sep belongs to outer context)
             fields.push(self.parse_field_init());
-            while self.at(TokenKind::Semicolon) {
+            while self.at(TokenKind::Sep) || self.at(TokenKind::Semicolon) {
                 self.advance();
+                if self.at(TokenKind::RBrace) {
+                    break;
+                }
                 fields.push(self.parse_field_init());
             }
-            let end = fields
-                .last()
-                .map(|f| f.span.clone())
-                .unwrap_or_else(|| start.clone());
-            let span = start.merge(&end);
-            Expr::RecordWith {
-                object: Box::new(object),
-                fields,
-                span,
-            }
+        }
+
+        let end = self.peek().span.clone();
+        self.expect(TokenKind::RBrace, "expected '}' after with fields");
+        let span = start.merge(&end);
+        Expr::RecordWith {
+            object: Box::new(object),
+            fields,
+            span,
         }
     }
 
@@ -4244,9 +4234,12 @@ impl Parser {
         // Empty record pattern: `Foo {}`
         if !self.at(TokenKind::RBrace) {
             fields.push(self.parse_field_pattern());
-            while self.at(TokenKind::Comma) {
-                self.advance(); // consume ','
-                // Allow trailing comma
+            while self.at(TokenKind::Sep)
+                || self.at(TokenKind::Semicolon)
+                || self.at(TokenKind::Comma)
+            {
+                self.advance();
+                // Allow a trailing separator.
                 if self.at(TokenKind::RBrace) {
                     break;
                 }
@@ -4281,8 +4274,11 @@ impl Parser {
 
         if !self.at(TokenKind::RBrace) {
             fields.push(self.parse_field_pattern());
-            while self.at(TokenKind::Comma) {
-                self.advance(); // consume ','
+            while self.at(TokenKind::Sep)
+                || self.at(TokenKind::Semicolon)
+                || self.at(TokenKind::Comma)
+            {
+                self.advance();
                 if self.at(TokenKind::RBrace) {
                     break;
                 }

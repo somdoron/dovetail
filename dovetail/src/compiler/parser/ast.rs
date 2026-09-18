@@ -709,7 +709,7 @@ pub enum Expr {
         fields: Vec<FieldInit>,
         span: Span,
     },
-    /// Record with expression: `point with x = 10`
+    /// Record with expression: `point with { x = 10 }`
     RecordWith {
         object: Box<Expr>,
         fields: Vec<FieldInit>,

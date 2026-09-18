@@ -157,14 +157,15 @@ function g(): Unit = call((value: Int32) =>
 #[test]
 fn record_updates_and_fields_converge() {
     let inline = r#"package a
-function f(p: Point): Point = p with x = 1; y = 2
+function f(p: Point): Point = p with { x = 1; y = 2 }
 function g(): Point = Point { x = 1; y = 2 }
 "#;
     let multiline = r#"package a
 function f(p: Point): Point =
-    p with
+    p with {
         x = 1
         y = 2
+    }
 function g(): Point =
     Point {
         x = 1
@@ -173,6 +174,46 @@ function g(): Point =
 "#;
     let output = format(inline);
     assert_eq!(format(multiline), output);
+    assert!(output.contains("p with { x = 1; y = 2 }"));
+    assert_eq!(format(&output), output);
+}
+
+#[test]
+fn record_patterns_use_semicolons() {
+    let comma_separated = r#"package a
+function sum(p: Point): Int32 =
+    match p with
+        case Point { x, y } => x + y
+"#;
+    let multiline = r#"package a
+function sum(p: Point): Int32 =
+    match p with
+        case Point {
+            x
+            y
+        } => x + y
+"#;
+    let output = format(comma_separated);
+    assert_eq!(format(multiline), output);
+    assert!(output.contains("case Point { x; y } =>"));
+    assert_eq!(format(&output), output);
+}
+
+#[test]
+fn multiline_record_patterns_use_semicolons_between_fields() {
+    let source = r#"package a
+function inspect(p: Point): Int32 =
+    match p with
+        case Point {
+            firstCoordinateWithAnIntentionallyLongName,
+            secondCoordinateWithAnIntentionallyLongName,
+            thirdCoordinateWithAnIntentionallyLongName,
+        } => 0
+"#;
+    let output = format(source);
+    assert!(output.contains(
+        "case Point {\n            firstCoordinateWithAnIntentionallyLongName;\n            secondCoordinateWithAnIntentionallyLongName;\n            thirdCoordinateWithAnIntentionallyLongName\n        } => 0"
+    ));
     assert_eq!(format(&output), output);
 }
 

@@ -3,7 +3,7 @@ package standard.parser
 test "append and concat produce flat results and preserve remaining input" =
     let parser = parseChar('(').append(parseDigit()) ++ parseChar(')')
     match parser.run(Slice.full("(3)rest".chars())) with
-        case ParseResult.Success { value = (open, digit, close), remaining = rest } =>
+        case ParseResult.Success { value = (open, digit, close); remaining = rest } =>
             assert open == '('
             assert digit == '3'
             assert close == ')'
@@ -14,14 +14,14 @@ test "append preserves right tuple and zip preserves both results" =
     let pair = parseChar('a').zip(parseChar('b'))
     let nested = pair.append(parseChar('c').zip(parseChar('d')))
     match nested.run(Slice.full("abcd".chars())) with
-        case ParseResult.Success { value = (a, b, cd), remaining = rest } =>
+        case ParseResult.Success { value = (a, b, cd); remaining = rest } =>
             assert a == 'a' && b == 'b'
             assert cd == ('c', 'd')
             assert rest.length == 0
         case ParseResult.Failure(message) => panic (message)
     let zipped = pair.zip(parseChar('c'))
     match zipped.run(Slice.full("abc".chars())) with
-        case ParseResult.Success { value = (ab, c), remaining = rest } =>
+        case ParseResult.Success { value = (ab, c); remaining = rest } =>
             assert ab == ('a', 'b')
             assert c == 'c'
         case ParseResult.Failure(message) => panic (message)
@@ -30,7 +30,7 @@ test "concat discards delimiters" =
     let first = parseChar('(').zipRight(parseDigit())
     let second = parseChar(',').zipRight(parseDigit()).zipLeft(parseChar(')'))
     match (first ++ second).run(Slice.full("(3,7)".chars())) with
-        case ParseResult.Success { value = digits, remaining = rest } =>
+        case ParseResult.Success { value = digits; remaining = rest } =>
             assert digits == ('3', '7')
             assert rest.length == 0
         case ParseResult.Failure(message) => panic (message)
@@ -45,7 +45,7 @@ test "concat supports more than six elements" =
             ++ parseDigit()
             ++ parseDigit()
     match parser.run(Slice.full("1234567!".chars())) with
-        case ParseResult.Success { value = (a, b, c, d, e, f, g), remaining = rest } =>
+        case ParseResult.Success { value = (a, b, c, d, e, f, g); remaining = rest } =>
             assert a == '1' && b == '2' && c == '3' && d == '4'
             assert e == '5' && f == '6' && g == '7'
             assert rest.get(0) == '!'
@@ -56,7 +56,7 @@ test "append propagates first failure without running right parser" =
     let right: Parser<Char> = Parser(input => panic ("right must not run"))
     match (left ++ right).run(Slice.full("x".chars())) with
         case ParseResult.Failure(message) => assert message == "left failed"
-        case ParseResult.Success { value = value, remaining = rest } => panic ("expected failure")
+        case ParseResult.Success { value = value; remaining = rest } => panic ("expected failure")
 
 test "append propagates right failure after left success" =
     let rightFn: ParserFn<Char> =
@@ -66,4 +66,4 @@ test "append propagates right failure after left success" =
     let right = Parser(rightFn)
     match parseChar('a').append(right).run(Slice.full("ab".chars())) with
         case ParseResult.Failure(message) => assert message == "right failed"
-        case ParseResult.Success { value = value, remaining = rest } => panic ("expected failure")
+        case ParseResult.Success { value = value; remaining = rest } => panic ("expected failure")

@@ -1385,7 +1385,7 @@ function main(): Unit =
     let s = Shape.Point { x = 10; y = 20 }
     match s with
         case Shape.Circle(r) => assert false
-        case Shape.Point { x = px, y = py } => assert px + py == 30
+        case Shape.Point { x = px; y = py } => assert px + py == 30
 "#,
     )
     .expect("record-style variant pattern match");
@@ -1403,9 +1403,9 @@ enum Shape =
 function main(): Unit =
     let p = Shape.Point { y = 20; x = 10 }
     match p with
-        case Shape.Point { x = px, y = py } => assert px == 10
+        case Shape.Point { x = px; y = py } => assert px == 10
     match p with
-        case Shape.Point { x = px, y = py } => assert py == 20
+        case Shape.Point { x = px; y = py } => assert py == 20
 "#,
     )
     .expect("record-style variant field reordering");
@@ -1428,7 +1428,7 @@ function main(): Unit =
     let l = Shape.Line(0.0, 0.0, 1.0, 1.0)
     match c with
         case Shape.Circle(r) => assert r == 3.14
-        case Shape.Point { x = _, y = _ } => assert false
+        case Shape.Point { x = _; y = _ } => assert false
         case Shape.Line(_, _, _, _) => assert false
 "#,
     )
@@ -1449,7 +1449,7 @@ function main(): Unit =
     let s = Shape.Point { x = 5; y = 5 }
     match s with
         case Shape.Circle(_) => assert false
-        case Shape.Point { x = px, y = py } => assert px == py
+        case Shape.Point { x = px; y = py } => assert px == py
 "#,
     )
     .expect("exhaustiveness with record-style variant");
@@ -1467,9 +1467,9 @@ enum Shape =
 function main(): Unit =
     let s = Shape.Point { x = 42; y = 99 }
     match s with
-        case Shape.Point { x, y } => assert x == 42
+        case Shape.Point { x; y } => assert x == 42
     match s with
-        case Shape.Point { x, y } => assert y == 99
+        case Shape.Point { x; y } => assert y == 99
 "#,
     )
     .expect("record-style variant with bare field shorthand in pattern");
@@ -1489,10 +1489,10 @@ function main(): Unit =
     let w: Wrapper<Int32> = Wrapper.Value { data = 42; label = 1 }
     match w with
         case Wrapper.Empty => assert false
-        case Wrapper.Value { data = d, label = l } => assert d == 42
+        case Wrapper.Value { data = d; label = l } => assert d == 42
     match w with
         case Wrapper.Empty => assert false
-        case Wrapper.Value { data = d, label = l } => assert l == 1
+        case Wrapper.Value { data = d; label = l } => assert l == 1
 "#,
     )
     .expect("generic enum with record variant");
@@ -1510,7 +1510,7 @@ enum Shape =
 function main(): Unit =
     let s = Shape.Point { x = 0; y = 42 }
     match s with
-        case Shape.Point { x = 0, y = py } => assert py == 42
+        case Shape.Point { x = 0; y = py } => assert py == 42
         case _ => assert false
 "#,
     )
@@ -1620,9 +1620,9 @@ enum Pair<T> =
 function main(): Unit =
     let p: Pair<Int32> = Pair.Pair { first = 10; second = 20 }
     match p with
-        case Pair.Pair { first = a, second = b } => assert a == 10
+        case Pair.Pair { first = a; second = b } => assert a == 10
     match p with
-        case Pair.Pair { first = a, second = b } => assert b == 20
+        case Pair.Pair { first = a; second = b } => assert b == 20
 "#,
     )
     .expect("generic enum with record variant inference");
@@ -1853,8 +1853,8 @@ enum Shape =
 function main(): Unit =
     let s = Shape.Point { x = 10; y = 20 }
     let result = match s with
-        case Shape.Point { x = px, y = py } if px > 15 => 0
-        case Shape.Point { x = px, y = py } => px + py
+        case Shape.Point { x = px; y = py } if px > 15 => 0
+        case Shape.Point { x = px; y = py } => px + py
         case Shape.Circle(r) => r
     assert result == 30
 "#,
@@ -1981,7 +1981,7 @@ enum Shape =
 function main(): Unit =
     let s = Shape.At(Point { x = 3; y = 4 })
     let result = match s with
-        case Shape.At(Point { x = px, y = py }) => px + py
+        case Shape.At(Point { x = px; y = py }) => px + py
         case Shape.Circle(r) => r
     assert result == 7
 "#,

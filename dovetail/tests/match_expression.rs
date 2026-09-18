@@ -510,7 +510,7 @@ record Point = x: Int32; y: Int32
 function main(): Unit =
     let p = Point { x = 10; y = 20 }
     let result = match p with
-        case Point { x, y } => x + y
+        case Point { x; y } => x + y
     assert result == 30
 "#,
     )

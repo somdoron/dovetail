@@ -656,9 +656,7 @@ field_init_list     = field_init { SEP field_init } [ SEP ]
 
 field_init          = IDENT "=" block_expr
 
-with_expr           = expression "with" with_body
-
-with_body           = BEGIN { field_init SEP } field_init [ SEP ] END
+with_expr           = expression "with" "{" field_init_list "}"
 
 /* Lambda */
 lambda_expr         = lambda_params "->" block_expr
@@ -720,7 +718,9 @@ constructor_pattern = type_name "(" [ pattern { "," pattern } ] ")"
 
 tuple_pattern       = "(" pattern "," pattern { "," pattern } ")"
 
-record_pattern      = type_name [ type_args ] "{" [ field_pattern { "," field_pattern } ] "}"
+record_pattern      = type_name [ type_args ] "{" [ field_pattern { record_pattern_sep field_pattern } [ record_pattern_sep ] ] "}"
+
+record_pattern_sep  = SEP | ","
 
 /* `[]` and `[a, b]` match a `List`, desugaring to `Nil` / nested `Cons`. */
 list_pattern        = "[" [ pattern { "," pattern } [ "," ] ] "]"

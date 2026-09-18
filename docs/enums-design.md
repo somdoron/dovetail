@@ -53,7 +53,7 @@ Each variant may have:
 
 - **No payload** — e.g. `None`, `Red`, `Point`.
 - **Payload with tuple syntax** — parentheses: `Variant(Type1, Type2)`. Positional, like a tuple. Construction: `Enum.Variant(expr1, expr2)`. Pattern: `case Enum.Variant(p1, p2) =>`.
-- **Payload with record syntax** — curly braces: `Variant { field1: Type1, field2: Type2 }`. Named fields, like a record. Construction: `Enum.Variant { field1 = expr1, field2 = expr2 }`. Pattern: `case Enum.Variant { field1 = p1, field2 = p2 } =>`.
+- **Payload with record syntax** — curly braces: `Variant { field1: Type1; field2: Type2 }`. Named fields, like a record. Construction: `Enum.Variant { field1 = expr1; field2 = expr2 }`. Pattern: `case Enum.Variant { field1 = p1; field2 = p2 } =>`.
 
 The declaration delimiter fixes the stored payload shape. A single-record tuple payload additionally accepts brace construction and patterns as shorthand (§3.4). **Empty enums** (zero variants) are **not** allowed; every enum must have at least one variant.
 
@@ -71,7 +71,7 @@ So today only **tuple-style** (positional) is allowed (e.g. `Rectangle(Float64, 
 To support **record-style** (named) payloads we add a second form:
 
 - **Tuple form (existing):** `IDENT "(" type_list ")"` — e.g. `Circle(Float64)`, `Rectangle(Float64, Float64)`.
-- **Record form (new):** `IDENT "{" record_field_list "}"` — same as record fields, e.g. `Point { x: Int32, y: Int32 }`.
+- **Record form (new):** `IDENT "{" record_field_list "}"` — same as record fields, e.g. `Point { x: Int32; y: Int32 }`.
 
 Grammar extension (conceptual):
 
@@ -86,7 +86,7 @@ So each variant has either a tuple payload (parens) or a record payload (curly),
 ### 3.3 Construction and pattern matching
 
 - **Tuple variant:** `Option.Some(42)`, `Shape.Rectangle(10.0, 20.0)`. Pattern: `case Option.Some(x) =>`, `case Shape.Rectangle(w, h) =>`.
-- **Record variant:** `Shape.Point { x = 0, y = 0 }`. Pattern: `case Shape.Point { x = px, y = py } =>`. Construction and pattern use the same `{ field = value }` / `{ field = pattern }` syntax as records.
+- **Record variant:** `Shape.Point { x = 0; y = 0 }`. Pattern: `case Shape.Point { x = px; y = py } =>`. Construction and pattern use the same `{ field = value }` / `{ field = pattern }` syntax as records.
 
 ---
 
@@ -99,9 +99,9 @@ OrderStatus.Placed { placedAt = now; total = total }
 // Equivalent to:
 OrderStatus.Placed(Placement { placedAt = now; total = total })
 
-case Placed { placedAt, total } => ...
+case Placed { placedAt; total } => ...
 // Equivalent to:
-case Placed(Placement { placedAt, total }) => ...
+case Placed(Placement { placedAt; total }) => ...
 ```
 
 The positional forms remain available for passing or binding the whole record. Inline record variants retain their existing representation and construction rules.
@@ -248,7 +248,7 @@ So most statically-typed languages with sum types use **A**: only the full enum/
 ### 8.2 Variant payload: tuple vs record syntax
 
 - **Tuple form:** Constructor and pattern use parentheses: `Enum.Variant(exprs)` / `case Enum.Variant(patterns) =>`. Grammar already has `type_name "(" ... ")"` for both.
-- **Record form:** Constructor and pattern use **curly braces**: `Enum.Variant { field = expr, ... }` / `case Enum.Variant { field = pattern, ... } =>`. Same as record construction and record patterns; extend grammar so that after a variant name we allow either `"(" ... ")"` or `"{" field_pattern_list "}"`. No ambiguity: delimiter distinguishes tuple vs record payload.
+- **Record form:** Constructor and pattern use **curly braces**: `Enum.Variant { field = expr; ... }` / `case Enum.Variant { field = pattern; ... } =>`. Same as record construction and record patterns; extend grammar so that after a variant name we allow either `"(" ... ")"` or `"{" field_pattern_list "}"`. No ambiguity: delimiter distinguishes tuple vs record payload.
 
 ### 8.3 AST
 

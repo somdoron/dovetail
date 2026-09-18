@@ -926,7 +926,7 @@ public class Runtime(
                             case Frame.ProducerAwaitFrame(request) =>
                                 self.awaitProducerShutdown(fiber, request)
                             case Frame.ProducerShutdownFrame {
-                                request,
+                                request;
                                 originalFailure = failure
                             } => self.finishProducerShutdown(fiber, request, failure)
                             case Frame.MapFrame { transform = f } =>
@@ -941,7 +941,7 @@ public class Runtime(
                             case Frame.FoldCauseFrame { onSuccess } =>
                                 fiber.asyncValue = onSuccess(value)
                             case Frame.UninterruptibleFrame {
-                                previousInterruptible = previous,
+                                previousInterruptible = previous;
                                 wasHard
                             } =>
                                 fiber.interruptible = previous
@@ -1026,7 +1026,7 @@ public class Runtime(
                                         fiber.maskedUntilSafePoint = true
                                     let next: Async<Any, Any> = Succeed(value)
                                     fiber.asyncValue = next
-                            case Frame.AwaitFrame { signal, check } =>
+                            case Frame.AwaitFrame { signal; check } =>
                                 match value as Option<Any> with
                                     case Some(v) =>
                                         // The wait ended without parking: give back the
@@ -1071,9 +1071,9 @@ public class Runtime(
                                                     .unregisterWaiter(signal, fiber.id)
                                                 fiber.forgetWake(signal)
                             case Frame.BracketAcquireFrame {
-                                release,
-                                useFn,
-                                scope,
+                                release;
+                                useFn;
+                                scope;
                                 outerScope = outer
                             } =>
                                 // Resource acquired successfully — push a Release frame so the
@@ -1105,9 +1105,9 @@ public class Runtime(
                                 if !self.deliverDeferredInterrupt(fiber) then
                                     fiber.asyncValue = useFn(value)
                             case Frame.BracketReleaseFrame {
-                                release,
-                                resource,
-                                scope,
+                                release;
+                                resource;
+                                scope;
                                 outerScope = outer
                             } =>
                                 // useFn succeeded with `value`. Close the scope first: the
@@ -1183,7 +1183,7 @@ public class Runtime(
                                             unwind
                                         )
                                         self.observeProducerCleanup(fiber, scope)
-                            case Frame.AttachAcquireFrame { finalizerOf, scope } =>
+                            case Frame.AttachAcquireFrame { finalizerOf; scope } =>
                                 // Acquired: hand the finalizer to the scope BEFORE anything
                                 // else can happen to this fiber. From here the resource is
                                 // owned by that scope, which is exactly what a deferred
@@ -1200,7 +1200,7 @@ public class Runtime(
                                 if !self.deliverDeferredInterrupt(fiber) then
                                     let next: Async<Any, Any> = Succeed(value)
                                     fiber.asyncValue = next
-                            case Frame.ScopeCloseFrame { scope, outerScope = outer } =>
+                            case Frame.ScopeCloseFrame { scope; outerScope = outer } =>
                                 // A scope that acquired nothing of its own: no release to
                                 // run, only what was attached to it.
                                 fiber
@@ -1849,7 +1849,7 @@ public class Runtime(
                             case Cause.Panicked(_, _) => self.preserveProducerCleanup(fiber, cause)
                             case _ => ()
                         fiber.asyncValue = FailCause(cause)
-                    case Frame.ProducerValueFrame { producer, cleanupFailure } =>
+                    case Frame.ProducerValueFrame { producer; cleanupFailure } =>
                         let cleanup =
                             match cleanupFailure with
                                 case Some(original) =>
@@ -1880,7 +1880,7 @@ public class Runtime(
                         // and `forkAndUse` finalizers when a fiber is interrupted.
                         fiber
                             .asyncValue = onCause(cause)
-                    case Frame.UninterruptibleFrame { previousInterruptible = previous, wasHard } =>
+                    case Frame.UninterruptibleFrame { previousInterruptible = previous; wasHard } =>
                         fiber.interruptible = previous
                         if wasHard then fiber.hardMaskDepth = fiber.hardMaskDepth - 1
                         // The success arm's gate, mirrored: the end of a masked region
@@ -1933,7 +1933,7 @@ public class Runtime(
                             .unregisterWaiter(signal, fiber.id)
                         fiber.forgetWake(signal)
                         self.handleFailure(fiber, cause)
-                    case Frame.BracketAcquireFrame { release, useFn, scope, outerScope = outer } =>
+                    case Frame.BracketAcquireFrame { release; useFn; scope; outerScope = outer } =>
                         // Acquire itself failed — nothing to release. The scope opened
                         // before `acquire` may still hold fibers forked during it, so
                         // close it before propagating; a fiber forked by a failing
@@ -1986,9 +1986,9 @@ public class Runtime(
                                     )
                                     self.observeProducerCleanup(fiber, scope)
                     case Frame.BracketReleaseFrame {
-                        release,
-                        resource,
-                        scope,
+                        release;
+                        resource;
+                        scope;
                         outerScope = outer
                     } =>
                         // useFn failed — close the scope (an abnormal close, so
@@ -2049,7 +2049,7 @@ public class Runtime(
                         // registered on is closed by its own frame. Just propagate.
                         self
                             .handleFailure(fiber, cause)
-                    case Frame.ScopeCloseFrame { scope, outerScope = outer } =>
+                    case Frame.ScopeCloseFrame { scope; outerScope = outer } =>
                         fiber.currentScope = outer
                         match self
                             .closeScope(fiber, scope, true, DrainResume.ResumeCause(cause)) with
@@ -2480,7 +2480,7 @@ public class Runtime(
                 match fiber.continuation.peek with
                     case Some(frame) =>
                         match frame with
-                            case Frame.BracketAcquireFrame { release, scope, outerScope = outer } =>
+                            case Frame.BracketAcquireFrame { release; scope; outerScope = outer } =>
                                 fiber.continuation.pop()
                                 fiber
                                     .continuation
@@ -2493,7 +2493,7 @@ public class Runtime(
                                         outerScope = outer
                                     }
                                 )
-                            case Frame.AttachAcquireFrame { finalizerOf, scope } =>
+                            case Frame.AttachAcquireFrame { finalizerOf; scope } =>
                                 // The same hazard as the bracket frame above, with a
                                 // different repair. The resource EXISTS — the acquire
                                 // returned it — and the registration that owns it is only

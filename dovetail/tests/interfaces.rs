@@ -1889,7 +1889,7 @@ function main(): Unit =
     assert t._0.alpha() + t._1 == 12
     let w = Wrap { t = concrete }
     assert w.t._0.alpha() == 5
-    let w2 = w with t = makeConcrete()
+    let w2 = w with { t = makeConcrete() }
     assert w2.t._0.alpha() == 1
     let r = viaReturn()
     assert r._0.alpha() + r._1 == 3

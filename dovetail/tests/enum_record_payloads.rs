@@ -65,7 +65,7 @@ function main(): Unit =
     assert read(wrap("hello")) == "hello"
     let option: Option<Data<Int32>> = Some { value = 7; other = None }
     match option with
-        case Some { value, other = None } => assert value == 7
+        case Some { value; other = None } => assert value == 7
         case Some { other = Some(_) } => assert false
         case None => assert false
     let result: Result<Data<Int32>, String> = Ok { value = 8; other = None }
@@ -99,7 +99,7 @@ class Counter(public mutable count: Int32)
 
 function read<T>(envelope: Envelope<T>): T =
     match envelope with
-        case Data { value, other = None, nested = Some(None) } => value
+        case Data { value; other = None; nested = Some(None) } => value
         case _ => panic "expected empty options"
 
 function main(): Unit =
@@ -136,7 +136,7 @@ enum Envelope<T> =
 
 function read<T>(envelope: Envelope<T>): T =
     match envelope with
-        case Data { value, transform, other = Some(next) } => next(transform(value))
+        case Data { value; transform; other = Some(next) } => next(transform(value))
         case _ => panic "expected another transform"
 
 function main(): Unit =
@@ -200,7 +200,7 @@ function calculate(transform: Int32 => Int32): Int32 = transform(12)
 
 function read<T>(envelope: Envelope<T>): T =
     match envelope with
-        case Data { value, transform, other = None } => transform(value)
+        case Data { value; transform; other = None } => transform(value)
         case _ => panic "expected None"
 
 function main(): Unit =
@@ -239,7 +239,7 @@ enum Envelope<T> =
 
 function read<T>(envelope: Envelope<T>): T =
     match envelope with
-        case Data { value, nested = Data { other = None } } => value
+        case Data { value; nested = Data { other = None } } => value
         case _ => panic "expected None"
 
 function main(): Unit =
@@ -293,7 +293,7 @@ enum Envelope<T> =
 
 function read<T>(envelope: Envelope<Option<T>>): T =
     match envelope with
-        case Data { other = Some(None), value = Some(value) } => value
+        case Data { other = Some(None); value = Some(value) } => value
         case _ => panic "expected a value and an empty nested option"
 
 function main(): Unit =
@@ -439,8 +439,8 @@ enum State =
 
 function read(state: State): Int32 =
     match state with
-        case Ready { first = true, second = true } => 1
-        case State.Ready(Flags { first = true, second = false }) => 2
+        case Ready { first = true; second = true } => 1
+        case State.Ready(Flags { first = true; second = false }) => 2
         case Ready { first = false } => 3
         case Empty => 4
 
@@ -550,7 +550,7 @@ enum Shape =
     }
     for (pattern, diagnostic) in [
         ("At { z }", "no field 'z'"),
-        ("At { x, x }", "duplicate field 'x'"),
+        ("At { x; x }", "duplicate field 'x'"),
         ("At { x = true }", "type mismatch"),
     ] {
         let source = format!(
@@ -649,7 +649,7 @@ function main(): Unit =
     let forward = Envelope.Data { value = 12; consume = consumeAny }
     let reverse = Envelope.Data { consume = consumeAny; value = 12 }
     match first with
-        case Callbacks { first, second } =>
+        case Callbacks { first; second } =>
             first(12)
             second(12)
         case Data {} => assert false
@@ -688,7 +688,7 @@ function main(): Unit =
         second = consumeChild
     }
     match wrapped with
-        case Data { make, first, second } =>
+        case Data { make; first; second } =>
             let child: Child = make(())
             first(child)
             second(child)
@@ -723,9 +723,9 @@ function main(): Unit =
         first = consumeParent
     }
     match forward with
-        case Data { make, second } => second(make(()))
+        case Data { make; second } => second(make(()))
     match reverse with
-        case Data { make, second } => second(make(()))
+        case Data { make; second } => second(make(()))
 "#,
     )
     .expect("producer evidence retains Child while its Result error type defaults to Never");
@@ -757,9 +757,9 @@ function main(): Unit =
         first = consumeParent
     }
     match forward with
-        case Data { transform, second } => second(transform(Child()))
+        case Data { transform; second } => second(transform(Child()))
     match reverse with
-        case Data { transform, second } => second(transform(Child()))
+        case Data { transform; second } => second(transform(Child()))
 "#,
     )
     .expect("identity closures use all independently available callback constraints");

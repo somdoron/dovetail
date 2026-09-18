@@ -129,7 +129,7 @@ function defaultConfig(host: String): Config =
     Config { host = host; port = 8080 }
 
 let local = defaultConfig("localhost")
-let custom = local with port = 3000
+let custom = local with { port = 3000 }
 ```
 
 Record field assignments are distinct from function arguments. The formatter

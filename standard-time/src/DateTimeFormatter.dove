@@ -1333,19 +1333,20 @@ internal function withContext(state: ParseState, newPos: Int32, ctx: FormatConte
     }
 
 internal function withYear(ctx: FormatContext, year: Int32): FormatContext =
-    ctx with year = Some(year)
+    ctx with { year = Some(year) }
 
 internal function withMonth(ctx: FormatContext, month: Int32): FormatContext =
-    ctx with month = Some(month)
+    ctx with { month = Some(month) }
 
 internal function setMonth(ctx: FormatContext, month: Int32): FormatContext = withMonth(ctx, month)
 
-internal function withDay(ctx: FormatContext, day: Int32): FormatContext = ctx with day = Some(day)
+internal function withDay(ctx: FormatContext, day: Int32): FormatContext =
+    ctx with { day = Some(day) }
 
 internal function setDay(ctx: FormatContext, day: Int32): FormatContext = withDay(ctx, day)
 
 internal function setDayOfYear(ctx: FormatContext, n: Int32): FormatContext =
-    ctx with dayOfYear = Some(n)
+    ctx with { dayOfYear = Some(n) }
 
 internal function setQuarter(ctx: FormatContext, n: Int32): FormatContext =
     // Quarter doesn't have a dedicated context slot; derived from month at
@@ -1358,24 +1359,27 @@ internal function setWeekOfYear(ctx: FormatContext, n: Int32): FormatContext =
     ctx
 
 internal function withDayOfWeek(ctx: FormatContext, n: Int32): FormatContext =
-    ctx with dayOfWeek = Some(n)
+    ctx with { dayOfWeek = Some(n) }
 
-internal function setHour(ctx: FormatContext, n: Int32): FormatContext = ctx with hour = Some(n)
+internal function setHour(ctx: FormatContext, n: Int32): FormatContext = ctx with { hour = Some(n) }
 
-internal function setMinute(ctx: FormatContext, n: Int32): FormatContext = ctx with minute = Some(n)
+internal function setMinute(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with { minute = Some(n) }
 
-internal function setSecond(ctx: FormatContext, n: Int32): FormatContext = ctx with second = Some(n)
+internal function setSecond(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with { second = Some(n) }
 
-internal function withNano(ctx: FormatContext, n: Int32): FormatContext = ctx with nano = Some(n)
+internal function withNano(ctx: FormatContext, n: Int32): FormatContext =
+    ctx with { nano = Some(n) }
 
 internal function withOffset(ctx: FormatContext, n: Int32): FormatContext =
-    ctx with offsetSeconds = Some(n)
+    ctx with { offsetSeconds = Some(n) }
 
 internal function withZoneId(ctx: FormatContext, id: String): FormatContext =
-    ctx with zoneId = Some(id)
+    ctx with { zoneId = Some(id) }
 
 internal function withZoneAbbrev(ctx: FormatContext, a: String): FormatContext =
-    ctx with zoneAbbrev = Some(a)
+    ctx with { zoneAbbrev = Some(a) }
 
 // --- Parse helpers ---------------------------------------------------------
 /// Read `[minDigits, maxDigits]` decimal digits starting at `pos`. Returns

@@ -153,7 +153,7 @@ The following are explicitly **not** implemented in the first iteration but shou
 
 - **Enums:** Constructor patterns (e.g. `case Some(x) =>`, `case None =>`). Exhaustiveness will require covering every variant; the same “space” or “usefulness” approach applies.
 - **Generics / type-info:** Matching on type parameters or type-level information may require GADT-style constraints. The AST and exhaustiveness rule should avoid hard-coding only value patterns.
-- **Records:** Record patterns (e.g. `case Point { x, y } =>`) and possibly record field guards. Exhaustiveness for records is usually trivial (one constructor) unless we add “open” records.
+- **Records:** Record patterns (e.g. `case Point { x; y } =>`) and possibly record field guards. Exhaustiveness for records is usually trivial (one constructor) unless we add “open” records.
 - **Tuples:** Tuple patterns (e.g. `case (0, _) =>`). Exhaustiveness for product types is a product of per-component coverage.
 
 The current design uses only literal, variable, and wildcard patterns so that the first iteration is simple and the exhaustiveness rule is easy to state; adding constructor/tuple/record patterns later will extend the pattern language and the exhaustiveness algorithm in a well-understood way.

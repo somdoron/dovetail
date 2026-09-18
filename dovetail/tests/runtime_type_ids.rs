@@ -199,7 +199,7 @@ function get(counter: Counter): Any =
 function main(): Unit =
     let original: Box<Dog> = Box { value = Dog() }
     let wide: Box<Animal> = original
-    let updated = wide with value = Animal()
+    let updated = wide with { value = Animal() }
     let any: Any = updated
     assert any is Box<Animal>
     assert !(any is Box<Dog>)

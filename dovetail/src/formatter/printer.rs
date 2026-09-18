@@ -257,17 +257,21 @@ impl<'a> Builder<'a> {
             return true;
         }
         if matches!(token.kind, K::End | K::Sep | K::Semicolon) {
+            let field_separator = brace_fields && matches!(token.kind, K::Sep | K::Semicolon);
+            let trailing_field_separator = field_separator && self.next_is_rbrace(state.index);
             state.parts.push(self.comments_before(state.index));
-            if brace_fields && matches!(token.kind, K::Sep | K::Semicolon) {
-                state.parts.push(D::FlatText(";"));
+            if field_separator && !trailing_field_separator {
+                state
+                    .parts
+                    .push(self.canonical_field_separator(state.index));
             }
             state.parts.extend(
                 self.trailing[state.index]
                     .iter()
                     .map(|range| D::Suffix(self.source[range.clone()].into())),
             );
-            state.parts.push(
-                if brace_fields && matches!(token.kind, K::Sep | K::Semicolon) {
+            if !trailing_field_separator {
+                state.parts.push(if field_separator {
                     D::Line(" ")
                 } else if matches!(token.kind, K::Sep | K::Semicolon)
                     && self.blank_line_before(state.index + 1)
@@ -275,8 +279,8 @@ impl<'a> Builder<'a> {
                     D::BlankLine
                 } else {
                     D::HardLine
-                },
-            );
+                });
+            }
             state.previous = None;
             state.index += 1;
             return true;
@@ -302,7 +306,7 @@ impl<'a> Builder<'a> {
                         state.index + 1..end,
                         excluded,
                         false,
-                        token.kind == K::LBrace && !self.in_pattern(state.index),
+                        token.kind == K::LBrace,
                     ),
                     self.dangling_comments(end),
                 ]);
@@ -383,8 +387,12 @@ impl<'a> Builder<'a> {
     }
 
     fn comma(&self, index: usize, continuation: bool, brace_fields: bool) -> D {
+        let trailing_field_separator = brace_fields && self.next_is_rbrace(index);
         let mut parts = if brace_fields {
-            let mut parts = vec![self.comments_before(index), D::FlatText(";")];
+            let mut parts = vec![self.comments_before(index)];
+            if !trailing_field_separator {
+                parts.push(self.canonical_field_separator(index));
+            }
             parts.extend(
                 self.trailing[index]
                     .iter()
@@ -394,12 +402,29 @@ impl<'a> Builder<'a> {
         } else {
             vec![self.leaf(index)]
         };
-        parts.push(if continuation {
-            D::Line(" ").indent()
-        } else {
-            D::Line(" ")
-        });
+        if !trailing_field_separator {
+            parts.push(if continuation {
+                D::Line(" ").indent()
+            } else {
+                D::Line(" ")
+            });
+        }
         D::concat(parts)
+    }
+
+    fn canonical_field_separator(&self, index: usize) -> D {
+        if self.in_pattern(index) {
+            D::text(";")
+        } else {
+            D::FlatText(";")
+        }
+    }
+
+    fn next_is_rbrace(&self, index: usize) -> bool {
+        self.parsed
+            .tokens
+            .get(index + 1)
+            .is_some_and(|token| token.kind == K::RBrace)
     }
 
     fn node_at(
@@ -547,29 +572,7 @@ impl<'a> Builder<'a> {
                     continuation,
                 }
             }
-            S::Update => {
-                let start = range.start;
-                range.start += 1;
-                let was_block = self.parsed.tokens[range.start].kind == K::Begin;
-                if was_block {
-                    range.start += 1;
-                    range.end -= 1;
-                }
-                D::concat([
-                    self.leaf(start),
-                    D::concat([
-                        D::Line(" "),
-                        self.sequence(range.clone(), excluded, false, true),
-                        if was_block {
-                            self.dangling_comments(range.end)
-                        } else {
-                            D::text("")
-                        },
-                    ])
-                    .indent(),
-                ])
-                .group()
-            }
+            S::Update => self.range(range, excluded).group(),
             S::Match => {
                 let with = (range.start..range.end)
                     .find(|&index| self.parsed.tokens[index].kind == K::With)

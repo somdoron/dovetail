@@ -9,7 +9,7 @@ record Account private =
 
 module Account =
     public function make(n: Int32): Account = Account { balance = n }
-    public function add(self, n: Int32): Account = self with balance = self.balance + n
+    public function add(self, n: Int32): Account = self with { balance = self.balance + n }
 
 record Box<T> private =
     item: T
@@ -17,7 +17,7 @@ record Box<T> private =
 module Box<T> =
     public function make(item: T): Box<T> = Box { item = item }
     public function explicit(item: T): Box<T> = Box<T> { item = item }
-    public function replace(self, item: T): Box<T> = self with item = item
+    public function replace(self, item: T): Box<T> = self with { item = item }
 
 record Token private
 module Token =
@@ -120,10 +120,10 @@ function main(): Unit =
 fn external_record_construction_and_updates_are_rejected() {
     for expression in [
         "Account { balance = 0 }",
-        "Account.make(1) with balance = 0",
+        "Account.make(1) with { balance = 0 }",
         "Box { item = 0 }",
         "Box<Int32> { item = 0 }",
-        "Box.make(1) with item = 0",
+        "Box.make(1) with { item = 0 }",
         "Token {}",
     ] {
         assert_errors(
@@ -167,7 +167,7 @@ fn traits_and_extensions_have_no_private_privileges() {
         ),
         (
             "Account",
-            "self with balance = 0",
+            "self with { balance = 0 }",
             "update with 'with' on private record",
         ),
         ("Status", "Status.Open", "cannot construct private enum"),
@@ -207,7 +207,7 @@ fn generic_traits_have_no_private_privileges() {
         ),
         (
             "Box<T>",
-            "self with item = self.item",
+            "self with { item = self.item }",
             "update with 'with' on private record",
         ),
         (
@@ -347,7 +347,7 @@ const EXPORTED_MODULES: &str = r#"
 package a
 module Box<T> =
     public function make(item: T): Box<T> = Box { item = item }
-    public function replace(self, item: T): Box<T> = self with item = item
+    public function replace(self, item: T): Box<T> = self with { item = item }
 module Status =
     public function open(): Status = Status.Open
     public function number(n: Int32): Status = Status.Number(n)
@@ -360,7 +360,7 @@ module Amount =
 const ACCOUNT_MODULE: &str = r#"
 module a.Account
 public function make(balance: Int32): Account = Account { balance = balance }
-public function add(self, n: Int32): Account = self with balance = self.balance + n
+public function add(self, n: Int32): Account = self with { balance = self.balance + n }
 "#;
 
 #[test]
@@ -407,7 +407,7 @@ fn same_named_foreign_modules_cannot_access_private_operations() {
         ),
         (
             "Account",
-            "Account.make(1) with balance = 0",
+            "Account.make(1) with { balance = 0 }",
             "update with 'with' on private record",
         ),
         (
@@ -417,7 +417,7 @@ fn same_named_foreign_modules_cannot_access_private_operations() {
         ),
         (
             "Box",
-            "Box.make(1) with item = 0",
+            "Box.make(1) with { item = 0 }",
             "update with 'with' on private record",
         ),
         ("Status", "Status.Open", "cannot construct private enum"),

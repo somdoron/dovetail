@@ -145,7 +145,7 @@ built with `OrderStatus.Placed { placedAt = now; total = total }` and read by na
 ```dovetail
     public function placedAt(self): Option<Instant> =
         match self.status with
-            case OrderStatus.Placed { placedAt = at, total = _ } => Some(at)
+            case OrderStatus.Placed { placedAt = at; total = _ } => Some(at)
             case _ => None
 ```
 
@@ -157,7 +157,7 @@ Both forms model exactly the same three states — this is a question of whether
 let status = OrderStatus.Placed { placedAt = now; total = total }
 
 match status with
-    case OrderStatus.Placed { placedAt = at, total = _ } => Some(at)
+    case OrderStatus.Placed { placedAt = at; total = _ } => Some(at)
     case _ => None
 ```
 
@@ -339,7 +339,7 @@ An **entity** is defined by identity over time. An order that has had ten lines 
 
 The recommended declaration in 19.2 is `public record Order private = ...`. The type and its fields remain visible, so a caller can read `order.status`, inspect `order.lines`, and match the record. Construction and `with` updates belong exclusively to `module Order` in the defining package. The type can stay in `types.dove` and its module in `Order.dove`; file placement does not change that ownership.
 
-This makes the entity rule enforceable: callers must use `Order.draft`, `order.addLine(...)`, and `order.place(...)`. Writing `order with status = OrderStatus.Placed(...)` from application code is a compile error. Trait implementations and extensions must use those functions as well.
+This makes the entity rule enforceable: callers must use `Order.draft`, `order.addLine(...)`, and `order.place(...)`. Writing `order with { status = OrderStatus.Placed(...) }` from application code is a compile error. Trait implementations and extensions must use those functions as well.
 
 `OrderStatus` remains publicly constructible in this model. Building a status value does not let a caller install it in a private `Order`. If the status needs its own construction rules, declare `enum OrderStatus private = ...` and put its factories in `module OrderStatus`; even `module Order` must then call those factories. Enum patterns remain available either way. Private records and enums expose inspection; private newtypes also hide their wrapped value.
 
@@ -377,7 +377,7 @@ module Order =
                 if self.lines.length >= maxLines then
                     Error(OrderError.TooManyLines(maxLines))
                 else
-                    Ok(self with lines = self.lines.prepend(line))
+                    Ok(self with { lines = self.lines.prepend(line) })
             case other => Error(OrderError.NotDraft(other))
 ```
 
@@ -442,7 +442,7 @@ Do not try to recover the split with an extension or a module hanging off the cl
 |---|---|---|
 | Mutation | none — produce the next value | in place |
 | Aliasing bugs | impossible | possible; a reference handed out can change |
-| Updating | `self with status = ...` | `self.status = ...` |
+| Updating | `self with { status = ... }` | `self.status = ...` |
 | State *and* an event | returns a tuple | event only; state already changed |
 | Event sourcing, audit, replay | natural | awkward |
 | File layout | `types.dove` + a file per concept (19.1) | a file per aggregate; shape and behavior together |
@@ -502,7 +502,7 @@ The temptation is an ambient event bus the aggregate can publish to. Resist it: 
                 else
                     let total: Money = self.total()
                     let placement: Placement = Placement { placedAt = now; total = total }
-                    let placed: Order = self with status = OrderStatus.Placed(placement)
+                    let placed: Order = self with { status = OrderStatus.Placed(placement) }
                     let event: OrderPlaced = OrderPlaced {
                         orderId = self.id
                         customerId = self.customerId
@@ -652,7 +652,7 @@ test "a placed order carries when it was placed and what it came to" =
     match drafted.place(noon(), true) with
         case Ok((placed, event)) =>
             match placed.status with
-                case OrderStatus.Placed { total, placedAt } =>
+                case OrderStatus.Placed { total; placedAt } =>
                     assert total.minorUnits == 2500i64
                     assert placedAt == noon()
                 case _ => panic "expected a placed order"

@@ -320,7 +320,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with x = 10
+    let p2 = p with { x = 10 }
     assert p2.x == 10
     assert p2.y == 2
 "#,
@@ -340,7 +340,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with x = 10; y = 20
+    let p2 = p with { x = 10; y = 20 }
     assert p2.x == 10
     assert p2.y == 20
 "#,
@@ -360,7 +360,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with x = 10
+    let p2 = p with { x = 10 }
     assert p.x == 1
     assert p.y == 2
     assert p2.x == 10
@@ -381,7 +381,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = (p with x = 10) with y = 20
+    let p2 = (p with { x = 10 }) with { y = 20 }
     assert p2.x == 10
     assert p2.y == 20
 "#,
@@ -403,7 +403,7 @@ function getX(p: Point): Int32 = p.x
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    assert getX(p with x = 99) == 99
+    assert getX(p with { x = 99 }) == 99
 "#,
     )
     .expect("record with as function argument");
@@ -421,9 +421,10 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with
+    let p2 = p with {
         x = 10
         y = 20
+    }
     assert p2.x == 10
     assert p2.y == 20
 "#,
@@ -439,7 +440,7 @@ package a
 
 function main(): Unit =
     let x = 42
-    let y = x with z = 1
+    let y = x with { z = 1 }
     ()
 "#,
     );
@@ -462,7 +463,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with z = 10
+    let p2 = p with { z = 10 }
     ()
 "#,
     );
@@ -485,7 +486,7 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with x = true
+    let p2 = p with { x = true }
     ()
 "#,
     );
@@ -510,13 +511,63 @@ record Point =
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
-    let p2 = p with x = 10; x = 20
+    let p2 = p with { x = 10; x = 20 }
     ()
 "#,
     );
     assert!(
         errors.iter().any(|e| e.contains("duplicate")),
         "expected duplicate field error, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_error_with_without_braces() {
+    let errors = common::compile_expecting_errors(
+        r#"
+package a
+
+record Point =
+    x: Int32
+    y: Int32
+
+function main(): Unit =
+    let p = Point { x = 1; y = 2 }
+    let p2 = p with x = 10
+    ()
+"#,
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected '{' after 'with'")),
+        "expected braces-required error, got: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn test_error_with_empty_fields() {
+    let errors = common::compile_expecting_errors(
+        r#"
+package a
+
+record Point =
+    x: Int32
+    y: Int32
+
+function main(): Unit =
+    let p = Point { x = 1; y = 2 }
+    let p2 = p with {}
+    ()
+"#,
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.contains("expected at least one field in with expression")),
+        "expected non-empty with expression error, got: {:?}",
         errors
     );
 }
@@ -597,11 +648,34 @@ record Point =
 function main(): Unit =
     let p = Point { x = 3; y = 4 }
     let result = match p with
-        case Point { x, y } => x + y
+        case Point { x; y } => x + y
     assert result == 7
 "#,
     )
     .expect("record pattern destructure all fields");
+}
+
+#[test]
+fn test_record_pattern_multiline_fields() {
+    common::compile_and_run(
+        r#"
+package a
+
+record Point =
+    x: Int32
+    y: Int32
+
+function main(): Unit =
+    let p = Point { x = 3; y = 4 }
+    let result = match p with
+        case Point {
+            x
+            y
+        } => x + y
+    assert result == 7
+"#,
+    )
+    .expect("multiline record pattern fields");
 }
 
 #[test]
@@ -617,7 +691,7 @@ record Point =
 function main(): Unit =
     let p = Point { x = 3; y = 4 }
     let result = match p with
-        case Point { x = a, y = b } => a + b
+        case Point { x = a; y = b } => a + b
     assert result == 7
 "#,
     )
@@ -637,8 +711,8 @@ record Point =
 function main(): Unit =
     let p = Point { x = 0; y = 0 }
     let result = match p with
-        case Point { x = 0, y = 0 } => 1
-        case Point { x, y } => 2
+        case Point { x = 0; y = 0 } => 1
+        case Point { x; y } => 2
     assert result == 1
 "#,
     )
@@ -658,8 +732,8 @@ record Point =
 function main(): Unit =
     let p = Point { x = 0; y = 42 }
     let result = match p with
-        case Point { x = 0, y } => y
-        case Point { x, y } => 0
+        case Point { x = 0; y } => y
+        case Point { x; y } => 0
     assert result == 42
 "#,
     )
@@ -700,7 +774,7 @@ record Point =
 function main(): Unit =
     let p = Point { x = 5; y = 10 }
     let result = match p with
-        case Point { x = _, y } => y
+        case Point { x = _; y } => y
     assert result == 10
 "#,
     )
@@ -723,21 +797,21 @@ function main(): Unit =
     let p3 = Point { x = 3; y = 4 }
 
     let r1 = match p1 with
-        case Point { x = 0, y = 0 } => 1
-        case Point { x = 0, y } => 2
-        case Point { x, y } => 3
+        case Point { x = 0; y = 0 } => 1
+        case Point { x = 0; y } => 2
+        case Point { x; y } => 3
     assert r1 == 1
 
     let r2 = match p2 with
-        case Point { x = 0, y = 0 } => 1
-        case Point { x = 0, y } => 2
-        case Point { x, y } => 3
+        case Point { x = 0; y = 0 } => 1
+        case Point { x = 0; y } => 2
+        case Point { x; y } => 3
     assert r2 == 2
 
     let r3 = match p3 with
-        case Point { x = 0, y = 0 } => 1
-        case Point { x = 0, y } => 2
-        case Point { x, y } => 3
+        case Point { x = 0; y = 0 } => 1
+        case Point { x = 0; y } => 2
+        case Point { x; y } => 3
     assert r3 == 3
 "#,
     )
@@ -757,8 +831,8 @@ record Point =
 function main(): Unit =
     let p = Point { x = 5; y = 10 }
     let result = match p with
-        case Point { x, y } if x > 3 => x + y
-        case Point { x, y } => 0
+        case Point { x; y } if x > 3 => x + y
+        case Point { x; y } => 0
     assert result == 15
 "#,
     )
@@ -778,7 +852,7 @@ record Point =
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
     let result = match p with
-        case Point { x, y } => x * y
+        case Point { x; y } => x * y
     assert result == 2
 "#,
     )
@@ -797,7 +871,7 @@ record Rect =
 
 function area(r: Rect): Int32 =
     match r with
-        case Rect { w, h } => w * h
+        case Rect { w; h } => w * h
 
 function main(): Unit =
     let r = Rect { w = 5; h = 3 }
@@ -874,7 +948,7 @@ record Point =
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
     let result = match p with
-        case Point { x, x } => 0
+        case Point { x; x } => 0
         case _ => 0
     ()
 "#,
@@ -884,6 +958,26 @@ function main(): Unit =
         "expected duplicate field error, got: {:?}",
         errors
     );
+}
+
+#[test]
+fn test_record_pattern_comma_separator_is_accepted() {
+    common::compile_and_run(
+        r#"
+package a
+
+record Point =
+    x: Int32
+    y: Int32
+
+function main(): Unit =
+    let p = Point { x = 1; y = 2 }
+    let result = match p with
+        case Point { x, y } => x + y
+    assert result == 3
+"#,
+    )
+    .expect("commas remain accepted in record patterns");
 }
 
 #[test]
@@ -932,7 +1026,7 @@ record Point =
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
     let result = match p with
-        case Point { x = 0, y } => y
+        case Point { x = 0; y } => y
     ()
 "#,
     );
@@ -960,8 +1054,8 @@ record Toggle =
 function main(): Unit =
     let t = Toggle { flag = true; value = 42 }
     let result = match t with
-        case Toggle { flag = true, value } => value
-        case Toggle { flag = false, value } => value + 1
+        case Toggle { flag = true; value } => value
+        case Toggle { flag = false; value } => value + 1
     assert result == 42
 "#,
     )
@@ -982,7 +1076,7 @@ record Toggle =
 function main(): Unit =
     let t = Toggle { flag = true; value = 42 }
     let result = match t with
-        case Toggle { flag = true, value } => value
+        case Toggle { flag = true; value } => value
     ()
 "#,
     );
@@ -1009,8 +1103,8 @@ record Toggle =
 function main(): Unit =
     let t = Toggle { flag = false; value = 10 }
     let result = match t with
-        case Toggle { flag = true, value } => value
-        case Toggle { flag, value } => value + 1
+        case Toggle { flag = true; value } => value
+        case Toggle { flag; value } => value + 1
     assert result == 11
 "#,
     )
@@ -1031,10 +1125,10 @@ record Flags =
 function main(): Unit =
     let f = Flags { a = true; b = false }
     let result = match f with
-        case Flags { a = true, b = true } => 1
-        case Flags { a = true, b = false } => 2
-        case Flags { a = false, b = true } => 3
-        case Flags { a = false, b = false } => 4
+        case Flags { a = true; b = true } => 1
+        case Flags { a = true; b = false } => 2
+        case Flags { a = false; b = true } => 3
+        case Flags { a = false; b = false } => 4
     assert result == 2
 "#,
     )
@@ -1055,9 +1149,9 @@ record Flags =
 function main(): Unit =
     let f = Flags { a = true; b = true }
     let result = match f with
-        case Flags { a = true, b = true } => 1
-        case Flags { a = true, b = false } => 2
-        case Flags { a = false, b = true } => 3
+        case Flags { a = true; b = true } => 1
+        case Flags { a = true; b = false } => 2
+        case Flags { a = false; b = true } => 3
     ()
 "#,
     );
@@ -1084,8 +1178,8 @@ record Flags =
 function main(): Unit =
     let f = Flags { a = false; b = true }
     let result = match f with
-        case Flags { a = true, b } => 1
-        case Flags { a = false, b } => 2
+        case Flags { a = true; b } => 1
+        case Flags { a = false; b } => 2
     assert result == 2
 "#,
     )
@@ -1150,7 +1244,7 @@ record Line =
 function main(): Unit =
     let l = Line { start = Point { x = 1; y = 2 }; end = Point { x = 3; y = 4 } }
     let result = match l with
-        case Line { start = Point { x = sx, y = sy }, end = Point { x = ex, y = ey } } => sx + sy + ex + ey
+        case Line { start = Point { x = sx; y = sy }; end = Point { x = ex; y = ey } } => sx + sy + ex + ey
     assert result == 10
 "#,
     )
@@ -1170,8 +1264,8 @@ record Tagged =
 function main(): Unit =
     let t = Tagged { tag = 1; value = Some(99) }
     let result = match t with
-        case Tagged { tag = 1, value = Some(x) } => x
-        case Tagged { tag = 1, value = None } => -1
+        case Tagged { tag = 1; value = Some(x) } => x
+        case Tagged { tag = 1; value = None } => -1
         case Tagged { value = v } => -2
     assert result == 99
 "#,

@@ -272,7 +272,7 @@ record Pair<A, B> = first: A; second: B
 
 function main(): Unit =
     let p = Pair<Int32, Bool> { first = 1; second = true }
-    let p2 = p with first = 99
+    let p2 = p with { first = 99 }
     assert p2.first == 99
     assert p2.second
 "#,
@@ -599,7 +599,7 @@ record Point = x: Int32; y: Int32
 
 function foo<T>(p: T): Int32 =
     match Point { x = 1; y = 2 } with
-        case Point { x = T, y } => T + y
+        case Point { x = T; y } => T + y
 
 function main(): Unit =
     let p = Point { x = 1; y = 2 }
@@ -695,7 +695,7 @@ record Box<T> = value: T
 
 function main(): Unit =
     let b = Box<String> { value = "hello" }
-    let b2 = b with value = "world"
+    let b2 = b with { value = "world" }
     assert b2.value == "world"
     assert b.value == "hello"
 "#,
@@ -748,7 +748,7 @@ package a
 
 record Box<T> = value: T
 
-function rewrap<T>(b: Box<T>, x: T): Box<T> = b with value = x
+function rewrap<T>(b: Box<T>, x: T): Box<T> = b with { value = x }
 
 function main(): Unit =
     let b = Box<String> { value = "hello" }

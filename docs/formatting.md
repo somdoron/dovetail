@@ -34,7 +34,9 @@ formatting-disable directives.
   a separate line. If any branch body wraps, every branch body starts on a
   new indented line. A whole conditional that fits can remain inline.
 - Lists wrap at grammar-supported boundaries. Record fields use semicolons
-  inline and layout separators when multiline; record patterns retain commas.
+  inline and layout separators when multiline. Record-pattern fields use
+  semicolons inline and between multiline fields, with no trailing semicolon.
+  Commas in record patterns are accepted as input and normalized to semicolons.
 - A `where` clause stays inline when the whole signature fits within 100
   columns, even if the body is multiline. Otherwise it starts on the next
   line, with wrapped conditions aligned beneath the first condition.

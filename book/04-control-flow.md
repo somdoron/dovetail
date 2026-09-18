@@ -152,12 +152,16 @@ record Point =
     y: Int32
 
 let quadrant = match point with
-    case Point { x, y } if x > 0 and y > 0 => "Q1"
-    case Point { x, y } if x < 0 and y > 0 => "Q2"
-    case Point { x, y } if x < 0 and y < 0 => "Q3"
-    case Point { x, y } if x > 0 and y < 0 => "Q4"
+    case Point { x; y } if x > 0 and y > 0 => "Q1"
+    case Point { x; y } if x < 0 and y > 0 => "Q2"
+    case Point { x; y } if x < 0 and y < 0 => "Q3"
+    case Point { x; y } if x > 0 and y < 0 => "Q4"
     case _ => "Origin or on axis"
 ```
+
+Commas are also accepted between record-pattern fields, but `dovetail fmt`
+normalizes them to semicolons. In a multiline pattern, semicolons appear
+between fields but not after the last field.
 
 ### Matching Tuples
 

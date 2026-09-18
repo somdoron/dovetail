@@ -795,11 +795,13 @@ record_declaration = "record" ident "=" Begin *(record_field Sep) record_field [
 
 record_field = ident ":" type
 
-record_expression = ident "{" [record_field_init *(";" record_field_init)] "}"
-
 record_field_init = ident "=" expression
 
-record_with_expression = expression "with" Begin *(record_field_init Sep) record_field_init End
+record_field_init_list = record_field_init *(Sep record_field_init) [Sep]
+
+record_expression = ident "{" [record_field_init_list] "}"
+
+record_with_expression = expression "with" "{" record_field_init_list "}"
 ```
 
 ---
@@ -1430,16 +1432,17 @@ record Point =
 
 ---
 
-### E27: Record with expression (with keyword)
+### E27: Record with expression (brace-delimited fields)
 
 ```
 function move(p: Point) =
-    p with
+    p with {
         x = p.x + 1
         y = p.y + 1
+    }
 ```
 
-**Token stream:** `function move ( p : Point ) = Begin p with Begin x = p.x + 1 Sep y = p.y + 1 End End Eof`
+**Token stream:** `function move ( p : Point ) = Begin p with { x = p.x + 1 Sep y = p.y + 1 } End Eof`
 
 ---
 
@@ -1612,12 +1615,13 @@ record Person =
     age: Int32
 
 function birthday(p: Person) =
-    p with
+    p with {
         age = p.age + 1
+    }
 
 function create() =
     Person {
-        name = "Alice",
+        name = "Alice"
         age = 30
     }
 ```

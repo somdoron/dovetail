@@ -169,7 +169,7 @@ record Holder =
 
 function main(): Unit =
     let h = Holder { items = [|1, 2, 3|] }
-    let h2 = h with items = [||]
+    let h2 = h with { items = [||] }
     assert h2.items.length == 0
 "#,
     )
@@ -259,7 +259,7 @@ record Box<T> =
 
 function main(): Unit =
     let b = Box<Array<Int32>> { value = [|1, 2, 3|] }
-    let b2 = b with value = [||]
+    let b2 = b with { value = [||] }
     assert b2.value.length == 0
 "#,
     )
