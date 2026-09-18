@@ -163,6 +163,21 @@ fn walk(expr: TypedExpr, async_succeed: Option<&ResolvedImplMethod>) -> TypedExp
             captures,
         },
 
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(walk(*call, async_succeed)),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(walk(*message, async_succeed)),
         },
@@ -1511,7 +1526,9 @@ fn contains_use(expr: &TypedExpr) -> bool {
             object, overrides, ..
         } => contains_use(object) || overrides.iter().any(|(_, _, e)| contains_use(e)),
         TypedExprKind::ArrayLiteral { elements } => elements.iter().any(contains_use),
-        TypedExprKind::Panic { message } => contains_use(message),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            contains_use(message)
+        }
         TypedExprKind::Assert { condition, message } => {
             contains_use(condition) || message.as_ref().is_some_and(|m| contains_use(m))
         }

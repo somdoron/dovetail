@@ -123,7 +123,9 @@ fn collect_strings_from_expr(expr: &TypedExpr, strings: &mut Vec<String>) {
                 collect_strings_from_expr(arg, strings);
             }
         }
-        TypedExprKind::Panic { message } => collect_strings_from_expr(message, strings),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            collect_strings_from_expr(message, strings)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {

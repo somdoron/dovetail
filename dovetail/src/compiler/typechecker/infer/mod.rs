@@ -21,6 +21,7 @@ mod indexing;
 mod match_expression;
 mod method_contracts;
 mod modules;
+mod named_arguments;
 mod negation;
 mod prefixed_literal;
 mod record_expressions;
@@ -128,6 +129,8 @@ pub(crate) fn make_display_name(base_name: &str, params: &[TypedParam]) -> Strin
 
 /// Holds the state for the inference phase.
 pub(super) struct Inference<'a> {
+    named_call_context: Option<named_arguments::NamedCallContext>,
+    named_call_receiver: Option<TypedExpr>,
     package_path: PackagePath,
     current_file: FilePath,
     registry: &'a Registry,
@@ -193,6 +196,8 @@ impl<'a> Inference<'a> {
         diagnostics: &'a mut Diagnostics,
     ) -> Self {
         Self {
+            named_call_context: None,
+            named_call_receiver: None,
             package_path,
             current_file,
             registry,

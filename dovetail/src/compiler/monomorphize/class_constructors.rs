@@ -203,7 +203,9 @@ fn initializer_body(
 
         // Evaluate every extends argument in the child scope before introducing parent names.
         let mut parent_statements = Vec::new();
-        for (index, (param, arg)) in parent.constructor_params.iter().zip(args).enumerate() {
+        for &index in &class.extends_argument_order {
+            let param = &parent.constructor_params[index];
+            let arg = &args[index];
             let temp = format!("$constructor$argument${depth}${index}");
             let value = substitute_types_in_expr(arg.clone(), substitution);
             let ty = apply_type_substitution(&param.ty, &parent_substitution);

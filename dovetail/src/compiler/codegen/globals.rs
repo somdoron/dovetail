@@ -417,7 +417,9 @@ fn walk_for_global_refs(
             walk(object, refs, visited_functions, visited_classes);
             walk(value, refs, visited_functions, visited_classes);
         }
-        TypedExprKind::Panic { message } => walk(message, refs, visited_functions, visited_classes),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            walk(message, refs, visited_functions, visited_classes)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {

@@ -789,6 +789,7 @@ impl<'a> Codegen<'a> {
             }
             TypedExprKind::Let { value, .. }
             | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::NamedCall { call: value, .. }
             | TypedExprKind::Panic { message: value }
             | TypedExprKind::BoxToAny { inner: value }
             | TypedExprKind::NewtypeCreate { value }
@@ -1042,6 +1043,7 @@ impl<'a> Codegen<'a> {
             }
             TypedExprKind::Let { value, .. }
             | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::NamedCall { call: value, .. }
             | TypedExprKind::Panic { message: value }
             | TypedExprKind::BoxToAny { inner: value }
             | TypedExprKind::NewtypeCreate { value }
@@ -1241,6 +1243,7 @@ impl<'a> Codegen<'a> {
             }
             TypedExprKind::Let { value, .. }
             | TypedExprKind::Assign { value, .. }
+            | TypedExprKind::NamedCall { call: value, .. }
             | TypedExprKind::Panic { message: value }
             | TypedExprKind::BoxToAny { inner: value }
             | TypedExprKind::NewtypeCreate { value }

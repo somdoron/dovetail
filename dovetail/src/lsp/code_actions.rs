@@ -386,7 +386,9 @@ fn walk_for_type_annotations(
                 recurse(e, actions);
             }
         }
-        TypedExprKind::Panic { message } => recurse(message, actions),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            recurse(message, actions)
+        }
         TypedExprKind::Assert { condition, message } => {
             recurse(condition, actions);
             if let Some(msg) = message {

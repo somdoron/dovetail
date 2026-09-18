@@ -1630,3 +1630,172 @@ function main(): Unit =
         "should navigate to definition line"
     );
 }
+
+#[test]
+fn named_arguments_signature_help_uses_labels_and_hides_redundant_hints() {
+    let source = r#"
+package a
+function subtract(left: Int32, right: Int32): Int32 = left - right
+function main(): Unit =
+    subtract(right = 2, left = 9)
+    ()
+"#;
+    let (module, registry) = check_source(source);
+    let signature =
+        signature_help::signature_help_at_position(&module, &registry, &file_path(), 5, 15)
+            .expect("signature help on an argument label");
+    assert_eq!(signature.active_parameter, Some(1));
+    assert!(
+        signature.signatures[0]
+            .label
+            .contains("left: Int32, right: Int32")
+    );
+    let hints = inlay_hints::inlay_hints_for_file(
+        &module,
+        &file_path(),
+        Range {
+            start: Position::new(0, 0),
+            end: Position::new(20, 0),
+        },
+        Some(source),
+    );
+    assert!(
+        !hints
+            .iter()
+            .any(|hint| hint.kind == Some(InlayHintKind::PARAMETER)),
+        "{hints:?}"
+    );
+}
+
+#[test]
+fn explicit_interface_named_arguments_have_signature_help() {
+    let source = r#"
+package a
+interface Adder =
+    function add(self, amount: Int32): Int32
+function useAdder(value: Adder): Int32 = Adder.add(value, amount = 3)
+"#;
+    let (module, registry) = check_source(source);
+    let signature =
+        signature_help::signature_help_at_position(&module, &registry, &file_path(), 5, 57)
+            .expect("signature help on an explicit interface argument");
+    assert_eq!(signature.active_parameter, Some(1));
+    assert!(signature.signatures[0].label.contains("amount: Int32"));
+    let hints = inlay_hints::inlay_hints_for_file(
+        &module,
+        &file_path(),
+        Range {
+            start: Position::new(0, 0),
+            end: Position::new(20, 0),
+        },
+        Some(source),
+    );
+    assert!(
+        !hints
+            .iter()
+            .any(|hint| hint.kind == Some(InlayHintKind::PARAMETER)),
+        "{hints:?}"
+    );
+}
+
+#[test]
+fn named_signature_help_preserves_declared_types_and_documentation() {
+    let source = r#"
+package a
+/// Accepts any value.
+function accept(value: Any): Unit = ()
+function lazy(value: ByName<Int32>): Int32 = value.get
+function identity<T>(value: T): T = value
+class Base()
+class Child() extends Base()
+function acceptBase(value: Base): Unit = ()
+function main(): Unit =
+    accept(value = 3)
+    lazy(value = 3)
+    identity<Any>(value = 3)
+    acceptBase(value = Child())
+    ()
+"#;
+    let (module, registry) = check_source(source);
+    for (call, expected_type) in [
+        ("accept(value", "value: Any"),
+        ("lazy(value", "value: ByName<Int32>"),
+        ("identity<Any>(value", "value: Any"),
+        ("acceptBase(value", "value: Base"),
+    ] {
+        let (line, text) = source
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.trim_start().starts_with(call))
+            .unwrap();
+        let column = text.find("value =").unwrap() + 1;
+        let help = signature_help::signature_help_at_position(
+            &module,
+            &registry,
+            &file_path(),
+            line as u32 + 1,
+            column as u32,
+        )
+        .expect("signature help for named argument");
+        assert!(
+            help.signatures[0].label.contains(expected_type),
+            "{call}: {:?}",
+            help.signatures
+        );
+        if call == "accept(value" {
+            assert_eq!(
+                help.signatures[0].documentation,
+                Some(Documentation::MarkupContent(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: "Accepts any value.".into(),
+                }))
+            );
+        }
+    }
+}
+
+#[test]
+fn named_generic_method_signature_uses_explicit_type_arguments() {
+    let source = r#"
+package a
+trait Picker =
+    function pick<T>(self, item: T): T
+record Worker = number: Int32
+implement Picker for Worker =
+    function pick<T>(self, item: T): T = item
+function main(): Unit =
+    let worker = Worker { number = 2 }
+    worker.pick<Any>(item = 3)
+    ()
+"#;
+    let (module, registry) = check_source(source);
+    let help = signature_help::signature_help_at_position(&module, &registry, &file_path(), 10, 22)
+        .expect("generic named method signature");
+    assert!(
+        help.signatures[0].label.contains("item: Any"),
+        "{:?}",
+        help.signatures
+    );
+}
+
+#[test]
+fn named_inherited_generic_signature_uses_parent_type_arguments() {
+    let source = r#"
+package a
+class Animal()
+class Dog() extends Animal()
+class Consumer<T>() =
+    public function accept(self, value: T): Unit = ()
+class DogConsumer() extends Consumer<Animal>()
+function main(): Unit =
+    DogConsumer().accept(value = Dog())
+"#;
+    let (module, registry) = check_source(source);
+    let help = signature_help::signature_help_at_position(&module, &registry, &file_path(), 9, 28)
+        .expect("inherited named method signature");
+    assert!(
+        help.signatures[0].label.contains("value: Animal"),
+        "{:?}",
+        help.signatures
+    );
+}

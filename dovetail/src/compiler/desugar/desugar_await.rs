@@ -422,6 +422,21 @@ fn walk_expr_for_async_closures(expr: TypedExpr) -> TypedExpr {
                 .collect(),
         ),
 
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(walk_expr_for_async_closures(*call)),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(walk_expr_for_async_closures(*message)),
         },
@@ -899,7 +914,7 @@ struct AwaitData {
     /// The expression whose value the continuation binds. For an `await`, this
     /// is the Async-valued operand directly. For a hoisted control-flow
     /// expression (`needs_lift == true`), this is the whole `If`/`Match`/`While`
-    /// node, which `lower_expr_to_async` lifts to Async before chaining.
+    /// node or ordered call block, lifted to Async before chaining.
     operand: TypedExpr,
     /// The unwrapped value type (Await's outer `ty`).
     inner_type: Type,
@@ -2052,6 +2067,38 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
             )
         }
 
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => {
+            if !contains_await(&call) {
+                return (
+                    None,
+                    TypedExpr {
+                        kind: TypedExprKind::NamedCall {
+                            call,
+                            argument_order,
+                            parameter_names,
+                            parameter_types,
+                            named_parameters,
+                            source_name,
+                        },
+                        ty: expr.ty,
+                        span: expr.span,
+                    },
+                );
+            }
+            let lowered = crate::compiler::named_calls::lower_with_parameter_types(
+                *call,
+                &argument_order,
+                &parameter_types,
+            );
+            hoist_control_flow(lowered.kind, lowered.ty, lowered.span)
+        }
         TypedExprKind::Panic { message } => {
             let (data, new_msg) = extract_first_await(*message);
             (
@@ -2843,7 +2890,7 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
     }
 }
 
-/// Hoist a control-flow expression (`If`/`Match`/`While`) that contains an
+/// Hoist a control-flow expression or ordered call block that contains an
 /// await out of its surrounding expression: return `AwaitData` marked
 /// `needs_lift` (so `lower_expr_to_async` lifts it to Async and binds it via
 /// `andThen`) plus a `VarRef` to replace it in the enclosing expression.
@@ -2871,7 +2918,8 @@ fn hoist_control_flow(kind: TypedExprKind, ty: Type, span: Span) -> (Option<Awai
 }
 
 /// Lift a hoisted control-flow expression to `Async<inner_ty, E>`. `If`/`Match`
-/// go through `lift_branching_to_async`; `While` through `build_while_loop_call`.
+/// go through `lift_branching_to_async`; `While` through `build_while_loop_call`;
+/// ordered call blocks use ordinary statement-wise lowering.
 fn lift_control_flow_to_async(
     expr: TypedExpr,
     inner_ty: &Type,
@@ -2879,6 +2927,9 @@ fn lift_control_flow_to_async(
     succeed_method: &Option<ResolvedImplMethod>,
     function_name: &str,
 ) -> TypedExpr {
+    if matches!(expr.kind, TypedExprKind::Block(_)) {
+        return lower_expr_to_async(expr, inner_ty, return_type, succeed_method, function_name);
+    }
     if matches!(expr.kind, TypedExprKind::While { .. }) {
         let (condition, body, span) = match expr {
             TypedExpr {
@@ -2952,7 +3003,9 @@ fn contains_await(expr: &TypedExpr) -> bool {
         | TypedExprKind::IntrinsicCall { args, .. }
         | TypedExprKind::EnumCreate { args, .. }
         | TypedExprKind::ClassNew { args, .. } => args.iter().any(contains_await),
-        TypedExprKind::Panic { message } => contains_await(message),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            contains_await(message)
+        }
         TypedExprKind::Assert { condition, message } => {
             contains_await(condition) || message.as_ref().is_some_and(|m| contains_await(m))
         }

@@ -613,6 +613,24 @@ pub(super) fn substitute_types_in_expr(
             field_index,
             boxed,
         },
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: sub_boxed(call, sub),
+            argument_order,
+            parameter_names,
+            parameter_types: parameter_types
+                .iter()
+                .map(|ty| apply_type_substitution(ty, sub))
+                .collect(),
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: sub_boxed(message, sub),
         },

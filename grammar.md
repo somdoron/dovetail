@@ -430,6 +430,8 @@ param_list          = param { "," param }
 
 param               = IDENT ":" type [ "=" expression ]
 
+/* Default parameter expressions are planned, not yet implemented. */
+
 where_clause        = "where" constraint { "," constraint }
 
 constraint          = IDENT ":" type_bound { "+" type_bound }
@@ -672,6 +674,11 @@ lambda_param        = IDENT [ ":" type ]
 arg_list            = arg { "," arg }
 
 arg                 = [ IDENT "=" ] expression           /* optional named arg */
+
+/* Positional arguments precede named arguments. Each declared parameter is
+   supplied exactly once; names bind against the statically visible declaration.
+   Named arguments may be reordered, but eager evaluation follows source order.
+   Function values and positional enum/newtype payloads have no argument labels. */
 
 /* Type Name (for constructors) */
 type_name           = [ package_path "." ] IDENT [ type_args ]

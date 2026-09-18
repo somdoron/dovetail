@@ -74,7 +74,7 @@ impl Inference<'_> {
             let overloads = self.registry.lookup_function(fqn, &self.package_path, &self.current_file)?;
             let matching: Vec<_> = overloads
                 .iter()
-                .filter(|sig| sig.params.len() == args.len())
+                .filter(|sig| sig.params.len() == args.len() && self.named_signature_allowed(&sig.params))
                 .collect();
             if matching.is_empty() {
                 return None;
@@ -91,7 +91,7 @@ impl Inference<'_> {
             Some(expected)
         }).or_else(|| {
             let definitions = self.registry.lookup_generic_function(fqn.as_ref()?, &self.package_path)?;
-            let matching: Vec<_> = definitions.iter().filter(|def| def.params.len() == args.len()).collect();
+            let matching: Vec<_> = definitions.iter().filter(|def| def.params.len() == args.len() && self.named_signature_allowed(&def.params)).collect();
             let first = *matching.first()?;
             let mut substitution = TypeParamSubstitution::new();
             if type_args.len() == first.type_params.len() {
@@ -178,7 +178,10 @@ impl Inference<'_> {
                     .lookup_function(&fqn, &self.package_path, &self.current_file)
                     .unwrap_or_default()
                     .into_iter()
-                    .filter(|sig| sig.matches_args(&arg_type_refs, |p, a| self.is_assignable(p, a)))
+                    .filter(|sig| {
+                        self.named_signature_allowed(&sig.params)
+                            && sig.matches_args(&arg_type_refs, |p, a| self.is_assignable(p, a))
+                    })
                     .map(|sig| {
                         if sig.is_intrinsic
                             && let Some(intrinsic) = resolve_freestanding_intrinsic(&fqn)
@@ -491,7 +494,10 @@ impl Inference<'_> {
                         Visibility::Internal => module_info.fqn.package == self.package_path,
                         Visibility::Private => sig.source_file == self.current_file,
                     })
-                    .filter(|sig| sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a)))
+                    .filter(|sig| {
+                        self.named_signature_allowed(&sig.params)
+                            && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+                    })
                     .cloned()
                     .collect();
                 if !overloads.is_empty() {
@@ -870,6 +876,7 @@ impl Inference<'_> {
                                 .clone();
                             let method_sig = trait_sig.methods.iter().find(|m| {
                                 m.name == method.value
+                                    && self.named_signature_allowed(&m.params)
                                     && (m.params.is_empty() || m.params[0].0 != "self")
                                     && m.params.len() == typed_args.len()
                             })?;
@@ -1021,9 +1028,12 @@ impl Inference<'_> {
                 if !static_ext.is_empty() {
                     let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
                     let any_match = static_ext.iter().any(|(_, m)| {
-                        FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
-                            self.is_assignable(p, a)
-                        })
+                        self.named_signature_allowed(&m.params)
+                            && FunctionSignature::params_match_args(
+                                &m.params,
+                                &arg_types,
+                                |p, a| self.is_assignable(p, a),
+                            )
                     });
                     if any_match {
                         let display = format!("{}.{}", name, method.value);
@@ -1163,9 +1173,12 @@ impl Inference<'_> {
                                 .iter()
                                 .map(|(n, t)| (n.clone(), apply_substitution(&sub, t)))
                                 .collect();
-                            FunctionSignature::params_match_args(&params, &arg_types, |p, a| {
-                                self.is_assignable(p, a)
-                            })
+                            self.named_signature_allowed(&params)
+                                && FunctionSignature::params_match_args(
+                                    &params,
+                                    &arg_types,
+                                    |p, a| self.is_assignable(p, a),
+                                )
                         })
                         .cloned()
                         .collect();
@@ -1323,9 +1336,10 @@ impl Inference<'_> {
                         .iter()
                         .map(|(n, t)| (n.clone(), apply_substitution(&sub, t)))
                         .collect();
-                    FunctionSignature::params_match_args(&params, &arg_types, |p, a| {
-                        self.is_assignable(p, a)
-                    })
+                    self.named_signature_allowed(&params)
+                        && FunctionSignature::params_match_args(&params, &arg_types, |p, a| {
+                            self.is_assignable(p, a)
+                        })
                 })
                 .cloned()
                 .collect();
@@ -1778,7 +1792,9 @@ impl Inference<'_> {
         let matching: Vec<_> = trait_sig
             .methods
             .iter()
-            .filter(|method| method.name == method_name)
+            .filter(|method| {
+                method.name == method_name && self.named_signature_allowed(&method.params)
+            })
             .filter(|method| {
                 let parameters: Vec<_> = method
                     .params
@@ -1953,7 +1969,8 @@ impl Inference<'_> {
         let arg_types: Vec<&Type> = all_args.iter().map(|a| &a.ty).collect();
         let mut matching_traits: Vec<&Fqn> = Vec::new();
         for (trait_fqn, sig) in impl_pairs {
-            if sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+            if self.named_signature_allowed(&sig.params)
+                && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
                 && !matching_traits.contains(&trait_fqn)
             {
                 matching_traits.push(trait_fqn);
@@ -2600,7 +2617,8 @@ impl Inference<'_> {
                             .chain(b.properties.iter())
                             .filter(|m| {
                                 m.name.0 == method.value
-                                    && (m.params.is_empty() || m.params[0].0 != "self")
+                                    && self.named_trait_implementation_allowed(trait_fqn, &m.dispatch_name)
+&& (m.params.is_empty() || m.params[0].0 != "self")
                                     && m.method_type_params.is_empty()
                                     && (m.visibility != Visibility::Private
                                         || m.span.file == self.current_file)
@@ -2870,7 +2888,8 @@ impl Inference<'_> {
             .iter()
             .enumerate()
             .filter(|(_, (_, _, sig))| {
-                sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+                self.named_signature_allowed(&sig.params)
+                    && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
             })
             .map(|(i, _)| i)
             .collect();
@@ -3150,6 +3169,9 @@ impl Inference<'_> {
         trait_sig: &crate::typechecker::registry::TraitSignature,
         method_sig: &crate::typechecker::registry::TraitMethodSig,
     ) -> BoundMethodResolution {
+        if !self.named_signature_allowed(&method_sig.params) {
+            return BoundMethodResolution::NoMatch;
+        }
         {
             // Build substitution: Self → receiver type + trait type params → type args from bound
             let mut sub = TypeParamSubstitution::new().with_self_type(receiver_ty.clone());
@@ -3359,7 +3381,10 @@ impl Inference<'_> {
     ) -> Vec<ResolvedFunction> {
         overloads
             .into_iter()
-            .filter(|sig| sig.matches_args(arg_types, |p, a| self.is_assignable(p, a)))
+            .filter(|sig| {
+                self.named_signature_allowed(&sig.params)
+                    && sig.matches_args(arg_types, |p, a| self.is_assignable(p, a))
+            })
             .map(|sig| ResolvedFunction::Regular {
                 mangled_name: sig.mangled_name,
                 return_type: sig.return_type,
@@ -3420,7 +3445,9 @@ impl Inference<'_> {
     ) -> TypedExpr {
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
         let intrinsic_match = overloads.iter().find(|sig| {
-            sig.is_intrinsic && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+            sig.is_intrinsic
+                && self.named_signature_allowed(&sig.params)
+                && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
         });
         if let Some(intrinsic_sig) = intrinsic_match
             && let Some(intrinsic) =
@@ -3455,6 +3482,7 @@ impl Inference<'_> {
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
         let intrinsic_match = overloads.iter().find(|(_, m)| {
             m.is_intrinsic
+                && self.named_signature_allowed(&m.params)
                 && FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
                     self.is_assignable(p, a)
                 })
@@ -3475,9 +3503,10 @@ impl Inference<'_> {
         let candidates: Vec<super::ResolvedFunction> = overloads
             .into_iter()
             .filter(|(_, m)| {
-                FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
-                    self.is_assignable(p, a)
-                })
+                self.named_signature_allowed(&m.params)
+                    && FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
+                        self.is_assignable(p, a)
+                    })
             })
             .map(|(block, m)| super::ResolvedFunction::ExtMethod {
                 ext_fqn: block.ext_fqn.clone(),
@@ -3588,9 +3617,10 @@ impl Inference<'_> {
                 let all_args = build_all_args(typed_receiver, typed_args);
                 let arg_types: Vec<&Type> = all_args.iter().map(|a| &a.ty).collect();
                 let any_match = instance_overloads.iter().any(|(_, m)| {
-                    FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
-                        self.is_assignable(p, a)
-                    })
+                    self.named_signature_allowed(&m.params)
+                        && FunctionSignature::params_match_args(&m.params, &arg_types, |p, a| {
+                            self.is_assignable(p, a)
+                        })
                 });
                 if any_match {
                     let display = format!("{}.{}", type_fqn.symbol, method.value);
@@ -4590,6 +4620,9 @@ impl Inference<'_> {
             // Try non-generic module instance methods
             if let Some(overloads) = module_info.functions.get(&method_sym) {
                 for sig in overloads {
+                    if !self.named_signature_allowed(&sig.params) {
+                        continue;
+                    }
                     if sig.params.is_empty() || sig.params[0].0 != "self" {
                         continue;
                     }
@@ -4615,6 +4648,9 @@ impl Inference<'_> {
                 .collect();
 
             for def in defs {
+                if !self.named_signature_allowed(&def.params) {
+                    continue;
+                }
                 if def.is_property || def.params.is_empty() || def.params[0].0 != "self" {
                     continue;
                 }
@@ -4698,6 +4734,9 @@ impl Inference<'_> {
             loop {
                 if let Some(overloads) = current_sig.instance_methods.get(&method_sym) {
                     for sig in overloads {
+                        if !self.named_signature_allowed(&sig.params) {
+                            continue;
+                        }
                         // Instance methods have self as first param
                         if sig.params.is_empty() || sig.params[0].0 != "self" {
                             continue;
@@ -4717,6 +4756,9 @@ impl Inference<'_> {
                 // Check generic instance methods on the class
                 if let Some(defs) = current_sig.generic_instance_methods.get(&method_sym) {
                     for def in defs {
+                        if !self.named_signature_allowed(&def.params) {
+                            continue;
+                        }
                         if def.params.is_empty() || def.params[0].0 != "self" {
                             continue;
                         }

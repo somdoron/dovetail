@@ -906,6 +906,9 @@ impl Inference<'_> {
             })
             .collect();
         let mut matching = candidates.into_iter().filter(|(_, m)| {
+            if !self.named_trait_implementation_allowed(trait_fqn, &m.dispatch_name) {
+                return false;
+            }
             let non_self = if m.params.first().is_some_and(|p| p.0 == "self") {
                 &m.params[1..]
             } else {

@@ -72,6 +72,7 @@ restriction statements in the appendix and interface design.
 
 | Document | Description | Implementation status |
 |----------|-------------|------------------------|
+| [linter-design.md](linter-design.md) | Future semantic linter responsibilities and candidate rules, including named-argument suggestions | **Proposal** (no linter implemented) |
 | [cranelift-gc-research.md](cranelift-gc-research.md) | Research: Cranelift + tracing GC, stack maps, safepoints, JIT/AOT, VMContext | **Research** |
 | [lsp-manual-testing.md](lsp-manual-testing.md) | Manual testing checklist for LSP features in VS Code | **Reference** |
 | [match-static-vs-generic-without-substituted.md](match-static-vs-generic-without-substituted.md) | Match: static vs generic subject types, role of `Type::Substituted` | **Reference** |

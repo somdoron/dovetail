@@ -18,6 +18,9 @@ use super::generics::apply_substitution;
 
 impl Inference<'_> {
     pub(super) fn infer_expr(&mut self, expr: &Expr) -> TypedExpr {
+        if let Some(receiver) = self.cached_named_receiver(expr) {
+            return receiver;
+        }
         let previous = self.current_expr_span.replace(expr.span());
         let typed = self.infer_expr_inner(expr);
         if previous.is_none() {
@@ -28,7 +31,14 @@ impl Inference<'_> {
     }
 
     fn infer_expr_inner(&mut self, expr: &Expr) -> TypedExpr {
+        if let Some(call) = self.infer_named_call(expr) {
+            return call;
+        }
         match expr {
+            Expr::NamedArgument { span, .. } => {
+                self.diagnostics.error(span.clone(), "named arguments are only supported for calls to declared functions, methods, and class constructors");
+                self.error_expr(span)
+            }
             Expr::PrefixedLiteral {
                 prefix,
                 parts,
@@ -3489,9 +3499,12 @@ impl Inference<'_> {
             let matching_ext: Vec<_> = ext_props
                 .iter()
                 .filter(|(_, m)| {
-                    FunctionSignature::params_match_args(&m.params, &self_arg_types, |p, a| {
-                        self.is_assignable(p, a)
-                    })
+                    self.named_signature_allowed(&m.params)
+                        && FunctionSignature::params_match_args(
+                            &m.params,
+                            &self_arg_types,
+                            |p, a| self.is_assignable(p, a),
+                        )
                 })
                 .collect();
             let distinct_exts: Vec<&Fqn> = {

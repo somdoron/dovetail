@@ -1156,6 +1156,7 @@ fn discover_generic_class_instances(
             | TypedExprKind::TypeCast { value, .. }
             | TypedExprKind::TypeTest { value, .. }
             | TypedExprKind::BoxToAny { inner: value }
+            | TypedExprKind::NamedCall { call: value, .. }
             | TypedExprKind::Panic { message: value }
             | TypedExprKind::Return { value, .. }
             | TypedExprKind::GlobalAssign { value, .. }
@@ -1359,7 +1360,9 @@ pub(crate) fn visit_expr_children(expr: &TypedExpr, mut f: impl FnMut(&TypedExpr
             args.iter().for_each(&mut f);
         }
         TypedExprKind::Return { value, .. } => f(value),
-        TypedExprKind::Panic { message } => f(message),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            f(message)
+        }
         TypedExprKind::Assert { condition, message } => {
             f(condition);
             if let Some(m) = message {
@@ -1454,7 +1457,9 @@ fn visit_expr_children_mut(expr: &mut TypedExpr, mut f: impl FnMut(&mut TypedExp
             args.iter_mut().for_each(&mut f);
         }
         TypedExprKind::Return { value, .. } => f(value),
-        TypedExprKind::Panic { message } => f(message),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            f(message)
+        }
         TypedExprKind::Assert { condition, message } => {
             f(condition);
             if let Some(m) = message {

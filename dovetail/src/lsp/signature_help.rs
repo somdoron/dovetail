@@ -58,6 +58,12 @@ struct CallInfo {
 }
 
 enum CallKind {
+    NamedCall {
+        name: String,
+        parameters: Vec<(String, Type)>,
+        return_type: Type,
+        doc_fqn: Option<Fqn>,
+    },
     FunctionCall {
         name: crate::common::types::MangledName,
     },
@@ -94,6 +100,54 @@ fn find_enclosing_call(
 
     // Check if this expression is a call expression
     let call_kind = match &expr.kind {
+        TypedExprKind::NamedCall {
+            call,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            argument_order,
+            source_name,
+        } => {
+            let Some(args) =
+                crate::compiler::named_calls::explicit_arguments(call, parameter_names.len())
+            else {
+                return;
+            };
+            let active = argument_order
+                .iter()
+                .find(|&&index| {
+                    let span = named_parameters
+                        .iter()
+                        .find(|(slot, _)| *slot == index)
+                        .map(|(_, span)| span)
+                        .unwrap_or(&args[index].span);
+                    span_contains(span, line, column)
+                })
+                .copied()
+                .unwrap_or_else(|| {
+                    argument_order
+                        .iter()
+                        .copied()
+                        .find(|&index| {
+                            (args[index].span.line, args[index].span.column) >= (line, column)
+                        })
+                        .unwrap_or_else(|| argument_order.last().copied().unwrap_or(0))
+                });
+            Some((
+                CallKind::NamedCall {
+                    name: source_name.clone(),
+                    parameters: parameter_names
+                        .iter()
+                        .cloned()
+                        .zip(parameter_types.iter().cloned())
+                        .collect(),
+                    doc_fqn: named_call_doc_fqn(call),
+                    return_type: expr.ty.clone(),
+                },
+                active as u32,
+            ))
+        }
+
         TypedExprKind::FunctionCall {
             name,
             args,
@@ -256,6 +310,9 @@ fn walk_children_for_calls(
             for e in exprs {
                 find_enclosing_call(e, file, line, column, best);
             }
+        }
+        TypedExprKind::NamedCall { call, .. } => {
+            walk_children_for_calls(call, file, line, column, best);
         }
         TypedExprKind::Panic { message } => {
             find_enclosing_call(message, file, line, column, best);
@@ -490,6 +547,29 @@ fn build_signature_help(
     registry: &Registry,
 ) -> Option<SignatureHelp> {
     let (label, params, doc) = match &call.kind {
+        CallKind::NamedCall {
+            name,
+            parameters,
+            return_type,
+            doc_fqn,
+        } => {
+            let labels: Vec<_> = parameters
+                .iter()
+                .map(|(name, ty)| format!("{name}: {ty}"))
+                .collect();
+            let label = format!("{name}({}): {return_type}", labels.join(", "));
+            let parameters = labels
+                .into_iter()
+                .map(|label| ParameterInformation {
+                    label: ParameterLabel::Simple(label),
+                    documentation: None,
+                })
+                .collect();
+            let doc = doc_fqn
+                .as_ref()
+                .and_then(|fqn| registry.lookup_doc_comment(fqn).map(str::to_string));
+            (label, parameters, doc)
+        }
         CallKind::FunctionCall { name } => {
             let func = super::source_functions::get(typed_module, name)?;
             let sig_label = format_func_sig(func);
@@ -661,4 +741,14 @@ fn format_func_sig(func: &crate::typechecker::types::TypedFunction) -> String {
         params.join(", "),
         func.return_type,
     )
+}
+
+fn named_call_doc_fqn(call: &TypedExpr) -> Option<Fqn> {
+    let name = match &call.kind {
+        TypedExprKind::FunctionCall { name, .. } => name,
+        TypedExprKind::ClassNew { mangled_name, .. } => mangled_name,
+        TypedExprKind::ClassSuperCall { method_mangled, .. } => method_mangled,
+        _ => return None,
+    };
+    Fqn::from_dotted(name.0.split(['$', '#']).next().unwrap_or(&name.0))
 }

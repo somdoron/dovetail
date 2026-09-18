@@ -157,23 +157,25 @@ impl Inference<'_> {
         }
 
         // 2. If extends: infer extends args in current (child) scope
-        let (typed_extends_args, resolved_parent_ty) = if let Some(ref ext) = class.extends {
-            let parent_ty = self.resolve_type_expr(&ext.parent_type);
-            match &parent_ty {
-                Type::Class(_, _) | Type::GenericClass { .. } => {}
-                _ if parent_ty.is_error() => {}
-                _ => {
-                    self.diagnostics.error(
-                        ext.span.clone(),
-                        format!("extends clause expected a class type, found '{parent_ty}'"),
-                    );
+        let (typed_extends_args, resolved_parent_ty, extends_argument_order) =
+            if let Some(ref ext) = class.extends {
+                let parent_ty = self.resolve_type_expr(&ext.parent_type);
+                match &parent_ty {
+                    Type::Class(_, _) | Type::GenericClass { .. } => {}
+                    _ if parent_ty.is_error() => {}
+                    _ => {
+                        self.diagnostics.error(
+                            ext.span.clone(),
+                            format!("extends clause expected a class type, found '{parent_ty}'"),
+                        );
+                    }
                 }
-            }
-            let args: Vec<TypedExpr> = ext.super_args.iter().map(|a| self.infer_expr(a)).collect();
-            (Some(args), Some(parent_ty))
-        } else {
-            (None, None)
-        };
+                let (args, order) =
+                    self.infer_extends_arguments(&parent_ty, &ext.super_args, &ext.span);
+                (Some(args), Some(parent_ty), order)
+            } else {
+                (None, None, vec![])
+            };
 
         // 3. Infer own class body (let bindings + expressions) → own_body_stmts
         let mut own_body_stmts: Vec<TypedExpr> = Vec::new();
@@ -363,6 +365,7 @@ impl Inference<'_> {
             initializer,
             initializer_fields,
             extends_args: typed_extends_args,
+            extends_argument_order,
             type_params: vec![],
             span: class.span.clone(),
         };
@@ -612,14 +615,12 @@ impl Inference<'_> {
         }
 
         // Infer extends args with TypeParameter types (constructor params still in scope)
-        let template_extends_args = if let Some(ref ext) = class.extends {
-            if !ext.super_args.is_empty() {
-                Some(ext.super_args.iter().map(|a| self.infer_expr(a)).collect())
-            } else {
-                None
-            }
+        let (template_extends_args, extends_argument_order) = if let Some(ref ext) = class.extends {
+            let parent = self.resolve_type_expr(&ext.parent_type);
+            let (args, order) = self.infer_extends_arguments(&parent, &ext.super_args, &ext.span);
+            (Some(args), order)
         } else {
-            None
+            (None, vec![])
         };
 
         self.pop_scope();
@@ -667,6 +668,7 @@ impl Inference<'_> {
                     initializer: template_initializer,
                     initializer_fields: template_initializer_fields,
                     extends_args: template_extends_args,
+                    extends_argument_order,
                     type_params: class_sig.type_params.clone(),
                     span: class_sig.span.clone(),
                 }),
@@ -1296,6 +1298,7 @@ impl Inference<'_> {
                     .iter()
                     .filter(|sig| {
                         !sig.is_property
+                            && self.named_signature_allowed(&sig.params)
                             && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
                     })
                     .collect();
@@ -1570,7 +1573,10 @@ impl Inference<'_> {
             let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
             let matching: Vec<_> = overloads
                 .iter()
-                .filter(|sig| sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a)))
+                .filter(|sig| {
+                    self.named_signature_allowed(&sig.params)
+                        && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+                })
                 .collect();
 
             if !matching.is_empty()
@@ -1637,6 +1643,9 @@ impl Inference<'_> {
         let arg_types: Vec<&Type> = typed_args.iter().map(|a| &a.ty).collect();
 
         for def in defs {
+            if !self.named_signature_allowed(&def.params) {
+                continue;
+            }
             // Static methods should NOT have a `self` parameter
             if def.params.first().is_some_and(|(name, _)| name == "self") {
                 continue;
@@ -2135,6 +2144,9 @@ impl Inference<'_> {
         // dispatched at call site) and non-instance members.
         for (method_name, defs) in &class_sig.generic_instance_methods {
             for def in defs {
+                if !self.named_signature_allowed(&def.params) {
+                    continue;
+                }
                 if !def.method_type_params.is_empty() {
                     continue;
                 }
@@ -2390,7 +2402,10 @@ impl Inference<'_> {
                 // Find matching overload
                 let matching: Vec<_> = overloads
                     .iter()
-                    .filter(|sig| sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a)))
+                    .filter(|sig| {
+                        self.named_signature_allowed(&sig.params)
+                            && sig.matches_args(&arg_types, |p, a| self.is_assignable(p, a))
+                    })
                     .collect();
 
                 if matching.len() == 1 {
@@ -2502,6 +2517,9 @@ impl Inference<'_> {
             .iter()
             .filter(|definition| definition.is_property == is_property)
         {
+            if !self.named_signature_allowed(&def.params) {
+                continue;
+            }
             // Pre-populate substitution with class-level type args
             let mut substitution = TypeParamSubstitution::new();
             for (tp, arg) in def.class_type_params.iter().zip(class_type_args.iter()) {

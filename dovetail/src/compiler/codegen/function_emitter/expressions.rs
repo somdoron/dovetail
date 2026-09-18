@@ -30,6 +30,9 @@ impl FunctionEmitter<'_> {
         self.source_mappings.push((inst_idx, expr.span.clone()));
 
         match &expr.kind {
+            TypedExprKind::NamedCall { .. } => {
+                unreachable!("named calls must be lowered before codegen")
+            }
             // Literals are effectless — skip entirely in statement context
             TypedExprKind::UnitLiteral => {
                 if ctx == ExprContext::Value {
@@ -1606,8 +1609,9 @@ impl FunctionEmitter<'_> {
             // Evaluate ALL extends args in current (child) scope, save to temp locals/flattens.
             // An erased param boxes into a single anyref temp; a concrete tuple stores into a
             // temp locals; the parent param name is then aliased directly to the temp base.
-            let mut temp_bases = Vec::new();
-            for (i, arg) in extends_args.iter().enumerate() {
+            let mut temp_bases = vec![0; extends_args.len()];
+            for &i in &cls.extends_argument_order {
+                let arg = &extends_args[i];
                 let param_ty = parent_cls.constructor_params[i].ty.clone();
                 self.emit_expr(arg, ExprContext::Value);
                 if Codegen::is_erased_slot(&param_ty) {
@@ -1615,12 +1619,12 @@ impl FunctionEmitter<'_> {
                     let val_type = self.codegen.single_val_type(&param_ty);
                     let temp = self.add_local(val_type);
                     self.instruction(Instruction::LocalSet(temp));
-                    temp_bases.push(temp);
+                    temp_bases[i] = temp;
                 } else {
                     let valtypes = self.codegen.type_to_valtypes(&param_ty);
                     let base = self.add_value_locals(&valtypes);
                     self.store_value(base, &valtypes);
-                    temp_bases.push(base);
+                    temp_bases[i] = base;
                 }
             }
 

@@ -206,7 +206,7 @@ fn walk_children<'a>(
                 walk_expr(e, file, line, column, best);
             }
         }
-        TypedExprKind::Panic { message } => {
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
             walk_expr(message, file, line, column, best);
         }
         TypedExprKind::Assert { condition, message } => {

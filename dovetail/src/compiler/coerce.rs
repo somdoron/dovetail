@@ -524,6 +524,21 @@ fn walk_expr(expr: TypedExpr, ctx: &WalkContext) -> TypedExpr {
             TypedExprKind::Block(exprs)
         }
 
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(walk_expr(*call, ctx)),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(walk_expr(*message, ctx)),
         },

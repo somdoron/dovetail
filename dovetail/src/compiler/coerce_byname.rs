@@ -106,6 +106,20 @@ pub fn coerce_byname_args(module: &mut TypedModule) {
             &function_params,
         );
     }
+    for definition in module.types.values_mut() {
+        if let crate::typechecker::types::TypeDef::Class(class) = definition {
+            for expression in class
+                .initializer
+                .iter_mut()
+                .chain(class.extends_args.iter_mut().flatten())
+            {
+                *expression = walk_expr(
+                    std::mem::replace(expression, dummy_expr()),
+                    &function_params,
+                );
+            }
+        }
+    }
     for block in &mut module.implement_blocks {
         for method in block.methods.iter_mut().chain(block.properties.iter_mut()) {
             method.body = walk_expr(
@@ -158,7 +172,18 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
         TypedExprKind::Block(exprs) => {
             TypedExprKind::Block(exprs.into_iter().map(|e| walk_expr(e, fn_params)).collect())
         }
-
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_types,
+            ..
+        } => {
+            return super::named_calls::lower_with_parameter_types(
+                walk_expr(*call, fn_params),
+                &argument_order,
+                &parameter_types,
+            );
+        }
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(walk_expr(*message, fn_params)),
         },
@@ -579,7 +604,7 @@ fn walk_expr(expr: TypedExpr, fn_params: &FnParamInfo) -> TypedExpr {
     TypedExpr { kind, ty, span }
 }
 
-fn needs_byname_coercion(actual: &Type, expected: &Type) -> bool {
+pub(crate) fn needs_byname_coercion(actual: &Type, expected: &Type) -> bool {
     if let Type::GenericNewtype { fqn, type_args, .. } = expected
         && is_byname_fqn(fqn)
         && !type_args.is_empty()
@@ -595,14 +620,17 @@ fn needs_byname_coercion(actual: &Type, expected: &Type) -> bool {
 fn coerce_args(args: Vec<TypedExpr>, param_types: &[Type]) -> Vec<TypedExpr> {
     args.into_iter()
         .zip(param_types.iter())
-        .map(|(arg, expected)| {
-            if needs_byname_coercion(&arg.ty, expected) {
-                wrap_in_byname(arg, expected.clone())
-            } else {
-                arg
-            }
-        })
+        .map(|(arg, expected)| coerce_argument(arg, expected))
         .collect()
+}
+
+/// Also used before await lowering when named operands become explicit bindings.
+pub(crate) fn coerce_argument(argument: TypedExpr, expected: &Type) -> TypedExpr {
+    if needs_byname_coercion(&argument.ty, expected) {
+        wrap_in_byname(argument, expected.clone())
+    } else {
+        argument
+    }
 }
 
 fn wrap_in_byname(expr: TypedExpr, byname_ty: Type) -> TypedExpr {

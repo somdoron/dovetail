@@ -654,6 +654,26 @@ fn resolve_ext_calls_in_expr(
                 })
                 .collect(),
         },
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(resolve_ext_calls_in_expr(
+                *call,
+                ext_blocks,
+                new_functions,
+                existing_functions,
+            )),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(resolve_ext_calls_in_expr(
                 *message,

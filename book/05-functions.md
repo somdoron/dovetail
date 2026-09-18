@@ -68,11 +68,57 @@ public function add(a: Int32, b: Int32): Int32 =
 
 ---
 
-## 5.2 Positional Arguments and Configuration
+## 5.2 Named and Default Arguments
 
-Function calls use positional arguments. Named arguments and default parameter
-values are not implemented. For explicit configuration, use record fields and a
-function that constructs the default configuration:
+### Named Arguments
+
+When calling a function, you can use named arguments for clarity:
+
+```dovetail
+function createUser(name: String, age: Int32, email: String): User =
+    User { name = name; age = age; email = email }
+
+// Using named arguments
+let user = createUser(name = "Alice", age = 30, email = "alice@example.com")
+```
+
+Named arguments can be in any order:
+
+```dovetail
+let user = createUser(email = "bob@example.com", name = "Bob", age = 25)
+```
+
+You can mix positional and named arguments, but positional arguments must come first:
+
+```dovetail
+let user = createUser("Charlie", age = 28, email = "charlie@example.com")
+```
+
+Every parameter must receive exactly one argument. Unknown names, duplicate
+arguments (including a positional and named argument for the same parameter),
+missing arguments, and positional arguments after named ones are errors.
+
+Named arguments also work with methods and class constructors. The receiver is
+evaluated first, then eager arguments are evaluated once in the order written,
+even when that differs from parameter order. `ByName` arguments remain deferred.
+
+Accepted names come from the declaration visible at the call site. Calls through
+a trait bound or interface use that contract's names; calls through a base class
+use its visible method declaration. Calls through a concrete class use its own
+method declaration, or the inherited declaration when it does not override the
+method. An implementation may rename parameters, but those names are not aliases
+for the contract's names. Runtime dispatch does not affect argument binding.
+Renaming a public parameter can therefore break callers that use its name.
+
+Function values, including stored function and bound-method references, accept
+only positional arguments: their types do not contain parameter names. Positional
+enum payloads and newtype constructors also have no argument labels. Record
+construction continues to use its existing field-initializer syntax.
+
+### Default Parameter Values (Planned)
+
+Default parameter values are planned but are not implemented yet. For optional
+settings today, use a configuration record and a function that constructs it:
 
 ```dovetail
 record Config =
@@ -88,6 +134,58 @@ let custom = local with port = 3000
 
 Record field assignments are distinct from function arguments. The formatter
 preserves that distinction; it does not introduce named arguments.
+
+The proposed default-parameter syntax is:
+
+```dovetail
+function greet(name: String, greeting: String = "Hello"): String =
+    "$greeting, $name!"
+
+greet("Alice")           // "Hello, Alice!"
+greet("Bob", "Hi")       // "Hi, Bob!"
+greet("Charlie", greeting = "Hey")  // "Hey, Charlie!"
+```
+
+Parameters with defaults must come after required parameters:
+
+```dovetail
+function createConfig(
+    host: String,
+    port: Int32 = 8080,
+    timeout: Int32 = 30,
+    debug: Bool = false
+): Config =
+    Config { host = host; port = port; timeout = timeout; debug = debug }
+
+// Use defaults
+let config1 = createConfig("localhost")
+
+// Override some defaults
+let config2 = createConfig("localhost", port = 3000, debug = true)
+```
+
+### Future Linter Rule for Named Arguments
+
+The formatter preserves the caller's choice of positional or named arguments.
+Adding argument names requires resolving the called declaration and belongs in
+a semantic linter.
+
+Dovetail does not yet have a linter. A planned rule would suggest named arguments
+when the called declaration has more than two explicit parameters, excluding
+the method receiver:
+
+```dovetail
+// You write:
+createUser("John", 30, "john@example.com")
+
+// A future linter could suggest this fix:
+createUser(name = "John", age = 30, email = "john@example.com")
+```
+
+Additional planned lint rules require named arguments for Boolean and numeric
+literals, even in calls with only one or two parameters. For example,
+`retry(3)` would be written as `retry(attempts = 3)`. These lint rules are not
+implemented yet. See the [future linter design and rule backlog](../docs/linter-design.md).
 
 ---
 
@@ -356,7 +454,8 @@ let result = numbers.filter(x => x > 0).map(x => x * 2).foldLeft(0, (acc, x) => 
 ## Summary
 
 - Functions are defined with `function name(params): ReturnType = body`
-- Use positional arguments and configuration records for explicit options
+- Use named arguments for clarity: `createUser(name = "Alice", age = 30)`
+- Default parameter values are planned; use configuration records for defaults today
 - Closures use `=>` syntax: `x => x * 2` or `(a, b) => a + b`
 - Closures capture variables from their environment
 - Function types describe signatures: `(Int32, Int32) => Int32`

@@ -1491,6 +1491,8 @@ pub struct ClassTypeDef {
     /// Typed extends arg expressions (reference own constructor params).
     /// None for root classes.
     pub extends_args: Option<Vec<TypedExpr>>,
+    /// Parameter slots in the order written in the extends clause.
+    pub extends_argument_order: Vec<usize>,
     /// Non-empty for generic class templates (keyed by base mangled name).
     /// Empty for concrete (non-generic or instantiated) classes.
     pub type_params: Vec<TypeParamName>,
@@ -2108,6 +2110,19 @@ pub enum IntrinsicKind {
 /// The kind of a typed expression.
 #[derive(Debug, Clone)]
 pub enum TypedExprKind {
+    /// Source call metadata, retained until argument evaluation is lowered.
+    NamedCall {
+        call: Box<TypedExpr>,
+        /// Explicit argument slots in written evaluation order (implicit receiver excluded).
+        argument_order: Vec<usize>,
+        /// Visible declaration's explicit parameter names, in declaration order.
+        parameter_names: Vec<String>,
+        /// Instantiated declared parameter types, aligned with parameter_names.
+        parameter_types: Vec<Type>,
+        /// Explicitly labelled parameter slots.
+        named_parameters: Vec<(usize, Span)>,
+        source_name: String,
+    },
     UnitLiteral,
     BoolLiteral(bool),
     StringLiteral(String),

@@ -3388,14 +3388,30 @@ impl Parser {
             return args;
         }
 
-        args.push(self.parse_value_expr());
+        args.push(self.parse_call_argument());
 
         while self.at(TokenKind::Comma) {
             self.advance(); // consume ','
-            args.push(self.parse_value_expr());
+            args.push(self.parse_call_argument());
         }
 
         args
+    }
+
+    fn parse_call_argument(&mut self) -> Expr {
+        if self.at(TokenKind::Ident) && self.peek_at(1).kind == TokenKind::Equals {
+            let name = self.expect_ident("expected argument name").unwrap();
+            self.advance();
+            let value = self.parse_value_expr();
+            let span = name.span.merge(&value.span());
+            Expr::NamedArgument {
+                name,
+                value: Box::new(value),
+                span,
+            }
+        } else {
+            self.parse_value_expr()
+        }
     }
 
     // ── Types ────────────────────────────────────────────────────────

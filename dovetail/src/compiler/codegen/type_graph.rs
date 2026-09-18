@@ -119,6 +119,7 @@ mod tests {
             initializer: vec![],
             initializer_fields: vec![],
             extends_args: None,
+            extends_argument_order: vec![],
             type_params: vec![],
             span: span(),
         };

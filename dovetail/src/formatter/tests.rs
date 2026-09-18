@@ -437,3 +437,20 @@ implement<T> Default for Array<T>
     );
     assert_eq!(format(&output), output);
 }
+
+#[test]
+fn named_arguments_preserve_labels_order_and_comments() {
+    let source = r#"package a
+function main(): Unit =
+    send(
+        urgent = true, // preserve this comment
+        message = "hello"
+    )
+"#;
+    let formatted = format(source);
+    assert!(formatted.contains("urgent = true"));
+    assert!(formatted.contains("message = \"hello\""));
+    assert!(formatted.contains("// preserve this comment"));
+    assert!(formatted.find("urgent").unwrap() < formatted.find("message").unwrap());
+    assert_eq!(format(&formatted), formatted);
+}

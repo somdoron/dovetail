@@ -233,7 +233,9 @@ fn expr_children_contain_var(expr: &TypedExpr, var_name: &VarName) -> bool {
         TypedExprKind::Await { operand, .. }
         | TypedExprKind::Try { operand, .. }
         | TypedExprKind::Use { operand, .. } => expr_contains_var(operand, var_name),
-        TypedExprKind::Panic { message } => expr_contains_var(message, var_name),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            expr_contains_var(message, var_name)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {
@@ -399,7 +401,9 @@ fn walk_children_for_refs(expr: &TypedExpr, var_name: &VarName, spans: &mut Vec<
                 collect_variable_refs(e, var_name, spans);
             }
         }
-        TypedExprKind::Panic { message } => collect_variable_refs(message, var_name, spans),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            collect_variable_refs(message, var_name, spans)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {
@@ -666,7 +670,9 @@ fn walk_children_for_references(expr: &TypedExpr, target: &ReferenceTarget, span
                 collect_references(e, target, spans);
             }
         }
-        TypedExprKind::Panic { message } => collect_references(message, target, spans),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            collect_references(message, target, spans)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {

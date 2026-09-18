@@ -647,6 +647,12 @@ pub enum Expr {
         value: Box<Expr>,
         span: Span,
     },
+    /// A named argument, valid only directly inside a call argument list.
+    NamedArgument {
+        name: Spanned<String>,
+        value: Box<Expr>,
+        span: Span,
+    },
     /// A function call: `add(1, 2)` or `identity<Int32>(42)`
     FunctionCall {
         name: Spanned<String>,
@@ -879,6 +885,7 @@ impl Expr {
             | Expr::Let { span, .. }
             | Expr::Identifier(_, span)
             | Expr::Assignment { span, .. }
+            | Expr::NamedArgument { span, .. }
             | Expr::FunctionCall { span, .. }
             | Expr::FieldAccess { span, .. }
             | Expr::MethodCall { span, .. }

@@ -135,6 +135,9 @@ impl Inference<'_> {
         let mut results = Vec::new();
         let mut extension_inference_span = None;
         for def in &generic {
+            if !self.named_signature_allowed(&def.params) {
+                continue;
+            }
             let resolved_type_args = self
                 .infer_type_args(def, arg_types, explicit_type_args)
                 .or_else(|| {
@@ -300,6 +303,9 @@ impl Inference<'_> {
 
         let mut results = Vec::new();
         for (block, method) in defs {
+            if !self.named_signature_allowed(&method.params) {
+                continue;
+            }
             // Skip properties on the IMPLICIT path — they are resolved via
             // infer_field_access. Explicit `ExtName.prop(recv)` calls pass an
             // ext filter and dispatch the property like a call — with no
@@ -394,6 +400,18 @@ impl Inference<'_> {
                         continue;
                     }
                 }
+            };
+
+            let type_args = if explicit_method_type_params.is_empty() {
+                type_args
+            } else {
+                if explicit_method_type_params.len() != method.method_type_params.len() {
+                    continue;
+                }
+                let Some(method_args) = self.resolve_type_args(explicit_method_type_params) else {
+                    continue;
+                };
+                [type_args[..block.type_params.len()].to_vec(), method_args].concat()
             };
 
             let concrete_sub = TypeParamSubstitution::from_pairs(&all_type_params, &type_args);
@@ -503,6 +521,15 @@ impl Inference<'_> {
         let mut results = Vec::new();
         let mut bound_errors = Vec::new();
         for (block, method) in &defs {
+            let names_match = match trait_filter {
+                Some((trait_fqn, _)) => {
+                    self.named_trait_implementation_allowed(trait_fqn, &method.dispatch_name)
+                }
+                None => self.named_signature_allowed(&method.params),
+            };
+            if !names_match {
+                continue;
+            }
             if property_only.is_some_and(|is_property| method.is_property != is_property) {
                 continue;
             }
@@ -576,6 +603,18 @@ impl Inference<'_> {
                         continue;
                     }
                 }
+            };
+
+            let type_args = if explicit_type_args.is_empty() {
+                type_args
+            } else {
+                if explicit_type_args.len() != method.method_type_params.len() {
+                    continue;
+                }
+                let Some(method_args) = self.resolve_type_args(explicit_type_args) else {
+                    continue;
+                };
+                [type_args[..block.type_params.len()].to_vec(), method_args].concat()
             };
 
             // Sibling applications can have different bounds. Filter the
@@ -748,6 +787,9 @@ impl Inference<'_> {
 
         let mut results = Vec::new();
         for (block, method) in defs {
+            if !self.named_signature_allowed(&method.params) {
+                continue;
+            }
             // Only consider properties
             if !method.is_property {
                 continue;
@@ -908,6 +950,9 @@ impl Inference<'_> {
 
         let mut results = Vec::new();
         for (block, method) in defs {
+            if !self.named_signature_allowed(&method.params) {
+                continue;
+            }
             // Filter to static methods (no `self` first param)
             if !method.params.is_empty() && method.params[0].0 == "self" {
                 continue;

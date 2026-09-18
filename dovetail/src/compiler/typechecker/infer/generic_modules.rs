@@ -60,6 +60,9 @@ impl Inference<'_> {
         let mut results = Vec::new();
         let mut unsatisfied_bounds: Vec<String> = Vec::new();
         for def in defs {
+            if !self.named_signature_allowed(&def.params) {
+                continue;
+            }
             // Unify receiver type against def.for_type to infer module-level type args
             let mut substitution = TypeParamSubstitution::new();
             if !substitution.unify(&def.for_type, receiver_ty) {
@@ -126,6 +129,18 @@ impl Inference<'_> {
                         continue;
                     }
                 }
+            };
+
+            let type_args = if explicit_method_type_params.is_empty() {
+                type_args
+            } else {
+                if explicit_method_type_params.len() != def.method_type_params.len() {
+                    continue;
+                }
+                let Some(method_args) = self.resolve_type_args(explicit_method_type_params) else {
+                    continue;
+                };
+                [type_args[..def.type_params.len()].to_vec(), method_args].concat()
             };
 
             // Verify non-self arg types are assignable to the substituted param
@@ -260,6 +275,9 @@ impl Inference<'_> {
 
         let mut results = Vec::new();
         for def in defs {
+            if !self.named_signature_allowed(&def.params) {
+                continue;
+            }
             // Only consider properties
             if !def.is_property {
                 continue;
@@ -396,6 +414,9 @@ impl Inference<'_> {
         let mut results = Vec::new();
         let mut unsatisfied_bounds: Vec<String> = Vec::new();
         for def in defs {
+            if !self.named_signature_allowed(&def.params) {
+                continue;
+            }
             // Filter to static members (no `self` first param)
             if !def.params.is_empty() && def.params[0].0 == "self" {
                 continue;

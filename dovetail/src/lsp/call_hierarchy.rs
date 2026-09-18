@@ -293,7 +293,9 @@ fn walk_children_for_calls_to(expr: &TypedExpr, target: &MangledName, sites: &mu
                 collect_calls_to(e, target, sites);
             }
         }
-        TypedExprKind::Panic { message } => collect_calls_to(message, target, sites),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            collect_calls_to(message, target, sites)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {
@@ -483,7 +485,9 @@ fn walk_children_for_all_calls(expr: &TypedExpr, calls: &mut Vec<(MangledName, S
                 collect_all_calls(e, calls);
             }
         }
-        TypedExprKind::Panic { message } => collect_all_calls(message, calls),
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
+            collect_all_calls(message, calls)
+        }
         TypedExprKind::Assert {
             condition, message, ..
         } => {

@@ -87,6 +87,21 @@ fn walk_expr(expr: TypedExpr) -> TypedExpr {
             TypedExprKind::Block(exprs.into_iter().map(walk_expr).collect())
         }
 
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(walk_expr(*call)),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(walk_expr(*message)),
         },

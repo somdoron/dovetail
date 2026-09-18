@@ -2010,6 +2010,27 @@ fn resolve_impl_calls_in_expr(
                 })
                 .collect(),
         },
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(resolve_impl_calls_in_expr(
+                *call,
+                impl_blocks,
+                new_functions,
+                existing_functions,
+                registry,
+            )),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(resolve_impl_calls_in_expr(
                 *message,

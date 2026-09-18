@@ -7,6 +7,7 @@ pub mod layout;
 pub mod lexer;
 pub mod macros;
 pub mod monomorphize;
+pub(crate) mod named_calls;
 pub mod parser;
 mod pipeline;
 pub mod typechecker;

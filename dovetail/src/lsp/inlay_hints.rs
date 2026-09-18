@@ -97,6 +97,37 @@ fn collect_hints(
     }
 
     match &expr.kind {
+        TypedExprKind::NamedCall {
+            call,
+            parameter_names,
+            named_parameters,
+            ..
+        } => {
+            if let Some(args) =
+                crate::compiler::named_calls::explicit_arguments(call, parameter_names.len())
+            {
+                for (slot, (name, arg)) in parameter_names.iter().zip(args).enumerate() {
+                    if !named_parameters
+                        .iter()
+                        .any(|(named_slot, _)| *named_slot == slot)
+                    {
+                        add_param_hint(arg, name, parameter_names.len(), hints);
+                    }
+                }
+            }
+            crate::compiler::monomorphize::visit_expr_children(call, |child| {
+                collect_hints(
+                    child,
+                    file,
+                    start_line,
+                    end_line,
+                    typed_module,
+                    document_content,
+                    hints,
+                );
+            });
+        }
+
         TypedExprKind::Let {
             name,
             var_ty,
@@ -337,43 +368,36 @@ fn add_param_hints(
     params: &[crate::typechecker::types::TypedParam],
     hints: &mut Vec<InlayHint>,
 ) {
-    for (i, arg) in args.iter().enumerate() {
-        if i >= params.len() {
-            break;
-        }
-        let param = &params[i];
-
-        // Skip self parameter
-        if param.name == "self" {
-            continue;
-        }
-
-        // Skip if it's a single-param function with a literal arg
-        if params.len() == 1 && is_literal(&arg.kind) {
-            continue;
-        }
-
-        // Skip if the argument is a VarRef whose name matches the parameter name
-        if let TypedExprKind::VarRef { name, .. } = &arg.kind
-            && name.to_string() == param.name
-        {
-            continue;
-        }
-
-        hints.push(InlayHint {
-            position: Position {
-                line: arg.span.line.saturating_sub(1),
-                character: arg.span.column.saturating_sub(1),
-            },
-            label: InlayHintLabel::String(format!("{}: ", param.name)),
-            kind: Some(InlayHintKind::PARAMETER),
-            text_edits: None,
-            tooltip: None,
-            padding_left: None,
-            padding_right: Some(false),
-            data: None,
-        });
+    for (arg, param) in args.iter().zip(params) {
+        add_param_hint(arg, &param.name, params.len(), hints);
     }
+}
+
+fn add_param_hint(arg: &TypedExpr, name: &str, parameter_count: usize, hints: &mut Vec<InlayHint>) {
+    if name == "self" || (parameter_count == 1 && is_literal(&arg.kind)) {
+        return;
+    }
+    if let TypedExprKind::VarRef {
+        name: argument_name,
+        ..
+    } = &arg.kind
+        && argument_name.to_string() == name
+    {
+        return;
+    }
+    hints.push(InlayHint {
+        position: Position {
+            line: arg.span.line.saturating_sub(1),
+            character: arg.span.column.saturating_sub(1),
+        },
+        label: InlayHintLabel::String(format!("{name}: ")),
+        kind: Some(InlayHintKind::PARAMETER),
+        text_edits: None,
+        tooltip: None,
+        padding_left: None,
+        padding_right: Some(false),
+        data: None,
+    });
 }
 
 /// Add parameter name hints for constructor call arguments.
@@ -487,7 +511,7 @@ fn walk_for_hints(
                 );
             }
         }
-        TypedExprKind::Panic { message } => {
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
             collect_hints(
                 message,
                 file,

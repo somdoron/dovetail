@@ -92,6 +92,7 @@ pub fn walk_expr<V: TypedExprVisitor + ?Sized>(
     diagnostics: &mut Diagnostics,
 ) {
     match &expr.kind {
+        TypedExprKind::NamedCall { call, .. } => visitor.visit_expr(call, diagnostics),
         TypedExprKind::Block(_) => visitor.visit_block(expr, diagnostics),
         TypedExprKind::BinaryOp { .. } => visitor.visit_binary_op(expr, diagnostics),
         TypedExprKind::UnaryOp { .. } => visitor.visit_unary_op(expr, diagnostics),
@@ -616,6 +617,7 @@ pub fn walk_untyped_expr<V: ExprVisitor + ?Sized>(
     diagnostics: &mut Diagnostics,
 ) {
     match expr {
+        Expr::NamedArgument { value, .. } => visitor.visit_expr(value, diagnostics),
         Expr::Let { .. } | Expr::LetDestructure { .. } => visitor.visit_let(expr, diagnostics),
         Expr::Match { .. } => visitor.visit_match(expr, diagnostics),
         Expr::Block(_) => visitor.visit_block(expr, diagnostics),

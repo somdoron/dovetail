@@ -196,6 +196,7 @@ fn collect_all_boxed_vars(expr: &TypedExpr, names: &mut Vec<VarName>) {
         }
         TypedExprKind::Let { value, .. }
         | TypedExprKind::Assign { value, .. }
+        | TypedExprKind::NamedCall { call: value, .. }
         | TypedExprKind::Panic { message: value }
         | TypedExprKind::BoxToAny { inner: value }
         | TypedExprKind::NewtypeCreate { value }
@@ -471,6 +472,21 @@ fn analyze_expr(expr: TypedExpr, scopes: &mut Vec<Scope>, closure_depth: usize) 
         }
 
         // === Recursive cases (same pattern as desugar_try.rs) ===
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(analyze_expr(*call, scopes, closure_depth)),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(analyze_expr(*message, scopes, closure_depth)),
         },
@@ -1062,7 +1078,7 @@ fn collect_captures_in_expr(
                 collect_captures_in_expr(&arm.body, scopes, captures);
             }
         }
-        TypedExprKind::Panic { message } => {
+        TypedExprKind::NamedCall { call: message, .. } | TypedExprKind::Panic { message } => {
             collect_captures_in_expr(message, scopes, captures);
         }
         TypedExprKind::Assert { condition, message } => {
@@ -1279,6 +1295,21 @@ fn set_boxed_flags(expr: TypedExpr, boxed_vars: &[VarName]) -> TypedExpr {
                     ..arm
                 })
                 .collect(),
+        },
+        TypedExprKind::NamedCall {
+            call,
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
+        } => TypedExprKind::NamedCall {
+            call: Box::new(set_boxed_flags(*call, boxed_vars)),
+            argument_order,
+            parameter_names,
+            parameter_types,
+            named_parameters,
+            source_name,
         },
         TypedExprKind::Panic { message } => TypedExprKind::Panic {
             message: Box::new(set_boxed_flags(*message, boxed_vars)),
