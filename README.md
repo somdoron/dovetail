@@ -10,7 +10,7 @@ are not provided yet. See the [library guide](book/22-stdlib.md) for current sco
 
 Start with [Getting Started](book/01-getting-started.md) for installation, VS Code
 setup, and a complete first program. Continue with the [book](book/toc.md),
-[CLI guide](book/02-tool-commands.md), and [standard-library guide](book/22-stdlib.md).
+[CLI guide](book/02-tool-commands.md), [container image guide](docs/container-images.md), and [standard-library guide](book/22-stdlib.md).
 
 From this checkout, with a Rust toolchain installed:
 

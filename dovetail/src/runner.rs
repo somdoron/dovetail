@@ -97,7 +97,23 @@ pub fn run_component(
         message: format!("failed to load component: {e}"),
     })?;
 
-    let mut linker = Linker::<State>::new(&engine);
+    run_loaded_component(
+        &engine,
+        &component,
+        fs_permissions,
+        env_permissions,
+        net_permissions,
+    )
+}
+
+pub(crate) fn run_loaded_component(
+    engine: &wasmtime::Engine,
+    component: &Component,
+    fs_permissions: &FsPermissions,
+    env_permissions: &EnvPermissions,
+    net_permissions: &NetPermissions,
+) -> Result<(), RunError> {
+    let mut linker = Linker::<State>::new(engine);
     wasmtime_wasi::p3::add_to_linker(&mut linker).map_err(|e| RunError {
         message: format!("failed to add WASI to linker: {e}"),
     })?;
@@ -157,8 +173,8 @@ pub fn run_component(
             })?;
     }
 
-    let mut store = Store::new(&engine, State::new(builder.build()));
+    let mut store = Store::new(engine, State::new(builder.build()));
 
-    crate::p3::run_cli_component(&component, &linker, &mut store)
+    crate::p3::run_cli_component(component, &linker, &mut store)
         .map_err(|message| RunError { message })
 }

@@ -19,3 +19,5 @@ pub use compiler::{
     capture, codegen, coerce, coerce_byname, desugar, layout, lexer, macros, monomorphize, parser,
     typechecker,
 };
+
+pub mod image;

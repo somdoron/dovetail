@@ -447,6 +447,7 @@ pub fn init_workspace(workspace_root: &Path, project_name: &str) -> Result<(), V
         standard_tag: None,
         dependencies: vec![],
         project: vec![toml_schema::RawProject {
+            image: None,
             name: project_name.to_string(),
             path: None,
             root_package: project_name.to_string(),
@@ -549,6 +550,7 @@ pub fn add_project(workspace_root: &Path, project_name: &str) -> Result<(), Vec<
 
     // Append new project and write back.
     raw.project.push(toml_schema::RawProject {
+        image: None,
         name: project_name.to_string(),
         path: None,
         root_package: project_name.to_string(),
@@ -928,4 +930,24 @@ mod rename_tests {
         assert!(!root.path().join("Dovetail.lock").exists());
         assert!(!root.path().join(".dovetail").exists());
     }
+}
+
+/// Read image settings without fetching dependencies or requiring source files.
+pub fn image_projects(root: &Path) -> anyhow::Result<Vec<crate::image::config::ImageProject>> {
+    validate_workspace_filenames(root).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let content = std::fs::read_to_string(root.join("Dovetail.toml"))?;
+    let manifest = toml_schema::parse_manifest(&content).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(manifest
+        .project
+        .into_iter()
+        .filter_map(|project| {
+            project
+                .image
+                .map(|config| crate::image::config::ImageProject {
+                    directory: root.join(project.path.as_deref().unwrap_or(&project.name)),
+                    name: project.name,
+                    config,
+                })
+        })
+        .collect())
 }

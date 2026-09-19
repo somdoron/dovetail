@@ -12,6 +12,8 @@ checkout, use `cargo run -- <command>` to avoid a stale installed binary.
 | `dovetail projects add model` | Add a project and starter `main` to an existing workspace |
 | `dovetail check [project]` | Type-check all projects or one selected project and its dependencies |
 | `dovetail build [project]` | Compile; writes artifacts under `build/` by default |
+| `dovetail image build [-p project]` | Build precompiled Linux AMD64/ARM64 OCI images for configured projects |
+| `dovetail image push [-p project]` | Publish existing image archives using Docker credentials |
 | `dovetail run [project]` | Build and run an application's `main` |
 | `dovetail test [project]` | Build and execute discovered tests |
 | `dovetail fmt [files...]` | Format local workspace sources/tests, or explicit `.dove` files |
@@ -42,6 +44,14 @@ Compiler warnings appear during checking, building, running, testing, and in the
 editor. They do not fail compilation. Handle discarded `Result`, `Async`, and
 `Resource` values or acknowledge an intentional discard with `let _ = ...`.
 That acknowledgement does not execute deferred work.
+
+### Container images
+
+Configure `[project.image]` in `Dovetail.toml`, then use `dovetail image build`
+and `dovetail image push`. Both select all image-configured local projects unless
+`-p` selects one. Building produces local archives; pushing never rebuilds.
+See the [container image guide](../docs/container-images.md) for base images,
+runtime releases, project settings, and GitHub Actions publishing.
 
 ### Formatting
 

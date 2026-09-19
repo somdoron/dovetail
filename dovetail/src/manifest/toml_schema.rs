@@ -48,6 +48,8 @@ impl ProjectSelection {
 /// A single `[[project]]` entry in Dovetail.toml.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct RawProject {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image: Option<crate::image::config::ImageConfig>,
     pub name: String,
     /// Project directory relative to the manifest; defaults to the project name.
     #[serde(default, skip_serializing_if = "Option::is_none")]

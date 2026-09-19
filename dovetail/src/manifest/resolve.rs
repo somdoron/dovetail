@@ -85,6 +85,7 @@ mod tests {
 
     fn project(name: &str, depends: &[&str]) -> RawProject {
         RawProject {
+            image: None,
             name: name.to_string(),
             path: None,
             root_package: format!("com.example.{name}"),

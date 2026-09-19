@@ -1,0 +1,9 @@
+compiler-version = "0.1.0"
+
+[[project]]
+name = "app"
+root_package = "app"
+packages = ["."]
+
+[project.image]
+name = "example.invalid/dovetail-image-smoke"

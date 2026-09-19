@@ -8,10 +8,10 @@ use dovetail::common::diagnostics::Diagnostics;
 #[derive(Parser)]
 #[command(name = "dovetail", version, about = "The Dovetail compiler")]
 struct Cli {
-    /// Require an unchanged dependency lockfile.
+    /// Require unchanged dependency and image lockfiles.
     #[arg(long, global = true)]
     locked: bool,
-    /// Resolve dependencies without network access.
+    /// Resolve dependencies and image inputs without network access.
     #[arg(long, global = true)]
     offline: bool,
     #[command(subcommand)]
@@ -20,6 +20,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Build or publish OCI container images.
+    Image {
+        #[command(subcommand)]
+        command: ImageCommand,
+    },
     /// Format Dovetail source files (the local workspace when files are omitted).
     Fmt {
         /// Check formatting without changing files.
@@ -113,6 +118,39 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum ImageCommand {
+    /// Build precompiled Linux images without Docker.
+    Build {
+        /// Select one project; otherwise build all image-configured local projects.
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Comma-separated platforms; defaults to project settings or both Linux architectures.
+        #[arg(long, value_delimiter = ',')]
+        platform: Vec<dovetail::image::config::Platform>,
+    },
+    /// Push existing project archives using Docker credentials.
+    Push {
+        /// Select one project; otherwise push all image-configured local projects.
+        #[arg(short, long)]
+        project: Option<String>,
+        /// Override the tag, retaining each configured repository.
+        #[arg(long)]
+        tag: Option<String>,
+    },
+    /// Execute trusted native code packaged by image build.
+    #[command(hide = true)]
+    Run {
+        #[arg(long)]
+        config: PathBuf,
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Print the runtime identity for release verification.
+    #[command(hide = true)]
+    RuntimeId,
+}
+
+#[derive(Subcommand)]
 enum ProjectsCommands {
     /// Add a new project to the workspace
     Add {
@@ -137,6 +175,12 @@ fn main() {
         ..Default::default()
     };
     match cli.command {
+        Commands::Image { command } => {
+            if let Err(error) = image_command(command, &options) {
+                eprintln!("error: {error:#}");
+                process::exit(1);
+            }
+        }
         Commands::Fmt { check, files } => match dovetail::formatter::files::run(&files, check) {
             Ok(true) => process::exit(1),
             Ok(false) => {}
@@ -769,4 +813,109 @@ fn report_diagnostics(diagnostics: &Diagnostics) {
             diag.span.file, diag.span.line, diag.span.column, severity, diag.message
         );
     }
+}
+
+fn image_command(
+    command: ImageCommand,
+    options: &dovetail::manifest::ResolveOptions,
+) -> anyhow::Result<()> {
+    use dovetail::image;
+    match command {
+        ImageCommand::RuntimeId => {
+            println!("{}", image::runtime::RUNTIME_ID);
+            Ok(())
+        }
+        ImageCommand::Run { config, args } => image::runtime::execute(&config, args),
+        ImageCommand::Push { project, tag } => {
+            anyhow::ensure!(
+                !options.offline,
+                "image push requires network access; remove --offline"
+            );
+            let root = std::env::current_dir()?;
+            let projects = image::config::select(
+                dovetail::manifest::image_projects(&root)?,
+                project.as_deref(),
+            )?;
+            let runtime = tokio::runtime::Runtime::new()?;
+            runtime.block_on(image::push(&root, &projects, tag.as_deref()))
+        }
+        ImageCommand::Build { project, platform } => {
+            build_images(project.as_deref(), platform, options)
+        }
+    }
+}
+
+fn build_images(
+    filter: Option<&str>,
+    platforms: Vec<dovetail::image::config::Platform>,
+    options: &dovetail::manifest::ResolveOptions,
+) -> anyhow::Result<()> {
+    let root = std::env::current_dir()?;
+    let projects =
+        dovetail::image::config::select(dovetail::manifest::image_projects(&root)?, filter)?;
+    let mut outputs = std::collections::BTreeSet::new();
+    for project in &projects {
+        anyhow::ensure!(
+            outputs.insert(project.archive(&root)),
+            "multiple projects use the same image output path"
+        );
+    }
+    let runtime = tokio::runtime::Runtime::new()?;
+    for project in projects {
+        let workspace = dovetail::manifest::load_manifest_with_options(
+            &root,
+            &dovetail::manifest::ResolveOptions {
+                target: Some(project.name.clone()),
+                ..options.clone()
+            },
+        )
+        .map_err(|errors| {
+            anyhow::anyhow!(
+                errors
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            )
+        })?;
+        let result = dovetail::build_workspace(
+            &workspace,
+            Some(&project.name),
+            dovetail::BuildMode::Build,
+            &std::collections::HashMap::new(),
+            false,
+            None,
+        );
+        report_diagnostics(&result.diagnostics);
+        anyhow::ensure!(
+            !result.diagnostics.has_errors(),
+            "image application compilation failed"
+        );
+        let application = result
+            .project_results
+            .iter()
+            .find(|(name, _)| name == &project.name)
+            .map(|(_, result)| result)
+            .ok_or_else(|| anyhow::anyhow!("project '{}' was not built", project.name))?;
+        anyhow::ensure!(
+            application.typed_module.main_function_fqn.is_some(),
+            "image project '{}' has no main function",
+            project.name
+        );
+        let wasm = application
+            .wasm
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("project produced no Wasm"))?;
+        runtime.block_on(dovetail::image::build(
+            &root,
+            &project,
+            wasm,
+            &dovetail::image::BuildOptions {
+                platforms: platforms.clone(),
+                locked: options.locked,
+                offline: options.offline,
+            },
+        ))?;
+    }
+    Ok(())
 }

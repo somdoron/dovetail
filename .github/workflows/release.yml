@@ -1,0 +1,144 @@
+name: Release binaries
+
+on:
+  pull_request:
+    paths:
+      - 'dovetail/**'
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - '.github/workflows/release.yml'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux/arm64
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      # Runtime identity hashes source bytes; keep Windows checkouts identical.
+      - name: Preserve source line endings
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PYTHON'
+          import os, pathlib, tomllib
+          manifest = tomllib.loads(pathlib.Path('dovetail/Cargo.toml').read_text())
+          expected = 'v' + manifest['package']['version']
+          actual = os.environ['RELEASE_TAG']
+          if actual != expected:
+              raise SystemExit(f'Release tag {actual!r} must match compiler version {expected!r}')
+          PYTHON
+      - uses: Swatinem/rust-cache@v2
+      - name: Build official executable
+        run: cargo build --release --locked --bin dovetail
+      - name: Smoke-test compiler
+        working-directory: dovetail/tests/fixtures/image
+        run: |
+          cargo run --release --locked -- --version
+          cargo run --release --locked -- run app
+      - name: Build image and execute its precompiled application
+        if: runner.os == 'Linux'
+        working-directory: dovetail/tests/fixtures/image
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cargo run --release --locked -- image build -p app --platform "$PLATFORM"
+          mkdir -p extracted
+          tar -xf build/images/app.oci.tar -C extracted
+          python3 - <<'PY'
+          import json, pathlib, tarfile
+          root = pathlib.Path('extracted')
+          def blob(descriptor):
+              return root / 'blobs' / descriptor['digest'].replace(':', '/')
+          layout = json.loads((root / 'index.json').read_text())
+          index = json.loads(blob(layout['manifests'][0]).read_text())
+          image = json.loads(blob(index['manifests'][0]).read_text())
+          layer = blob(image['layers'][-1])
+          with tarfile.open(layer) as archive:
+              archive.extractall('application', filter='data')
+          config = pathlib.Path('application/app/dovetail-image.json')
+          data = json.loads(config.read_text())
+          data['component'] = str(pathlib.Path('application/app/application.cwasm').resolve())
+          config.write_text(json.dumps(data))
+          PY
+          cargo run --release --locked -- image run --config application/app/dovetail-image.json
+      - uses: docker/setup-docker-action@v5
+        if: runner.os == 'Linux'
+      - name: Run the packaged Linux image
+        if: runner.os == 'Linux'
+        working-directory: dovetail/tests/fixtures/image
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          skopeo copy oci-archive:build/images/app.oci.tar docker-daemon:dovetail-image-smoke:ci
+          docker run --rm dovetail-image-smoke:ci
+      - name: Package executable and checksum
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          python - <<'PYTHON'
+          import hashlib, os, pathlib, shutil
+          suffix = '.exe' if os.name == 'nt' else ''
+          source = pathlib.Path('target/release') / ('dovetail' + suffix)
+          destination = pathlib.Path('dist') / ('dovetail-' + os.environ['TARGET'] + suffix)
+          destination.parent.mkdir(exist_ok=True)
+          shutil.copy2(source, destination)
+          digest = hashlib.sha256(destination.read_bytes()).hexdigest()
+          destination.with_name(destination.name + '.sha256').write_text(
+              f'{digest}  {destination.name}\n', encoding='utf-8')
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: dist
+      - name: Attach official binaries to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "$RELEASE_TAG" dist/*

@@ -471,6 +471,7 @@ mod tests {
 
     fn raw_project(name: &str, root_package: &str, packages: &[&str]) -> RawProject {
         RawProject {
+            image: None,
             name: name.to_string(),
             path: None,
             root_package: root_package.to_string(),
