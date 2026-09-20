@@ -390,6 +390,17 @@
 
 ---
 
+### [Part 27: Production Deployment and CI](27-production-deployment.md)
+
+- 27.1 Prepare a Reproducible Release
+- 27.2 Image Permissions and Deployment Configuration
+- 27.3 Configure CI Checks
+- 27.4 Build and Publish in CI
+- 27.5 Run and Verify the Image
+- 27.6 Operate and Roll Back
+
+---
+
 ### Appendix
 
 - [A. Grammar Reference](../grammar.md)

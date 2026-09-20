@@ -29,3 +29,19 @@ Run a normal initial image build to create Dovetail.images.lock and commit it be
 using `--locked` in publishing. A build can succeed without Docker installed; running
 the resulting image locally is a separate operation. The templates configure CI;
 reading this guidance does not authorize publishing a workflow, release, or image.
+
+Validate the exact release revision before publishing: run the same locked fetch,
+format check, typecheck, and tests before `image build`, or depend on a check job
+for that revision. The publishing template alone does not run those checks.
+Smoke-test the published image with its intended mounts, environment, network, and
+nonroot user before production promotion. Record its registry digest and promote
+that artifact across environments; retain the previous digest for rollback.
+Database migrations must remain compatible with the intended rollback.
+
+Deployment supplies port mappings, persistent storage, secrets, resource limits,
+restart policy, and health probes. WASI grants must already be present in the
+image; deployment flags cannot add them. Provision writable directories for the
+configured UID/GID, keep credentials out of manifest image environment and files,
+and configure probes externally when the base lacks a shell or probe executable.
+An image build is not a deployment, and the stop signal alone does not establish
+application-level graceful shutdown.

@@ -481,6 +481,25 @@
     ]
   },
   {
+    "source": "book/27-production-deployment.md",
+    "sections": [
+      "27.1 Prepare a Reproducible Release",
+      "27.2 Image Permissions and Deployment Configuration",
+      "27.3 Configure CI Checks",
+      "27.4 Build and Publish in CI",
+      "27.5 Run and Verify the Image",
+      "27.6 Operate and Roll Back"
+    ],
+    "references": [
+      "references/images.md",
+      "references/wasi.md",
+      "references/ci.md"
+    ],
+    "reviews": [
+      "reviews/dovetail-reviewer.md"
+    ]
+  },
+  {
     "source": "docs/container-images.md",
     "sections": [
       "Configuration",

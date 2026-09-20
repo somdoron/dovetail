@@ -31,11 +31,23 @@ destination = "/app/public"
 ```
 
 Customize values for the application; `/data` must exist when the image starts.
+WASI permissions default to denied and are baked into `/app/dovetail-image.json`
+at image build time. There are no image startup flags or environment variables
+that override them. Change `[project.image.wasi]` and rebuild to change grants;
+arguments after the image name are application arguments, not runtime flags.
+Replacing the internal JSON through a mount is a manual replacement of trusted
+runtime configuration, not a dedicated WASI override interface.
 Enable `inherit-env` only if guest environment access is intended. `expose` is
 metadata, not a port mapping. Copied files are relative to the project; paths outside
 it, symlinks, OCI whiteouts, and overriding generated runtime files are rejected.
 Manifest `resources` are embedded in the component and need no extra copy.
 Labels and annotations use `project.image.labels`/`annotations` tables.
+Allowed paths grant read/write WASI access subject to container filesystem
+permissions; there are no per-path read-only settings or host:guest mappings.
+Use deployment mounts to map host storage into those container paths and to impose
+read-only access where needed. Network access is one TCP/UDP/DNS toggle, without
+destination allowlists. Environment inheritance exposes all container environment
+entries to the guest; keep secrets out of image settings and copied files.
 
 ```sh
 dovetail image build -p api

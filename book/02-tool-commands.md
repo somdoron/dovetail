@@ -85,6 +85,13 @@ and `dovetail image push`. Both select all image-configured local projects unles
 See the [container image guide](../docs/container-images.md) for base images,
 runtime releases, project settings, and GitHub Actions publishing.
 
+Image WASI grants (`allow-network`, `inherit-env`, and `allow-path` under
+`[project.image.wasi]`) default to denied and are fixed at image build time.
+There are no startup flag or environment-variable overrides; change the manifest
+and rebuild. Mounts, port mappings, and environment values still need corresponding
+WASI grants. See [Production Deployment and CI](27-production-deployment.md) for
+the complete workflow.
+
 ### Formatting
 
 ```sh

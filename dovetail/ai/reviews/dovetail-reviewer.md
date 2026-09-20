@@ -16,6 +16,11 @@ Check:
   this compiler. Do not recommend proposed defaults or nonexistent linter commands.
 - Runtime permissions and image/CI settings provide intended capabilities and preserve
   reproducibility. Distinguish deployment grants from language logic.
+  Image WASI grants are baked in; do not suggest nonexistent startup overrides.
+  Check that allowed container paths exist and have suitable ownership, secrets
+  stay out of images, publishing validates the release revision, and promotion or
+  rollback identifies the tested image by digest. Deployment mounts and network
+  policy must agree with guest grants.
 - Dovetail conventions improve clarity: descriptive camelCase names, conventional
   factories, Result/Option handling, and appropriate type boundaries. Existing library
   API names are not violations. Let the formatter own layout.

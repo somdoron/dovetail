@@ -84,6 +84,22 @@ image metadata; the deployment still supplies port mappings and volume mounts.
 Application arguments override image `args` through the container runtime's normal
 command arguments. No shell is involved in the generated entrypoint.
 
+These WASI grants are baked into `/app/dovetail-image.json` during image build.
+There are no startup flags or environment variables for overriding them: change
+`[project.image.wasi]` and rebuild the image. Passing `--allow-network` after the
+image name passes an application argument; it does not enable network access.
+An operator can manually mount a replacement internal JSON configuration, but
+that replaces trusted runtime configuration rather than using a dedicated WASI
+override interface.
+
+`allow-network` is one toggle for TCP, UDP, and DNS, without destination allowlists.
+`inherit-env` exposes all container environment entries to the guest. `allow-path`
+grants read/write access at the same container and guest path, subject to OS
+permissions and mount restrictions. There are no per-path read-only grants or
+host:guest mappings in these settings; configure mappings and read-only mounts in
+the deployment. See [Production Deployment and CI](../book/27-production-deployment.md)
+for a release workflow and deployment configuration example.
+
 Base layers and their environment and labels are retained; explicitly configured
 values override them. Dovetail replaces the process entrypoint, arguments, user,
 working directory, ports, and stop signal, and removes an inherited healthcheck.
