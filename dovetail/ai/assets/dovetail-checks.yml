@@ -1,0 +1,34 @@
+name: Dovetail checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+env:
+  DOVETAIL_VERSION: "{{DOVETAIL_VERSION}}"
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install matching compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset=dovetail-x86_64-unknown-linux-gnu
+          base="https://github.com/somdoron/dovetail/releases/download/v${DOVETAIL_VERSION}"
+          install_dir="${RUNNER_TEMP}/dovetail-bin"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          curl --fail --location --retry 3 "$base/$asset" --output "$asset"
+          curl --fail --location --retry 3 "$base/$asset.sha256" --output "$asset.sha256"
+          sha256sum --check "$asset.sha256"
+          mv "$asset" dovetail
+          chmod +x dovetail
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - run: dovetail --version
+      - run: dovetail deps fetch --locked
+      - run: dovetail fmt --check
+      - run: dovetail check --locked
+      - run: dovetail test --locked

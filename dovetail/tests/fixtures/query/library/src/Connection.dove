@@ -1,0 +1,10 @@
+module example.api.Connection
+
+/// Open a connection using its numeric identifier.
+public function open(id: Int32): Connection = Connection { id = id }
+
+/// Open the default connection.
+public function open(): Connection = Connection { id = 0 }
+
+public function identity<T>(value: T): T = value
+private function implementationDetail(): String = "secret body"

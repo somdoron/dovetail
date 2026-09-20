@@ -1,0 +1,61 @@
+package example.api
+
+/// A connection with an application-defined identifier.
+@derive(Equatable)
+public record Connection =
+    id: Int32
+
+public type Identifier = Int32
+public newtype Secret private = String
+
+public enum Outcome =
+    Empty
+    Connected(Connection)
+    Metadata { code: Int32 }
+
+public trait Source =
+    type Item
+    function item(self): Item
+    function ready(self): Bool = true
+
+implement Source for Connection =
+    type Item = Int32
+    public function item(self): Int32 = self.id
+
+extension ConnectionText for Connection =
+    public function text(self): String = "connection"
+
+public class Counter(public mutable value: Int32) =
+    private let label = "counter"
+    public let static mutable total: Int32 = 0
+    public function read(self): Int32 = self.value
+    protected function description(self): String = self.label
+
+public let inferred = "connection"
+public function defaultReturn() = ()
+public let answer = 42
+private function hidden(): Int32 = 99
+
+public record Box<out T> where T: Display =
+    value: T
+
+public interface Readable =
+    function read(self): Int32
+
+public interface NamedReadable extends Readable =
+    property name(self): String
+
+public class Child(value: Int32) extends Counter(value) =
+    private let label = 17
+    public function doubled(self): Int32 = self.read() * 2
+
+public function add<L, R, O>(left: L, right: R): O where L: Add<R, Output = O> = left + right
+
+@derive(Equatable)
+public record Descriptor =
+    id: Int32
+
+module Box<T> =
+    public function get(self): T = self.value
+
+public function echo(self: Int32): Int32 = self

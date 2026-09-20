@@ -114,6 +114,7 @@ Source Files → Lexer → Layout Filter → Parser → Typechecker → Codegen 
 
 - **`dovetail build`** — Full pipeline through codegen; produces WASM component.
 - **`dovetail fmt`** — Format local workspace sources and tests; `--check` checks without writing. See [docs/formatting.md](docs/formatting.md).
+- **`dovetail query search|package|definition`** — Inspect APIs through body-free declaration views, including dependencies and the embedded prelude. Query mode retains source metadata and enriches it after checking; it does not generate WASM.
 - **`dovetail check`** — Same pipeline but stops after typechecker (no codegen). Use for validation (e.g. editors, CI).
 - **Entry point** — A `function main(): Unit` (no arguments, returns Unit) is the component entry. `dovetail test` runs test declarations.
 
@@ -135,3 +136,25 @@ Source Files → Lexer → Layout Filter → Parser → Typechecker → Codegen 
 | wit-component | WASM component model and interfaces |
 | wit-parser | Parsing WIT for WASI boundaries |
 | wasmparser | WASM validation and inspection (tests) |
+
+## AI guidance maintenance
+
+`dovetail/ai/` is the canonical consumer skill, references, review profiles, and CI
+assets embedded in the compiler. Generic agents (including Codex) install under
+`.agents/skills`; Claude installs under `.claude/skills` with native review wrappers.
+Review profiles run only when requested. Keep consumer guidance independent of this
+compiler checkout and its internal instructions.
+
+When changing language features, CLI/runtime behavior, standard-library APIs, or the
+book, update affected references, examples, and review rules in the same change.
+If none are affected, explain why in the handoff. Maintain `tools/ai-coverage.json`
+when source sections or reference destinations change. Keep implemented behavior
+separate from proposals, and do not document a linter command before it exists.
+
+Run `python3 tools/check-ai.py --links-only` for content structure and coverage.
+Run `python3 tools/check-ai.py` for installed-bundle checks and executable examples;
+`--example NAME` narrows executable validation. It reuses the book example marker
+and local compiler validation machinery. Use `cargo test --test ai_install` for
+installer behavior. Run the behavioral scenarios in `docs/ai-evaluation.md` when
+changing discovery, routing, review behavior, or compatibility guidance. Native
+wrappers must reference canonical content rather than duplicate language rules.

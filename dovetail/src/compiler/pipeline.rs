@@ -48,6 +48,8 @@ pub enum BuildMode {
     Build,
     /// Type-check only: no codegen, no main validation.
     Check,
+    /// Type-check and retain body-free declarations for API queries.
+    Query,
     /// Test mode: skip main resolution, convert tests to functions, codegen.
     Test,
 }
@@ -413,6 +415,8 @@ pub fn check(source: &str, file_path: &str) -> typechecker::TypeCheckerResult {
 
 /// Result of building an entire project.
 pub struct ProjectResult {
+    /// Present only in query mode; source declarations with resolved signatures.
+    pub declarations: Vec<crate::query::DeclarationView>,
     /// Production declarations exported to dependents, excluding external test packages.
     dependency_module: Option<TypedModule>,
     pub typed_module: TypedModule,
@@ -483,6 +487,7 @@ pub fn build_project(
     resilient: bool,
 ) -> ProjectResult {
     let mut diagnostics = Diagnostics::new();
+    let mut declarations = Vec::new();
 
     // Build the macro registry up front so every short-circuit return path
     // can include the project's own macros — useful when the workspace
@@ -580,6 +585,7 @@ pub fn build_project(
                     ),
                 );
                 return ProjectResult {
+                    declarations,
                     dependency_module: None,
                     typed_module: accumulated_module,
                     registry: accumulated_registry,
@@ -614,6 +620,7 @@ pub fn build_project(
             ),
         );
         return ProjectResult {
+            declarations,
             dependency_module: None,
             typed_module: accumulated_module,
             registry: accumulated_registry,
@@ -623,6 +630,33 @@ pub fn build_project(
             wasm: None,
             test_exports: vec![],
         };
+    }
+
+    if mode == BuildMode::Query {
+        for (interface, binding) in wit_universe.interfaces.iter().zip(&wit_bindings) {
+            if dependency_registry.has_package(&interface.dovetail_package) {
+                continue;
+            }
+            let path = project
+                .generated_sources_dir(workspace_root)
+                .join(format!("{}.dove", interface.dovetail_package));
+            let path = path
+                .strip_prefix(workspace_root)
+                .unwrap_or(&path)
+                .to_string_lossy();
+            let mut generated =
+                crate::query::parse_declarations(&binding.source, &path, &mut diagnostics);
+            crate::query::enrich(
+                &mut generated,
+                &accumulated_registry,
+                &accumulated_module,
+                !diagnostics.has_errors(),
+            );
+            for declaration in &mut generated {
+                declaration.generated = true;
+            }
+            declarations.extend(generated);
+        }
     }
 
     // Validate that no src package uses the reserved "test" prefix
@@ -639,6 +673,7 @@ pub fn build_project(
     }
     if diagnostics.has_errors() && !resilient {
         return ProjectResult {
+            declarations,
             dependency_module: None,
             typed_module: accumulated_module,
             registry: accumulated_registry,
@@ -665,6 +700,7 @@ pub fn build_project(
                     continue;
                 }
                 return ProjectResult {
+                    declarations,
                     dependency_module: None,
                     typed_module: accumulated_module,
                     registry: accumulated_registry,
@@ -677,10 +713,24 @@ pub fn build_project(
             }
         };
 
+        let mut package_declarations = if mode == BuildMode::Query {
+            let mut views = crate::query::capture(&package_ast);
+            views.extend(crate::query::recover_unparsed(
+                &package_ast,
+                &package.source_dir,
+                workspace_root,
+                &diagnostics,
+            ));
+            views
+        } else {
+            Vec::new()
+        };
+
         // 2. Macro phase (between Parse and Collect)
         macros::expand_package(&mut package_ast, &macro_registry, &mut diagnostics);
         if diagnostics.has_errors() && !resilient {
             return ProjectResult {
+                declarations,
                 dependency_module: None,
                 typed_module: accumulated_module,
                 registry: accumulated_registry,
@@ -694,6 +744,16 @@ pub fn build_project(
 
         // 3. Typecheck this package against accumulated registry
         let tc_result = typechecker::typecheck(&package_ast, &accumulated_registry);
+        if mode == BuildMode::Query {
+            crate::query::add_generated(&mut package_declarations, &package_ast);
+            crate::query::enrich(
+                &mut package_declarations,
+                &tc_result.registry,
+                &tc_result.typed_module,
+                !diagnostics.has_errors() && !tc_result.diagnostics.has_errors(),
+            );
+            declarations.extend(package_declarations);
+        }
         diagnostics.extend_from(&tc_result.diagnostics);
 
         // 3. Merge results for next packages (always merge in resilient mode)
@@ -703,6 +763,7 @@ pub fn build_project(
 
         if diagnostics.has_errors() && !resilient {
             return ProjectResult {
+                declarations,
                 dependency_module: None,
                 typed_module: accumulated_module,
                 registry: accumulated_registry,
@@ -744,6 +805,7 @@ pub fn build_project(
             macros::expand_package(&mut package_ast, &macro_registry, &mut diagnostics);
             if diagnostics.has_errors() && !resilient {
                 return ProjectResult {
+                    declarations,
                     dependency_module: None,
                     typed_module: accumulated_module,
                     registry: accumulated_registry,
@@ -764,6 +826,7 @@ pub fn build_project(
 
             if diagnostics.has_errors() && !resilient {
                 return ProjectResult {
+                    declarations,
                     dependency_module: None,
                     typed_module: accumulated_module,
                     registry: accumulated_registry,
@@ -803,6 +866,7 @@ pub fn build_project(
         );
         if diagnostics.has_errors() {
             return ProjectResult {
+                declarations,
                 dependency_module: None,
                 typed_module: accumulated_module,
                 registry: accumulated_registry,
@@ -819,6 +883,7 @@ pub fn build_project(
         }
         if diagnostics.has_errors() {
             return ProjectResult {
+                declarations,
                 dependency_module: None,
                 typed_module: accumulated_module,
                 registry: accumulated_registry,
@@ -870,6 +935,7 @@ pub fn build_project(
     };
 
     ProjectResult {
+        declarations,
         dependency_module,
         typed_module: accumulated_module,
         registry: accumulated_registry,
@@ -986,8 +1052,9 @@ pub fn build_workspace(
         // WASM component with its own test exports.  For Build/Check mode only
         // the final project (the target) gets the real mode; dependencies are
         // compiled in Check mode (no codegen needed).
-        let project_mode = if workspace.is_local(project)
-            && project_filter.is_none_or(|name| project.name.0 == name)
+        let project_mode = if mode == BuildMode::Query
+            || workspace.is_local(project)
+                && project_filter.is_none_or(|name| project.name.0 == name)
         {
             mode
         } else {

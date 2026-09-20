@@ -31,15 +31,16 @@ def check_links(pages):
     errors = []
     for page in pages:
         content = FENCES.sub('', page.read_text())
+        display = page.relative_to(ROOT) if page.is_relative_to(ROOT) else page
         for target in re.findall(r'!?\[[^\]\n]+\]\(([^)\n]+)\)', content):
             url = urlsplit(target.strip('<>'))
             if url.scheme or url.netloc:
                 continue
             destination = (page.parent / unquote(url.path)).resolve() if url.path else page
             if not destination.exists():
-                errors.append(f'{page.relative_to(ROOT)}: missing {target}')
+                errors.append(f'{display}: missing {target}')
             elif url.fragment and destination.suffix == '.md' and unquote(url.fragment) not in anchors(destination):
-                errors.append(f'{page.relative_to(ROOT)}: missing anchor {target}')
+                errors.append(f'{display}: missing anchor {target}')
     if errors:
         raise ValueError('\n'.join(errors))
     print(f'Local links checked in {len(pages)} documentation pages.', flush=True)
@@ -55,7 +56,7 @@ def command(workspace, *args):
     return result.stdout + result.stderr if args[0] == 'test' else result.stdout
 
 
-def check_examples(pages, selected):
+def check_examples(pages, selected, *, check_init=True):
     examples = {}
     for page in pages:
         content = page.read_text()
@@ -112,6 +113,8 @@ def check_examples(pages, selected):
             output = command(workspace, 'test', name)
             if not re.search(r'[1-9]\d* passed', output):
                 raise ValueError(f'{name}: no passing tests reported:\n{output}')
+        if not check_init:
+            return
         # Exercise the documented first-user command with the generated manifest.
         fresh = workspace / 'first-user'
         fresh.mkdir()

@@ -37,3 +37,7 @@ jobs:
       run: python3 tools/check-book.py
       env:
         RUST_MIN_STACK: "16777216"
+    - name: Validate AI guidance and complete examples
+      run: python3 tools/check-ai.py
+      env:
+        RUST_MIN_STACK: "16777216"

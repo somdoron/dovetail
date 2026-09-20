@@ -1,0 +1,38 @@
+name: Publish Dovetail image
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+env:
+  DOVETAIL_VERSION: "{{DOVETAIL_VERSION}}"
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install matching compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset=dovetail-x86_64-unknown-linux-gnu
+          base="https://github.com/somdoron/dovetail/releases/download/v${DOVETAIL_VERSION}"
+          install_dir="${RUNNER_TEMP}/dovetail-bin"
+          mkdir -p "$install_dir"
+          cd "$install_dir"
+          curl --fail --location --retry 3 "$base/$asset" --output "$asset"
+          curl --fail --location --retry 3 "$base/$asset.sha256" --output "$asset.sha256"
+          sha256sum --check "$asset.sha256"
+          mv "$asset" dovetail
+          chmod +x dovetail
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - run: dovetail image build -p api --locked
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: dovetail image push -p api --tag "$GITHUB_SHA"

@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod backtrace;
 pub mod common;
 pub mod compiler;
@@ -6,6 +7,7 @@ pub mod formatter;
 pub mod lsp;
 pub mod manifest;
 pub mod p3;
+pub mod query;
 pub mod runner;
 pub mod test_runner;
 

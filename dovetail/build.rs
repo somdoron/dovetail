@@ -2,6 +2,8 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, path::Path};
 
 fn main() {
+    // Track additions/removals as well as edits to embedded AI bundle files.
+    println!("cargo:rerun-if-changed=ai");
     // Cargo packages carry their own lockfile and a normalized Cargo.toml.
     // Use the original manifest and the runtime dependency closure so installed
     // crates and source checkouts have the same identity, independent of tools

@@ -1,0 +1,3 @@
+package example.api.child
+
+public function childValue(): Int32 = 1

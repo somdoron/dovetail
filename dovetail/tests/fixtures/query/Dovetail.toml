@@ -1,0 +1,12 @@
+compiler-version = "0.1.0"
+
+[[project]]
+name = "library"
+root_package = "example.api"
+packages = [".", "child"]
+
+[[project]]
+name = "app"
+root_package = "example.app"
+depends = ["library"]
+packages = ["."]

@@ -20,6 +20,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Discover typed APIs in projects, dependencies, and the prelude.
+    Query(dovetail::query::QueryArgs),
+    /// Install coding-agent skills and review profiles.
+    Ai {
+        #[command(subcommand)]
+        command: AiCommand,
+    },
     /// Build or publish OCI container images.
     Image {
         #[command(subcommand)]
@@ -97,6 +104,12 @@ enum Commands {
     Init {
         /// Project name
         project: String,
+        /// Install AI support for these agents.
+        #[arg(long, value_delimiter = ',', conflicts_with = "no_ai")]
+        ai: Vec<dovetail::ai::Target>,
+        /// Skip the optional AI installation prompt.
+        #[arg(long)]
+        no_ai: bool,
     },
     /// Manage projects in the workspace
     Projects {
@@ -114,6 +127,19 @@ enum Commands {
         /// Enable verbose logging to stderr
         #[arg(long)]
         verbose: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AiCommand {
+    /// Install or refresh workspace-local AI guidance.
+    Install {
+        /// Targets to install; omit to refresh remembered targets or select interactively.
+        #[arg(long, value_delimiter = ',')]
+        agent: Vec<dovetail::ai::Target>,
+        /// Show changes without writing files.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -175,6 +201,32 @@ fn main() {
         ..Default::default()
     };
     match cli.command {
+        Commands::Query(args) => {
+            let result = std::env::current_dir()
+                .map_err(anyhow::Error::from)
+                .and_then(|root| dovetail::query::execute(&root, &args, &options));
+            match result {
+                Ok(result) => {
+                    print!("{}", result.output);
+                    report_diagnostics(&result.diagnostics);
+                    if !result.success {
+                        process::exit(1);
+                    }
+                }
+                Err(error) => {
+                    eprintln!("error: {error:#}");
+                    process::exit(1);
+                }
+            }
+        }
+        Commands::Ai {
+            command: AiCommand::Install { agent, dry_run },
+        } => {
+            if let Err(error) = dovetail::ai::install_command(&agent, dry_run) {
+                eprintln!("error: {error:#}");
+                process::exit(1);
+            }
+        }
         Commands::Image { command } => {
             if let Err(error) = image_command(command, &options) {
                 eprintln!("error: {error:#}");
@@ -265,8 +317,15 @@ fn main() {
             Ok(()) => {}
             Err(code) => process::exit(code),
         },
-        Commands::Init { project } => {
+        Commands::Init { project, ai, no_ai } => {
             if let Err(()) = init(&project) {
+                process::exit(1);
+            }
+            if let Err(error) = dovetail::ai::install_after_init(&ai, no_ai) {
+                eprintln!("error: workspace was created, but AI installation failed: {error:#}");
+                eprintln!(
+                    "retry with: dovetail ai install --agent generic,claude (select your intended targets)"
+                );
                 process::exit(1);
             }
         }
