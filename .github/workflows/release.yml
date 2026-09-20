@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'dovetail/**'
+      - 'vscode-dovetail/**'
+      - 'LICENSE-*'
       - 'Cargo.lock'
       - 'Cargo.toml'
       - '.github/workflows/release.yml'
@@ -15,6 +17,42 @@ permissions:
   contents: read
 
 jobs:
+  build-extension:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vscode-dovetail
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vscode-dovetail/package-lock.json
+      - name: Validate extension release version
+        if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node - <<'JS'
+          const expected = 'v' + require('./package.json').version;
+          if (process.env.RELEASE_TAG !== expected) {
+            throw new Error(`Release tag must match extension version ${expected}`);
+          }
+          JS
+      - run: npm ci
+      - name: Package extension and checksum
+        run: |
+          npm run package
+          sha256sum *.vsix > dovetail-language.vsix.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-extension
+          path: |
+            vscode-dovetail/*.vsix
+            vscode-dovetail/*.vsix.sha256
+          if-no-files-found: error
+
   verify-crate:
     runs-on: ubuntu-24.04
     steps:
@@ -134,7 +172,7 @@ jobs:
 
   publish:
     if: github.event_name == 'release'
-    needs: build
+    needs: [build, build-extension]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -144,7 +182,11 @@ jobs:
           pattern: binary-*
           merge-multiple: true
           path: dist
-      - name: Attach official binaries to the published release
+      - uses: actions/download-artifact@v4
+        with:
+          name: vscode-extension
+          path: dist
+      - name: Attach binaries and VS Code extension to the published release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

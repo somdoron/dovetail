@@ -242,19 +242,25 @@ Dovetail provides a VS Code extension for the best development experience.
 
 #### Installing the Extension
 
+Download `dovetail-language-<version>.vsix` from the matching
+[GitHub release](https://github.com/somdoron/dovetail/releases). In VS Code, run
+**Extensions: Install from VSIX...** from the Command Palette and select the file.
+Install the compiler separately with `cargo install dovetail-lang --locked`.
+
+To build the extension from a repository checkout:
+
 1. Open VS Code
 2. Navigate to the `vscode-dovetail` directory in the Dovetail repository
 3. Run:
 
 ```bash
-npm install
-npm run compile
+npm ci
 ```
 
 4. Package the extension:
 
 ```bash
-npx vsce package
+npm run package
 ```
 
 5. Install the generated `.vsix` file in VS Code:

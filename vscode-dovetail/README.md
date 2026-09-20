@@ -3,6 +3,16 @@
 The extension uses `dovetail lsp-server` for language support. Set
 `dovetail.serverPath` if the compiler is not on your PATH.
 
+## Installation
+
+Install the compiler separately with `cargo install dovetail-lang --locked`.
+Download the `.vsix` from the matching
+[GitHub release](https://github.com/somdoron/dovetail/releases), then use
+**Extensions: Install from VSIX...** in VS Code's Command Palette.
+
+To package from source, run `npm ci` and `npm run package` in `vscode-dovetail`.
+The package includes the language client; it does not include the compiler.
+
 ## Formatting
 
 Choose **Format Document** to format the current buffer, including unsaved

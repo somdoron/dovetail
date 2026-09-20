@@ -9,7 +9,7 @@
     "url": "https://github.com/somdoron/dovetail",
     "directory": "vscode-dovetail"
   },
-  "license": "MIT",
+  "license": "MIT OR Apache-2.0",
   "engines": {
     "vscode": "^1.75.0"
   },

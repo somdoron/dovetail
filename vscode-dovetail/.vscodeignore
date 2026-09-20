@@ -1,0 +1,7 @@
+src/**
+test/**
+tsconfig.json
+package-lock.json
+out/**/*.map
+*.vsix
+*.sha256
