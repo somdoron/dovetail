@@ -2,6 +2,10 @@
 
 ## Commands
 
+Install the compiler with `cargo install dovetail-lang` (add `--locked` to use
+the release's locked dependencies). The package is `dovetail-lang`; the executable
+is `dovetail`, and it includes the runtime. Cargo's bin directory must be on `PATH`.
+
 Use `dovetail --help` and `<command> --help` for the installed version. During
 compiler development use `cargo run --` so the installed binary cannot mask changes.
 Manifest-based commands normally run at the workspace root; fmt also searches

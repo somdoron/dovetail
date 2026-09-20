@@ -12,6 +12,12 @@ Start with [Getting Started](book/01-getting-started.md) for installation, VS Co
 setup, and a complete first program. Continue with the [book](book/toc.md),
 [CLI guide](book/02-tool-commands.md), [container image guide](docs/container-images.md), and [standard-library guide](book/22-stdlib.md).
 
+Install the `dovetail` executable from crates.io:
+
+```bash
+cargo install dovetail-lang
+```
+
 From this checkout, with a Rust toolchain installed:
 
 ```bash
@@ -34,3 +40,7 @@ compiler development so validation uses the current source.
 
 Contributor references: [repository guidance](CLAUDE.md), [grammar](grammar.md),
 [compiler architecture](compiler.md), and [design documents](docs/toc.md).
+For publishing compiler versions, see the [release guide](docs/releases.md).
+
+Licensed under either the [MIT license](LICENSE-MIT) or the
+[Apache License 2.0](LICENSE-APACHE), at your option.

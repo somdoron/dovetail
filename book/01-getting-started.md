@@ -176,7 +176,7 @@ cargo --version
 
 ### Installing with Cargo
 
-Once the crate is published to crates.io, install the Dovetail CLI with:
+Install the Dovetail CLI from crates.io with:
 
 ```bash
 cargo install dovetail-lang --locked
@@ -187,8 +187,8 @@ and installs the executable in its bin directory (usually `~/.cargo/bin/`). Make
 sure that directory is on your `PATH`. The CLI includes the runtime used by
 `dovetail run`, so you don't need to install Wasmtime separately.
 
-<!-- Release preparation: dovetail-lang matches the current Cargo package name.
-Confirm the published name before release; dovetaillang is another candidate. -->
+`cargo install dovetail-lang` also works; `--locked` uses the dependency versions
+recorded for the release.
 
 ### Installing from Source
 
