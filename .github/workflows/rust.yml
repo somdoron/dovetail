@@ -8,6 +8,10 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Each integration-test binary links Wasmtime. Omit Rust debug symbols to
+  # keep the combined build artifacts within the hosted runner's disk budget.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
 
 jobs:
   build:
@@ -19,12 +23,17 @@ jobs:
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: "rust-cache"
+        shared-key: "rust-cache-no-debug"
         cache-on-failure: true
     - name: Build
       run: cargo build --workspace --verbose
     - name: Run tests
       run: cargo test --workspace --verbose
+    - name: Report build disk usage
+      if: always()
+      run: |
+        df -h .
+        du -sh target 2>/dev/null || true
     - name: Run Dovetail-language tests
       run: cargo run --bin dovetail -- test
       env:
