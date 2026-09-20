@@ -9,6 +9,7 @@ metadata:
 
 This guidance is bundled with Dovetail **{{DOVETAIL_VERSION}}**.
 Dovetail was formerly called Domain. Use `.dove`, `Dovetail.toml`, and `dovetail`.
+Dovetail is in preview; compiler defects and behavior changes are possible.
 
 ## Check compatibility once per session
 
@@ -22,6 +23,26 @@ If they differ, tell the user to refresh this guidance by running
 installation targets. Do not reinstall automatically or update the compiler.
 Continue unrelated work; verify version-sensitive syntax before relying on it.
 If the compiler is unavailable, say compatibility could not be checked.
+
+## Compiler errors during preview
+
+For a suspected compiler defect (a crash, incorrect diagnostic, or wrong code
+generation), first search the [GitHub issues](https://github.com/somdoron/dovetail/issues)
+for the diagnostic and affected feature, including both open and closed issues.
+Distinguish ordinary source errors from compiler bugs; fix valid diagnostics in
+the application normally.
+
+Check [releases](https://github.com/somdoron/dovetail/releases) for a newer compiler
+version and whether it fixes the problem. Recommend a relevant update; do not
+upgrade automatically. After an upgrade, remind the user to refresh the skill with
+`dovetail ai install`.
+
+If the defect remains unreported, prepare a minimal reproduction, compiler version,
+command, and expected versus actual behavior, then ask the user for permission
+before filing a GitHub issue. Show the proposed report first and exclude secrets
+or private project content. If an existing issue matches, share its link and status
+instead of opening a duplicate. If GitHub is unavailable, say those checks remain
+unverified. Investigate defects rather than hiding them in application workarounds.
 
 ## Working method
 
@@ -63,9 +84,7 @@ from the consumer workspace. Dovetail resolves its manifest from the working dir
   There is no `dovetail lint` command yet. Default parameter values and a durable
   execution runtime are also not implemented.
 - Do not translate familiar syntax or library APIs from another language by guesswork.
-  Treat compiler crashes or wrong code generation as compiler defects: capture a
-  minimal reproduction and investigate/report them rather than hiding them in
-  application workarounds.
+  Follow the preview compiler-error workflow above for suspected compiler defects.
 
 ## Load by task
 
