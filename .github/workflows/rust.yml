@@ -20,6 +20,12 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+    - name: Free disk space for Rust tests
+      run: |
+        df -h .
+        # This Rust/Python job does not use the runner's Android, .NET, or Haskell SDKs.
+        sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc
+        df -h .
     - name: Cache Rust dependencies
       uses: Swatinem/rust-cache@v2
       with:

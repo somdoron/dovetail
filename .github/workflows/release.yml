@@ -121,7 +121,7 @@ jobs:
         run: |
           cargo run --release --locked -- image build -p app --platform "$PLATFORM"
           mkdir -p extracted
-          tar -xf build/images/app.oci.tar -C extracted
+          tar --no-same-owner -xf build/images/app.oci.tar -C extracted
           python3 - <<'PY'
           import json, pathlib, tarfile
           root = pathlib.Path('extracted')
@@ -147,7 +147,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y skopeo
-          skopeo copy oci-archive:build/images/app.oci.tar docker-daemon:dovetail-image-smoke:ci
+          # Use the extracted layout so Skopeo does not try to restore root ownership.
+          # Skopeo needs the endpoint explicitly; it does not use Docker CLI contexts.
+          docker_host=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
+          skopeo copy --dest-daemon-host "$docker_host" oci:extracted docker-daemon:dovetail-image-smoke:ci
           docker run --rm dovetail-image-smoke:ci
       - name: Package executable and checksum
         env:
