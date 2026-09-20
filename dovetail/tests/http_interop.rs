@@ -4,7 +4,7 @@
 //! `standard-io-http/test/` would silently agree on.
 //!
 //! Workflow per test:
-//!   1. Build the workspace (via `build_workspace`), find the WASM for
+//!   1. Build the interop project once (via `build_workspace`), find the WASM for
 //!      `standard-io-http-interop` (its `Main.dove` switches on the
 //!      `MODE` env var).
 //!   2. For "Dovetail client" — start a raw TCP server in a Rust thread
@@ -17,58 +17,14 @@
 //! mismatch, so a successful `run_component` (Ok return) implies the
 //! Dovetail side accepted the wire bytes correctly.
 
+#[path = "common/interop.rs"]
+mod interop;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-fn repo_root() -> PathBuf {
-    // CARGO_MANIFEST_DIR points at the `dovetail/` crate root; the workspace
-    // root is one level up.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("dovetail crate must live in a parent dir")
-        .to_path_buf()
-}
-
-/// Build the workspace once and find the WASM bytes for the named project.
-/// Panics with the manifest / build errors on failure.
-fn build_interop_wasm(project: &str) -> Vec<u8> {
-    let root = repo_root();
-    let workspace = dovetail::manifest::load_manifest(&root)
-        .unwrap_or_else(|errs| panic!("manifest load errors: {errs:?}"));
-
-    let result = dovetail::build_workspace(
-        &workspace,
-        None,
-        dovetail::BuildMode::Build,
-        &std::collections::HashMap::new(),
-        false,
-        None,
-    );
-
-    if result.diagnostics.has_errors() {
-        let errors: Vec<String> = result
-            .diagnostics
-            .iter()
-            .map(|d| format!("{}: {}", d.span.file, d.message))
-            .collect();
-        panic!("build_workspace failed:\n{}", errors.join("\n"));
-    }
-
-    let (_, project_result) = result
-        .project_results
-        .iter()
-        .find(|(name, _)| name == project)
-        .unwrap_or_else(|| panic!("project '{project}' not in build results"));
-
-    project_result
-        .wasm
-        .clone()
-        .unwrap_or_else(|| panic!("project '{project}' has no WASM output"))
-}
 
 /// Run a WASM component with the given env + network access.
 fn run_with_env(
@@ -99,7 +55,7 @@ fn run_with_env(
 
 #[test]
 fn dovetail_client_against_raw_rust_server() {
-    let wasm = build_interop_wasm("standard-io-http-interop");
+    let wasm = interop::interop_wasm();
 
     // Start a one-shot Rust TCP server. It accepts one connection, reads
     // until "\r\n\r\n" (request headers complete), checks the request
@@ -143,7 +99,7 @@ fn dovetail_client_against_raw_rust_server() {
     });
 
     let url = format!("http://127.0.0.1:{port}/hello");
-    if let Err(e) = run_with_env(&wasm, vec![("MODE", "client"), ("URL", &url)]) {
+    if let Err(e) = run_with_env(wasm, vec![("MODE", "client"), ("URL", &url)]) {
         panic!("Dovetail WASM client run failed: {}", e.message);
     }
 
@@ -171,7 +127,7 @@ fn dovetail_client_against_raw_rust_server() {
 
 #[test]
 fn raw_rust_client_against_dovetail_server() {
-    let wasm = build_interop_wasm("standard-io-http-interop");
+    let wasm = interop::interop_wasm();
 
     // Get an OS-assigned port, release the listener, hand the port to the
     // Dovetail server. Small TOCTOU window where another process could grab
@@ -181,14 +137,14 @@ fn raw_rust_client_against_dovetail_server() {
         listener.local_addr().expect("local_addr").port()
     };
 
-    let server_wasm = wasm.clone();
+    let server_wasm = wasm;
     let port_str = port.to_string();
     thread::spawn(move || {
         // Server loops forever; this thread dies with the test process. Surface
         // any startup failure on stderr — otherwise a server that traps looks
         // identical to one that is merely slow to bind, and the only symptom is
         // the "failed to bind" timeout below.
-        if let Err(e) = run_with_env(&server_wasm, vec![("MODE", "server"), ("PORT", &port_str)]) {
+        if let Err(e) = run_with_env(server_wasm, vec![("MODE", "server"), ("PORT", &port_str)]) {
             eprintln!("Dovetail interop server exited with error: {}", e.message);
         }
     });
@@ -196,7 +152,7 @@ fn raw_rust_client_against_dovetail_server() {
     // Poll the bind by retrying connect with a short timeout — the Dovetail
     // server takes a moment to start up.
     // Generous startup allowance: both tests in this binary run concurrently and
-    // each compiles a full Dovetail workspace, so wasmtime's compile+instantiate of
+    // each instantiates the shared interop component, so wasmtime's compilation of
     // the (large) interop component can take well over 5s under that contention.
     // This bounds a hang; it is not a latency assertion.
     let deadline = Instant::now() + Duration::from_secs(60);

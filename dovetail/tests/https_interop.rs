@@ -19,55 +19,15 @@
 //! a subprocess, so they can be timing-sensitive; they are best-effort interop
 //! smoke tests, not deterministic unit tests.
 
+#[path = "common/interop.rs"]
+mod interop;
+
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
-
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("dovetail crate must live in a parent dir")
-        .to_path_buf()
-}
-
-/// Build the workspace once and return the WASM bytes for the named project.
-fn build_interop_wasm(project: &str) -> Vec<u8> {
-    let root = repo_root();
-    let workspace = dovetail::manifest::load_manifest(&root)
-        .unwrap_or_else(|errs| panic!("manifest load errors: {errs:?}"));
-
-    let result = dovetail::build_workspace(
-        &workspace,
-        None,
-        dovetail::BuildMode::Build,
-        &std::collections::HashMap::new(),
-        false,
-        None,
-    );
-
-    if result.diagnostics.has_errors() {
-        let errors: Vec<String> = result
-            .diagnostics
-            .iter()
-            .map(|d| format!("{}: {}", d.span.file, d.message))
-            .collect();
-        panic!("build_workspace failed:\n{}", errors.join("\n"));
-    }
-
-    let (_, project_result) = result
-        .project_results
-        .iter()
-        .find(|(name, _)| name == project)
-        .unwrap_or_else(|| panic!("project '{project}' not in build results"));
-
-    project_result
-        .wasm
-        .clone()
-        .unwrap_or_else(|| panic!("project '{project}' has no WASM output"))
-}
 
 /// Run a WASM component with env vars, filesystem access, and network access.
 ///
@@ -264,19 +224,19 @@ fn openssl_client_against_dovetail_https_server() {
         );
         return;
     }
-    let wasm = build_interop_wasm("standard-io-http-interop");
+    let wasm = interop::interop_wasm();
     let dir = TempDir::new("server");
     let (cert, key) = gen_p256_cert(&dir.path);
     let port = free_port();
 
     // Dovetail TLS server runs forever in a thread; dies with the test process.
-    let server_wasm = wasm.clone();
+    let server_wasm = wasm;
     let cert_str = cert.to_string_lossy().to_string();
     let key_str = key.to_string_lossy().to_string();
     let port_str = port.to_string();
     thread::spawn(move || {
         let _ = run_tls_wasm(
-            &server_wasm,
+            server_wasm,
             vec![
                 ("MODE", "server-tls"),
                 ("PORT", &port_str),
@@ -287,8 +247,8 @@ fn openssl_client_against_dovetail_https_server() {
     });
 
     // Generous startup allowance — wasmtime's compile+instantiate of the large
-    // interop component is slow when the suite's other tests compile Dovetail
-    // workspaces concurrently. This bounds a hang, it is not a latency assertion.
+    // interop component can be slow while the other test instantiates it too.
+    // This bounds a hang, it is not a latency assertion.
     assert!(
         wait_for_port(port, Instant::now() + Duration::from_secs(60)),
         "Dovetail TLS server never bound on port {port}"
@@ -366,7 +326,7 @@ fn dovetail_https_client_against_openssl_server() {
         );
         return;
     }
-    let wasm = build_interop_wasm("standard-io-http-interop");
+    let wasm = interop::interop_wasm();
     let dir = TempDir::new("client");
     let (cert, key) = gen_p256_cert(&dir.path);
     let port = free_port();
@@ -403,7 +363,7 @@ fn dovetail_https_client_against_openssl_server() {
     let url = format!("https://127.0.0.1:{port}/");
     let ca_str = cert.to_string_lossy().to_string();
     let result = run_tls_wasm(
-        &wasm,
+        wasm,
         vec![("MODE", "client-tls"), ("URL", &url), ("CA", &ca_str)],
     );
 
