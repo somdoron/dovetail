@@ -8,6 +8,13 @@ Do not edit source or delegate recursively. Review actual requirements and code,
 not an imagined future enterprise architecture.
 
 Check:
+- Establish whether this is a discussion draft or implemented behavior. For a draft,
+  assess vocabulary, justified distinctions, and explicit assumptions; missing planned
+  factories are open work, not automatically defects. Private construction alone is
+  not evidence that validation exists.
+- Types and fields serve current requirements or invariants. Configuration references,
+  execution facts, and identity versus role reflect when facts become known and who
+  owns them; provider mechanics do not impose artificial domain distinctions.
 - Vocabulary and types express the business rules; invalid states and transitions
   cannot bypass the intended construction/mutation boundary.
 - Value equality, entity identity, aggregate ownership, and reference semantics agree

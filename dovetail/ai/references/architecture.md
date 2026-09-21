@@ -20,6 +20,26 @@ entities and implementation details. External consumers depend on a context's co
 not its app internals. Compiler dependency/visibility checks enforce declared boundaries,
 but cannot discover business ownership or guarantee pure domain code by themselves.
 
+## Configuration and execution facts
+
+Separate what a definition requests from what an execution actually used. In an
+agent harness, an agent can reference `SkillName`, `ToolName`, and `AgentName`;
+the application resolves definitions when needed and records the versions or
+content actually used in the run. Referenced capabilities can evolve without
+forcing the parent definition to change. Require definition-time revision pinning
+only when a concrete reproducibility or compatibility rule calls for it.
+
+Ask when facts become available and which operation establishes them. A skill's
+content revision may become known only after loading succeeds; it need not exist
+on the agent definition. Discovery metadata, successfully loaded content, and
+execution history serve different decisions. Capture accepted execution facts at
+the appropriate stage rather than guessing them during configuration. Decide
+whether later loads reuse captured content or resolve again from actual run rules.
+The application obtains external facts; the domain decides what they mean.
+
+Use the [modeling discussion](domain.md#collaborative-types-first-modeling) to
+establish these rules before adding resolution registries or execution machinery.
+
 ## Application responsibilities
 
 Use cases coordinate requests, event handlers, and jobs: acquire facts, ask the domain

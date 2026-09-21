@@ -52,7 +52,11 @@ unverified. Investigate defects rather than hiding them in application workaroun
    skill directory. References are self-contained; the language book is not required.
 3. Inspect nearby source and query actual dependency declarations before inventing
    API calls (`dovetail query search`, `package`, and `definition`). In particular, import named extensions explicitly, even in their package.
-4. Implement the requested behavior with valid types and explicit failure handling.
+4. For a new domain or substantial feature, suggest a small `types.dove` draft and
+   discussion before behavior; follow [domain modeling](references/domain.md).
+   Respect the requested scope: a modeling session can end with a compiling draft
+   and open questions. Implement behavior once the relevant rules are understood,
+   using valid types and explicit failure handling.
 5. Format changed sources, check, and run relevant tests. Report what ran and what
    remains unverified. Use the compiler matching the project.
 6. Run review profiles only if the user requests a review. Ordinary edits do not
@@ -103,7 +107,7 @@ from the consumer workspace. Dovetail resolves its manifest from the working dir
 | Filesystem roots/paths, networking, environment and guest arguments | [WASI](references/wasi.md) |
 | OCI configuration, build/push, runtimes and reproducibility | [Images](references/images.md) |
 | GitHub Actions installation, checks and publishing | [CI](references/ci.md) |
-| Value objects, entities, aggregates, valid states and domain tests | [Domain modeling](references/domain.md) |
+| Collaborative types-first modeling, value objects, entities, aggregates and domain tests | [Domain modeling](references/domain.md) |
 | Layers, transactions, ports, contracts and bounded contexts | [Application architecture](references/architecture.md) |
 
 ## Requested reviews
