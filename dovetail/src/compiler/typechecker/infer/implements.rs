@@ -316,6 +316,10 @@ impl Inference<'_> {
             };
 
             self.push_scope();
+            // Body inference must use this method's return type, independently
+            // of the declaration or call site that preceded it.
+            let prev_expected = self.expected_type.take();
+            self.expected_type = Some(body_expected_type.clone());
             let prev_async_return = self.async_return_type.take();
             if method.is_async {
                 self.async_return_type = Some(return_type.clone());
@@ -353,6 +357,7 @@ impl Inference<'_> {
             };
             self.function_return_type = prev_fn_return;
             self.async_return_type = prev_async_return;
+            self.expected_type = prev_expected;
             self.pop_scope();
 
             self.pop_scope();

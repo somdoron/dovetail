@@ -133,6 +133,7 @@ impl Inference<'_> {
 
         // Body scope
         self.push_scope();
+        let prev_expected = self.expected_type.take();
         self.expected_type = Some(body_expected_type.clone());
         let prev_fn_return = self.function_return_type.take();
         self.function_return_type = Some(return_type.clone());
@@ -143,6 +144,7 @@ impl Inference<'_> {
         let body = self.infer_function_body(func, &typed_params, &return_type);
         self.async_return_type = prev_async_return;
         self.function_return_type = prev_fn_return;
+        self.expected_type = prev_expected;
         self.pop_scope();
 
         self.pop_scope();

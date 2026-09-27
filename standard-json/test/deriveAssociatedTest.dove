@@ -1,0 +1,109 @@
+package test
+
+import standard.json.Json
+import standard.json.JsonError
+import standard.json.JsonEncoder
+import standard.json.JsonDecoder
+
+@derive(JsonDecoder)
+ public record AgentFile =
+    id: String
+
+module AgentFile =
+    public function decode(text: String): Result<AgentFile, String> =
+        let json = try Json.parse(text).mapError((_: JsonError) => "Invalid JSON")
+        let decoded: Result<AgentFile, JsonError> = AgentFile.fromJson(json)
+        decoded.mapError((_: JsonError) => "Invalid fields")
+
+test "derive: associated decode" =
+    assert AgentFile.decode("{\"id\":\"agent\"}").require.id == "agent"
+
+test "derive: associated decode maps malformed JSON to String" =
+    let decoded: Result<AgentFile, String> = AgentFile.decode("not json")
+    match decoded with
+        case Error(message) => assert message == "Invalid JSON"
+        case _ => assert false
+
+test "derive: associated decode preserves separate field error types" =
+    let json = Json.parse("{\"id\":42}").require
+    let decoded: Result<AgentFile, JsonError> = AgentFile.fromJson(json)
+    match decoded with
+        case Error(JsonError.TypeError(expected, got)) =>
+            assert expected == "String"
+            assert got == "Number"
+        case _ => assert false
+    let mapped: Result<AgentFile, String> = AgentFile.decode(json.encode())
+    match mapped with
+        case Error(message) => assert message == "Invalid fields"
+        case _ => assert false
+
+test "derive: fromJson succeeds alongside associated decode" =
+    let decoded: Result<AgentFile, JsonError> =
+        AgentFile.fromJson(Json.parse("{\"id\":\"agent\"}").require)
+    assert decoded.require.id == "agent"
+
+// Original larger reproduction, including both derives and list fields.
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+ public record FullAgentFile =
+    id: String
+    name: String
+    description: String
+    systemPrompt: String
+    provider: String
+    model: String
+    contextWindowTokens: Int64
+    outputTokenLimit: Int64
+    skills: List<String>
+    tools: List<String>
+    subagents: List<String>
+
+module FullAgentFile =
+    public function decode(text: String): Result<FullAgentFile, String> =
+        let json = try Json.parse(text).mapError((_: JsonError) => "Invalid JSON")
+        let decoded: Result<FullAgentFile, JsonError> = FullAgentFile.fromJson(json)
+        decoded.mapError((_: JsonError) => "Invalid fields")
+
+test "derive: full associated decoder round-trips string integer and list fields" =
+    let original =
+        FullAgentFile {
+            id = "agent"
+            name = "Assistant"
+            description = "Test agent"
+            systemPrompt = "Help"
+            provider = "provider"
+            model = "model"
+            contextWindowTokens = 100000i64
+            outputTokenLimit = 4096i64
+            skills = ["coding"]
+            tools = ["shell", "search"]
+            subagents = []
+        }
+    let json = original.toJson()
+    let decoded: Result<FullAgentFile, JsonError> = FullAgentFile.fromJson(json)
+    let mapped: Result<FullAgentFile, String> = FullAgentFile.decode(json.encode())
+    assert decoded.require.toJson().encode() == json.encode()
+    assert mapped.require.toJson().encode() == json.encode()
+
+test "derive: full associated decoder maps malformed JSON" =
+    let decoded: Result<FullAgentFile, String> = FullAgentFile.decode("not json")
+    match decoded with
+        case Error(message) => assert message == "Invalid JSON"
+        case _ => assert false
+
+test "derive: full associated decoder preserves integer and list errors" =
+    let invalidInputs =
+        [
+            "{\"id\":\"a\",\"name\":\"a\",\"description\":\"a\",\"systemPrompt\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"contextWindowTokens\":\"wrong\",\"outputTokenLimit\":1,\"skills\":[],\"tools\":[],\"subagents\":[]}",
+            "{\"id\":\"a\",\"name\":\"a\",\"description\":\"a\",\"systemPrompt\":\"a\",\"provider\":\"a\",\"model\":\"a\",\"contextWindowTokens\":1,\"outputTokenLimit\":1,\"skills\":[42],\"tools\":[],\"subagents\":[]}"
+        ]
+    for text in invalidInputs do
+        let decoded: Result<FullAgentFile, JsonError> =
+            FullAgentFile.fromJson(Json.parse(text).require)
+        match decoded with
+            case Error(JsonError.TypeError(_, _)) => ()
+            case _ => assert false
+        let mapped: Result<FullAgentFile, String> = FullAgentFile.decode(text)
+        match mapped with
+            case Error(message) => assert message == "Invalid fields"
+            case _ => assert false
