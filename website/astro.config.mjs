@@ -33,7 +33,11 @@ export default defineConfig({
       description: 'A language for business logic.',
       social: [{ icon: 'github', label: 'GitHub', href: REPOSITORY }],
       customCss: ['./src/styles/docs.css'],
-      components: { Footer: './src/components/DocsFooter.astro' },
+      components: {
+        Footer: './src/components/DocsFooter.astro',
+        ThemeProvider: './src/components/DarkTheme.astro',
+        ThemeSelect: './src/components/ThemeSelect.astro',
+      },
       expressiveCode: { shiki: { langs: [grammar], langAlias: { rhai: 'rust' } } },
       sidebar: [
         { label: 'Book overview', link: '/book/' },
