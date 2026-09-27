@@ -220,6 +220,10 @@ function main(): Unit =
 test "time arithmetic uses an explicit instant" = main()
 ```
 
+For deterministic tests, `standard.io.TestClock` supplies scoped virtual time to
+the time extensions, `Async.sleep`, and `timeout`, with real-clock fallback outside
+the installation. See [Scoped Test Clocks](13-resources.md#139-scoped-test-clocks).
+
 ## 22.8 JSON
 
 `standard.json.Json` is a JSON value tree. `Json.parse` returns a `Result`;

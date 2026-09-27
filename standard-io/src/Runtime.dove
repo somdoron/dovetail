@@ -1,5 +1,7 @@
 package standard.io
 
+import standard.time.Instant
+import standard.time.Duration
 import standard.collection.MutableStack
 import standard.collection.MutableQueue
 import standard.collection.MutableMap
@@ -193,6 +195,7 @@ class FiberState(
     /// attaches to. Saved and restored by the bracket frames.
     public mutable currentScope: ScopeId,
     public mutable contextBindings: List<ScopeContextBinding>,
+    public mutable virtualClock: Option<TestClockState>,
     public joinWaiters: MutableStack<FiberId>,
     public mutable interruptPending: Bool,
     /// Wakes that arrived for a waiter this fiber was registered on while the
@@ -331,6 +334,7 @@ class FiberState(
             rootScope,
             rootScope,
             List.empty,
+            None,
             joinWaiters,
             false,
             pendingWakes,
@@ -699,7 +703,9 @@ public class Runtime(
     childScope: MutableMap<FiberId, ScopeId>,
     mutable nextScopeId: ScopeId,
     internal producers: MutableMap<FiberId, ProducerState>,
-    internal producerRequests: MutableMap<FiberId, ProducerRequest>
+    internal producerRequests: MutableMap<FiberId, ProducerRequest>,
+    clockRuntimeToken: TestClockRuntimeToken,
+    mutable testClocks: List<TestClockState>
 ) =
     public function make(program: Async<Any, Any>): Runtime =
         let mainFiber = FiberState.make(FiberId.zero, program, None, ScopeId(0))
@@ -728,7 +734,9 @@ public class Runtime(
             childScope,
             ScopeId(1),
             MutableMap.new(),
-            MutableMap.new()
+            MutableMap.new(),
+            TestClockRuntimeToken(),
+            []
         )
 
     function newScopeId(self): ScopeId =
@@ -1338,6 +1346,17 @@ public class Runtime(
             case idle: ProducerIdle =>
                 self.beginPark(fiber)
                 ()
+            case clock: AllocateTestClock => self.allocateTestClock(fiber, clock.initial)
+            case clock: ReadTestClock =>
+                if self.validateTestClock(fiber, clock.clock) then
+                    fiber.asyncValue =
+                        Succeed(
+                            checkedClockInstant(clock.clock.initial, clock.clock.elapsed).require
+                        )
+            case clock: SleepTestClock => self.sleepTestClock(fiber, clock.clock, clock.duration)
+            case clock: AdvanceTestClock =>
+                self.advanceTestClock(fiber, clock.clock, clock.duration)
+            case clock: CloseTestClock => self.closeTestClock(fiber, clock.clock)
             case context: ReadScopeContext =>
                 fiber.asyncValue = Succeed(findScopeContext(fiber.contextBindings, context.token))
             case context: WithScopeContext<Any, Any> =>
@@ -2835,6 +2854,7 @@ public class Runtime(
             case FiberStatus.Completed => ()
 
     function removeAllRegistrationsForFiber(self, fiberId: FiberId): Unit =
+        self.removeTestClockRegistration(fiberId)
         match self.producerRequests.get(fiberId) with
             case Some(request) => self.detachProducerRequest(request)
             case None => ()
@@ -3750,6 +3770,8 @@ public class Runtime(
                                 case _ => ()
                         case None => ()
                 case None => moreToRun = false
+            self.serviceTestClocks()
+            if !self.runQueue.isEmpty then moreToRun = true
 
     /// Deliver one host completion event to the fiber parked on `index`.
     public function deliver(self, event: Int32, index: Waitable, payload: EventPayload): Unit =
@@ -3783,6 +3805,155 @@ public class Runtime(
                 self.resumeSuspension(susp, outcome)
             case None => panic "runtime received an event for an unknown waitable"
 
+    function testClockDefect(self, fiber: FiberState, message: String): Unit =
+        fiber.asyncValue = FailCause<Never>(Cause.Panicked("TestClock: " ++ message, fiber.trace))
+
+    function allocateTestClock(self, fiber: FiberState, initial: Instant): Unit =
+        if !validClockNanos(initial.nano) then
+            self.testClockDefect(fiber, "initial instant has invalid nanoseconds")
+        else
+            let state =
+                TestClockState(self.clockRuntimeToken, initial, Duration.zero(), false, [], [])
+            self.testClocks = self.testClocks.prepend(state)
+            fiber.asyncValue = Succeed(TestClock.make(state))
+
+    function validateTestClock(self, fiber: FiberState, clock: TestClockState): Bool =
+        if !ClassIdentity.equals(clock.owner, self.clockRuntimeToken) then
+            self.testClockDefect(fiber, "handle belongs to a different runtime")
+            false
+        else if clock.closed then
+            self.testClockDefect(fiber, "installation is closed")
+            false
+        else
+            true
+
+    function sleepTestClock(self, fiber: FiberState, clock: TestClockState, duration: Duration):
+        Unit =
+        if self.validateTestClock(fiber, clock) then
+            if !validClockNanos(duration.nanos) then
+                self.testClockDefect(fiber, "sleep duration has invalid nanoseconds")
+            else if duration.isNegative() || duration.isZero() then
+                fiber.asyncValue = Succeed(())
+            else
+                match testClockTarget(clock, duration) with
+                    case None => self.testClockDefect(fiber, "sleep deadline is out of range")
+                    case Some(deadline) =>
+                        if self.beginPark(fiber) then
+                            clock.sleepers =
+                                clock
+                                    .sleepers
+                                    .append(
+                                    TestClockSleeper { fiber = fiber.id; deadline = deadline }
+                                )
+                            fiber.virtualClock = Some(clock)
+
+    function advanceTestClock(self, fiber: FiberState, clock: TestClockState, duration: Duration):
+        Unit =
+        if self.validateTestClock(fiber, clock) then
+            if duration.isNegative() || !validClockNanos(duration.nanos) then
+                self
+                    .testClockDefect(
+                    fiber,
+                    "advance requires a nonnegative duration with valid nanoseconds"
+                )
+            else if self.beginPark(fiber) then
+                clock.advances = clock.advances.append(TestClockAdvance(fiber.id, duration, None))
+                fiber.virtualClock = Some(clock)
+
+    /// A fiber has at most one virtual wait. Retire it before waking or interrupting.
+    function removeTestClockRegistration(self, fiberId: FiberId): Unit =
+        match self.fibers.get(fiberId) with
+            case Some(fiber) =>
+                match fiber.virtualClock with
+                    case Some(clock) =>
+                        clock.sleepers =
+                            clock
+                                .sleepers
+                                .filter(
+                                (sleeper: TestClockSleeper) => !sleeper.fiber.equals(fiberId)
+                            )
+                        clock.advances =
+                            clock
+                                .advances
+                                .filter(
+                                (advance: TestClockAdvance) => !advance.fiber.equals(fiberId)
+                            )
+                        fiber.virtualClock = None
+                    case None => ()
+            case None => ()
+
+    function resumeTestClockFiber(self, fiberId: FiberId, result: Async<Any, Any>): Unit =
+        self.removeTestClockRegistration(fiberId)
+        match self.fibers.get(fiberId) with
+            case Some(fiber) =>
+                match fiber.status with
+                    case FiberStatus.Suspended =>
+                        fiber.asyncValue = result
+                        fiber.status = FiberStatus.Running
+                        self.runQueue.enqueue(fiber.id)
+                    case _ => ()
+            case None => ()
+
+    function closeTestClock(self, fiber: FiberState, clock: TestClockState): Unit =
+        if self.validateTestClock(fiber, clock) then
+            clock.closed = true
+            let failure: Async<Any, Any> =
+                FailCause<Never>(Cause.Panicked("TestClock: installation is closed", fiber.trace))
+            for sleeper in clock.sleepers do
+                self.resumeTestClockFiber(sleeper.fiber, failure)
+            for advance in clock.advances do
+                self.resumeTestClockFiber(advance.fiber, failure)
+            self.testClocks =
+                self
+                    .testClocks
+                    .filter((other: TestClockState) => !ClassIdentity.equals(other, clock))
+            fiber.asyncValue = Succeed(())
+
+    /// Only runnable fibers using this clock delay advancement; unrelated work does not.
+    function testClockSettled(self, clock: TestClockState): Bool =
+        let mutable settled = true
+        for entry in self.fibers do
+            let fiber = entry._1
+            match fiber.status with
+                case FiberStatus.Running =>
+                    match findScopeContext(fiber.contextBindings, testClockContext.identity) with
+                        case Some(value) =>
+                            let installed = value as TestClock
+                            if ClassIdentity.equals(installed.state, clock) then settled = false
+                        case None => ()
+                case _ => ()
+        settled
+
+    /// Run between turns, including when unrelated fibers keep the queue nonempty.
+    function serviceTestClocks(self): Unit =
+        for clock in self.testClocks do
+            if !clock.advances.isEmpty && self.testClockSettled(clock) then
+                self.serviceTestClock(clock, clock.advances.head)
+
+    function serviceTestClock(self, clock: TestClockState, advance: TestClockAdvance): Unit =
+        // FIFO requests compute relative targets only when they become active.
+        if advance.target.isNone then advance.target = testClockTarget(clock, advance.duration)
+        match advance.target with
+            case None =>
+                let failure: Async<Any, Any> =
+                    Async<Unit, Never>.failPanic("TestClock: advance target is out of range")
+                self.resumeTestClockFiber(advance.fiber, failure)
+            case Some(target) =>
+                let mutable deadline = target
+                let mutable due = false
+                for sleeper in clock.sleepers do
+                    if sleeper.deadline <= deadline then
+                        deadline = sleeper.deadline
+                        due = true
+                clock.elapsed = deadline
+                if due then
+                    // Snapshot iteration preserves registration order for equal deadlines.
+                    for sleeper in clock.sleepers do
+                        if sleeper.deadline == deadline then
+                            self.resumeTestClockFiber(sleeper.fiber, Succeed(()))
+                else
+                    self.resumeTestClockFiber(advance.fiber, Succeed(()))
+
     /// Explain a stall. Only ever called on the panic path, so scanning every
     /// fiber is free. A scope waiting on a fiber that will never finish is the
     /// failure mode structured `fork` introduces, and it is unreadable without
@@ -3792,6 +3963,14 @@ public class Runtime(
         for entry in self.fibers do
             let fiber = entry._1
             message = message ++ self.producerWaitDescription(fiber)
+            match fiber.virtualClock with
+                case Some(_) =>
+                    message =
+                        message
+                            ++ "\n  fiber "
+                            ++ fiber.id.value.format()
+                            ++ " is waiting for virtual time; call TestClock.advance or interrupt the waiting fiber"
+                case None => ()
             match fiber.status with
                 case FiberStatus.Draining(scopeId) =>
                     message = message ++ self.drainingDescription(fiber, scopeId)
@@ -4133,6 +4312,7 @@ public class Runtime(
         let mutable mainCompleted = false
         while !mainCompleted do
             self.drainRunQueue()
+            self.serviceTestClocks()
             match self.mainFiber.completedResult with
                 case Some(_) => mainCompleted = true
                 case None =>

@@ -9,65 +9,64 @@ import standard.time.YearMonth
 import standard.time.Year
 import standard.time.ZonedDateTime
 import standard.time.TimeZone
-import standard.wasi.clock.WallClock
 
 extension TimeExtension for Instant =
-    /// Reads the current Instant from the wall clock.
-    public property now: Async<Instant, Never> = Async.thunk(() => WallClock.now)
+    /// Reads the current Instant from the installed test clock or the real wall clock.
+    public property now: Async<Instant, Never> = currentTime()
 
 extension TimeExtension for LocalDateTime =
-    /// Reads the current LocalDateTime at UTC from the wall clock.
+    /// Reads the current LocalDateTime at UTC from the installed test clock or the real wall clock.
     public property now: Async<LocalDateTime, Never> =
-        Async.thunk(() => WallClock.now.toLocalDateTime(TimeZone.utc))
+        currentTime().map((now: Instant) => now.toLocalDateTime(TimeZone.utc))
 
     /// Reads the current LocalDateTime at the given TimeZone.
     public function nowAt(tz: TimeZone): Async<LocalDateTime, Never> =
-        Async.thunk(() => WallClock.now.toLocalDateTime(tz))
+        currentTime().map((now: Instant) => now.toLocalDateTime(tz))
 
 extension TimeExtension for LocalTime =
-    /// Reads the current LocalTime at UTC from the wall clock.
+    /// Reads the current LocalTime at UTC from the installed test clock or the real wall clock.
     public property now: Async<LocalTime, Never> =
-        Async.thunk(() => WallClock.now.toLocalTime(TimeZone.utc))
+        currentTime().map((now: Instant) => now.toLocalTime(TimeZone.utc))
 
     /// Reads the current LocalTime at the given TimeZone.
     public function nowAt(tz: TimeZone): Async<LocalTime, Never> =
-        Async.thunk(() => WallClock.now.toLocalTime(tz))
+        currentTime().map((now: Instant) => now.toLocalTime(tz))
 
 extension TimeExtension for LocalDate =
-    /// Reads today's LocalDate at UTC from the wall clock.
+    /// Reads today's LocalDate at UTC from the installed test clock or the real wall clock.
     public property today: Async<LocalDate, Never> =
-        Async.thunk(() => WallClock.now.toLocalDate(TimeZone.utc))
+        currentTime().map((now: Instant) => now.toLocalDate(TimeZone.utc))
 
     /// Reads today's LocalDate at the given TimeZone.
     public function todayAt(tz: TimeZone): Async<LocalDate, Never> =
-        Async.thunk(() => WallClock.now.toLocalDate(tz))
+        currentTime().map((now: Instant) => now.toLocalDate(tz))
 
 extension TimeExtension for YearMonth =
-    /// Reads today's YearMonth at UTC from the wall clock.
+    /// Reads today's YearMonth at UTC from the installed test clock or the real wall clock.
     public property today: Async<YearMonth, Never> =
-        Async.thunk(() => WallClock.now.toYearMonth(TimeZone.utc))
+        currentTime().map((now: Instant) => now.toYearMonth(TimeZone.utc))
 
     /// Reads today's YearMonth at the given TimeZone.
     public function todayAt(tz: TimeZone): Async<YearMonth, Never> =
-        Async.thunk(() => WallClock.now.toYearMonth(tz))
+        currentTime().map((now: Instant) => now.toYearMonth(tz))
 
 extension TimeExtension for Year =
-    /// Reads this year at UTC from the wall clock.
+    /// Reads this year at UTC from the installed test clock or the real wall clock.
     public property today: Async<Year, Never> =
-        Async.thunk(() => WallClock.now.toYear(TimeZone.utc))
+        currentTime().map((now: Instant) => now.toYear(TimeZone.utc))
 
     /// Reads this year at the given TimeZone.
     public function todayAt(tz: TimeZone): Async<Year, Never> =
-        Async.thunk(() => WallClock.now.toYear(tz))
+        currentTime().map((now: Instant) => now.toYear(tz))
 
 extension TimeExtension for ZonedDateTime =
-    /// Reads the current ZonedDateTime at UTC from the wall clock.
+    /// Reads the current ZonedDateTime at UTC from the installed test clock or the real wall clock.
     public property now: Async<ZonedDateTime, Never> =
-        Async.thunk(() => WallClock.now.toZonedDateTime(TimeZone.utc))
+        currentTime().map((now: Instant) => now.toZonedDateTime(TimeZone.utc))
 
     /// Reads the current ZonedDateTime at the given TimeZone.
     public function nowAt(tz: TimeZone): Async<ZonedDateTime, Never> =
-        Async.thunk(() => WallClock.now.toZonedDateTime(tz))
+        currentTime().map((now: Instant) => now.toZonedDateTime(tz))
 
 // --- Tests ---
 test "Instant.now reads wall clock" =

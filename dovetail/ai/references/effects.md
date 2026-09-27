@@ -26,3 +26,8 @@ Follow the [book access workflow](book.md) for version matching and offline fall
   producers. Child shadowing never updates parents/siblings or merges on join.
   Bound objects can still be mutable; inheritance does not confer concurrency safety.
   A new `Async.run()` starts with no bindings.
+
+- For deterministic time tests, use `let clock = use TestClock.install(initial)`
+  and `await clock.advance(duration)`. Advance settles runnable fibers using that
+  clock and processes chained deadlines; it does not wait for arbitrary host I/O.
+  Keep the real `@timeout` watchdog for non-suspending loops and test deadlocks.

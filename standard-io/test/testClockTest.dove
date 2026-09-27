@@ -1,0 +1,381 @@
+package test
+
+import standard.io.Async
+import standard.io.Cause
+import standard.io.TestClock
+import standard.io.TimeExtension
+import standard.io.Resource
+import standard.io.Producer
+import standard.time.Instant
+import standard.time.Duration
+import standard.time.LocalDate
+import standard.time.LocalTime
+import standard.time.LocalDateTime
+import standard.time.ZonedDateTime
+import standard.time.YearMonth
+import standard.time.Year
+import standard.time.TimeZone
+
+async function clockAfter(seconds: Int64): Async<Instant, Never> =
+    await Async<Unit, Never>.sleep(Duration.ofSeconds(seconds))
+    await Instant.now
+
+function expectClockDefect<T>(effect: Async<T, Never>): Async<Unit, Never> =
+    effect
+        .foldCause(
+        (
+            (cause: Cause<Never>) =>
+                Async
+                    .thunk(
+                    () =>
+                        match cause with
+                            case Cause.Panicked(message, _) =>
+                                assert message.startsWith("TestClock:")
+                            case _ => panic "expected TestClock defect"
+                )
+        ),
+        (_: T) => Async.thunk(() => panic "expected TestClock defect")
+    )
+
+function expectClockInterrupt<T>(effect: Async<T, Never>): Async<Unit, Never> =
+    effect
+        .foldCause(
+        (
+            (cause: Cause<Never>) =>
+                Async
+                    .thunk(
+                    () =>
+                        match cause with
+                            case Cause.Interrupted(_) => ()
+                            case _ => panic "expected interruption"
+                )
+        ),
+        (_: T) => Async.thunk(() => panic "expected interruption")
+    )
+
+@timeout(10000)
+ test "TestClock: frozen reads conversions and nanosecond advancement" =
+    let program: Async<Unit, Never> =
+        async do
+            let initial = Instant { epochSecond = 86400i64; nano = 999999999 }
+            let zone = TimeZone.of("test", -3600)
+            let description = TestClock.install(initial)
+            let read = Instant.now
+            assert (await read).epochSecond > 86400i64
+            for iteration in [1, 2] do
+                let clock = use description
+                assert (await read) == initial
+                assert (await Instant.now) == initial
+                assert (await LocalDate.today) == initial.toLocalDate(TimeZone.utc)
+                assert (await LocalDate.todayAt(zone)) == initial.toLocalDate(zone)
+                assert (await LocalTime.now) == initial.toLocalTime(TimeZone.utc)
+                assert (await LocalTime.nowAt(zone)) == initial.toLocalTime(zone)
+                assert (await LocalDateTime.now) == initial.toLocalDateTime(TimeZone.utc)
+                assert (await LocalDateTime.nowAt(zone)) == initial.toLocalDateTime(zone)
+                assert (await ZonedDateTime.now) == initial.toZonedDateTime(TimeZone.utc)
+                assert (await ZonedDateTime.nowAt(zone)) == initial.toZonedDateTime(zone)
+                assert (await YearMonth.today) == initial.toYearMonth(TimeZone.utc)
+                assert (await YearMonth.todayAt(zone)) == initial.toYearMonth(zone)
+                assert (await Year.today) == initial.toYear(TimeZone.utc)
+                assert (await Year.todayAt(zone)) == initial.toYear(zone)
+                await clock.advance(Duration.ofNanos(1i64))
+                assert (await Instant.now) == Instant.ofEpochSecond(86401i64)
+            assert (await read).epochSecond > 86401i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: immediate forks partial advances chained and periodic sleeps" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let mutable count = 0
+            let work: Async<Unit, Never> =
+                async do
+                    for second in [1, 2, 3] do
+                        await Async<Unit, Never>.sleep(Duration.ofSeconds(5i64))
+                        count = count + 1
+                        assert (await Instant.now).epochSecond == second.toInt64() * 5i64
+            let child = await work.fork()
+            await clock.advance(Duration.ofSeconds(4i64))
+            assert count == 0
+            await clock.advance(Duration.ofSeconds(6i64))
+            assert count == 2
+            await clock.advance(Duration.ofSeconds(5i64))
+            await child.join()
+            assert count == 3
+            assert (await Instant.now).epochSecond == 15i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: equal deadlines wake in registration order and zero settles" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let mutable order = 0
+            for index in [1, 2, 3] do
+                let work: Async<Unit, Never> =
+                    async do
+                        await Async<Unit, Never>.sleep(Duration.ofNanos(1i64))
+                        order = order * 10 + index
+                let child = await work.fork()
+            await clock.advance(Duration.zero())
+            assert order == 0
+            await clock.advance(Duration.ofNanos(1i64))
+            assert order == 123
+            await Async<Unit, Never>.sleep(Duration.zero())
+            await Async<Unit, Never>.sleep(Duration.ofNanos(-1i64))
+            assert (await Instant.now).nano == 1
+    program.run()
+
+@timeout(10000)
+ test "TestClock: timeout success expiration and race use virtual time" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let success = await clockAfter(2i64).timeout(Duration.ofSeconds(3i64)).fork()
+            let expiration = await clockAfter(5i64).timeout(Duration.ofSeconds(3i64)).fork()
+            let racer = await clockAfter(1i64).race(clockAfter(4i64)).fork()
+            await clock.advance(Duration.ofSeconds(10i64))
+            assert (await success.join()).require.epochSecond == 2i64
+            assert (await expiration.join()).isNone
+            assert (await racer.join()).epochSecond == 1i64
+            assert (await Instant.now).epochSecond == 10i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: nested installations restore and siblings remain isolated" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(100i64))
+            let nested: Async<Unit, Never> =
+                async do
+                    let inner = use TestClock.install(Instant.ofEpochSecond(200i64))
+                    let child = await clockAfter(3i64).fork()
+                    await inner.advance(Duration.ofSeconds(3i64))
+                    assert (await child.join()).epochSecond == 203i64
+            let sibling = await nested.fork()
+            let other = await clockAfter(7i64).fork()
+            await clock.advance(Duration.ofSeconds(7i64))
+            await sibling.join()
+            assert (await other.join()).epochSecond == 107i64
+            await nested
+            assert (await Instant.now).epochSecond == 107i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: unrelated runnable fibers do not prevent advancement" =
+    let program: Async<Unit, Never> =
+        async do
+            let unrelated: Async<Unit, Never> =
+                async do
+                    while true do
+                        await Async<Unit, Never>.yieldNow()
+            let background = await unrelated.forkBackground()
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let child = await clockAfter(2i64).fork()
+            await clock.advance(Duration.ofSeconds(2i64))
+            assert (await child.join()).epochSecond == 2i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: concurrent advances are FIFO and relative to activation" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let first = await clock.advance(Duration.ofSeconds(2i64)).fork()
+            let second = await clock.advance(Duration.ofSeconds(5i64)).fork()
+            await first.join()
+            await second.join()
+            assert (await Instant.now).epochSecond == 7i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: canceling advancement retains elapsed progress" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let ready = await Async<Unit, Never>.makePromise()
+            let work: Async<Instant, Never> =
+                async do
+                    await Async<Unit, Never>.sleep(Duration.ofSeconds(1i64))
+                    await ready.complete(())
+                    await clockAfter(4i64)
+            let worker = await work.fork()
+            let advancing = await clock.advance(Duration.ofSeconds(10i64)).fork()
+            await ready.awaitPromise()
+            await advancing.interrupt()
+            await expectClockInterrupt(advancing.join())
+            assert (await Instant.now).epochSecond == 1i64
+            await clock.advance(Duration.ofSeconds(4i64))
+            assert (await worker.join()).epochSecond == 5i64
+            assert (await Instant.now).epochSecond == 5i64
+    program.run()
+
+@timeout(10000)
+ test "TestClock: repeated sleep cancellation leaves no spurious wakes" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let mutable fired = 0
+            for iteration in [1, 2, 3, 4, 5, 6, 7, 8] do
+                let sleeper = await clockAfter(2i64).map((_: Instant) => fired = fired + 1).fork()
+                await clock.advance(Duration.zero())
+                await sleeper.interrupt()
+                await expectClockInterrupt(sleeper.join())
+            await clock.advance(Duration.ofSeconds(10i64))
+            assert fired == 0
+    program.run()
+
+@timeout(10000)
+ test "TestClock: producer acquire pull and release inherit the creating clock" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(10i64))
+            let mutable released = false
+            let producer =
+                await Producer<Instant, Never>
+                    .make(
+                    Instant.now,
+                    (_: Instant) => clockAfter(2i64),
+                    (initial: Instant) =>
+                        async do
+                            assert initial.epochSecond == 10i64
+                            assert (await Instant.now).epochSecond == 12i64
+                            released = true
+                )
+            let advancing = await clock.advance(Duration.ofSeconds(2i64)).fork()
+            let value = await producer.next().orPanicWith((_: Option<Never>) => "unexpected end")
+            assert value.epochSecond == 12i64
+            await advancing.join()
+            await producer.interrupt()
+            assert released
+    program.run()
+
+@timeout(10000)
+ test "TestClock: cleanup retains clock and can be driven explicitly" =
+    let mutable finished = false
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let ready = await Async<Unit, Never>.makePromise()
+            let never = await Async<Unit, Never>.makePromise()
+            let body: Async<Unit, Never> =
+                async do
+                    let resource: Resource<Unit, Never> =
+                        Resource
+                            .make(
+                            () => Async.succeed(()),
+                            (_: Unit) =>
+                                async do
+                                    await ready.complete(())
+                                    await Async<Unit, Never>.sleep(Duration.ofSeconds(2i64))
+                                    assert (await Instant.now).epochSecond == 2i64
+                                    finished = true
+                        )
+                    use resource
+                    await never.awaitPromise()
+            let child = await body.forkBackground()
+            await clock.advance(Duration.zero())
+            await child.interrupt()
+            await ready.awaitPromise()
+            assert !finished
+            await clock.advance(Duration.ofSeconds(2i64))
+            await expectClockInterrupt(child.join())
+            assert finished
+    program.run()
+
+@timeout(10000)
+ test "TestClock: invalid advances are defects without changing time" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            await expectClockDefect(clock.advance(Duration.ofNanos(-1i64)))
+            await expectClockDefect(clock.advance(Duration { seconds = 0i64; nanos = 1000000000 }))
+            await expectClockDefect(
+                Async<Unit, Never>.sleep(Duration { seconds = 0i64; nanos = -1 })
+            )
+            assert (await Instant.now).epochSecond == 0i64
+            let edge: Async<Unit, Never> =
+                async do
+                    let nearEnd = Instant { epochSecond = 9223372036854775807i64; nano = 999999998 }
+                    let limit = use TestClock.install(nearEnd)
+                    await limit.advance(Duration.ofNanos(1i64))
+                    await expectClockDefect(limit.advance(Duration.ofNanos(1i64)))
+                    await expectClockDefect(Async<Unit, Never>.sleep(Duration.ofNanos(1i64)))
+                    assert (await Instant.now).nano == 999999999
+            await edge
+            assert (await Instant.now).epochSecond == 0i64
+    program.run()
+
+test "TestClock: closed handles fail and fresh runtimes use real time" =
+    let mutable saved: Option<TestClock> = None
+    let installed: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            saved = Some(clock)
+    let first: Async<Unit, Never> =
+        async do
+            await installed
+            await expectClockDefect(saved.require.advance(Duration.zero()))
+            assert (await Instant.now).epochSecond > 0i64
+    first.run()
+    let second: Async<Unit, Never> =
+        async do
+            await expectClockDefect(saved.require.advance(Duration.zero()))
+            assert (await Instant.now).epochSecond > 0i64
+    second.run()
+
+@timeout(10000)
+ test "TestClock: background scope cleanup reads frozen time without advancing" =
+    let mutable released = false
+    let program: Async<Unit, Never> =
+        async do
+            let installed: Async<Unit, Never> =
+                async do
+                    let clock = use TestClock.install(Instant.ofEpochSecond(99i64))
+                    let child: Async<Unit, Never> =
+                        async do
+                            let cleanup: Resource<Unit, Never> =
+                                Resource
+                                    .make(
+                                    () => Async.succeed(()),
+                                    (_: Unit) =>
+                                        async do
+                                            assert (await Instant.now).epochSecond == 99i64
+                                            released = true
+                                )
+                            use cleanup
+                            await Async<Unit, Never>.sleep(Duration.ofSeconds(100i64))
+                    let background = await child.forkBackground()
+                    await clock.advance(Duration.zero())
+            await installed
+            assert released
+            assert (await Instant.now).epochSecond > 99i64
+    program.run()
+
+test "TestClock: malformed installation and elapsed overflow are rejected" =
+    let program: Async<Unit, Never> =
+        async do
+            let malformed: Async<Unit, Never> =
+                async do
+                    let clock = use TestClock.install(Instant { epochSecond = 0i64; nano = -1 })
+                    ()
+            await expectClockDefect(malformed)
+            let clock = use TestClock.install(Instant.ofEpochSecond(-9223372036854775807i64))
+            await clock.advance(Duration.ofSeconds(9223372036854775807i64))
+            assert (await Instant.now).epochSecond == 0i64
+            await expectClockDefect(clock.advance(Duration.ofSeconds(1i64)))
+            assert (await Instant.now).epochSecond == 0i64
+    program.run()
+
+test "TestClock: an active handle cannot control a different runtime" =
+    let outer: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let inner: Async<Unit, Never> =
+                async do
+                    assert (await Instant.now).epochSecond > 0i64
+                    await expectClockDefect(clock.advance(Duration.zero()))
+            inner.run()
+            assert (await Instant.now).epochSecond == 0i64
+    outer.run()

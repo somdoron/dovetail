@@ -1,0 +1,125 @@
+package standard.io
+
+import standard.time.Instant
+import standard.time.Duration
+
+@timeout(10000)
+ test "TestClock: canceled registrations are removed while installation remains open" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let mutable iteration = 0
+            while iteration < 32 do
+                let child = await Async<Unit, Never>.sleep(Duration.ofSeconds(5i64)).fork()
+                await clock.advance(Duration.zero())
+                assert clock.state.sleepers.length == 1
+                await child.interrupt()
+                await child
+                    .join()
+                    .foldCause(
+                    (_: Cause<Never>) => Async.succeed(()),
+                    (_: Unit) => Async.succeed(())
+                )
+                assert clock.state.sleepers.isEmpty
+                assert clock.state.advances.isEmpty
+                iteration = iteration + 1
+    program.run()
+
+@timeout(10000)
+ test "TestClock: queued advance cancellation removes the request without moving time" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let child = await clock.advance(Duration.ofSeconds(5i64)).fork()
+            // The caller stays runnable under the same clock, so the request cannot advance.
+            while clock.state.advances.isEmpty do
+                await Async<Unit, Never>.yieldNow()
+            await child.interrupt()
+            await child
+                .join()
+                .foldCause((_: Cause<Never>) => Async.succeed(()), (_: Unit) => Async.succeed(()))
+            assert clock.state.advances.isEmpty
+            assert clock.state.elapsed == Duration.zero()
+    program.run()
+
+@timeout(10000)
+ test "TestClock: closing invalidates outside queued controllers" =
+    let program: Async<Unit, Never> =
+        async do
+            let published = await Async<TestClock, Never>.makePromise()
+            let mutable rejected = false
+            let outside: Async<Unit, Never> =
+                async do
+                    let clock = await published.awaitPromise()
+                    await clock
+                        .advance(Duration.ofSeconds(5i64))
+                        .foldCause(
+                        (
+                            (cause: Cause<Never>) =>
+                                Async
+                                    .thunk(
+                                    () =>
+                                        match cause with
+                                            case Cause.Panicked(_, _) => rejected = true
+                                            case _ => panic "expected closed clock defect"
+                                )
+                        ),
+                        (_: Unit) => Async.thunk(() => panic "advance escaped clock lifetime")
+                    )
+            let controller = await outside.fork()
+            let installed: Async<Unit, Never> =
+                async do
+                    let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+                    await published.complete(clock)
+                    while clock.state.advances.isEmpty do
+                        await Async<Unit, Never>.yieldNow()
+                    assert clock.state.elapsed == Duration.zero()
+            await installed
+            await controller.join()
+            assert rejected
+    program.run()
+
+test "TestClock: stalled virtual sleepers have an actionable diagnostic" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            await Async<Unit, Never>.sleep(Duration.ofSeconds(5i64))
+    let runtime = Runtime.make(program)
+    let root = runtime.fibers.get(FiberId.zero).require
+    let mutable stepping = true
+    while stepping do
+        match root.status with
+            case FiberStatus.Running => runtime.step(root)
+            case _ => stepping = false
+    assert root.virtualClock.isSome
+    let message = runtime.stallMessage()
+    assert message.contains("virtual time")
+    assert message.contains("TestClock.advance")
+    assert root.virtualClock.require.elapsed == Duration.zero()
+    runtime.interruptFiber(root)
+    runtime.eventLoop()
+    assert root.virtualClock.isNone
+
+@timeout(10000)
+ test "TestClock: canceling a timeout retires both timer registrations" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let work =
+                Async<Unit, Never>
+                    .sleep(Duration.ofSeconds(10i64))
+                    .timeout(Duration.ofSeconds(5i64))
+            let child = await work.fork()
+            await clock.advance(Duration.zero())
+            assert clock.state.sleepers.length == 2
+            await child.interrupt()
+            await child
+                .join()
+                .foldCause(
+                (_: Cause<Never>) => Async.succeed(()),
+                (_: Option<Unit>) => Async.succeed(())
+            )
+            assert clock.state.sleepers.isEmpty
+            await clock.advance(Duration.ofSeconds(20i64))
+            assert clock.state.sleepers.isEmpty
+    program.run()

@@ -1,5 +1,7 @@
 package test
 
+import standard.io.TestClock
+import standard.time.Instant
 import standard.io.Async
 import standard.io.stream.Stream
 import standard.time.Duration
@@ -147,4 +149,15 @@ import standard.time.Duration
             assert (await Stream<Unit, Never>.tick(Duration.zero()).take(2).runCollect())
                 .length
                 == 2
+    program.run()
+
+@timeout(5000)
+ test "Stream intervals process every deadline under TestClock" =
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+            let ticks = Stream<Unit, Never>.tick(Duration.ofSeconds(5i64))
+            let child = await ticks.take(3).runCollect().fork()
+            await clock.advance(Duration.ofSeconds(15i64))
+            assert (await child.join()).length == 3
     program.run()

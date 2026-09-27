@@ -1,0 +1,96 @@
+package standard.io
+
+import standard.time.Duration
+import standard.time.Instant
+import standard.wasi.clock.WallClock
+
+let testClockContext: ScopeContext<TestClock> = ScopeContext<TestClock>.makeIdentity()
+
+/// A scoped virtual clock. Read its time through Instant.now and the time extensions.
+public class TestClock private (internal state: TestClockState) =
+    /// Describe a fresh installation. Each use allocates a separate frozen clock.
+    public function install(initial: Instant): TestClockScope = TestClockScope.make(initial)
+
+    /// Process deadlines in order, settling this clock's fibers between deadlines.
+    public function advance(self, duration: Duration): Async<Unit, Never> =
+        AdvanceTestClock(self.state, duration)
+
+    internal function make(state: TestClockState): TestClock = TestClock(state)
+
+/// A reusable installation supporting use, with no resource-transfer operations.
+public class TestClockScope private (initial: Instant) =
+    internal function make(initial: Instant): TestClockScope = TestClockScope(initial)
+
+    internal function run<U, E>(self, body: (TestClock) => Async<U, E>): Async<U, E> =
+        let acquire: () => Async<TestClock, Never> = () => AllocateTestClock(self.initial)
+        let release: (TestClock) => Async<Unit, Never> =
+            (clock: TestClock) => CloseTestClock(clock.state)
+        let resource: Resource<TestClock, Never> = Resource.make(acquire, release)
+        resource
+            .use (
+            (
+                (clock: TestClock) =>
+                    testClockContext
+                        .scope(clock)
+                        .use ((_: Unit) => body(clock), (never: Never) => never)
+            ),
+            (never: Never) => never
+        )
+
+implement Usable<TestClock, Never> for TestClockScope =
+    type Wrapped<U, E2> = Async<U, E2>
+
+    function use<U, E2>(self, body: (TestClock) => Async<U, E2>, errorF: (Never) => E2):
+        Async<U, E2> = self.run(body)
+
+internal async function currentTime(): Async<Instant, Never> =
+    let installed = await testClockContext.get()
+    match installed with
+        case Some(clock) =>
+            let read: Async<Instant, Never> = ReadTestClock(clock.state)
+            await read
+        case None => await Async.thunk(() => WallClock.now)
+
+internal class TestClockRuntimeToken()
+
+internal class TestClockState(
+    public owner: TestClockRuntimeToken,
+    public initial: Instant,
+    public mutable elapsed: Duration,
+    public mutable closed: Bool,
+    public mutable sleepers: List<TestClockSleeper>,
+    public mutable advances: List<TestClockAdvance>
+)
+
+internal record TestClockSleeper =
+    fiber: FiberId
+    deadline: Duration
+
+internal class TestClockAdvance(
+    public fiber: FiberId,
+    public duration: Duration,
+    public mutable target: Option<Duration>
+)
+
+internal function validClockNanos(nanos: Int32): Bool = nanos >= 0 && nanos < 1000000000
+
+/// Addition with nonnegative seconds, checked before either seconds addition.
+internal function checkedClockInstant(initial: Instant, elapsed: Duration): Option<Instant> =
+    let maximum = 9223372036854775807i64
+    let nanos = initial.nano + elapsed.nanos
+    if initial.epochSecond > maximum - elapsed.seconds then
+        None
+    else
+        let seconds = initial.epochSecond + elapsed.seconds
+        let carry = if nanos >= 1000000000 then 1i64 else 0i64
+        if carry == 1i64 && seconds == maximum then None
+        else Some(Instant { epochSecond = seconds + carry; nano = nanos % 1000000000 })
+
+/// A target must fit both elapsed time and the clock's wall-time representation.
+internal function testClockTarget(clock: TestClockState, duration: Duration): Option<Duration> =
+    let elapsed = Instant { epochSecond = clock.elapsed.seconds; nano = clock.elapsed.nanos }
+    match checkedClockInstant(elapsed, duration) with
+        case None => None
+        case Some(target) =>
+            let result = Duration { seconds = target.epochSecond; nanos = target.nano }
+            checkedClockInstant(clock.initial, result).map((_: Instant) => result)

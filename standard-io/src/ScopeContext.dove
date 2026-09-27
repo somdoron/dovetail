@@ -4,7 +4,12 @@ package standard.io
 public class ScopeContext<T> private (token: ScopeContextToken) =
     /// Allocate a fresh identity each time this effect executes.
     public function make(): Async<ScopeContext<T>, Never> =
-        Async.thunk(() => ScopeContext<T>(ScopeContextToken()))
+        Async.thunk(() => ScopeContext<T>.makeIdentity())
+
+    /// Package-owned service identities may be allocated once during initialization.
+    internal function makeIdentity(): ScopeContext<T> = ScopeContext<T>(ScopeContextToken())
+
+    internal property identity(self): ScopeContextToken = self.token
 
     /// Read the nearest binding at execution time; absence is not an error.
     public function get(self): Async<Option<T>, Never> =

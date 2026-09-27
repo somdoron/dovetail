@@ -16,6 +16,9 @@ Check:
 - ScopeContext consumers share the injected identity, handle absent bindings, and
   keep owned resources alive outside binding scopes. Do not assume child shadowing
   changes parent bindings or makes shared connections safe for concurrent use.
+- Virtual-time tests install TestClock, advance explicitly, and synchronize external
+  I/O. Check that sleepers and sleeping finalizers can finish before scope exit;
+  do not assume advancing one clock settles unrelated or independently scoped work.
 - Mutable aliases do not invalidate snapshots; pattern coverage and casts are sound.
 - Imports, dependencies, visible APIs, named arguments, and supported features match
   this compiler. Do not recommend proposed defaults or nonexistent linter commands.

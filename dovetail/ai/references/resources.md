@@ -30,3 +30,8 @@ Follow the [book access workflow](book.md) for version matching and offline fall
 - `use context.scope(value)` shadows locally and restores after children and cleanup.
   Its `ScopeContextScope<T>` is Usable, not Resource: do not suggest resource transfer
   or attachment methods. Acquire owned resources outside their binding scopes.
+
+- TestClock installation inherits ScopeContext isolation and shadowing. Its handle
+  is valid only in the creating runtime until installation closes. Finish or
+  interrupt virtual sleepers before exit; shutdown does not advance time. Sleeping
+  finalizers require explicit advancement while their clock remains installed.

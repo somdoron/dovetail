@@ -139,6 +139,14 @@ public function makePromise(): Async<Promise<T, E>, Never> =
     )
 
 public async function sleep(duration: Duration): Async<Unit, Never> =
+    let installed = await testClockContext.get()
+    match installed with
+        case Some(clock) =>
+            let sleeping: Async<Unit, Never> = SleepTestClock(clock.state, duration)
+            await sleeping
+        case None => await Async<Unit, Never>.realSleep(duration)
+
+internal async function realSleep(duration: Duration): Async<Unit, Never> =
     // `MonotonicClock.waitForStart` owns the Duration-to-nanoseconds conversion.
     // The timer carries no result buffer, so `finish` has nothing to lift.
     await Async<Unit, Never>

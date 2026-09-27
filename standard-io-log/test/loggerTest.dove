@@ -7,6 +7,9 @@ import standard.io.log.LogField
 import standard.io.log.LogSpan
 import standard.io.log.MemorySink
 import standard.io.Async
+import standard.io.TestClock
+import standard.time.Instant
+import standard.time.Duration
 
 // ── withName: dotted sub-naming ───────────────────────────────────────
 test "Logger.withName sets name on a fresh logger" =
@@ -149,3 +152,19 @@ test "Logger forces ByName message exactly once when level passes" =
     match sink.snapshot() with
         case [only] => assert only.message == "noisy"
         case _ => assert false
+
+test "Logger timestamps follow the installed TestClock" =
+    let sink = MemorySink.make()
+    let log = Logger.make(sink)
+    let program: Async<Unit, Never> =
+        async do
+            let clock = use TestClock.install(Instant.ofEpochSecond(100i64))
+            await log.info("first")
+            await clock.advance(Duration.ofSeconds(5i64))
+            await log.info("second")
+    program.run()
+    match sink.snapshot() with
+        case [first, second] =>
+            assert first.timestamp == Instant.ofEpochSecond(100i64)
+            assert second.timestamp == Instant.ofEpochSecond(105i64)
+        case _ => panic "expected two log records"

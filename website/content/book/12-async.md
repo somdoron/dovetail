@@ -291,3 +291,11 @@ Inject one context identity into consumers, then use `context.scope(value)` at t
 execution boundary. Children inherit at creation; nested bindings shadow locally,
 and joining never merges changes into the parent. See [Scope Context](13-resources.md#138-scope-context)
 for the API, optional lookup, and lifetime rules.
+
+### Testing time-dependent effects
+
+Use `let clock = use TestClock.install(initial)` and `await clock.advance(duration)`
+to drive `Async.sleep`, `timeout`, and time reads without real waiting. Advancement
+processes deadlines and settles fibers using that clock; it does not simulate
+host I/O or automatically finish sleepers during scope shutdown. See
+[Scoped Test Clocks](13-resources.md#139-scoped-test-clocks) for a complete example.

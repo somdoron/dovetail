@@ -1,5 +1,7 @@
 package standard.io
 
+import standard.time.Instant
+import standard.time.Duration
 import standard.collection.MutableQueue
 import standard.wasi.ComponentFuture
 import standard.wasi.ComponentStreamRead
@@ -399,3 +401,20 @@ internal final class ProducerAcquired(
 ) extends Async<Unit, Never>()
 
 internal final class ProducerIdle(public producer: ProducerState) extends Async<Unit, Never>()
+
+// --- Scoped virtual time ---
+internal final class AllocateTestClock(public initial: Instant) extends Async<TestClock, Never>()
+
+internal final class ReadTestClock(public clock: TestClockState) extends Async<Instant, Never>()
+
+internal final class SleepTestClock(
+    public clock: TestClockState,
+    public duration: Duration
+) extends Async<Unit, Never>()
+
+internal final class AdvanceTestClock(
+    public clock: TestClockState,
+    public duration: Duration
+) extends Async<Unit, Never>()
+
+internal final class CloseTestClock(public clock: TestClockState) extends Async<Unit, Never>()

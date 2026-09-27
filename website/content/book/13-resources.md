@@ -241,6 +241,75 @@ acquire the connection with `use` first, then open its context scope. The connec
 is released after context users finish. Mutable values remain shared references;
 context inheritance does not make a connection safe for concurrent operations.
 
+## 13.9 Scoped Test Clocks
+
+`standard.io.TestClock` freezes time for a scope and its descendant fibers. With
+no test clock installed, time reads and sleeps use the real clock. Installation
+uses a private `ScopeContext<TestClock>`: nested installations shadow the outer
+clock, and independent scopes can use different clocks.
+
+`TestClock.install(initial)` is a reusable `TestClockScope` description implementing
+`Usable<TestClock, Never>`. Each `use` creates a fresh clock at `initial` and returns
+its controller. Read time through `Instant.now` and the existing date/time
+extensions; call `await clock.advance(duration)` to move it forward. `Async.sleep`
+and `timeout` use the same virtual timeline, as do consumers of those APIs such
+as logging. Direct low-level `standard.wasi.clock` calls still use host time.
+
+**Complete example (checked in CI)**:
+
+<!-- book-example: {"name": "testclock", "depends": ["standard-io"]} -->
+```dovetail
+package testclock
+
+import standard.io.Async
+import standard.io.TestClock
+import standard.io.TimeExtension
+import standard.time.Instant
+import standard.time.Duration
+
+async function delayedTime(): Async<Instant, Never> =
+    await Async<Unit, Never>.sleep(Duration.ofSeconds(5i64))
+    await Instant.now
+
+function main(): Unit =
+    let program: Async<Unit, Never> = async do
+        let clock = use TestClock.install(Instant.ofEpochSecond(0i64))
+        let child = await delayedTime().fork()
+        await clock.advance(Duration.ofSeconds(5i64))
+        assert (await child.join()).epochSecond == 5i64
+    program.run()
+
+test "sleep completes in virtual time" = main()
+```
+
+Advancement first lets runnable fibers using this clock complete or suspend,
+so an immediately forked task can register its sleep. It then visits each due
+deadline in order, waking equal-deadline sleepers in registration order and letting
+relevant work settle before proceeding. A ten-second advance therefore handles
+a task that sleeps five seconds and then another five. Wall time and elapsed time
+move together, with nanosecond precision; there is no separate wall-clock reset.
+
+`advance(Duration.zero())` settles relevant runnable work without moving time.
+Nonpositive virtual sleeps complete immediately; use `Async.yieldNow()` when you
+need an explicit scheduling yield. Unrelated runnable fibers do not block clock
+advancement, but an endlessly runnable fiber using the clock does. Host I/O is not
+simulated: synchronize explicitly with external events. The test runner's
+`@timeout` remains a real-time watchdog.
+
+Concurrent advances execute FIFO, computing their relative targets when they
+become active. Canceling an advance removes its request without rolling back time
+or work already completed. Invalid durations, invalid nanosecond fields, and time
+arithmetic outside the representable range produce `Cause.Panicked` without
+partially applying the invalid request. Negative advancement is invalid.
+
+Normal scope lifetime rules apply. Background children are interrupted and drained;
+structured children must finish. Time is never advanced automatically during
+shutdown. Drive sleeping cleanup explicitly, or interrupt outstanding sleepers
+before leaving the scope. A stalled runtime identifies virtual waiters in its
+diagnostic. Bindings remain installed through cleanup, and clock handles become
+invalid after installation closes. Using a handle in a different `Async.run()`
+also produces an async defect; each runtime starts without clock bindings.
+
 ## Summary
 
 - `use` acquires a resource inside an async function and guarantees release when the enclosing scope exits — on success, typed failure, or async `Cause.Panicked`.
