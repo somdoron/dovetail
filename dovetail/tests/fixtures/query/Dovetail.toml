@@ -1,4 +1,4 @@
-compiler-version = "0.1.0"
+compiler-version = "0.1.1"
 
 [[project]]
 name = "library"

@@ -17,6 +17,8 @@ See Cargo's [publishing guide](https://doc.rust-lang.org/cargo/reference/publish
 1. Update `version` in `dovetail/Cargo.toml` and `vscode-dovetail/package.json` to
    the same version. Refresh `Cargo.lock` with Cargo and the extension lockfile
    with `npm install --package-lock-only` in `vscode-dovetail`.
+   Update `compiler-version` in workspace and fixture manifests, test manifests,
+   and current book examples. Update the extension installation script's VSIX filename.
 2. Run `cargo publish --package dovetail-lang --locked --dry-run` to verify that
    the packaged sources build. This does not upload the crate.
 3. Commit the release changes and publish a GitHub release with a matching tag,

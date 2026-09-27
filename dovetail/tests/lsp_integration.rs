@@ -47,7 +47,7 @@ fn create_valid_workspace(source: &str) -> (tempfile::TempDir, std::path::PathBu
     let source_path = src_dir.join("a.dove");
     std::fs::write(&source_path, source).unwrap();
 
-    let manifest = r#"compiler-version = "0.1.0"
+    let manifest = r#"compiler-version = "0.1.1"
 [[project]]
 name = "test"
 root_package = "a"

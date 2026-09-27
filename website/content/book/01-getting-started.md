@@ -332,7 +332,7 @@ not have a separate `--lib` flag.
 The generated `Dovetail.toml` looks like this (the compiler version matches the CLI you installed):
 
 ```toml
-compiler-version = "0.1.0"
+compiler-version = "0.1.1"
 
 [[project]]
 name = "hello"

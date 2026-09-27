@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn parse_single_project() {
-        let toml = r#"compiler-version = "0.1.0"
+        let toml = r#"compiler-version = "0.1.1"
 [[project]]
 name = "myapp"
 root_package = "com.example.myapp"
@@ -148,7 +148,7 @@ packages = ["."]
 
     #[test]
     fn parse_multiple_projects_with_depends() {
-        let toml = r#"compiler-version = "0.1.0"
+        let toml = r#"compiler-version = "0.1.1"
 [[project]]
 name = "mylib"
 root_package = "com.example.mylib"
@@ -168,7 +168,7 @@ packages = ["utils", "."]
 
     #[test]
     fn parse_empty_depends_default() {
-        let toml = r#"compiler-version = "0.1.0"
+        let toml = r#"compiler-version = "0.1.1"
 [[project]]
 name = "myapp"
 root_package = "com.example.myapp"
@@ -180,7 +180,7 @@ packages = ["."]
 
     #[test]
     fn parse_missing_required_field_name() {
-        let toml = r#"compiler-version = "0.1.0"
+        let toml = r#"compiler-version = "0.1.1"
 [[project]]
 root_package = "com.example.myapp"
 packages = ["."]
@@ -190,7 +190,7 @@ packages = ["."]
 
     #[test]
     fn parse_missing_required_field_packages() {
-        let toml = r#"compiler-version = "0.1.0"
+        let toml = r#"compiler-version = "0.1.1"
 [[project]]
 name = "myapp"
 root_package = "com.example.myapp"

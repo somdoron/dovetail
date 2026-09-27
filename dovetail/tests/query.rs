@@ -23,7 +23,7 @@ fn workspace() -> tempfile::TempDir {
     );
     let manifest = directory.path().join("Dovetail.toml");
     let source = std::fs::read_to_string(&manifest).unwrap();
-    std::fs::write(manifest, source.replace("0.1.0", env!("CARGO_PKG_VERSION"))).unwrap();
+    std::fs::write(manifest, source.replace("0.1.1", env!("CARGO_PKG_VERSION"))).unwrap();
     directory
 }
 

@@ -13,7 +13,7 @@ This part covers *consuming* components. **SQLite** is a full database compiled 
 Components are declared per project in `Dovetail.toml` (see [Part 11: Packages](11-packages.md)):
 
 ```toml
-compiler-version = "0.1.0"
+compiler-version = "0.1.1"
 
 [[project]]
 name = "myapp"
@@ -70,7 +70,7 @@ Calling a binding crosses the component boundary through the canonical ABI: valu
 For a Git dependency, select `standard-sqlite` through the standard-library shorthand described in [Part 11](11-packages.md#115-github-dependencies):
 
 ```toml
-compiler-version = "0.1.0"
+compiler-version = "0.1.1"
 standard-tag = "<tag>"
 
 [[project]]

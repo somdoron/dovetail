@@ -315,7 +315,7 @@ fn test_build_workspace_via_manifest() {
     // Write Dovetail.toml
     fs::write(
         dir.path().join("Dovetail.toml"),
-        r#"compiler-version = "0.1.0"
+        r#"compiler-version = "0.1.1"
 [[project]]
 name = "mylib"
 root_package = "lib"
