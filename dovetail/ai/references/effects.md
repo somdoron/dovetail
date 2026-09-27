@@ -21,3 +21,8 @@ Follow the [book access workflow](book.md) for version matching and offline fall
 - Cancellation is cooperative. Keep uninterruptible critical sections bounded.
 - Await/use in loops have control-flow restrictions: consult the chapter before
   putting them in a while condition or suspending an iteration with break/continue.
+
+- ScopeContext bindings are inherited when fibers are created, including races and
+  producers. Child shadowing never updates parents/siblings or merges on join.
+  Bound objects can still be mutable; inheritance does not confer concurrency safety.
+  A new `Async.run()` starts with no bindings.

@@ -249,6 +249,10 @@ impl FunctionEmitter<'_> {
                 }
             }
             TypedExprKind::VarRef { name, boxed } => {
+                if matches!(expr.ty, Type::Never | Type::Error) {
+                    self.instruction(Instruction::Unreachable);
+                    return;
+                }
                 if *boxed {
                     self.emit_mut_box_load(self.lookup_local(name), &expr.ty);
                 } else {

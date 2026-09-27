@@ -67,7 +67,7 @@ This matches how you would write the cleanup by hand: outer resources outlive in
 
 ## 13.3 Release on Failure
 
-The release step runs whether the body succeeds, fails with a typed error, or panics. There is no `finally` block to remember and no `try`/`catch` to thread around the work — the keyword itself binds acquisition and release together.
+The release step runs whether the body succeeds, fails with a typed error, or produces an async `Cause.Panicked` (for example through `Async.failPanic`). A language-level `panic` or failed `assert` traps and aborts execution; it does not unwind resource scopes. There is no `finally` block to remember and no `try`/`catch` to thread around the work — the keyword itself binds acquisition and release together.
 
 ```dovetail
 async function process(path: String): Async<Result, ProcessError> =
@@ -182,9 +182,68 @@ No explicit `.mapError(...)` is needed at the `use` site — the conversion is w
 
 ---
 
+## 13.8 Scope Context
+
+`standard.io.ScopeContext<T>` lets consumers share a context identity while each
+executing scope supplies its own value. Create the identity with
+`await ScopeContext<T>.make()` and inject it into the objects that need it.
+`await context.get()` returns the nearest binding as `Option<T>`.
+
+`use context.scope(value)` installs a binding for the rest of the block. Its
+`ScopeContextScope<T>` result implements `Usable<Unit, Never>`; it is not a
+`Resource`, and does not provide resource composition, `attachToScope`, or
+`forkAndUse`. Constructing the description does not install a binding.
+
+Nested scopes can shadow a binding. On exit, the previous binding is restored,
+including on typed failure, async `Cause.Panicked`, or interruption. Fatal Wasm
+traps do not unwind scopes. Forked children inherit the bindings
+present when they are created, including background fibers, race branches, and
+producer fibers. A child's changes do not affect its parent or siblings, and joining
+does not merge them back. Children and finalizers finish before the binding is
+removed. A fresh `Async.run()` starts without bindings.
+
+Each execution of `make()` creates a distinct identity, even for the same `T`.
+Lookup happens when `get()` executes. Consumers choose how to handle missing values;
+there is no implicit default or required-lookup failure.
+
+**Complete example (checked in CI)** — inject one context into a repository and
+supply a different value within each execution scope:
+
+<!-- book-example: {"name": "scopecontext", "depends": ["standard-io"]} -->
+```dovetail
+package scopecontext
+
+import standard.io.Async
+import standard.io.ScopeContext
+
+record Repository =
+    connections: ScopeContext<String>
+
+module Repository =
+    async function connection(self): Async<Option<String>, Never> =
+        await self.connections.get()
+
+function main(): Unit =
+    let program: Async<Unit, Never> = async do
+        let connections = await ScopeContext<String>.make()
+        let repository = Repository { connections = connections }
+        assert (await repository.connection()).isNone
+        use connections.scope("request connection")
+        let child = await repository.connection().fork()
+        assert (await child.join()).require == "request connection"
+    program.run()
+
+test "repository inherits its scoped connection" = main()
+```
+
+A context owns its binding, not the bound resource. For a database connection,
+acquire the connection with `use` first, then open its context scope. The connection
+is released after context users finish. Mutable values remain shared references;
+context inheritance does not make a connection safe for concurrent operations.
+
 ## Summary
 
-- `use` acquires a resource inside an async function and guarantees release when the enclosing scope exits — on success, failure, or panic.
+- `use` acquires a resource inside an async function and guarantees release when the enclosing scope exits — on success, typed failure, or async `Cause.Panicked`.
 - A `use` block is a fiber scope: fibers forked inside it finish (or are cancelled) before the resource is released.
 - Acquisition and release are both uninterruptible by default: an interrupt arriving during either is deferred until it completes, so a resource is never stranded half-owned or left half-closed. An acquisition that *is* a wait opts its park back in with `.interruptible()`; a release never can.
 - Syntax is `let x = use expr`, or bare `use expr` when the value is not wanted; multiple `use` bindings in a block release in LIFO order.

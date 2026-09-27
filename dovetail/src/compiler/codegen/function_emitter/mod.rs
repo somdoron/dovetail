@@ -743,19 +743,25 @@ impl<'a> FunctionEmitter<'a> {
     /// bind the declared param name to that shadow in the current scope. Must be called after
     /// `new_for_closure` (and after `emit_closure_env_prologue` if there are captures).
     pub fn emit_closure_param_prologue(&mut self, params: &[TypedClosureParam]) {
+        use crate::typechecker::types::Type;
+
         for (i, param) in params.iter().enumerate() {
             let wasm_param_idx = (i + 1) as u32;
             let declared_ty = &param.ty;
 
+            // An uninhabited parameter cannot be supplied. Keep its local representation
+            // consistent with ordinary bindings even though the closure cannot execute.
+            if matches!(declared_ty, Type::Never | Type::Error) {
+                self.instruction(Instruction::Unreachable);
+                let shadow_local = self.add_local(self.codegen.single_val_type(declared_ty));
+                self.bind_name(param.name.clone(), shadow_local);
+                continue;
+            }
+
             // anyref-equivalent declared type: bind the name directly to the WASM param index.
-            // Type::Never is included here because closures with `(Never) => …` params
-            // can never actually be invoked, so a runtime cast to a concrete Never type
-            // would be both impossible (Never has no values) and dead code (the body
-            // must diverge or never reference the param).
             if matches!(
                 declared_ty,
                 crate::typechecker::types::Type::Any
-                    | crate::typechecker::types::Type::Never
                     | crate::typechecker::types::Type::TypeVariable(..)
                     | crate::typechecker::types::Type::GenericParam(..)
             ) {

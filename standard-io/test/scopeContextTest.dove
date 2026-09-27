@@ -1,0 +1,424 @@
+package test
+
+import standard.io.Async
+import standard.io.ScopeContext
+import standard.io.Resource
+import standard.io.Cause
+import standard.io.Producer
+
+async function contextValue(context: ScopeContext<Int32>, expected: Int32): Async<Unit, Never> =
+    assert (await context.get()).require == expected
+
+async function boundContextValue(context: ScopeContext<Int32>, value: Int32): Async<Unit, Never> =
+    use context.scope(value)
+    await contextValue(context, value)
+
+test "ScopeContext: identity, lazy lookup, reusable descriptions and shadowing" =
+    let program: Async<Unit, Never> =
+        async do
+            let allocation = ScopeContext<Int32>.make()
+            let context = await allocation
+            let other = await allocation
+            let read = context.get()
+            let binding = context.scope(10)
+            assert (await read).isNone
+            for index in [1, 2] do
+                use binding
+                await contextValue(context, 10)
+                assert (await other.get()).isNone
+                await boundContextValue(context, index)
+                assert (await read).require == 10
+            assert (await read).isNone
+            let optional = await ScopeContext<Option<Int32>>.make()
+            assert (await optional.get()).isNone
+            use optional.scope(None)
+            assert (await optional.get()).require.isNone
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: fork snapshots isolate parents and siblings and joins do not merge" =
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            use context.scope(10)
+            let release = await Async<Unit, Never>.makePromise()
+            let child =
+                await (
+                    async do
+                        await release.awaitPromise()
+                        await contextValue(context, 10)
+                        await boundContextValue(context, 30)
+                        await contextValue(context, 10)
+                )
+                    .fork()
+            let sibling = await boundContextValue(context, 40).fork()
+            let inner: Async<Unit, Never> =
+                async do
+                    use context.scope(20)
+                    await release.complete(())
+                    await child.join()
+                    await sibling.join()
+                    await contextValue(context, 20)
+            await inner
+            await contextValue(context, 10)
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: background cleanup and attached finalizers retain bindings" =
+    let mutable cleaned = false
+    let mutable released = false
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            let ready = await Async<Unit, Never>.makePromise()
+            let never = await Async<Unit, Never>.makePromise()
+            let scoped: Async<Unit, Never> =
+                async do
+                    use context.scope(42)
+                    let resource: Resource<Unit, Never> =
+                        Resource
+                            .make(
+                            () => Async.succeed(()),
+                            (_: Unit) =>
+                                async do
+                                    await contextValue(context, 42)
+                                    assert cleaned
+                                    released = true
+                        )
+                    await resource.attachToScope()
+                    let child: Async<Unit, Never> =
+                        async do
+                            let cleanup: Resource<Unit, Never> =
+                                Resource
+                                    .make(
+                                    () => Async.succeed(()),
+                                    (_: Unit) =>
+                                        async do
+                                            await contextValue(context, 42)
+                                            cleaned = true
+                                )
+                            use cleanup
+                            await ready.complete(())
+                            await never.awaitPromise()
+                    let background = await child.forkBackground()
+                    await ready.awaitPromise()
+            await scoped
+            assert cleaned && released
+            assert (await context.get()).isNone
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: races and producer acquisition pulls and release inherit" =
+    let mutable released = false
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            use context.scope(7)
+            await contextValue(context, 7).race(contextValue(context, 7))
+            let producer =
+                await Producer<Int32, Never>
+                    .make(
+                    context.get(),
+                    (
+                        (_: Option<Int32>) =>
+                            context.get().map((value: Option<Int32>) => value.require)
+                    ),
+                    (acquired: Option<Int32>) =>
+                        async do
+                            assert acquired.require == 7
+                            await contextValue(context, 7)
+                            released = true
+                )
+            let read: Async<Unit, Never> =
+                async do
+                    use context.scope(8)
+                    let value =
+                        await producer.next().orPanicWith((_: Option<Never>) => "unexpected end")
+                    assert value == 7
+                    await producer.interrupt()
+            await read
+            assert released
+    program.run()
+
+test "ScopeContext: restores after typed failure panic and cleanup failure" =
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            use context.scope(1)
+            let failing: Async<Unit, String> =
+                async do
+                    use context.scope(2)
+                    await Async<Unit, String>.fail("expected")
+            await failing
+                .fold(
+                (
+                    (error: String) =>
+                        (
+                            async do
+                                assert error == "expected"
+                                await contextValue(context, 1)
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "expected failure")
+            )
+            let panicking: Async<Unit, Never> =
+                async do
+                    use context.scope(3)
+                    await Async<Unit, Never>.failPanic("expected panic")
+            let cleanupFailure: Async<Unit, Never> =
+                async do
+                    use context.scope(4)
+                    let resource: Resource<Unit, Never> =
+                        Resource
+                            .make(
+                            () => Async.succeed(()),
+                            (_: Unit) =>
+                                async do
+                                    await contextValue(context, 4)
+                                    await Async<Unit, Never>.failPanic("expected panic")
+                        )
+                    use resource
+                    ()
+            for effect in [panicking, cleanupFailure] do
+                await effect
+                    .foldCause(
+                    (
+                        (cause: Cause<Never>) =>
+                            (
+                                async do
+                                    match cause with
+                                        case Cause.Panicked(message, _) =>
+                                            assert message == "expected panic"
+                                        case _ => panic "expected panic cause"
+                                    await contextValue(context, 1)
+                            )
+                    ),
+                    (_: Unit) => Async.thunk(() => panic "expected defect")
+                )
+            await contextValue(context, 1)
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: cancellation restores before outer recovery" =
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            use context.scope(1)
+            let ready = await Async<Unit, Never>.makePromise()
+            let never = await Async<Unit, Never>.makePromise()
+            let interrupted: Async<Unit, Never> =
+                async do
+                    use context.scope(2)
+                    await ready.complete(())
+                    await never.awaitPromise()
+            let child =
+                await interrupted
+                    .foldCause(
+                    (
+                        (cause: Cause<Never>) =>
+                            (
+                                async do
+                                    match cause with
+                                        case Cause.Interrupted(_) => ()
+                                        case _ => panic "expected interruption"
+                                    await contextValue(context, 1)
+                            )
+                    ),
+                    (_: Unit) => Async.thunk(() => panic "expected interruption")
+                )
+                    .fork()
+            await ready.awaitPromise()
+            await child.interrupt()
+            await child.join()
+            await contextValue(context, 1)
+    program.run()
+
+test "ScopeContext: fresh runtimes do not retain bindings" =
+    let mutable saved: Option<ScopeContext<Int32>> = None
+    let first: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            saved = Some(context)
+            use context.scope(5)
+            await contextValue(context, 5)
+    first.run()
+    let second: Async<Unit, Never> =
+        async do
+            let context = saved.require
+            assert (await context.get()).isNone
+            await boundContextValue(context, 6)
+            assert (await context.get()).isNone
+    second.run()
+
+class ContextCounter(public mutable value: Int32)
+
+@timeout(10000)
+ test "ScopeContext: structured children drain before restoration and values remain shared" =
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<ContextCounter>.make()
+            let counter = ContextCounter(0)
+            let scoped: Async<String, Never> =
+                async do
+                    use context.scope(counter)
+                    let child: Async<Unit, Never> =
+                        async do
+                            let inherited = (await context.get()).require
+                            inherited.value = 9
+                    let fiber = await child.fork()
+                    "body result"
+            assert (await scoped) == "body result"
+            assert counter.value == 9
+            assert (await context.get()).isNone
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: cleanup-created children and attachments finish before restoration" =
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            use context.scope(1)
+            for mode in [0, 1, 2] do
+                let mutable children = 0
+                let mutable releases = 0
+                let child: Async<Unit, Never> =
+                    async do
+                        await contextValue(context, 2)
+                        children = children + 1
+                let nested: Resource<Unit, Never> =
+                    Resource
+                        .make(
+                        () => Async.succeed(()),
+                        (_: Unit) =>
+                            async do
+                                await contextValue(context, 2)
+                                releases = releases + 1
+                                let fiber = await child.fork()
+                                ()
+                    )
+                let first: Resource<Unit, Never> =
+                    Resource
+                        .make(
+                        () => Async.succeed(()),
+                        (_: Unit) =>
+                            async do
+                                await contextValue(context, 2)
+                                await nested.attachToScope()
+                                let fiber = await child.fork()
+                                if mode == 2 then
+                                    await Async<Unit, Never>.failPanic("cleanup defect")
+                    )
+                let scoped: Async<Unit, String> =
+                    async do
+                        use context.scope(2)
+                        await first.attachToScope()
+                        if mode == 1 then await Async<Unit, String>.fail("body failure")
+                let observed =
+                    await scoped
+                        .foldCause(
+                        (cause: Cause<String>) => Async.succeed(Some(cause)),
+                        (_: Unit) => Async.succeed(None)
+                    )
+                if mode == 0 then
+                    assert observed.isNone
+                    assert children == 2
+                else
+                    assert observed.isSome
+                assert releases == 1
+                await contextValue(context, 1)
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: pre-start interruption does not invoke the use callback" =
+    let mutable invoked = false
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            let body: Async<Unit, Never> =
+                context
+                    .scope(1)
+                    .use (
+                    (
+                        (_: Unit) =>
+                            invoked = true
+                            Async.succeed(())
+                    ),
+                    (error: Never) => error
+                )
+            let child = await body.fork()
+            await child.interrupt()
+            await child
+                .join()
+                .foldCause(
+                (
+                    (cause: Cause<Never>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Interrupted(_) => ()
+                                    case _ => panic "expected interruption"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "expected interruption")
+            )
+            assert !invoked
+            assert (await context.get()).isNone
+    program.run()
+
+@timeout(10000)
+ test "ScopeContext: canceled producer pull preserves context cleanup defects" =
+    let program: Async<Unit, Never> =
+        async do
+            let context = await ScopeContext<Int32>.make()
+            let ready = await Async<Unit, Never>.makePromise()
+            let never = await Async<Unit, Never>.makePromise()
+            let pull: (Unit) => Async<Int32, Option<Never>> =
+                (_: Unit) =>
+                    async do
+                        use context.scope(2)
+                        let resource: Resource<Unit, Never> =
+                            Resource
+                                .make(
+                                () => Async.succeed(()),
+                                (_: Unit) =>
+                                    async do
+                                        await contextValue(context, 2)
+                                        await Async<Unit, Never>.failPanic("context cleanup defect")
+                            )
+                        await resource.attachToScope()
+                        await ready.complete(())
+                        await never.awaitPromise()
+                        1
+            let driver: Async<Unit, Never> =
+                async do
+                    let producer =
+                        await Producer<Int32, Never>
+                            .make(
+                            Async<Unit, Never>.succeed(()),
+                            pull,
+                            (_: Unit) => Async.succeed(())
+                        )
+                    await producer.next().orPanicWith((_: Option<Never>) => "unexpected end")
+                    ()
+            let child = await driver.fork()
+            await ready.awaitPromise()
+            await child.interrupt()
+            await child
+                .join()
+                .foldCause(
+                (
+                    (cause: Cause<Never>) =>
+                        Async
+                            .thunk(
+                            () =>
+                                match cause with
+                                    case Cause.Panicked(message, _) =>
+                                        assert message == "context cleanup defect"
+                                    case _ => panic "lost context cleanup defect"
+                        )
+                ),
+                (_: Unit) => Async.thunk(() => panic "expected cleanup defect")
+            )
+            assert (await context.get()).isNone
+    program.run()

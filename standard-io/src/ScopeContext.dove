@@ -1,0 +1,33 @@
+package standard.io
+
+/// An identity shared by consumers, whose value is supplied by the executing scope.
+public class ScopeContext<T> private (token: ScopeContextToken) =
+    /// Allocate a fresh identity each time this effect executes.
+    public function make(): Async<ScopeContext<T>, Never> =
+        Async.thunk(() => ScopeContext<T>(ScopeContextToken()))
+
+    /// Read the nearest binding at execution time; absence is not an error.
+    public function get(self): Async<Option<T>, Never> =
+        ReadScopeContext(self.token)
+            .map<Option<T>>((value: Option<Any>) => value.map<T>((bound: Any) => bound as T))
+
+    /// Describe a binding. Use it to open a scope; construction installs nothing.
+    public function scope(self, value: T): ScopeContextScope<T> =
+        ScopeContextScope<T>.make(self.token, value)
+
+/// A reusable scoped binding, supporting `use` without resource transfer operations.
+public class ScopeContextScope<T> private (internal token: ScopeContextToken, internal value: T) =
+    internal function make(token: ScopeContextToken, value: T): ScopeContextScope<T> =
+        ScopeContextScope<T>(token, value)
+
+implement<T> Usable<Unit, Never> for ScopeContextScope<T> =
+    type Wrapped<U, E2> = Async<U, E2>
+
+    function use<U, E2>(self, f: (Unit) => Async<U, E2>, errorF: (Never) => E2): Async<U, E2> =
+        WithScopeContext<U, E2>(self.token, self.value, () => f(()))
+
+internal class ScopeContextToken()
+
+internal record ScopeContextBinding =
+    token: ScopeContextToken
+    value: Any

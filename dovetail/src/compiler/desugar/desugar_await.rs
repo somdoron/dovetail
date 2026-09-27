@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::desugar_use::is_resource_use_result;
 use crate::common::span::Span;
-use crate::common::types::{MangledName, SymbolName, VarName, Variance};
+use crate::common::types::{MangledName, SymbolName, TypeParamName, VarName, Variance};
 
 use crate::common::types::Fqn;
 use crate::typechecker::types::{
@@ -24,6 +24,25 @@ use crate::typechecker::types::{
 /// Runs after `desugar_try`, before `capture::analyze_captures`.
 pub fn desugar_await_expressions(module: &mut TypedModule) {
     super::awaitable::snapshot(module);
+    let function_parameters = module
+        .functions
+        .iter()
+        .chain(module.function_templates.iter())
+        .map(|(name, function)| {
+            (
+                name.clone(),
+                (
+                    function.type_params.clone(),
+                    function
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect(),
+                ),
+            )
+        })
+        .collect();
+    FUNCTION_PARAMETERS.with(|slot| *slot.borrow_mut() = function_parameters);
     // Snapshot the class parent chain for `widens_to`'s covariant-widening
     // check (see `CLASS_PARENTS`). Overwritten wholesale on every call, so a
     // stale map from a previous module can never leak into this pass.
@@ -315,7 +334,13 @@ fn widens_to(actual: &Type, expected: &Type) -> bool {
 /// Upper bound on class-hierarchy depth for the `widens_to` ancestor walk.
 const MAX_CLASS_HIERARCHY_DEPTH: usize = 64;
 
+type FunctionParameters = HashMap<MangledName, (Vec<TypeParamName>, Vec<Type>)>;
+
 thread_local! {
+    /// Parameter types preserve deferred arguments when awaits split positional calls.
+    /// Replaced for each module, like CLASS_PARENTS below.
+    static FUNCTION_PARAMETERS: RefCell<FunctionParameters> = RefCell::new(HashMap::new());
+
     /// Child → parent class mangled names for the current module, snapshotted
     /// by `desugar_await_expressions` from `module.types`. A thread-local
     /// rather than a threaded parameter because the covariance check sits under
@@ -1090,7 +1115,8 @@ fn lower_await_stmt(
     match stmt.kind {
         // Bare expression-statement Await: `await foo`.
         TypedExprKind::Await { operand, .. } => {
-            let operand_async = *operand;
+            let operand_async =
+                lower_await_operand(*operand, return_type, succeed_method, function_name);
             match continuation {
                 None => operand_async,
                 Some(cont) => build_and_then(
@@ -1115,7 +1141,9 @@ fn lower_await_stmt(
             value,
         } if matches!(value.kind, TypedExprKind::Await { .. }) => {
             let operand = match value.kind {
-                TypedExprKind::Await { operand, .. } => *operand,
+                TypedExprKind::Await { operand, .. } => {
+                    lower_await_operand(*operand, return_type, succeed_method, function_name)
+                }
                 _ => unreachable!(),
             };
             let cont = continuation.unwrap_or_else(|| {
@@ -1344,7 +1372,7 @@ fn lower_await_stmt(
 
 /// Lower an expression containing await(s) into an Async-valued expression.
 /// For pure (no-await) expressions, wraps in `succeed`. For `Await` itself,
-/// returns its operand directly. For `Match`/`If`, uses the branching lift.
+/// lowers its operand before executing it. For `Match`/`If`, uses the branching lift.
 /// Otherwise, hoists the first inner await via `extract_first_await` and
 /// recursively lowers the remaining expression.
 fn lower_expr_to_async(
@@ -1364,9 +1392,9 @@ fn lower_expr_to_async(
         return wrap_in_succeed(expr, &async_inner_ty, &Some(inner_succeed));
     }
 
-    // The expression IS an Await — its operand is the Async directly.
+    // The operand may itself need awaits to construct the Async to execute.
     if let TypedExprKind::Await { operand, .. } = expr.kind {
-        return *operand;
+        return lower_await_operand(*operand, return_type, succeed_method, function_name);
     }
 
     // Match/If with await inside — full branching lift.
@@ -1422,7 +1450,12 @@ fn lower_expr_to_async(
             function_name,
         )
     } else {
-        await_data.operand
+        lower_await_operand(
+            await_data.operand,
+            return_type,
+            succeed_method,
+            function_name,
+        )
     };
     // The modified_expr now has a VarRef where the await was; lift it into
     // Async<inner_ty, E> via recursive call. The recursive call's return_type
@@ -1442,6 +1475,54 @@ fn lower_expr_to_async(
         bound_ty,
         cont,
         &async_inner_ty,
+        succeed_method,
+        function_name,
+        span,
+    )
+}
+
+/// Evaluate any awaits needed to construct an operand, then execute the
+/// resulting computation. Lower the whole operand so blocks keep their local
+/// bindings and branches keep awaits inside the selected branch.
+fn lower_await_operand(
+    operand: TypedExpr,
+    return_type: &Type,
+    succeed_method: &Option<ResolvedImplMethod>,
+    function_name: &str,
+) -> TypedExpr {
+    if !contains_await(&operand) {
+        return operand;
+    }
+    let operand_type = operand.ty.clone();
+    let success_type =
+        super::awaitable::success_type(&operand_type).expect("checked Awaitable operand");
+    let result_type = super::awaitable::rebind(
+        outer_awaitable_context(return_type, succeed_method),
+        success_type,
+    );
+    let span = operand.span.clone();
+    let evaluated = lower_expr_to_async(
+        operand,
+        &operand_type,
+        return_type,
+        succeed_method,
+        function_name,
+    );
+    let name = fresh_await_var();
+    let computation = TypedExpr {
+        kind: TypedExprKind::VarRef {
+            name: name.clone(),
+            boxed: false,
+        },
+        ty: operand_type.clone(),
+        span: span.clone(),
+    };
+    build_and_then_typed(
+        evaluated,
+        name,
+        operand_type.clone(),
+        computation,
+        &result_type,
         succeed_method,
         function_name,
         span,
@@ -1895,35 +1976,7 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
             )
         }
 
-        TypedExprKind::FunctionCall {
-            name,
-            args,
-            type_params,
-        } => {
-            let mut new_args = Vec::new();
-            let mut found_data = None;
-            for arg in args {
-                if found_data.is_some() {
-                    new_args.push(arg);
-                } else {
-                    let (data, new_arg) = extract_first_await(arg);
-                    new_args.push(new_arg);
-                    found_data = data;
-                }
-            }
-            (
-                found_data,
-                TypedExpr {
-                    kind: TypedExprKind::FunctionCall {
-                        name,
-                        args: new_args,
-                        type_params,
-                    },
-                    ty: expr.ty,
-                    span: expr.span,
-                },
-            )
-        }
+        TypedExprKind::FunctionCall { .. } => extract_positional_call_await(expr),
 
         TypedExprKind::EnumCreate {
             fqn,
@@ -2888,6 +2941,54 @@ fn extract_first_await(expr: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
         // `lower_await_stmt` or left inline.
         _ => (None, expr),
     }
+}
+
+/// Keep eager positional operands before later awaits, while preserving deferred arguments.
+fn extract_positional_call_await(call: TypedExpr) -> (Option<AwaitData>, TypedExpr) {
+    let TypedExprKind::FunctionCall {
+        name,
+        args,
+        type_params,
+    } = &call.kind
+    else {
+        unreachable!("positional await extraction requires a function call");
+    };
+    if !args.iter().any(contains_await) {
+        return (None, call);
+    }
+    let parameter_types = positional_parameter_types(name, type_params, args);
+    let order: Vec<usize> = (0..args.len()).collect();
+    let ordered =
+        crate::compiler::named_calls::lower_with_parameter_types(call, &order, &parameter_types);
+    hoist_control_flow(ordered.kind, ordered.ty, ordered.span)
+}
+
+/// Resolve the eager/deferred parameter types before positional arguments
+/// become bindings, while generic functions still have their template names.
+fn positional_parameter_types(
+    name: &MangledName,
+    type_params: &[Type],
+    args: &[TypedExpr],
+) -> Vec<Type> {
+    FUNCTION_PARAMETERS.with(|slot| {
+        let functions = slot.borrow();
+        let template_name = MangledName(name.0.split('#').next().unwrap().to_owned());
+        let Some((parameters, types)) = functions
+            .get(name)
+            .or_else(|| functions.get(&template_name))
+        else {
+            return args.iter().map(|argument| argument.ty.clone()).collect();
+        };
+        let substitutions: BTreeMap<TypeParamName, Type> = parameters
+            .iter()
+            .cloned()
+            .zip(type_params.iter().cloned())
+            .collect();
+        types
+            .iter()
+            .map(|ty| crate::monomorphize::substitute::apply_type_substitution(ty, &substitutions))
+            .collect()
+    })
 }
 
 /// Hoist a control-flow expression or ordered call block that contains an

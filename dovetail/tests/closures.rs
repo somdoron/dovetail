@@ -1767,3 +1767,24 @@ function main(): Unit =
     )
     .expect("contravariant class-subtype closure");
 }
+
+#[test]
+fn never_closure_parameters_are_unreachable_for_all_value_representations() {
+    common::compile_and_run(
+        r#"
+package a
+
+function integer(value: Int32): Int32 = value
+function wideInteger(value: Int64): Int64 = value
+function reference(value: String): String = value
+
+function main(): Unit =
+    let narrow = (value: Never) => integer(value)
+    let wide = (value: Never) => wideInteger(value)
+    let text = (value: Never) => reference(value)
+    let captured = (value: Never) => () => reference(value)
+    ()
+"#,
+    )
+    .expect("uninhabited closure parameters must produce valid unreachable Wasm");
+}

@@ -364,6 +364,17 @@ test "PromiseState Completed" =
         case PromiseState.Completed(Ok(v)) => assert v == 42
         case _ => panic "expected Completed Ok"
 
+// --- Scoped context execution ---
+internal final class ReadScopeContext(public token: ScopeContextToken) extends Async<
+    Option<Any>,
+    Never>()
+
+internal final class WithScopeContext<out T, out E>(
+    public token: ScopeContextToken,
+    public value: Any,
+    public body: () => Async<Any, Any>
+) extends Async<T, E>()
+
 // --- Demand-driven producer execution ---
 public class Producer<out A, out E> internal (internal fiber: FiberId, internal creator: FiberId)
 

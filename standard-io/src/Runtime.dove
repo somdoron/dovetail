@@ -16,7 +16,13 @@ import standard.wasi.Stream
 import standard.wasi.Waitable
 import standard.wasi.SubtaskHandle
 
+record ScopeContextLifetime =
+    scope: ScopeId
+    outerScope: ScopeId
+    previousBindings: List<ScopeContextBinding>
+
 enum Frame =
+    CloseScopeContextFrame(ScopeContextLifetime)
     ProducerCleanupFrame(ProducerState)
     ProducerValueFrame { producer: ProducerState; cleanupFailure: Option<Cause<Any>> }
     ProducerCleanupHandlerFrame
@@ -186,6 +192,7 @@ class FiberState(
     /// The innermost scope currently open in this fiber — what the next `fork`
     /// attaches to. Saved and restored by the bracket frames.
     public mutable currentScope: ScopeId,
+    public mutable contextBindings: List<ScopeContextBinding>,
     public joinWaiters: MutableStack<FiberId>,
     public mutable interruptPending: Bool,
     /// Wakes that arrived for a waiter this fiber was registered on while the
@@ -323,6 +330,7 @@ class FiberState(
             parent,
             rootScope,
             rootScope,
+            List.empty,
             joinWaiters,
             false,
             pendingWakes,
@@ -449,6 +457,7 @@ function buildsFrame(node: Async<Any, Any>): Bool =
         case _fc: FoldCause<Any, Any> => true
         case _u: Uninterruptible<Any, Any> => true
         case _i: Interruptible<Any, Any> => true
+        case _context: WithScopeContext<Any, Any> => true
         case _b: Bracket<Any, Any> => true
         case _at: Attach<Any, Any> => true
         case _aw: Await<Any, Any> => true
@@ -798,7 +807,8 @@ public class Runtime(
     ///
     /// Only the fiber that HOLDS a scope open ever attaches to it — `currentScope`
     /// is per-fiber, and a fiber parked draining a scope runs no code — so a
-    /// registration can never land on a scope that is already closing.
+    /// registration cannot race a parked drain. Context cleanup keeps its scope
+    /// current and may attach more work, which its close frame drains in turn.
     function registerFinalizer(self, fiber: FiberState, scopeId: ScopeId, finalizer: Finalizer):
         Unit =
         let scopeRecord = self.scopeRecordFor(scopeId, fiber.id)
@@ -845,6 +855,7 @@ public class Runtime(
         self.nextFiberId = self.nextFiberId.next
         let fiber =
             FiberState.make(fiberId, program, Some(ownerId), self.newScopeId(), makeHandle(fiberId))
+        fiber.contextBindings = self.fibers.get(ownerId).require.contextBindings
         self.fibers.put(fiberId, fiber)
         self.runQueue.enqueue(fiberId)
         // Read before attaching, or the fiber would see its own arrival.
@@ -929,6 +940,8 @@ public class Runtime(
                                 request;
                                 originalFailure = failure
                             } => self.finishProducerShutdown(fiber, request, failure)
+                            case Frame.CloseScopeContextFrame(context) =>
+                                self.closeScopeContext(fiber, context, Ok(value))
                             case Frame.MapFrame { transform = f } =>
                                 fiber.trace = fiber.trace.tail
                                 let next: Async<Any, Any> = Succeed(f(value))
@@ -1325,6 +1338,30 @@ public class Runtime(
             case idle: ProducerIdle =>
                 self.beginPark(fiber)
                 ()
+            case context: ReadScopeContext =>
+                fiber.asyncValue = Succeed(findScopeContext(fiber.contextBindings, context.token))
+            case context: WithScopeContext<Any, Any> =>
+                let outerScope = fiber.currentScope
+                let lifetime =
+                    ScopeContextLifetime {
+                        scope = self.openScope(fiber)
+                        outerScope = outerScope
+                        previousBindings = fiber.contextBindings
+                    }
+                // Install the binding and its cleanup owner in the same step.
+                fiber
+                    .continuation
+                    .push(Frame.CloseScopeContextFrame(lifetime))
+                fiber.contextBindings =
+                    fiber
+                        .contextBindings
+                        .prepend(
+                        ScopeContextBinding { token = context.token; value = context.value }
+                    )
+                // The first step may be granted to an already-interrupted fiber
+                // solely to arm cleanup. Do not invoke user code in that step.
+                let start: Async<Unit, Any> = Async.succeed(())
+                fiber.asyncValue = start.andThen<Any>((_: Unit) => context.body())
             case fk: Fork<Any, Any> =>
                 // Structured: belongs to the innermost open scope, which waits for
                 // it when it closes normally.
@@ -1870,6 +1907,8 @@ public class Runtime(
                         self.awaitProducerShutdown(fiber, request)
                     case Frame.ProducerShutdownFrame { request } =>
                         self.finishProducerShutdown(fiber, request, Some(cause))
+                    case Frame.CloseScopeContextFrame(context) =>
+                        self.closeScopeContext(fiber, context, Error(cause))
                     case Frame.FoldFrame { onFailure } =>
                         match cause with
                             case Cause.Failed(error, _) => fiber.asyncValue = onFailure(error)
@@ -2167,6 +2206,56 @@ public class Runtime(
                         fiber.interruptPending = false
                         self.interruptDrainingFiber(fiber, scopeId)
                     ScopeClose.Draining
+
+    /// Keep cleanup-created children and attachments inside the binding's lifetime.
+    /// Unlike a resource bracket, a context has no own release: keep closing the
+    /// same scope until its finalizers have stopped adding work, then restore.
+    function closeScopeContext(
+        self,
+        fiber: FiberState,
+        context: ScopeContextLifetime,
+        outcome: Result<Any, Cause<Any>>
+    ): Unit =
+        let resume =
+            match outcome with
+                case Ok(value) => DrainResume.ResumeValue(value)
+                case Error(cause) => DrainResume.ResumeCause(cause)
+        let abnormal =
+            match outcome with
+                case Ok(_) => false
+                case Error(_) => true
+        let next: Async<Any, Any> =
+            match outcome with
+                case Ok(value) => Async<Any, Any>.succeed(value)
+                case Error(cause) => Async<Any, Any>.fromCause(cause)
+        match self.closeScope(fiber, context.scope, abnormal, resume) with
+            case ScopeClose.Draining =>
+                fiber.continuation.push(Frame.CloseScopeContextFrame(context))
+            case ScopeClose.Closed(finalizers) =>
+                if finalizers.isEmpty then
+                    fiber.currentScope = context.outerScope
+                    fiber.contextBindings = context.previousBindings
+                    fiber.asyncValue = next
+                else
+                    // closeScope retired the old record. Cleanup may recreate it
+                    // by forking or attaching; this frame drains that work too.
+                    fiber
+                        .continuation
+                        .push(Frame.CloseScopeContextFrame(context))
+                    let location =
+                        SourceLocation { file = ""; line = 0; column = 0; functionName = "" }
+                    self
+                        .runMaskedUnwind(
+                        fiber,
+                        Frame.AndThenFrame { continuation = (_: Any) => next; location = location },
+                        runFinalizers(finalizers)
+                    )
+                    // A context can close inside an active producer pull. Preserve
+                    // cleanup provenance even though this is not its release scope;
+                    // the handler frame also respects later foldCause recovery.
+                    fiber
+                        .continuation
+                        .push(Frame.ProducerCleanupHandlerFrame)
 
     /// Interrupt what a closing scope must not wait for: its background fibers
     /// always, its structured ones too when the close is `abnormal`.
@@ -4423,3 +4512,14 @@ test "Runtime: no stalled fiber leaves the deadlock message bare" =
     let runtime = Runtime.make(program)
     let message = runtime.stallMessage()
     assert message == "Deadlock: no runnable fibers and no pending waitables"
+
+/// Bindings are immutable and shared by children; the nearest matching identity wins.
+function findScopeContext(bindings: List<ScopeContextBinding>, token: ScopeContextToken):
+    Option<Any> =
+    let mutable remaining = bindings
+    let mutable found: Option<Any> = None
+    while !remaining.isEmpty && found.isNone do
+        let binding = remaining.head
+        if ClassIdentity.equals(binding.token, token) then found = Some(binding.value)
+        remaining = remaining.tail
+    found

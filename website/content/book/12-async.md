@@ -39,7 +39,7 @@ Most async values, however, come from async functions (12.2) or from library cal
 A failure in an async program is more than just a typed error. The runtime distinguishes three kinds of failure, captured by `Cause<E>`:
 
 - **`Failed(e)`** — a typed error of type `E` (the same channel as `Async.fail`)
-- **`Panicked(message)`** — an assertion or other panic from inside the computation
+- **`Panicked(message)`** — an async defect, such as `Async.failPanic(message)`; a language-level `panic` or failed `assert` instead aborts execution with a Wasm trap
 - **`Interrupted`** — the fiber was cancelled (see 12.5)
 
 Most code only cares about typed failures; the other variants surface through panic handlers and structured-concurrency cancellation.
@@ -283,3 +283,11 @@ async function pause(): Async<Unit, Never> =
 `let _ = computation` explicitly acknowledges intentional discard. It **does not
 execute** the computation. Bindings and arguments count as using a value; this
 warning does not prove that every stored computation is eventually executed.
+
+### Inherited scope context
+
+`ScopeContext<T>` supplies values to an executing scope and its descendant fibers.
+Inject one context identity into consumers, then use `context.scope(value)` at the
+execution boundary. Children inherit at creation; nested bindings shadow locally,
+and joining never merges changes into the parent. See [Scope Context](13-resources.md#138-scope-context)
+for the API, optional lookup, and lifetime rules.

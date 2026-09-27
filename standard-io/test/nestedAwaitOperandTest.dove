@@ -1,0 +1,109 @@
+package test
+
+import standard.io.Async
+
+function nestedAwaitRecord(events: Array<Int32>, value: Int32): Int32 =
+    events.set(0, events.get(0) * 10 + value)
+    value
+
+function nestedAwaitPair(first: Int32, second: Int32): Async<Int32, Never> =
+    Async.succeed(first + second)
+
+test "nested await operands: statement, binding and tail execute in order" =
+    let events = Array<Int32>.fill(1, 0)
+    let program: Async<Int32, Never> =
+        async do
+            await Async.succeed(nestedAwaitRecord(events, await Async.succeed(1)))
+            let value = await Async.succeed(await Async.thunk(() => nestedAwaitRecord(events, 2)))
+            let mutable changed = await Async.succeed(await Async.succeed(value))
+            await Async.succeed(())
+            changed = changed + 1
+            assert changed == 3
+            await Async.succeed(await Async.thunk(() => nestedAwaitRecord(events, 3)))
+    assert events.get(0) == 0
+    program.map(value => assert value == 3).run()
+    assert events.get(0) == 123
+
+test "nested await operands: expression and sibling evaluation order" =
+    let events = Array<Int32>.fill(1, 0)
+    let program: Async<Unit, Never> =
+        async do
+            assert (
+                await nestedAwaitPair(
+                    nestedAwaitRecord(events, 1),
+                    await Async.thunk(() => nestedAwaitRecord(events, 2))
+                )
+            )
+                == 3
+            assert events.get(0) == 12
+    assert events.get(0) == 0
+    program.run()
+
+test "nested await operands: block bindings and branches remain local" =
+    let events = Array<Int32>.fill(1, 0)
+    let program: Async<Unit, Never> =
+        async do
+            let value =
+                await (
+                    if true then
+                        let first = await Async.succeed(40)
+                        Async.succeed(first + (await Async.succeed(2)))
+                    else
+                        Async.succeed(nestedAwaitRecord(events, await Async.succeed(9)))
+                )
+            assert value == 42
+            assert events.get(0) == 0
+    program.run()
+
+test "nested await operands: inner failure skips construction and continuation" =
+    let events = Array<Int32>.fill(1, 0)
+    let program: Async<Int32, String> =
+        async do
+            let value =
+                await Async
+                    .succeed(nestedAwaitRecord(events, await Async<Int32, String>.fail("inner")))
+            nestedAwaitRecord(events, 9)
+    program
+        .fold(
+        message => Async.thunk(() => assert message == "inner"),
+        (_: Int32) => Async.thunk(() => assert false)
+    )
+        .run()
+    assert events.get(0) == 0
+
+test "nested await operands: outer failure propagates" =
+    let program: Async<Int32, String> =
+        async do
+            await Async<Int32, String>.fail(await Async.succeed("outer"))
+    program
+        .fold(
+        message => Async.thunk(() => assert message == "outer"),
+        (_: Int32) => Async.thunk(() => assert false)
+    )
+        .run()
+
+test "await failure arguments: uninhabited continuation values remain unreachable" =
+    let events = Array<Int32>.fill(1, 0)
+    let program: Async<Int32, String> =
+        async do
+            nestedAwaitRecord(events, await Async<Int32, String>.fail("direct"))
+    program
+        .fold(
+        message => Async.thunk(() => assert message == "direct"),
+        (_: Int32) => Async.thunk(() => assert false)
+    )
+        .run()
+    assert events.get(0) == 0
+
+function nestedAwaitIgnore<T>(deferred: ByName<T>, value: Int32): Async<Int32, Never> =
+    Async.succeed(value)
+
+test "nested await operands: earlier deferred arguments stay lazy" =
+    let events = Array<Int32>.fill(1, 0)
+    let program: Async<Unit, Never> =
+        async do
+            let value =
+                await nestedAwaitIgnore(nestedAwaitRecord(events, 9), await Async.succeed(42))
+            assert value == 42
+            assert events.get(0) == 0
+    program.run()
