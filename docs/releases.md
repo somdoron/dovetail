@@ -4,6 +4,8 @@ The [release workflow](../.github/workflows/release.yml) builds official binarie
 and publishes the compiler package as `dovetail-lang` on crates.io. The installed
 executable remains `dovetail`.
 
+Release notes: [0.1.2](releases/0.1.2.md).
+
 ## One-time setup
 
 Create a crates.io account and verify its email address. Create an API token with

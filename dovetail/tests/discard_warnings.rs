@@ -305,7 +305,7 @@ fn cli_prints_warnings_without_failing_check_or_build() {
     std::fs::write(
         directory.path().join("Dovetail.toml"),
         r#"
-compiler-version = "0.1.1"
+compiler-version = "0.1.2"
 [[project]]
 name = "example"
 root_package = "example"

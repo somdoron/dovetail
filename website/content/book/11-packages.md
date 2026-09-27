@@ -43,7 +43,7 @@ This keeps the codebase predictable: you can infer the package from the path and
 When you use the `dovetail` CLI, each **project** in the workspace has a **root package** defined in `Dovetail.toml`:
 
 ```toml
-compiler-version = "0.1.1"
+compiler-version = "0.1.2"
 
 [[project]]
 name = "api"
@@ -230,7 +230,7 @@ The compiler enforces this. You’ll get an error if you introduce a circular de
 In a workspace, dependencies are declared per **project** in `Dovetail.toml`:
 
 ```toml
-compiler-version = "0.1.1"
+compiler-version = "0.1.2"
 
 [[project]]
 name = "core"
@@ -271,7 +271,7 @@ Projects can use libraries from public or private Git repositories, including re
 The following example imports two projects from one repository. Replace the example URL and tag with those of your library:
 
 ```toml
-compiler-version = "0.1.1"
+compiler-version = "0.1.2"
 
 [[dependencies]]
 git = "https://github.com/acme/database.git"
@@ -291,7 +291,7 @@ The compiler resolves the complete transitive dependency tree. If `postgres` dep
 
 ### Pin the Compiler and Library Revision
 
-Every manifest must declare `compiler-version`. Run `dovetail --version` to find your binary's version; the examples here assume `0.1.1`. The workspace and every reachable dependency manifest must require that exact version. Build, check, run, and test reject a root version mismatch before fetching dependencies. Editor analysis performs the same compatibility checks.
+Every manifest must declare `compiler-version`. Run `dovetail --version` to find your binary's version; the examples here assume `0.1.2`. The workspace and every reachable dependency manifest must require that exact version. Build, check, run, and test reject a root version mismatch before fetching dependencies. Editor analysis performs the same compatibility checks.
 
 The compiler version also pins the bundled prelude. Dependencies use that prelude, and cannot supply a conflicting replacement. A published tag without `compiler-version` cannot be used until its publisher adds the field in a new revision.
 
@@ -372,7 +372,7 @@ The language server resolves the same dependency graph as the CLI. Go-to-definit
 Use top-level `standard-tag` to make all standard library projects available at one revision:
 
 ```toml
-compiler-version = "0.1.1"
+compiler-version = "0.1.2"
 standard-tag = "<tag>"
 
 [[project]]
