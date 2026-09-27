@@ -908,7 +908,7 @@ dependencies = [
 
 [[package]]
 name = "dovetail-lang"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "clap",

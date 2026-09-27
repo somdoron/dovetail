@@ -2,7 +2,7 @@
   "name": "dovetail-language",
   "displayName": "Dovetail Language",
   "description": "Language support for the Dovetail programming language",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "dovetail-lang",
   "repository": {
     "type": "git",
@@ -131,7 +131,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "install-ext": "vsce package && code --install-extension dovetail-language-0.1.2.vsix",
+    "install-ext": "vsce package && code --install-extension dovetail-language-0.1.3.vsix",
     "test:grammar": "vscode-tmgrammar-snap ./test/grammar/*.dove -s source.dovetail -g ./syntaxes/dovetail.tmLanguage.json",
     "test": "npm run test:grammar"
   },

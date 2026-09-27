@@ -585,7 +585,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("myapp/src/utils")).unwrap();
 
         // Write Dovetail.toml.
-        let manifest = r#"compiler-version = "0.1.2"
+        let manifest = r#"compiler-version = "0.1.3"
 [[project]]
 name = "mylib"
 path = "libraries/mylib"
@@ -647,7 +647,7 @@ packages = ["utils", "."]
         std::fs::create_dir_all(tmp.path().join("a/src")).unwrap();
         std::fs::create_dir_all(tmp.path().join("b/src")).unwrap();
 
-        let manifest = r#"compiler-version = "0.1.2"
+        let manifest = r#"compiler-version = "0.1.3"
 [[project]]
 name = "a"
 root_package = "com.a"
@@ -681,7 +681,7 @@ packages = ["."]
 
         std::fs::create_dir_all(tmp.path().join("myapp/src/utils")).unwrap();
 
-        let manifest = r#"compiler-version = "0.1.2"
+        let manifest = r#"compiler-version = "0.1.3"
 [[project]]
 name = "myapp"
 root_package = "com.example.myapp"

@@ -116,7 +116,7 @@ All dependencies use the running compiler's bundled prelude. Do not load a separ
 
 The LSP checks its own compiler version against the workspace and dependencies too. Report mismatches as workspace configuration errors and do not serve semantic results from an incompatible compiler or stale cache. Include compiler version in compilation and LSP cache keys; source checkouts can remain shared across compiler versions.
 
-Existing manifests must add `compiler-version` when adopting this schema. Project initialization must write the creating binary's version, and manifest-rewriting commands must preserve it. The examples use illustrative release versions. Compatibility uses the declared Cargo package version (currently `0.1.2`); development binaries with that same declared version are treated as compatible. No Git revision is appended.
+Existing manifests must add `compiler-version` when adopting this schema. Project initialization must write the creating binary's version, and manifest-rewriting commands must preserve it. The examples use illustrative release versions. Compatibility uses the declared Cargo package version (currently `0.1.3`); development binaries with that same declared version are treated as compatible. No Git revision is appended.
 
 ### 2.2 Standard library shorthand
 

@@ -136,7 +136,7 @@ fn lib_and_app(root: &std::path::Path, app_src: &str) {
     write(&root.join("myapp/src/main.dove"), app_src);
     write(
         &root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.2"
+        r#"compiler-version = "0.1.3"
 [[project]]
 name = "mylib"
 root_package = "mylib"
@@ -266,7 +266,7 @@ fn a_project_can_use_the_prefix_it_declares() {
     );
     write(
         &root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.2"
+        r#"compiler-version = "0.1.3"
 [[project]]
 name = "mylib"
 root_package = "mylib"
@@ -398,7 +398,7 @@ function main(): Unit =
     );
     write(
         &root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.2"
+        r#"compiler-version = "0.1.3"
 [[project]]
 name = "mylib"
 root_package = "mylib"
@@ -448,7 +448,7 @@ function main(): Unit =
     );
     write(
         &root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.2"
+        r#"compiler-version = "0.1.3"
 [[project]]
 name = "mylib"
 root_package = "mylib"

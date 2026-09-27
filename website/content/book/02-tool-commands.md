@@ -212,7 +212,7 @@ To add a library, run `dovetail projects add model`, replace its generated `main
 with library declarations, and add `"model"` to the consuming project's `depends`:
 
 ```toml
-compiler-version = "0.1.2"
+compiler-version = "0.1.3"
 
 [[project]]
 name = "model"
@@ -241,7 +241,7 @@ To add standard libraries, set `standard-tag` to an **existing tag with the matc
 compiler version**, then select project names through `depends`:
 
 ```toml
-compiler-version = "0.1.2"
+compiler-version = "0.1.3"
 standard-tag = "<matching-tag>"
 
 [[project]]
