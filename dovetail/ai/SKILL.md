@@ -48,8 +48,9 @@ unverified. Investigate defects rather than hiding them in application workaroun
 
 1. Read the project's own instructions and `Dovetail.toml`. Identify the selected
    project, dependencies, existing conventions, and the user's requested scope.
-2. Read only the references below needed for this task. Do not load the entire
-   skill directory. References are self-contained; the language book is not required.
+2. Read only the task references below that matter. They cover workflow and common
+   mistakes; the [book](references/book.md) owns detailed syntax and examples.
+   Fetch relevant chapters on demand, with version and offline checks from that guide.
 3. Inspect nearby source and query actual dependency declarations before inventing
    API calls (`dovetail query search`, `package`, and `definition`). In particular, import named extensions explicitly, even in their package.
 4. For a new domain or substantial feature, suggest a small `types.dove` draft and
@@ -94,6 +95,7 @@ from the consumer workspace. Dovetail resolves its manifest from the working dir
 
 | Task | Reference |
 |---|---|
+| Find detailed language documentation, match versions, or work offline | [Book access](references/book.md) |
 | Find APIs, inspect signatures, explore dependencies or the prelude | [API discovery](references/api-discovery.md) |
 | Expressions, literals, control flow, functions, named arguments, closures | [Syntax](references/syntax.md) |
 | Records, enums, private construction, newtypes, modules, arrays/lists/slices, casts | [Types and collections](references/types.md) |

@@ -4,6 +4,8 @@ Use only when a review is requested for domain modeling or architecture. Read th
 [domain modeling](../references/domain.md) and
 [application architecture](../references/architecture.md) references; load language
 references from [the skill index](../SKILL.md) only as needed to verify enforcement.
+Use linked book chapters for detailed examples, following [book access](../references/book.md)
+for version matching and offline fallback.
 Do not edit source or delegate recursively. Review actual requirements and code,
 not an imagined future enterprise architecture.
 

@@ -384,7 +384,7 @@ depends = ["standard-collection", "standard-json"]
 
 Replace `<tag>` with a tag whose manifest declares the matching compiler version. Currently this shorthand uses `https://github.com/somdoron/dovetail.git`. It exposes projects rooted at `standard` or `standard.*`, retaining their actual project names such as `standard-json`, while excluding `standard.prelude`. Each local project still selects the libraries it needs through `depends`.
 
-The [Git dependencies design](../docs/github-dependencies-design.md) describes the resolver and compatibility rules in more detail.
+The [Git dependencies design](../../../docs/github-dependencies-design.md) describes the resolver and compatibility rules in more detail.
 
 ---
 

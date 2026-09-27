@@ -250,19 +250,19 @@ All five items landed (2026-09):
 Interfaces are documented within the existing type system chapter; chapter
 numbers remain unchanged.
 
-- [Part 6, §6.11](../book/06-type-system.md#611-interfaces-and-interface-types)
+- [Part 6, §6.11](../website/content/book/06-type-system.md#611-interfaces-and-interface-types)
   covers declarations, interface values, implicit coercion, heterogeneous lists,
   runtime-selected returns, dependency fields, generic interfaces and bounds,
   intersections and upcasts, `Self` returns, declaration restrictions, `Any`
   boundaries, and the trait-versus-interface decision table.
-- [Part 8, §8.5–8.7](../book/08-traits.md#85-trait-and-interface-inheritance)
+- [Part 8, §8.5–8.7](../website/content/book/08-traits.md#85-trait-and-interface-inheritance)
   covers shared inheritance, default methods and properties, implementation
   precedence, coherence, and explicit member disambiguation. Its introduction
   distinguishes traits from interface value types, and its property examples
   use receiver syntax.
-- The [TOC](../book/toc.md), [introduction](../book/01-getting-started.md), and
-  architecture discussions of ports in [Part 18](../book/18-project-structure.md#186-ports-and-adapters)
-  and [Part 20](../book/20-application-layer.md) link to the type system section.
+- The [TOC](../website/content/book/toc.md), [introduction](../website/content/book/01-getting-started.md), and
+  architecture discussions of ports in [Part 18](../website/content/book/18-project-structure.md#186-ports-and-adapters)
+  and [Part 20](../website/content/book/20-application-layer.md) link to the type system section.
 
 Validation: all 11 new or corrected runnable examples compile and execute with
 the current compiler; the added section link targets exist.

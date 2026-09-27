@@ -1,0 +1,154 @@
+---
+import { SITE, REPOSITORY } from '../lib/book.mjs';
+const topics = [
+  ['01', 'Make the rules visible.', 'Records, enums, and newtypes give business concepts their own vocabulary. Private construction keeps their invariants close.', '/book/type-system/', 'Explore the type system'],
+  ['02', 'Give failure a type.', 'Use Option and Result to make absence and rejection part of the contract. Follow the happy path without hiding the alternatives.', '/book/error-handling/', 'Work with typed errors'],
+  ['03', 'Keep work in its scope.', 'Async describes work. Resources describe ownership. Structured concurrency brings execution and cleanup together.', '/book/async/', 'Understand async & resources'],
+];
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content="Dovetail is a language for business logic. Model your rules with expressive types, typed errors, and structured concurrency. Compile to WebAssembly." />
+    <link rel="canonical" href={SITE} />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="describedby" href={`${SITE}/llms.txt`} />
+    <meta name="theme-color" content="#f6f3eb" />
+    <title>Dovetail — A language for business logic</title>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="shell">
+      <a class="wordmark" href="/" aria-label="Dovetail home"><span class="mark" aria-hidden="true">⋈</span> dovetail</a>
+      <nav aria-label="Main navigation">
+        <a href="/book/">The book</a>
+        <a href="/llms.txt">For agents</a>
+        <a href={REPOSITORY}>GitHub <span aria-hidden="true">↗</span></a>
+      </nav>
+    </header>
+    <main id="main">
+      <section class="hero shell">
+        <div class="intro">
+          <p class="eyebrow"><span></span> THE DOVETAIL PROGRAMMING LANGUAGE</p>
+          <h1>Business rules.<br /><em>First-class code.</em></h1>
+          <p class="lede">A language for the logic that makes your application yours. Express your domain, make failure explicit, and compile to WebAssembly.</p>
+          <div class="actions">
+            <a class="button" href="/book/getting-started/">Start building <span aria-hidden="true">↗</span></a>
+            <a class="text-link" href="/book/">Read the book <span aria-hidden="true">→</span></a>
+          </div>
+          <div class="install"><span aria-hidden="true">$</span><code>cargo install dovetail-lang</code><button id="copy" aria-label="Copy installation command">Copy</button><span id="copy-status" class="sr-only" aria-live="polite"></span></div>
+          <p class="preview">In preview. The compiler and libraries are evolving.</p>
+        </div>
+        <div class="code-card">
+          <div class="code-header"><span><i></i> Quantity.dove</span><span>DOVETAIL</span></div>
+          <pre aria-label="A validated Quantity type in Dovetail"><code><span class="comment">// A quantity that earns its name.</span>
+<span class="keyword">newtype</span> <span class="type">Quantity</span> <span class="keyword">private</span> = <span class="type">Int32</span>
+
+<span class="keyword">module</span> <span class="type">Quantity</span> =
+    <span class="keyword">public function</span> make(value: <span class="type">Int32</span>)
+        : <span class="type">Result</span>&lt;<span class="type">Quantity</span>, <span class="type">String</span>&gt; =
+        <span class="keyword">if</span> value &gt; <span class="number">0</span> <span class="keyword">then</span>
+            Ok(Quantity(value))
+        <span class="keyword">else</span>
+            Error(<span class="string">"Must be positive"</span>)</code></pre>
+          <div class="code-note"><span aria-hidden="true">↳</span> A small type. An explicit boundary.</div>
+        </div>
+      </section>
+      <div class="platform-strip"><div class="shell"><span>Built around your domain</span><span>Strong, expressive types</span><span>Structured concurrency</span><span>WebAssembly + WASI</span></div></div>
+      <section class="ideas shell" aria-labelledby="ideas-title">
+        <div class="section-heading"><p class="eyebrow">A LANGUAGE THAT FITS THE PROBLEM</p><h2 id="ideas-title">Let the model do more.</h2></div>
+        <div class="cards">
+          {topics.map(([number, title, text, href, label]) => <article><span class="number-label">/{number}</span><h3>{title}</h3><p>{text}</p><a href={href}>{label} <span aria-hidden="true">↗</span></a></article>)}
+        </div>
+      </section>
+      <section class="book-section shell" aria-labelledby="book-title">
+        <div><p class="eyebrow">ONE BOOK. TWO WAYS TO READ.</p><h2 id="book-title">For you.<br />And your coding assistant.</h2><p>Start with a first program, then explore the language and the design of real applications. Your assistant can read the same chapters as Markdown.</p></div>
+        <div class="reading-links">
+          <a href="/book/getting-started/"><span><small>START HERE</small>Your first Dovetail program</span><span aria-hidden="true">↗</span></a>
+          <a href="/book/ddd/"><span><small>GO DEEPER</small>Model the domain</span><span aria-hidden="true">↗</span></a>
+          <a href="/llms.txt"><span><small>FOR CODING ASSISTANTS</small>The agent-readable book</span><span aria-hidden="true">↗</span></a>
+        </div>
+      </section>
+    </main>
+    <footer class="shell"><a class="wordmark" href="/">dovetail</a><p>Built for the details that matter.</p><a href={REPOSITORY}>Open source · MIT / Apache 2.0 <span aria-hidden="true">↗</span></a></footer>
+    <script>
+      const button = document.querySelector<HTMLButtonElement>('#copy');
+      button?.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText('cargo install dovetail-lang');
+          document.querySelector('#copy-status')!.textContent = 'Installation command copied.';
+          button.textContent = 'Copied';
+          setTimeout(() => { button.textContent = 'Copy'; }, 2000);
+        } catch {
+          document.querySelector('#copy-status')!.textContent = 'Select the command to copy it manually.';
+        }
+      });
+    </script>
+  </body>
+</html>
+<style>
+  :global(*) { box-sizing: border-box; }
+  :global(body) { margin: 0; background: #f6f3eb; color: #262b25; font-family: ui-sans-serif, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  :global(a) { color: inherit; }
+  :global(a:focus-visible), :global(button:focus-visible) { outline: 3px solid #ad4e2b; outline-offset: 5px; }
+  .shell { max-width: 1264px; padding-inline: 48px; margin-inline: auto; }
+  header { display: flex; align-items: center; justify-content: space-between; height: 108px; }
+  .wordmark { font: 600 34px Georgia, serif; letter-spacing: -2px; text-decoration: none; }
+  .mark { color: #ac502e; margin-right: 8px; font-size: 40px; }
+  nav { display: flex; gap: 32px; font-size: 14px; }
+  nav a { text-decoration: none; }
+  nav a:hover, .text-link:hover { text-decoration: underline; }
+  .hero { padding-top: 78px; padding-bottom: 104px; display: grid; grid-template-columns: 1.12fr 1fr; gap: 64px; align-items: center; }
+  .eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 1.8px; margin: 0 0 25px; }
+  .eyebrow > span { display: inline-block; background: #b45e3d; width: 7px; height: 7px; border-radius: 50%; margin-right: 9px; }
+  h1 { font: 500 clamp(46px, 5vw, 68px)/1.04 Georgia, serif; letter-spacing: -3px; margin: 0 0 25px; }
+  h1 em { color: #ad512f; font-weight: 400; }
+  .lede { color: #5a6057; font-size: 17px; line-height: 1.75; max-width: 470px; margin: 0; }
+  .actions { display: flex; align-items: center; gap: 28px; margin-top: 31px; font-size: 14px; }
+  .button { background: #293b2d; color: #fffdf7; padding: 15px 23px; border-radius: 4px; text-decoration: none; }
+  .button:hover { background: #3b5140; }
+  .button span { padding-left: 25px; }
+  .text-link { text-decoration: none; }
+  .install { display: flex; align-items: center; gap: 13px; max-width: 368px; margin-top: 27px; border: 1px solid #dcded3; padding: 12px 13px; border-radius: 4px; font-size: 12px; background: #efeee6; }
+  .install > span { color: #838b7e; }
+  .install button { margin-left: auto; border: 0; color: #5a6057; background: none; cursor: pointer; font-size: 11px; }
+  .preview { font-size: 11px; color: #73776d; margin-top: 13px; }
+  .code-card { background: #212d26; color: #e3e8dd; border: 1px solid #3b463c; border-radius: 9px; box-shadow: 12px 20px 0 #e5e4d9; transform: rotate(-1deg); overflow: hidden; }
+  .code-header { padding: 18px 23px; border-bottom: 1px solid #3d473d; display: flex; justify-content: space-between; font: 11px ui-monospace, monospace; color: #a7b0a0; }
+  .code-header span:last-child { font: 9px ui-sans-serif, system-ui; letter-spacing: 1.6px; }
+  .code-header i { display: inline-block; height: 6px; width: 6px; border-radius: 50%; background: #bd7650; margin-right: 8px; }
+  pre { overflow-x: auto; margin: 0; padding: 34px 25px; font: 12px/1.9 ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .comment { color: #96a18e; }.keyword { color: #dbaa80; }.type { color: #bbd0b2; }.number { color: #e8c791; }.string { color: #d1cb9c; }
+  .code-note { padding: 17px 25px; border-top: 1px solid #3d473d; font-size: 11px; color: #a7b0a0; }
+  .code-note span { margin-right: 8px; }
+  .platform-strip { border-block: 1px solid #d9ddd0; }
+  .platform-strip .shell { display: flex; justify-content: space-between; padding-block: 23px; font-size: 11px; color: #626b5a; letter-spacing: .2px; }
+  .ideas { padding-top: 85px; padding-bottom: 91px; }
+  .section-heading .eyebrow { margin-bottom: 15px; }
+  h2 { font: 400 41px/1.15 Georgia, serif; letter-spacing: -1.3px; margin: 0; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 45px; margin-top: 45px; }
+  article { border-top: 1px solid #c9cebf; padding-top: 22px; }
+  .number-label { font: 11px ui-monospace, monospace; color: #9b502f; }
+  h3 { font: 400 25px Georgia, serif; letter-spacing: -.7px; margin: 24px 0 13px; }
+  article p, .book-section p:not(.eyebrow) { color: #62685d; font-size: 14px; line-height: 1.8; }
+  article a { font-size: 12px; text-decoration: none; display: inline-block; margin-top: 14px; }
+  article a:hover { text-decoration: underline; }
+  article a span { margin-left: 10px; }
+  .book-section { padding-block: 58px 70px; display: grid; grid-template-columns: 1fr 1fr; gap: 110px; border-top: 1px solid #d9ddd0; }
+  .book-section .eyebrow { margin-bottom: 19px; }
+  .book-section p:not(.eyebrow) { max-width: 420px; }
+  .reading-links a { display: flex; justify-content: space-between; align-items: center; padding: 26px 0; border-bottom: 1px solid #d0d5c8; text-decoration: none; font: 20px Georgia, serif; }
+  .reading-links a:hover { color: #974522; }
+  .reading-links small { display: block; font: 9px ui-sans-serif, system-ui; letter-spacing: 1.4px; color: #737c69; margin-bottom: 9px; }
+  footer { display: flex; align-items: center; gap: 25px; padding-block: 30px; border-top: 1px solid #d9ddd0; }
+  footer .wordmark { font-size: 27px; }
+  footer p, footer > a:last-child { font-size: 11px; color: #686e61; }
+  footer > a:last-child { margin-left: auto; text-decoration: none; }
+  .skip { position: absolute; top: -100px; }.skip:focus { top: 5px; background: white; padding: 10px; z-index: 1; }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  @media (max-width: 1000px) { .shell { padding-inline: 28px; }.hero { gap: 32px; }pre { font-size: 11px; padding-inline: 17px; }.book-section { gap: 50px; } }
+  @media (max-width: 760px) { header { height: 90px; }nav { gap: 16px; font-size: 12px; }.wordmark { font-size: 29px; }.mark { display: none; }.hero { grid-template-columns: 1fr; padding-top: 40px; padding-bottom: 60px; gap: 45px; }h1 { font-size: 54px; }.code-card { max-width: 520px; transform: none; }pre { font-size: 12px; }.platform-strip .shell { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }.cards { grid-template-columns: 1fr; gap: 30px; }.ideas { padding-block: 55px; }.book-section { grid-template-columns: 1fr; gap: 15px; }.book-section h2 { font-size: 35px; }footer { flex-wrap: wrap; gap: 10px 20px; }footer > a:last-child { margin-left: 0; } }
+  @media (max-width: 380px) { .shell { padding-inline: 20px; }nav { gap: 10px; }h1 { font-size: 47px; }.install { gap: 8px; font-size: 11px; }pre { font-size: 10px; }.actions { gap: 18px; } }
+</style>

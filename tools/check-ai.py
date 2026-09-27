@@ -49,19 +49,20 @@ def check_skill(directory, *, installed=False):
 
 def check_coverage():
     coverage = json.loads((ROOT / 'tools/ai-coverage.json').read_text())
-    expected = {str(path.relative_to(ROOT)) for path in (ROOT / 'book').glob('[0-9]*.md')}
+    expected = {str(path.relative_to(ROOT)) for path in (ROOT / 'website/content/book').glob('[0-9]*.md')}
     actual = {entry['source'] for entry in coverage}
     if not expected <= actual:
         raise ValueError(f'Book chapters missing from AI coverage: {expected - actual}')
     for entry in coverage:
         source = ROOT / entry['source']
-        headings = re.findall(r'^## (.+)$', source.read_text(), re.M)
-        relevant = {heading for heading in headings if not heading.startswith('Summary')}
-        if relevant != set(entry['sections']):
-            raise ValueError(f'Update AI coverage for changed sections: {entry["source"]}')
+        if not source.is_file():
+            raise ValueError(f'Missing AI documentation source: {source}')
         for target in entry['references'] + entry['reviews']:
             if not (BUNDLE / target).is_file():
                 raise ValueError(f'Missing AI coverage destination: {target}')
+        references = '\n'.join((BUNDLE / target).read_text() for target in entry['references'])
+        if entry['documentation'] not in references:
+            raise ValueError(f'No task reference links to the canonical documentation: {entry["source"]}')
     print('AI source coverage checked.', flush=True)
 
 

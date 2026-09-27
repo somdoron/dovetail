@@ -50,8 +50,8 @@ Related documents were reconciled with the same scope:
 | Interface declaration checks, type-position gate, coercion, intersections, upcasts, bare `Self` returns | [interface tests](../dovetail/tests/interfaces.rs), [coercion](../dovetail/src/compiler/coerce.rs), [lowering regressions](../dovetail/tests/trait_lowering_review.rs) |
 | Shared interface representations, erased ABI bridges, distinct generic application dispatch | [codegen](../dovetail/src/compiler/codegen/mod.rs), [trait tests](../dovetail/tests/traits.rs), [lowering regressions](../dovetail/tests/trait_lowering_review.rs) |
 | `TraitObject` → `InterfaceObject`, `$TraitObj$` → `$IfaceObj$` | [typed IR](../dovetail/src/compiler/typechecker/types.rs), [name construction](../dovetail/src/common/types.rs); old names survive only in historical documents and test names/comments |
-| Generic defaults, inherited overload dispatch, ordinary/GAT projections, abstract resource continuations | [completion regressions](../dovetail/tests/trait_completion.rs), [advanced examples](../book/26-advanced-generics.md#267-generic-trait-defaults) |
-| Book coverage | [Part 6 §6.11](../book/06-type-system.md#611-interfaces-and-interface-types), [Part 8 §8.5–8.7](../book/08-traits.md#85-trait-and-interface-inheritance); 11 new/corrected runnable examples validated during Phase 6 |
+| Generic defaults, inherited overload dispatch, ordinary/GAT projections, abstract resource continuations | [completion regressions](../dovetail/tests/trait_completion.rs), [advanced examples](../website/content/book/26-advanced-generics.md#267-generic-trait-defaults) |
+| Book coverage | [Part 6 §6.11](../website/content/book/06-type-system.md#611-interfaces-and-interface-types), [Part 8 §8.5–8.7](../website/content/book/08-traits.md#85-trait-and-interface-inheritance); 11 new/corrected runnable examples validated during Phase 6 |
 
 ## Obsolete proposals and current boundaries
 

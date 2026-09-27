@@ -1,6 +1,6 @@
 # Enums Design
 
-This document designs **enums** (discriminated unions) in Dovetail: definition, variant access (including qualified form `Enum.Variant`), variant payloads (tuple `(...)` or record `{ ... }` syntax), generics, match expressions, and codegen strategies. It aligns with the [type system book](book/06-type-system.md), [grammar](grammar.md), [match-expression-design](match-expression-design.md), and [generics-design](generics-design.md).
+This document designs **enums** (discriminated unions) in Dovetail: definition, variant access (including qualified form `Enum.Variant`), variant payloads (tuple `(...)` or record `{ ... }` syntax), generics, match expressions, and codegen strategies. It aligns with the [type system book](../website/content/book/06-type-system.md), [grammar](grammar.md), [match-expression-design](match-expression-design.md), and [generics-design](generics-design.md).
 
 **In scope:** Enum declaration, generic enums (`Option<T>`, `Result<T,E>`), variant construction and pattern matching, qualified variant names (`Option.Some`), **bare names** for `Some`, `None`, `Ok`, `Error` (and optionally `Result`) when in scope, variant payloads (tuple or record syntax, see §3), exhaustiveness, and codegen (sub-type vs flat approach).
 

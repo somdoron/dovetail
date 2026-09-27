@@ -1,4 +1,8 @@
-# GitHub Actions
+# CI and publishing workflow
+
+Read [Production Deployment](https://dovetaillang.org/book/production-deployment.md)
+and the [image reference](https://dovetaillang.org/guides/container-images.md) for
+setup and deployment details. Follow the [book access workflow](book.md).
 
 Start with the bundled [consumer checks workflow](../assets/dovetail-checks.yml).
 It installs a version-matched Linux compiler, verifies its release checksum, and
@@ -37,11 +41,3 @@ Smoke-test the published image with its intended mounts, environment, network, a
 nonroot user before production promotion. Record its registry digest and promote
 that artifact across environments; retain the previous digest for rollback.
 Database migrations must remain compatible with the intended rollback.
-
-Deployment supplies port mappings, persistent storage, secrets, resource limits,
-restart policy, and health probes. WASI grants must already be present in the
-image; deployment flags cannot add them. Provision writable directories for the
-configured UID/GID, keep credentials out of manifest image environment and files,
-and configure probes externally when the base lacks a shell or probe executable.
-An image build is not a deployment, and the stop signal alone does not establish
-application-level graceful shutdown.

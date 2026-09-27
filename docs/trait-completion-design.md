@@ -364,7 +364,7 @@ package boundary. Existing tests for retired restrictions now assert the new
 behavior.
 
 The book explains these features with complete programs in
-[Advanced Generics](../book/26-advanced-generics.md#267-generic-trait-defaults).
+[Advanced Generics](../website/content/book/26-advanced-generics.md#267-generic-trait-defaults).
 Introductory trait, class, and resource chapters link to that material.
 
 Review regressions additionally cover inherited binder renaming, overload

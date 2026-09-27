@@ -11,7 +11,7 @@ This document designs **scoped resource management** for Dovetail: the **Usable*
 **Generic resource helpers:** An abstract `Usable` bound preserves the resource's
 wrapper as `R.Wrapped<U, E2>`. A generic `use` continuation must return that
 associated result; the helper cannot assume a particular container. See the
-[complete example](../book/26-advanced-generics.md#generic-resource-helpers).
+[complete example](../website/content/book/26-advanced-generics.md#generic-resource-helpers).
 
 **Prerequisites:** [async-await-design](async-await-design.md) (prefix expressions, desugaring infrastructure), [async-runtime-design](async-runtime-design.md) (Async runtime, Cause error model), [traits-design](traits-design.md) (associated types and GATs).
 

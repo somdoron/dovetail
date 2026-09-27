@@ -176,7 +176,7 @@ pub struct ClassDecl {
     pub visibility: Visibility,
     /// Span of a `@stringLiteral` attribute, when this type is itself the
     /// prefix of a prefixed string literal. Usually the marker goes on a
-    /// lowercase type alias instead; see book/24-prefixed-literals.md.
+    /// lowercase type alias instead; see website/content/book/24-prefixed-literals.md.
     pub string_literal: Option<Span>,
     pub is_final: bool,
     pub is_abstract: bool,
@@ -394,7 +394,7 @@ pub struct RecordDecl {
     pub construction_private: bool,
     /// Span of a `@stringLiteral` attribute, when this type is itself the
     /// prefix of a prefixed string literal. Usually the marker goes on a
-    /// lowercase type alias instead; see book/24-prefixed-literals.md.
+    /// lowercase type alias instead; see website/content/book/24-prefixed-literals.md.
     pub string_literal: Option<Span>,
     pub name: Spanned<String>,
     pub type_params: Vec<VariantTypeParam>,

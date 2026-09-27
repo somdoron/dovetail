@@ -1,6 +1,6 @@
 # Arrays Design
 
-This document designs **arrays** in Dovetail: representation (WASM-GC packed vs non-packed, reference-element arrays), the built-in generic `Array<T>`, and compiler intrinsics for element access and length. It aligns with the [language basics book](book/03-language-basics.md), [type system book](book/06-type-system.md), [grammar](grammar.md), [compiler design](compiler.md), [generics design](generics-design.md), and [strings design](strings-design.md).
+This document designs **arrays** in Dovetail: representation (WASM-GC packed vs non-packed, reference-element arrays), the built-in generic `Array<T>`, and compiler intrinsics for element access and length. It aligns with the [language basics book](../website/content/book/03-language-basics.md), [type system book](../website/content/book/06-type-system.md), [grammar](grammar.md), [compiler design](compiler.md), [generics design](generics-design.md), and [strings design](strings-design.md).
 
 ---
 
@@ -177,7 +177,7 @@ So: **Int8, Int16, Int32, Int64, Uint8, Uint16, Uint32, Uint64, Char, Float32, F
 ## 11. Grammar and Book Updates
 
 - **Grammar:** No change required for the three operations if they are expressed as normal extension methods (e.g. `arr.get(index)`, `arr.set(index, value)`, `arr.length`). The compiler identifies these by receiver type and method name and lowers to intrinsics.
-- **Book** [book/06-type-system.md](book/06-type-system.md) (§6.7 Arrays): Can state that array element access and length are provided via `arr.get(i)`, `arr.set(i, x)`, and `arr.length`, and that other operations (e.g. iteration, fold) are provided by the prelude. Optional indexing sugar (e.g. `arr[i]` and `arr[i] = x`) can be defined as syntactic sugar for `arr.get(i)` and `arr.set(i, x)` in a later design or grammar update.
+- **Book** [website/content/book/06-type-system.md](../website/content/book/06-type-system.md) (§6.7 Arrays): Can state that array element access and length are provided via `arr.get(i)`, `arr.set(i, x)`, and `arr.length`, and that other operations (e.g. iteration, fold) are provided by the prelude. Optional indexing sugar (e.g. `arr[i]` and `arr[i] = x`) can be defined as syntactic sugar for `arr.get(i)` and `arr.set(i, x)` in a later design or grammar update.
 
 ---
 

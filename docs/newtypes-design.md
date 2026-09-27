@@ -1,6 +1,6 @@
 # Newtypes Design
 
-This document designs **newtypes** in Dovetail: zero-cost abstraction types, construction, unwrapping via `value`, inference rules (no direct assignment of inner type), codegen transparency, and private newtypes. It aligns with the [type system book](book/06-type-system.md), [grammar](grammar.md), and [compiler design](compiler.md).
+This document designs **newtypes** in Dovetail: zero-cost abstraction types, construction, unwrapping via `value`, inference rules (no direct assignment of inner type), codegen transparency, and private newtypes. It aligns with the [type system book](../website/content/book/06-type-system.md), [grammar](grammar.md), and [compiler design](compiler.md).
 
 ---
 

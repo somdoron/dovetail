@@ -3,6 +3,8 @@
 Use only when a review is requested. Review the specified diff/files and enough
 surrounding code to establish behavior; do not expand into unrelated cleanup.
 Read [skill guidance](../SKILL.md), then only relevant references from its index.
+Use their book links for detailed rules; follow [book access](../references/book.md)
+for version matching and offline fallback. The website can be newer than the compiler.
 Do not edit source, run mutating formatters, publish, or delegate recursively.
 
 Check:

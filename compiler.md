@@ -26,7 +26,7 @@ This document describes the design of the Dovetail compiler: pipeline, data stru
 
 ### Project layout and `Dovetail.toml` (see book Part 11)
 
-The following is defined in the language book, [Part 11: Packages and Modules](book/11-packages.md); the compiler implements it.
+The following is defined in the language book, [Part 11: Packages and Modules](website/content/book/11-packages.md); the compiler implements it.
 
 - **Project manifest:** `Dovetail.toml` lives at the project (or workspace) root. Each project is a `[[project]]` entry with `name`, `type` (`library` or `application`), `root-package` (e.g. `com.example.api`), and `depends` (list of project names). The dependency list defines which packages are visible and implies compilation order (DAG). For v1, the compiler may accept an explicit package order instead of or in addition to `depends`.
 - **Package ↔ directory:** The declared package in each file must **match the file’s location**. Under a project’s `src/`, the path mirrors the package: e.g. `root-package = "com.example.myapp"` and `src/utils/helpers.dove` → `package com.example.myapp.utils`. So package names map to folders by convention (dot-segments → path segments under `src/`).

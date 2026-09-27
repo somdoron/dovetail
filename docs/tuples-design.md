@@ -1,6 +1,6 @@
 # Tuples Design
 
-This document designs **tuples** in Dovetail: anonymous positional types, construction, element access (0-based), destructuring, and their treatment in the inference layer and codegen. It aligns with the [type system book](book/06-type-system.md), [grammar](grammar.md), and [compiler design](compiler.md).
+This document designs **tuples** in Dovetail: anonymous positional types, construction, element access (0-based), destructuring, and their treatment in the inference layer and codegen. It aligns with the [type system book](../website/content/book/06-type-system.md), [grammar](grammar.md), and [compiler design](compiler.md).
 
 ---
 
@@ -200,7 +200,7 @@ Implementation is split into phases so that each delivers a testable slice. The 
 ## 10. Grammar and book alignment
 
 - **Remove named tuples from grammar:** [grammar.md](grammar.md) currently has `tuple_type` with an alternative for `named_tuple_field`. This design drops named tuples; the grammar should be updated so that `tuple_type` is only the positional form `"(" type "," type { "," type } ")"`.
-- **Book:** The [type system book](book/06-type-system.md) has been updated to describe only positional tuples and 0-based access (`_0`, `_1`); named tuples have been removed.
+- **Book:** The [type system book](../website/content/book/06-type-system.md) has been updated to describe only positional tuples and 0-based access (`_0`, `_1`); named tuples have been removed.
 
 ---
 

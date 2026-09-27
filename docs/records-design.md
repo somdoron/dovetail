@@ -1,6 +1,6 @@
 # Records Design
 
-This document designs **records** in Dovetail: definition, construction, field access, the `with` expression, and pattern matching on records (including literal field patterns). It aligns with the [type system book](book/06-type-system.md), [control flow book](book/04-control-flow.md), and [grammar](grammar.md).
+This document designs **records** in Dovetail: definition, construction, field access, the `with` expression, and pattern matching on records (including literal field patterns). It aligns with the [type system book](../website/content/book/06-type-system.md), [control flow book](../website/content/book/04-control-flow.md), and [grammar](grammar.md).
 
 ---
 
@@ -234,7 +234,7 @@ record_pattern_sep  = SEP | ","
 field_pattern   = IDENT [ "=" pattern ]
 ```
 
-- **When `= pattern` is omitted:** the pattern is equivalent to `IDENT = IDENT` (bind the field to a variable with the same name). This matches the [control flow book](book/04-control-flow.md) style `case Point { x; y } =>` and is common in Haskell (record puns) and similar languages.
+- **When `= pattern` is omitted:** the pattern is equivalent to `IDENT = IDENT` (bind the field to a variable with the same name). This matches the [control flow book](../website/content/book/04-control-flow.md) style `case Point { x; y } =>` and is common in Haskell (record puns) and similar languages.
 - **When `= pattern` is present:** the field is matched against that pattern (literal, variable, `_`, or nested pattern).
 
 - In **record construction** and **with**: `field_init = IDENT "=" block_expr` (RHS expression; `=` required).

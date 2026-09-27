@@ -162,4 +162,4 @@ The [advanced generics chapter](26-advanced-generics.md#263-bounds-on-enclosing-
 the rules for modules, classes, implementations, and extension blocks.
 
 For the compiler design and implementation milestones, see the
-[tuple extension design](../docs/tuple-extension-design.md).
+[tuple extension design](../../../docs/tuple-extension-design.md).

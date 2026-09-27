@@ -1,65 +1,17 @@
-# OCI images
+# Image build and release checks
 
-Building creates Linux AMD64/ARM64 precompiled OCI archives. Pushing uploads an
-existing archive and never rebuilds. Neither operation needs a Docker daemon,
-Dockerfile, or QEMU. Running an image still requires an appropriate Linux runtime.
+Read [Production deployment](https://dovetaillang.org/book/production-deployment.md), [Tool commands](https://dovetaillang.org/book/tool-commands.md) for syntax and examples.
+Follow the [book access workflow](book.md) for version matching and offline fallback.
 
-Place settings after the application's project entry:
+Use [the image configuration reference](https://dovetaillang.org/guides/container-images.md)
+for manifest fields and command examples. Build creates an archive; push uploads
+that archive without rebuilding. Neither requires Docker, but running the image
+requires an appropriate Linux runtime.
 
-```toml
-[project.image]
-name = "ghcr.io/acme/api"
-tag = "latest"
-base = "gcr.io/distroless/cc-debian13:nonroot"
-platforms = ["linux/amd64", "linux/arm64"]
-user = "65532:65532"
-workdir = "/app"
-expose = ["8080/tcp"]
-args = []
-stop-signal = "SIGTERM"
-
-[project.image.env]
-PORT = "8080"
-
-[project.image.wasi]
-allow-network = true
-allow-path = ["/data"]
-
-[[project.image.files]]
-source = "public"
-destination = "/app/public"
-```
-
-Customize values for the application; `/data` must exist when the image starts.
-WASI permissions default to denied and are baked into `/app/dovetail-image.json`
-at image build time. There are no image startup flags or environment variables
-that override them. Change `[project.image.wasi]` and rebuild to change grants;
-arguments after the image name are application arguments, not runtime flags.
-Replacing the internal JSON through a mount is a manual replacement of trusted
-runtime configuration, not a dedicated WASI override interface.
-Enable `inherit-env` only if guest environment access is intended. `expose` is
-metadata, not a port mapping. Copied files are relative to the project; paths outside
-it, symlinks, OCI whiteouts, and overriding generated runtime files are rejected.
-Manifest `resources` are embedded in the component and need no extra copy.
-Labels and annotations use `project.image.labels`/`annotations` tables.
-Allowed paths grant read/write WASI access subject to container filesystem
-permissions; there are no per-path read-only settings or host:guest mappings.
-Use deployment mounts to map host storage into those container paths and to impose
-read-only access where needed. Network access is one TCP/UDP/DNS toggle, without
-destination allowlists. Environment inheritance exposes all container environment
-entries to the guest; keep secrets out of image settings and copied files.
-
-```sh
-dovetail image build -p api
-dovetail image build -p api --platform linux/amd64
-dovetail image push -p api --tag 1.2.3
-```
-
-Without `-p`, select all image-configured local applications. The default archive
-is `build/images/<project>.oci.tar`; `output` overrides it relative to the workspace.
-`name` contains a repository only, not a tag/digest. Push publishes all platforms
-in the archive; projects cannot target the same tag. Login/publish requires the
-user's intended destination and authorization, not merely loading this reference.
+WASI grants are baked into `/app/dovetail-image.json`; deployment arguments cannot
+add permissions. Change the manifest and rebuild. Container paths must exist with
+appropriate ownership. Mounts, port publishing, and guest grants are separate.
+Keep credentials out of copied files and image environment settings.
 
 ## Runtime matching and reproducibility
 

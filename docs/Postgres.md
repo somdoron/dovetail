@@ -9,7 +9,7 @@ This document designs Dovetail's PostgreSQL support: a sans-io wire-protocol cor
 ## 1. Scope and Philosophy
 
 - **PostgreSQL-specific, not a generic database abstraction.** Like [skunk](https://github.com/typelevel/skunk), the driver targets one protocol and embraces its features (extended query protocol, binary format, `COPY`, `LISTEN`/`NOTIFY`, arrays, typed errors) instead of a JDBC-style lowest common denominator. Each database gets its own protocol library and driver; they share only the SQL surface and the codec toolkit. Dovetail monomorphizes and favors explicitness — a leaky universal abstraction fights both.
-- **Sans-io.** The wire protocol is a **pure state machine**: bytes and intents in, bytes and events out, zero IO. The async driver pumps it. This is not a new pattern for this codebase — `standard-http` already is a sans-io HTTP state machine (`Connection.client()` + [ReceiveBuffer](../standard-http/src/ReceiveBuffer.dove)) driven by the thin TCP client in [standard-io-http/src/transport.dove](../standard-io-http/src/transport.dove). PostgreSQL mirrors that split exactly. Sans-io also fits Dovetail's async model, where `Async` is an inert description run separately ([book/12-async.md](../book/12-async.md)).
+- **Sans-io.** The wire protocol is a **pure state machine**: bytes and intents in, bytes and events out, zero IO. The async driver pumps it. This is not a new pattern for this codebase — `standard-http` already is a sans-io HTTP state machine (`Connection.client()` + [ReceiveBuffer](../standard-http/src/ReceiveBuffer.dove)) driven by the thin TCP client in [standard-io-http/src/transport.dove](../standard-io-http/src/transport.dove). PostgreSQL mirrors that split exactly. Sans-io also fits Dovetail's async model, where `Async` is an inert description run separately ([website/content/book/12-async.md](../website/content/book/12-async.md)).
 - **Reuse the SQL surface.** `sql"..."`, fragment composition, and the `ToSqlParameter`/`FromSql`/`FromRow` traits live in `standard-sql` and are database-agnostic. The driver consumes them.
 - **Inspirations, reimagined.** skunk for the layering; [scodec](https://github.com/scodec/scodec) for codecs — but reworked for a language with no implicits and no HLists (§4).
 
@@ -193,4 +193,4 @@ A shared `SqlValue` is a lowest-common-denominator, so PostgreSQL gets an **esca
 - [rustls](https://github.com/rustls/rustls) — sans-io TLS (model for `standard-tls`)
 - [PostgreSQL Frontend/Backend Protocol](https://www.postgresql.org/docs/current/protocol.html)
 - [SCRAM (RFC 5802)](https://datatracker.ietf.org/doc/html/rfc5802) / [SCRAM-SHA-256 (RFC 7677)](https://datatracker.ietf.org/doc/html/rfc7677)
-- Internal: [SQL.md](SQL.md), [tuple-extension-design.md](tuple-extension-design.md), [book/12-async.md](../book/12-async.md)
+- Internal: [SQL.md](SQL.md), [tuple-extension-design.md](tuple-extension-design.md), [website/content/book/12-async.md](../website/content/book/12-async.md)

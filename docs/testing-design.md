@@ -1,6 +1,6 @@
 # Testing Design
 
-This document designs **testing support** in the Dovetail compiler: test declarations, test attributes, test organization (unit and integration), and the `dovetail test` CLI command. It aligns with [grammar.md](../grammar.md), [compiler.md](../compiler.md), [multi-project-multi-package-design](multi-project-multi-package-design.md), and [book/15-testing.md](../book/15-testing.md).
+This document designs **testing support** in the Dovetail compiler: test declarations, test attributes, test organization (unit and integration), and the `dovetail test` CLI command. It aligns with [grammar.md](../grammar.md), [compiler.md](../compiler.md), [multi-project-multi-package-design](multi-project-multi-package-design.md), and [website/content/book/15-testing.md](../website/content/book/15-testing.md).
 
 **In scope:** Test declaration syntax and AST; test attributes (`@skip`, `@panics`, `@timeout`); unit tests in `src/` with private-member access; integration tests in `test/` directory; test naming (fully qualified test names); `dovetail test` CLI with project filter, file filter, test name filter, colored output; test compilation and execution via WASM; test runner output format.
 
@@ -561,8 +561,8 @@ Minimal working `dovetail test` — from source to execution.
 
 Result/Option return types for tests were descoped — tests always return `Unit`. Phase 6 became a documentation-only pass:
 
-- **Book:** Updated `book/15-testing.md` to accurately reflect implemented features (removed Result/Option section, updated CLI docs, renumbered sections).
-- **TOC:** Updated `book/toc.md` to match new section numbering.
+- **Book:** Updated `website/content/book/15-testing.md` to accurately reflect implemented features (removed Result/Option section, updated CLI docs, renumbered sections).
+- **TOC:** Updated `website/content/book/toc.md` to match new section numbering.
 - **Design doc:** Marked implementation status as complete, updated syntax and tables to reflect descoped return types.
 
 **Deliverable:** Documentation accurately reflects the implemented testing feature.
@@ -612,4 +612,4 @@ Result/Option return types for tests were descoped — tests always return `Unit
 - [grammar.md](../grammar.md) — Syntax and layout rules.
 - [compiler.md](../compiler.md) — Pipeline stages and architecture.
 - [multi-project-multi-package-design.md](multi-project-multi-package-design.md) — Project/package structure and CLI.
-- [book/15-testing.md](../book/15-testing.md) — User-facing testing documentation.
+- [website/content/book/15-testing.md](../website/content/book/15-testing.md) — User-facing testing documentation.

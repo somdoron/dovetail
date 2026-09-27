@@ -1,6 +1,6 @@
 # Generic Variance, Any Type, and Type Test / Cast
 
-This document designs **generic variance** (covariant `out` and contravariant `in`), the **Any** type as a real type, **type test** (`is`) and **cast** (`as`), and **type-annotated patterns** in match. It aligns with the [type system book](book/06-type-system.md), [grammar](grammar.md), [enums-design](enums-design.md), [generics-design](generics-design.md), and [match-expression-design](match-expression-design.md).
+This document designs **generic variance** (covariant `out` and contravariant `in`), the **Any** type as a real type, **type test** (`is`) and **cast** (`as`), and **type-annotated patterns** in match. It aligns with the [type system book](../website/content/book/06-type-system.md), [grammar](grammar.md), [enums-design](enums-design.md), [generics-design](generics-design.md), and [match-expression-design](match-expression-design.md).
 
 **In scope:** Definition-site variance on type parameters (`out T`, `in T`, no marker = invariant); applicability to generic enums and records (and future generic classes); prelude `Option` and `Result` covariant on all type parameters; bi-directional inference for uninferred variance (covariant → `Never`, contravariant → `Any`); `Any` as a type with assignability and codegen (boxing); `is` and `as` expressions; type-annotated patterns in match for type narrowing.
 

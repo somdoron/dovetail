@@ -82,7 +82,7 @@ That acknowledgement does not execute deferred work.
 Configure `[project.image]` in `Dovetail.toml`, then use `dovetail image build`
 and `dovetail image push`. Both select all image-configured local projects unless
 `-p` selects one. Building produces local archives; pushing never rebuilds.
-See the [container image guide](../docs/container-images.md) for base images,
+See the [container image guide](../../../docs/container-images.md) for base images,
 runtime releases, project settings, and GitHub Actions publishing.
 
 Image WASI grants (`allow-network`, `inherit-env`, and `allow-path` under
@@ -103,7 +103,7 @@ dovetail fmt hello/src/main.dove
 The formatter uses four spaces and a 100-column target, preserves comments and
 literal text, and checks the structure of its output before accepting it. It does
 not fetch or format Git dependencies. It does not insert named arguments or
-rewrite synchronous functions into async functions. See [Formatting](../docs/formatting.md).
+rewrite synchronous functions into async functions. See [Formatting](../../../docs/formatting.md).
 
 ### Runtime permissions
 

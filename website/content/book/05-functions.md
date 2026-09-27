@@ -185,7 +185,7 @@ createUser(name = "John", age = 30, email = "john@example.com")
 Additional planned lint rules require named arguments for Boolean and numeric
 literals, even in calls with only one or two parameters. For example,
 `retry(3)` would be written as `retry(attempts = 3)`. These lint rules are not
-implemented yet. See the [future linter design and rule backlog](../docs/linter-design.md).
+implemented yet. See the [future linter design and rule backlog](../../../docs/linter-design.md).
 
 ---
 

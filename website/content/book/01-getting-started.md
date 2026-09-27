@@ -301,7 +301,7 @@ To enable format-on-save:
 }
 ```
 
-See [Formatting](../docs/formatting.md) for the formatter's style and options.
+See [Formatting](../../../docs/formatting.md) for the formatter's style and options.
 
 ---
 

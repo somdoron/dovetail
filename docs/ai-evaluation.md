@@ -10,6 +10,9 @@ findings, and limitations. Deterministic validation remains `tools/check-ai.py`.
 
 | Request and fixture | What to assess after execution |
 |---|---|
+| Implement a feature requiring unfamiliar generic associated types | Loads the generics cautions and relevant book chapter, queries dependency declarations, and avoids fetching the full book |
+| Explain resource scopes while the website is unavailable | Uses the checkout book or source at the intended revision; if offline, uses available source/queries and identifies unresolved details without guessing |
+| A website example uses a feature absent from the selected compiler | Verifies the intended revision and installed API rather than treating main as version-matched documentation |
 | Implement a validated positive Quantity and an operation consuming it in a fresh project | Valid syntax, private construction, typed rejection, observable tests; loads syntax/types/domain only as relevant; no unsolicited reviews |
 | Start modeling an agent harness with named skills, tools, and delegation; requirements are still being discussed | Suggests a small compiling `types.dove`, invites focused discussion, labels assumptions, explains fields through behavior, and defers unsupported machinery; loads domain and architecture as needed |
 | Continue that session: skills resolve on successful load, tool and agent names are independent, and delegated runs use ordinary agents | Revises the draft and documentation consistently; separates configuration from execution facts and identity from role without speculative wrappers; does not claim private construction implements validation |

@@ -2,7 +2,7 @@
 
 This document specifies Dovetail's SQL support: type-safe query construction through smart string interpolation.
 
-> **Status: implemented.** Prefixed string literals are in the compiler, and `standard-sqlite` is their first client. See [book/24-prefixed-literals.md](../book/24-prefixed-literals.md) for the language feature and `standard-sqlite/test/` for the tests.
+> **Status: implemented.** Prefixed string literals are in the compiler, and `standard-sqlite` is their first client. See [website/content/book/24-prefixed-literals.md](../website/content/book/24-prefixed-literals.md) for the language feature and `standard-sqlite/test/` for the tests.
 >
 > There was exactly one new *language* feature: **prefixed string literals**, described in [The Literal Mechanism](#the-literal-mechanism). It is domain-agnostic — the compiler learns nothing about databases. Everything SQL-specific lives in the driver library.
 
@@ -43,7 +43,7 @@ The one thing genuinely lost is **middleware written once across drivers**: pool
 
 `sql"..."` is **not** a hard-coded compiler feature. It is the first client of a general facility: **prefixed string literals**. The compiler owns the *lexing and the interpolation grammar*; a registered handler owns the *semantics*. Nothing about databases lives in the compiler.
 
-This is the same philosophy as derive macros (see [book/16-macros.md](../book/16-macros.md)): the compiler provides a small structural hook, libraries provide the meaning.
+This is the same philosophy as derive macros (see [website/content/book/16-macros.md](../website/content/book/16-macros.md)): the compiler provides a small structural hook, libraries provide the meaning.
 
 ### What the compiler provides
 
@@ -54,7 +54,7 @@ This is the same philosophy as derive macros (see [book/16-macros.md](../book/16
    - `${ expr }` — interpolate an arbitrary expression
    - `$.. expr` — *spread*: interpolate a sequence of values
 
-   The first two are exactly the forms ordinary Dovetail strings already support ([book/03-language-basics.md §3.6](../book/03-language-basics.md)); `$..` is new. Note that `$user.name` is **not** a form — as in ordinary strings, `$` binds a bare identifier only, and anything with a field access or an operator uses `${ ... }`. The literal parses into a structured AST of *literal text* and *interpolation* parts.
+   The first two are exactly the forms ordinary Dovetail strings already support ([website/content/book/03-language-basics.md §3.6](../website/content/book/03-language-basics.md)); `$..` is new. Note that `$user.name` is **not** a form — as in ordinary strings, `$` binds a bare identifier only, and anything with a field access or an operator uses `${ ... }`. The literal parses into a structured AST of *literal text* and *interpolation* parts.
 
 3. **A lowering to builder calls.** The compiler lowers the structured literal to a chain of calls on the handler's **builder type**:
    - literal text → `builder.literal("...")`
@@ -398,7 +398,7 @@ trait = "standard.sqlite.FromRow"
 script = "macros/FromRow.rhai"
 ```
 
-Each script reads the `input` description of the type (its `kind`, `fields` / `variants`, `type_params`) and returns a single `implement` block as Dovetail source. See [book/16-macros.md](../book/16-macros.md) for the authoring model.
+Each script reads the `input` description of the type (its `kind`, `fields` / `variants`, `type_params`) and returns a single `implement` block as Dovetail source. See [website/content/book/16-macros.md](../website/content/book/16-macros.md) for the authoring model.
 
 ---
 

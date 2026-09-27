@@ -21,7 +21,7 @@ dependency versions. Cargo's bin directory (usually `~/.cargo/bin`) must be on
 your `PATH`. Wasmtime does not need to be installed separately.
 
 See the [website](https://dovetaillang.org),
-[getting started guide](https://github.com/somdoron/dovetail/blob/main/book/01-getting-started.md),
+[getting started guide](https://github.com/somdoron/dovetail/blob/main/website/content/book/01-getting-started.md),
 and [source repository](https://github.com/somdoron/dovetail).
 
 Licensed under either the [MIT license](LICENSE-MIT) or the

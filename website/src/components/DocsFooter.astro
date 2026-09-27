@@ -1,0 +1,14 @@
+---
+import DefaultFooter from '@astrojs/starlight/components/Footer.astro';
+const { entry } = Astro.locals.starlightRoute;
+---
+{entry.id !== '404' && (
+  <nav class="agent-links" aria-label="Documentation formats">
+    <a href={`/${entry.id}.md`}>View Markdown</a>
+    <a href="/llms.txt">Documentation for agents</a>
+  </nav>
+)}
+<DefaultFooter />
+<style>
+  .agent-links { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-block: 2rem; font-size: .875rem; }
+</style>

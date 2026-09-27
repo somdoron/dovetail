@@ -1,6 +1,6 @@
 # Generics Design (Specialized Only)
 
-This document designs **generics** in Dovetail: generic functions and generic records with **monomorphization only** (specialized). Every instantiation is compiled as a separate WASM function or struct; there is no shared representation, no type-info at runtime, and no reified match. It aligns with the [type system book](book/06-type-system.md), [generics book](book/07-generics.md), [control flow book](book/04-control-flow.md), [grammar](grammar.md), and [compiler design](compiler.md). This design is the baseline for all generic types in Dovetail (records, and later enums, classes).
+This document designs **generics** in Dovetail: generic functions and generic records with **monomorphization only** (specialized). Every instantiation is compiled as a separate WASM function or struct; there is no shared representation, no type-info at runtime, and no reified match. It aligns with the [type system book](../website/content/book/06-type-system.md), [generics book](../website/content/book/07-generics.md), [control flow book](../website/content/book/04-control-flow.md), [grammar](grammar.md), and [compiler design](compiler.md). This design is the baseline for all generic types in Dovetail (records, and later enums, classes).
 
 **Reified/shared generics** (single representation for reference-type arguments, type-info parameters, runtime type dispatch) have been **dropped** for simplicity. They may be revisited in a future version of the language.
 

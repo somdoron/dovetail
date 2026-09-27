@@ -1,6 +1,6 @@
 # Extension Methods Design
 
-This document designs **extension methods** in Dovetail: adding methods to any type (primitives, records, enums, newtypes, classes, `String`, `Array`, etc.). It aligns with the [type system book](book/06-type-system.md) and [grammar](grammar.md). This design focuses on **non-generic** extensions; generic extensions are out of scope and will be designed separately.
+This document designs **extension methods** in Dovetail: adding methods to any type (primitives, records, enums, newtypes, classes, `String`, `Array`, etc.). It aligns with the [type system book](../website/content/book/06-type-system.md) and [grammar](grammar.md). This design focuses on **non-generic** extensions; generic extensions are out of scope and will be designed separately.
 
 ---
 

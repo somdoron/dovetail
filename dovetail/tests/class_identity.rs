@@ -223,17 +223,17 @@ function main(): Unit =
 fn new_book_examples_compile_and_run() {
     for (book, marker, main) in [
         (
-            include_str!("../../book/09-classes.md"),
+            include_str!("../../website/content/book/09-classes.md"),
             "class IdentityCounter",
             "checkIdentity()",
         ),
         (
-            include_str!("../../book/08-traits.md"),
+            include_str!("../../website/content/book/08-traits.md"),
             "class IdentityBox",
             "checkBoxIdentity()\n    let a = IdentityBox(1)\n    assert a == a\n    assert a.hash() == ClassIdentity.hash(a)",
         ),
         (
-            include_str!("../../book/26-advanced-generics.md"),
+            include_str!("../../website/content/book/26-advanced-generics.md"),
             "function sameInstance",
             "let a = Item()\n    assert sameInstance(a, a)\n    assert instanceHash(a) == ClassIdentity.hash(a)",
         ),

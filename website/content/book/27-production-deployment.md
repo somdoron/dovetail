@@ -12,7 +12,7 @@ Use a compiler matching `compiler-version` in `Dovetail.toml` and a compatible
 standard-library revision. Commit the manifest and `Dovetail.lock`. The selected
 compiler release must have matching Linux runtime assets available before image
 builds can download them. For compiler development, use the explicit runtime paths
-described in the [image guide](../docs/container-images.md#runtime-releases-and-development-builds).
+described in the [image guide](../../../docs/container-images.md#runtime-releases-and-development-builds).
 
 Add these settings after the application's `[[project]]` entry:
 
@@ -85,7 +85,7 @@ guest access.
 
 ## 27.3 Configure CI Checks
 
-Copy the bundled [checks workflow](../dovetail/ai/assets/dovetail-checks.yml) into
+Copy the bundled [checks workflow](../../../dovetail/ai/assets/dovetail-checks.yml) into
 your application's `.github/workflows/dovetail-checks.yml`. Replace
 `{{DOVETAIL_VERSION}}` with the exact compiler version from your manifest; this
 placeholder is rendered automatically when installed through the AI bundle.
@@ -111,7 +111,7 @@ from the application workspace instead.
 
 ## 27.4 Build and Publish in CI
 
-Copy the bundled [publishing workflow](../dovetail/ai/assets/dovetail-publish.yml)
+Copy the bundled [publishing workflow](../../../dovetail/ai/assets/dovetail-publish.yml)
 into `.github/workflows/dovetail-publish.yml`. Set the same compiler version,
 replace `api`, and configure your repository in `[project.image]`. The template
 runs on `v*` tags, grants `packages: write` to the publishing job, and logs into

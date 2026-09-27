@@ -4,7 +4,7 @@
 [trait/interface audit](trait-implementation-status.md). Section 8 preserves the
 obsolete object design for historical context only.
 
-This document describes **traits** in Dovetail in one place: non-generic and generic traits, all forms of implementation (impl blocks and class `implements`), interfaces (dynamic dispatch), and trait bounds. It consolidates and supersedes the previous traits-design and generic-traits-design documents. It aligns with the [traits book](../book/08-traits.md) and [grammar](../grammar.md).
+This document describes **traits** in Dovetail in one place: non-generic and generic traits, all forms of implementation (impl blocks and class `implements`), interfaces (dynamic dispatch), and trait bounds. It consolidates and supersedes the previous traits-design and generic-traits-design documents. It aligns with the [traits book](../website/content/book/08-traits.md) and [grammar](../grammar.md).
 
 **Generics context:** Functions are monomorphized; generic data representations
 follow [full erasure](full-erasure-design.md). Bounds are checked at compile time.

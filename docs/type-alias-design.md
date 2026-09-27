@@ -1,6 +1,6 @@
 # Type Alias Design
 
-This document designs **type aliases** and **generic type aliases** in Dovetail: pure naming conveniences with no runtime representation, full application on the right-hand side, trait bounds on type parameters, visibility and imports, and their treatment across the pipeline. It aligns with the [type system book](book/06-type-system.md), [grammar](grammar.md), and [compiler design](compiler.md).
+This document designs **type aliases** and **generic type aliases** in Dovetail: pure naming conveniences with no runtime representation, full application on the right-hand side, trait bounds on type parameters, visibility and imports, and their treatment across the pipeline. It aligns with the [type system book](../website/content/book/06-type-system.md), [grammar](grammar.md), and [compiler design](compiler.md).
 
 ---
 

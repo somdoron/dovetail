@@ -1,0 +1,14 @@
+:root {
+  --sl-color-accent-low: #35251d;
+  --sl-color-accent: #b85e35;
+  --sl-color-accent-high: #f6c5a4;
+  --sl-font: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #f9e8dc;
+  --sl-color-accent: #974522;
+  --sl-color-accent-high: #572a18;
+  --sl-color-bg: #fffdf8;
+  --sl-color-bg-sidebar: #f6f3eb;
+}
+.site-title { font-family: Georgia, serif; letter-spacing: -.04em; }

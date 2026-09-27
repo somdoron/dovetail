@@ -12,7 +12,7 @@ name. Each example includes a test and can be checked, built, run, and tested.
 
 ## 22.1 Core Types
 
-The [prelude source](../dovetail/prelude/src/) includes primitives, `String`, `Option`,
+The [prelude source](../../../dovetail/prelude/src/) includes primitives, `String`, `Option`,
 `Result`, `List`, `Array`, slices, `BigInt`, `Decimal`, and core traits such as
 `Equatable`, `Comparable`, `Hashable`, and `Display`. These need no dependency or import.
 
@@ -55,7 +55,7 @@ List `length` and indexed lookup traverse the list. Arrays provide indexed acces
 and a stored length. Choose arrays for bytes, mutation, and repeated random access;
 lists are useful for immutable sequential processing.
 
-The [standard-collection project](../standard-collection/src/) adds `ArrayList`,
+The [standard-collection project](../../../standard-collection/src/) adds `ArrayList`,
 `MutableMap`, `MutableSet`, `MutableQueue`, `MutableStack`, `Range`, and `StringBuilder`.
 Several mutable collections currently require `Default` elements; maps require both
 `Default` keys and values, plus `Hashable` and `Equatable` keys. Validated types may
@@ -122,7 +122,7 @@ addition, subtraction, multiplication, negation, equality, and ordering. Decimal
 division and rounding operations are not provided yet. Normalization removes
 insignificant trailing zeros; Decimal is not a fixed-display-scale money type.
 
-The [standard-math project](../standard-math/src/) currently provides
+The [standard-math project](../../../standard-math/src/) currently provides
 `RoundingMode`; the presence of that enum does not imply a Decimal
 rounding API.
 
@@ -191,8 +191,8 @@ See [Resource Management](13-resources.md) for release and cancellation rules.
 Use `dovetail run <project> --allow-network` for programs that open sockets or resolve
 names. HTTP has basic routing; it is not a complete web framework. The HTTP/TLS
 stack has outstanding hardening and conformance work. Read the
-[HTTP readiness inventory](../docs/http-library-production-readiness.md) and the
-[TLS implementation boundaries](../docs/tls-library-design.md) before relying on it
+[HTTP readiness inventory](../../../docs/http-library-production-readiness.md) and the
+[TLS implementation boundaries](../../../docs/tls-library-design.md) before relying on it
 for production workloads. Some older HTTP inventory entries lag the source; the
 inventory is not a guarantee that a listed feature is absent or complete.
 
@@ -267,7 +267,7 @@ trust anchors. `standard.io.crypto` supplies effectful random-key generation,
 certificate loading, and resource-managed secrets.
 
 Randomness and secret generation belong at the I/O boundary. Inject generated
-identifiers into domain logic. Consult the [crypto design and implementation status](../docs/crypto-library-design.md)
+identifiers into domain logic. Consult the [crypto design and implementation status](../../../docs/crypto-library-design.md)
 for supported primitives and cleanup limitations; do not infer full protocol
 readiness from the existence of a primitive.
 

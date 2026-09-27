@@ -1,6 +1,6 @@
 # Strings Design
 
-This document designs **strings** and **characters** in Dovetail: representation (WASM-GC), character type, string literals (single-line and multi-line), string interpolation, concatenation, storage of literals in the component (data section by default, with an optional flag for globals), and intrinsics for byte access. It aligns with the [language basics book](book/03-language-basics.md), [grammar](grammar.md), and [compiler design](compiler.md).
+This document designs **strings** and **characters** in Dovetail: representation (WASM-GC), character type, string literals (single-line and multi-line), string interpolation, concatenation, storage of literals in the component (data section by default, with an optional flag for globals), and intrinsics for byte access. It aligns with the [language basics book](../website/content/book/03-language-basics.md), [grammar](grammar.md), and [compiler design](compiler.md).
 
 ---
 
@@ -58,7 +58,7 @@ This document designs **strings** and **characters** in Dovetail: representation
 - **Type**: `String ++ String → String`.
 - **Precedence**: Same as other additive operators (see grammar: `additive_expr` with `+`).
 - **Semantics**: Produce a new string (new packed array of u8) containing the bytes of the left operand followed by the bytes of the right operand. No implicit conversion of non-String to String in this design; conversions (e.g. `Int32` to `String`) are done by explicit calls (e.g. standard library) or by interpolation in literals.
-- The [language basics book](book/03-language-basics.md) is updated to describe concatenation with `++`.
+- The [language basics book](../website/content/book/03-language-basics.md) is updated to describe concatenation with `++`.
 
 ---
 

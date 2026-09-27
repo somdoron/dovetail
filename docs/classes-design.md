@@ -1,6 +1,6 @@
 # Classes Design
 
-This document designs **classes** in Dovetail: single-constructor model, inheritance and trait implementation, abstract classes, visibility, let bindings, methods and properties (instance/static, abstract/override/final), generics, subtyping, and codegen (WASMGC subtyping, vtable). It aligns with the [type system book](book/06-type-system.md), [traits design](traits-design.md), [grammar](grammar.md), and [compiler design](compiler.md).
+This document designs **classes** in Dovetail: single-constructor model, inheritance and trait implementation, abstract classes, visibility, let bindings, methods and properties (instance/static, abstract/override/final), generics, subtyping, and codegen (WASMGC subtyping, vtable). It aligns with the [type system book](../website/content/book/06-type-system.md), [traits design](traits-design.md), [grammar](grammar.md), and [compiler design](compiler.md).
 
 Dovetail aims for **strong OOP capabilities** alongside its functional features. Classes are a major feature and will be implemented in **multiple phases**.
 
@@ -275,7 +275,7 @@ Classes are a large feature; implementation is split into phases so that each ph
 | **Phase 5b** | Generic class integration with the rest of the type system: variance on generic class type params (`+T`/`-T`); `implements` clause on generic classes; `extends` on generic classes; let binding initializers on generic classes; trait object coercion for generic class instances; `resolve_trait_impl_method_for_type` for `GenericClass`. | **Deferred from Phase 5.** See §14.1 for details. |
 | **Phase 6** | **Subtype constraints (class bounds)** on type parameters wherever trait bounds are allowed (generic functions, classes, records, where clause, implement, extension). Same syntax `A : ClassName`; typechecker treats class bounds as subtype constraints. | |
 | **Phase 7** | Properties (instance/static, abstract/override/final); polish and diagnostics. | |
-| **Phase 8** | **`is` and `as` on class hierarchies.** Extend the typechecker to allow `is`/`as` when the subject is a class type (not just `Any`). Codegen uses existing `ref.test`/`ref.cast` — no boxing needed for classes. Update the book ([09-classes.md](book/09-classes.md)) with examples of type testing and downcasting in class hierarchies. | Depends on Phase 2 (inheritance + codegen). Builds on `is`/`as` infrastructure from variance-any-design Phase 5. |
+| **Phase 8** | **`is` and `as` on class hierarchies.** Extend the typechecker to allow `is`/`as` when the subject is a class type (not just `Any`). Codegen uses existing `ref.test`/`ref.cast` — no boxing needed for classes. Update the book ([09-classes.md](../website/content/book/09-classes.md)) with examples of type testing and downcasting in class hierarchies. | Depends on Phase 2 (inheritance + codegen). Builds on `is`/`as` infrastructure from variance-any-design Phase 5. |
 
 Later (out of scope for this doc): field override/shadowing policy.
 
@@ -318,4 +318,4 @@ The following features were deferred from Phase 5 (standalone generic classes) t
 - [generics-design.md](generics-design.md) — Monomorphization, bounds, where clause.
 - [compiler.md](compiler.md) — Pipeline, typechecker, codegen.
 - [variance-any-design.md](variance-any-design.md) — Variance, Any type, `is`/`as` expressions.
-- [book/09-classes.md](book/09-classes.md) — Class language reference.
+- [website/content/book/09-classes.md](../website/content/book/09-classes.md) — Class language reference.

@@ -1,28 +1,17 @@
 [
   {
-    "source": "book/01-getting-started.md",
-    "sections": [
-      "1.1 Introduction to Dovetail",
-      "1.2 Installation and Setup",
-      "1.3 Editor Setup",
-      "1.4 Your First Dovetail Program"
-    ],
+    "source": "website/content/book/01-getting-started.md",
     "references": [
       "references/projects.md",
       "references/tooling.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/getting-started.md"
   },
   {
-    "source": "book/02-tool-commands.md",
-    "sections": [
-      "2.1 The Dovetail CLI",
-      "2.2 Project Structure",
-      "2.3 Dependency Management",
-      "2.4 CI and Local Compiler Development"
-    ],
+    "source": "website/content/book/02-tool-commands.md",
     "references": [
       "references/projects.md",
       "references/tooling.md",
@@ -33,368 +22,202 @@
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/tool-commands.md"
   },
   {
-    "source": "book/03-language-basics.md",
-    "sections": [
-      "3.1 Layout-Sensitive Syntax",
-      "3.2 Comments and Documentation",
-      "3.3 Variables and Bindings",
-      "3.4 Primitive Types",
-      "3.5 Operators",
-      "3.6 String Interpolation"
-    ],
+    "source": "website/content/book/03-language-basics.md",
     "references": [
       "references/syntax.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/language-basics.md"
   },
   {
-    "source": "book/04-control-flow.md",
-    "sections": [
-      "4.1 If Expressions",
-      "4.2 Match Expressions",
-      "4.3 Loops"
-    ],
+    "source": "website/content/book/04-control-flow.md",
     "references": [
       "references/syntax.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/control-flow.md"
   },
   {
-    "source": "book/05-functions.md",
-    "sections": [
-      "5.1 Function Definitions",
-      "5.2 Named and Default Arguments",
-      "5.3 Closures and Lambdas",
-      "5.4 First-Class Function References",
-      "5.5 Method References",
-      "5.6 Higher-Order Functions"
-    ],
+    "source": "website/content/book/05-functions.md",
     "references": [
       "references/syntax.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/functions.md"
   },
   {
-    "source": "book/06-type-system.md",
-    "sections": [
-      "6.1 Type Inference",
-      "6.2 Records",
-      "6.3 Enums (Discriminated Unions)",
-      "6.4 Tuples",
-      "6.5 Newtypes",
-      "6.6 Type Aliases",
-      "6.7 Lists, Arrays, and Slices",
-      "6.8 Modules",
-      "6.9 Extension Methods",
-      "6.10 The Any Type and Type Casting",
-      "6.11 Interfaces and Interface Types",
-      "Private Construction for Records and Enums"
-    ],
+    "source": "website/content/book/06-type-system.md",
     "references": [
       "references/types.md",
       "references/contracts.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/type-system.md"
   },
   {
-    "source": "book/07-generics.md",
-    "sections": [
-      "7.1 Generic Functions",
-      "7.2 Generic Types",
-      "7.3 Constraints"
-    ],
+    "source": "website/content/book/07-generics.md",
     "references": [
       "references/generics.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/generics.md"
   },
   {
-    "source": "book/08-traits.md",
-    "sections": [
-      "8.1 Defining Traits",
-      "8.2 Implementing Traits",
-      "8.3 Core Traits",
-      "8.4 The Orphan Rule",
-      "8.5 Trait and Interface Inheritance",
-      "8.6 Default Methods and Properties",
-      "8.7 Method Resolution and Explicit Disambiguation"
-    ],
+    "source": "website/content/book/08-traits.md",
     "references": [
       "references/contracts.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/traits.md"
   },
   {
-    "source": "book/09-classes.md",
-    "sections": [
-      "9.1 Class Definitions",
-      "9.2 Methods",
-      "9.3 Class Body Fields",
-      "9.4 Private Constructors",
-      "9.5 Mutable Fields",
-      "9.6 Inheritance",
-      "9.7 Abstract Classes",
-      "9.8 Sealed Abstract Classes",
-      "9.9 Generic Classes",
-      "9.10 Implementing Traits for Classes",
-      "9.11 Extension Properties",
-      "9.12 Extension Methods for Classes",
-      "9.13 Visibility Modifiers",
-      "9.14 Classes vs Records",
-      "9.15 Class Identity"
-    ],
+    "source": "website/content/book/09-classes.md",
     "references": [
       "references/contracts.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/classes.md"
   },
   {
-    "source": "book/10-error-handling.md",
-    "sections": [
-      "10.1 No Exceptions",
-      "10.2 Option Type",
-      "10.3 Result Type",
-      "10.4 Railway-Oriented Programming",
-      "10.5 Panics and Assertions"
-    ],
+    "source": "website/content/book/10-error-handling.md",
     "references": [
       "references/effects.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/error-handling.md"
   },
   {
-    "source": "book/11-packages.md",
-    "sections": [
-      "11.1 Package Declaration",
-      "11.2 Imports",
-      "11.3 Visibility",
-      "11.4 No Circular Dependencies",
-      "11.5 GitHub Dependencies"
-    ],
+    "source": "website/content/book/11-packages.md",
     "references": [
       "references/projects.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/packages.md"
   },
   {
-    "source": "book/12-async.md",
-    "sections": [
-      "12.1 The Async Type",
-      "12.2 Async Functions",
-      "12.3 The `await` Operator",
-      "12.4 Running Async Code",
-      "12.5 Parallel Execution"
-    ],
+    "source": "website/content/book/12-async.md",
     "references": [
       "references/effects.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/async.md"
   },
   {
-    "source": "book/13-resources.md",
-    "sections": [
-      "13.1 The `use` Keyword",
-      "13.2 LIFO Release Order",
-      "13.3 Release on Failure",
-      "13.4 Scopes Without a Resource",
-      "13.5 Attaching to a Scope You Already Have",
-      "13.6 Composing Resources",
-      "13.7 Error Conversion at the Use Site"
-    ],
+    "source": "website/content/book/13-resources.md",
     "references": [
       "references/resources.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/resources.md"
   },
   {
-    "source": "book/14-streams.md",
-    "sections": [
-      "14.1 Descriptions and Consumption",
-      "14.2 Creating a Source",
-      "14.3 Chunks and Transformations",
-      "14.4 Concatenation and Flat Mapping",
-      "14.5 Repeating Effects and Time",
-      "14.6 Errors and Resource Lifetimes",
-      "14.7 Merging Concurrent Sources",
-      "14.8 Running and Folding",
-      "14.9 Byte Transports"
-    ],
+    "source": "website/content/book/14-streams.md",
     "references": [
       "references/resources.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/streams.md"
   },
   {
-    "source": "book/15-testing.md",
-    "sections": [
-      "15.1 Unit Tests",
-      "15.2 Test Organization",
-      "15.3 Test Attributes",
-      "15.4 Running Tests",
-      "15.5 Testing Best Practices"
-    ],
+    "source": "website/content/book/15-testing.md",
     "references": [
       "references/tooling.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/testing.md"
   },
   {
-    "source": "book/16-macros.md",
-    "sections": [
-      "16.1 Overview",
-      "16.2 The `@derive` Attribute",
-      "16.3 Built-in Derives",
-      "16.4 Writing Custom Derives (Rhai)"
-    ],
+    "source": "website/content/book/16-macros.md",
     "references": [
       "references/integrations.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/macros.md"
   },
   {
-    "source": "book/17-components.md",
-    "sections": [
-      "17.1 Declaring a Component Dependency",
-      "17.2 What Gets Generated",
-      "17.3 Using SQLite",
-      "17.4 Building and Running",
-      "17.5 Limits (v1)"
-    ],
+    "source": "website/content/book/17-components.md",
     "references": [
       "references/integrations.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/components.md"
   },
   {
-    "source": "book/18-project-structure.md",
-    "sections": [
-      "18.1 The Dependency Rule",
-      "18.2 Three Projects per Bounded Context",
-      "18.3 Three Packages Inside `app`",
-      "18.4 What the Compiler Enforces",
-      "18.5 Variant: the Domain Layer as Its Own Project",
-      "18.6 Ports and Adapters",
-      "18.7 The Composition Root",
-      "18.8 The Shared Kernel",
-      "18.9 Talking to Other Bounded Contexts",
-      "18.10 Testing the Layers",
-      "18.11 Rules at a Glance"
-    ],
+    "source": "website/content/book/18-project-structure.md",
     "references": [
       "references/architecture.md"
     ],
     "reviews": [
       "reviews/dovetail-ddd-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/project-structure.md"
   },
   {
-    "source": "book/19-ddd.md",
-    "sections": [
-      "19.1 Start With the Types",
-      "19.2 Make Illegal States Unrepresentable",
-      "19.3 Value Objects",
-      "19.4 Entities",
-      "19.5 Two Styles: Values or Objects",
-      "19.6 Aggregates",
-      "19.7 Domain Events",
-      "19.8 Domain Services",
-      "19.9 Factories and Reconstitution",
-      "19.10 The Anemic Domain Model",
-      "19.11 Testing the Domain",
-      "19.12 A Change, End to End"
-    ],
+    "source": "website/content/book/19-ddd.md",
     "references": [
       "references/domain.md"
     ],
     "reviews": [
       "reviews/dovetail-ddd-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/ddd.md"
   },
   {
-    "source": "book/20-application-layer.md",
-    "sections": [
-      "20.1 What a Use Case Owns",
-      "20.2 Commands, Queries, and Results",
-      "20.3 The Three Triggers",
-      "20.4 Repositories",
-      "20.5 Publishing Integration Events",
-      "20.6 Sagas, Compensation, and Durable Execution",
-      "20.7 Cross-Cutting Concerns",
-      "20.8 Testing the Application Layer",
-      "20.9 Worked Example"
-    ],
+    "source": "website/content/book/20-application-layer.md",
     "references": [
       "references/architecture.md"
     ],
     "reviews": [
       "reviews/dovetail-ddd-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/application-layer.md"
   },
   {
-    "source": "book/21-context-mapping.md",
-    "sections": [
-      "21.1 Subdomains: Core, Supporting, Generic",
-      "21.2 Ubiquitous Language and Bounded Contexts",
-      "21.3 Context Relationship Patterns",
-      "21.4 Direct Contract Use vs Anticorruption Layer",
-      "21.5 Integration Events",
-      "21.6 Drawing and Maintaining the Context Map",
-      "21.7 Splitting and Merging Contexts"
-    ],
+    "source": "website/content/book/21-context-mapping.md",
     "references": [
       "references/architecture.md"
     ],
     "reviews": [
       "reviews/dovetail-ddd-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/context-mapping.md"
   },
   {
-    "source": "book/22-stdlib.md",
-    "sections": [
-      "22.1 Core Types",
-      "22.2 Collections",
-      "22.3 Text Processing",
-      "22.4 Math",
-      "22.5 I/O",
-      "22.6 Networking",
-      "22.7 Time",
-      "22.8 JSON",
-      "22.9 Randomness and Crypto",
-      "22.10 Streams and SQLite"
-    ],
+    "source": "website/content/book/22-stdlib.md",
     "references": [
       "references/projects.md",
       "references/types.md",
@@ -402,16 +225,11 @@
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/stdlib.md"
   },
   {
-    "source": "book/23-best-practices.md",
-    "sections": [
-      "23.1 Code Style",
-      "23.2 Functional Patterns",
-      "23.3 Error Handling Patterns",
-      "23.4 Project Organization"
-    ],
+    "source": "website/content/book/23-best-practices.md",
     "references": [
       "references/domain.md",
       "references/architecture.md",
@@ -420,76 +238,41 @@
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/best-practices.md"
   },
   {
-    "source": "book/24-prefixed-literals.md",
-    "sections": [
-      "24.1 Why not just build a string?",
-      "24.2 Syntax",
-      "24.3 What a literal lowers to",
-      "24.4 Bounds come from the builder, not the compiler",
-      "24.5 Writing a builder",
-      "24.6 Declaring a prefix",
-      "24.7 Composition instead of in-string control flow",
-      "24.8 Summary"
-    ],
+    "source": "website/content/book/24-prefixed-literals.md",
     "references": [
       "references/integrations.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/prefixed-literals.md"
   },
   {
-    "source": "book/25-tuple-extension.md",
-    "sections": [
-      "25.1 Extending a Tuple",
-      "25.2 Extension in Generic Types",
-      "25.3 Tuple Shape and Accessors",
-      "25.4 Pair and Recursive Implementations",
-      "25.5 Parser Composition",
-      "25.6 Enclosing Parameter Bounds"
-    ],
+    "source": "website/content/book/25-tuple-extension.md",
     "references": [
       "references/generics.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/tuple-extension.md"
   },
   {
-    "source": "book/26-advanced-generics.md",
-    "sections": [
-      "26.1 Generic Extensions",
-      "26.2 Class Constraints",
-      "26.3 Bounds on Enclosing Parameters",
-      "26.4 Trait and Override Contracts",
-      "26.5 Variance and Method Bounds",
-      "26.6 Pattern Matching on Generic Types",
-      "26.7 Generic Trait Defaults",
-      "26.8 Associated Outputs",
-      "26.9 Generic Associated Types",
-      "26.10 Inherited Overloads",
-      "Further Reading"
-    ],
+    "source": "website/content/book/26-advanced-generics.md",
     "references": [
       "references/generics.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/advanced-generics.md"
   },
   {
-    "source": "book/27-production-deployment.md",
-    "sections": [
-      "27.1 Prepare a Reproducible Release",
-      "27.2 Image Permissions and Deployment Configuration",
-      "27.3 Configure CI Checks",
-      "27.4 Build and Publish in CI",
-      "27.5 Run and Verify the Image",
-      "27.6 Operate and Roll Back"
-    ],
+    "source": "website/content/book/27-production-deployment.md",
     "references": [
       "references/images.md",
       "references/wasi.md",
@@ -497,16 +280,11 @@
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/book/production-deployment.md"
   },
   {
     "source": "docs/container-images.md",
-    "sections": [
-      "Configuration",
-      "Runtime releases and development builds",
-      "Reproducibility and offline builds",
-      "Registry credentials and GitHub Actions"
-    ],
     "references": [
       "references/images.md",
       "references/ci.md",
@@ -514,36 +292,27 @@
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/guides/container-images.md"
   },
   {
     "source": "docs/formatting.md",
-    "sections": [
-      "Canonical style",
-      "VS Code",
-      "Implementation"
-    ],
     "references": [
       "references/tooling.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://dovetaillang.org/guides/formatting.md"
   },
   {
     "source": "docs/linter-design.md",
-    "sections": [
-      "Responsibilities",
-      "Named arguments for larger signatures",
-      "Require names for Boolean and numeric literals",
-      "Additional candidate rules",
-      "Future validation"
-    ],
     "references": [
       "references/tooling.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"
-    ]
+    ],
+    "documentation": "https://github.com/somdoron/dovetail/blob/main/docs/linter-design.md"
   }
 ]

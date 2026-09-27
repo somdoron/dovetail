@@ -97,7 +97,7 @@ override interface.
 grants read/write access at the same container and guest path, subject to OS
 permissions and mount restrictions. There are no per-path read-only grants or
 host:guest mappings in these settings; configure mappings and read-only mounts in
-the deployment. See [Production Deployment and CI](../book/27-production-deployment.md)
+the deployment. See [Production Deployment and CI](../website/content/book/27-production-deployment.md)
 for a release workflow and deployment configuration example.
 
 Base layers and their environment and labels are retained; explicitly configured

@@ -403,9 +403,9 @@
 
 ### Appendix
 
-- [A. Grammar Reference](../grammar.md)
-- [B. Operator Precedence Table](../grammar.md#operator-precedence-table)
-- [C. Reserved Keywords](../grammar.md#keywords)
+- [A. Grammar Reference](../../../grammar.md)
+- [B. Operator Precedence Table](../../../grammar.md#operator-precedence-table)
+- [C. Reserved Keywords](../../../grammar.md#keywords)
 - [D. Standard Library Quick Reference](22-stdlib.md)
 
 [How this book is validated](validation.md)

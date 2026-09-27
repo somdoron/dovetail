@@ -1,6 +1,6 @@
 # Modules Design
 
-This document designs **modules** in Dovetail: a named container that aggregates functions, properties, types, and other declarations under one name (similar to F# modules). There are **two kinds of modules**: **standalone modules** (namespace only) and **modules for a type** (when a type with the same name exists in the package). Unnamed extensions are **not** part of this design; modules are a separate concept. The design aligns with the [grammar](grammar.md), [compiler](compiler.md), and [book Part 11: Packages and Modules](book/11-packages.md).
+This document designs **modules** in Dovetail: a named container that aggregates functions, properties, types, and other declarations under one name (similar to F# modules). There are **two kinds of modules**: **standalone modules** (namespace only) and **modules for a type** (when a type with the same name exists in the package). Unnamed extensions are **not** part of this design; modules are a separate concept. The design aligns with the [grammar](grammar.md), [compiler](compiler.md), and [book Part 11: Packages and Modules](../website/content/book/11-packages.md).
 
 **In scope:** Two module kinds (standalone vs module-for-type), allowed members per kind, module declaration (inline and file-level), import rules (module only), qualified use and dispatch from module-for-type, FQN and visibility.
 

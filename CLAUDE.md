@@ -108,7 +108,7 @@ Source Files → Lexer → Layout Filter → Parser → Typechecker → Codegen 
 - [grammar.md](grammar.md) — Complete lexical and syntactic grammar (CFG notation)
 - [layout_rules.md](layout_rules.md) — Indentation/offside rule implementation guide with data structures
 - [docs/type-theory-and-improvements.md](docs/type-theory-and-improvements.md) — Type-system theory, current implementation, gaps, and improvement guide (for engineers)
-- [book/](book/) — Language reference (see [book/toc.md](book/toc.md); parts on getting started, basics, control flow, functions, type system, generics, traits, classes, packages, testing)
+- [website/content/book/](website/content/book/) — Language reference (see [website/content/book/toc.md](website/content/book/toc.md); parts on getting started, basics, control flow, functions, type system, generics, traits, classes, packages, testing)
 
 ## CLI and Entry Point
 
@@ -145,10 +145,16 @@ assets embedded in the compiler. Generic agents (including Codex) install under
 Review profiles run only when requested. Keep consumer guidance independent of this
 compiler checkout and its internal instructions.
 
+`website/content/book/` is the canonical language/configuration reference. `website/` publishes
+it with Astro/Starlight, including Markdown chapters and `/llms.txt`; generated
+pages are not separately maintained. The skill supplies workflow, targeted pitfalls,
+and requested review guidance, linking to detailed book chapters on demand.
+
 When changing language features, CLI/runtime behavior, standard-library APIs, or the
-book, update affected references, examples, and review rules in the same change.
-If none are affected, explain why in the handoff. Maintain `tools/ai-coverage.json`
-when source sections or reference destinations change. Keep implemented behavior
+book, update affected task routing, pitfalls, examples, and review rules in the same
+change; do not copy book explanations into the skill. If none are affected, explain
+why in the handoff. Maintain `tools/ai-coverage.json` when documentation sources,
+URLs, or reference destinations change. Keep implemented behavior
 separate from proposals, and do not document a linter command before it exists.
 
 Run `python3 tools/check-ai.py --links-only` for content structure and coverage.
@@ -158,3 +164,8 @@ and local compiler validation machinery. Use `cargo test --test ai_install` for
 installer behavior. Run the behavioral scenarios in `docs/ai-evaluation.md` when
 changing discovery, routing, review behavior, or compatibility guidance. Native
 wrappers must reference canonical content rather than duplicate language rules.
+
+For website changes, run `npm --prefix website ci`, `npm --prefix website run check`,
+and `npm --prefix website run build`. The build checks exported documentation,
+HTML discovery links, and internal links/anchors. See `website/README.md` for preview
+and hosting instructions. Language changes still use the book/compiler checks above.

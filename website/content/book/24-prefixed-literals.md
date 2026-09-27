@@ -234,4 +234,4 @@ Composition gets the same result with nothing new in the language, and gets *mor
 | Declaration | `@stringLiteral` on a type alias, record, or class; the prefix is the declared name |
 | Scope | Wherever the name is imported; `import pkg.sql as pg` renames the literal to `pg"..."` |
 
-See [docs/SQL.md](../docs/SQL.md) for the first client of this mechanism, `standard-sqlite`'s `sql"..."`.
+See [docs/SQL.md](../../../docs/SQL.md) for the first client of this mechanism, `standard-sqlite`'s `sql"..."`.

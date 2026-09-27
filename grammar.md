@@ -117,7 +117,7 @@ interpolation = '$' IDENT
    whitespace) by a string. The prefix must not be a keyword, and `test` is
    reserved for test declarations. The prefix is an ordinary name in scope,
    declared with `@stringLiteral`, naming the builder type the literal is
-   lowered onto; see book/24-prefixed-literals.md. */
+   lowered onto; see website/content/book/24-prefixed-literals.md. */
 PREFIXED_STRING_LIT
             = IDENT '"' { string_char | escape_seq | prefixed_interpolation } '"'
             | IDENT '"""' { any_char | escape_seq | prefixed_interpolation } '"""'
@@ -274,14 +274,14 @@ Attributes precede the visibility keyword on the declarations that accept them.
 ```
 declaration_attrs   = { derive_attr } [ string_literal_attr ]
 
-/* Applies a derive macro; see book/16-macros.md.
+/* Applies a derive macro; see website/content/book/16-macros.md.
    Allowed on: record, enum, newtype. */
 derive_attr         = "@" "derive" "(" IDENT { "." IDENT } ")"
 
 /* Marks the declared name as the prefix of a prefixed string literal, so
    `IDENT"..."` is available wherever the name is in scope. Takes no argument —
    the prefix IS the name. Allowed on: type alias, record, class.
-   See book/24-prefixed-literals.md. */
+   See website/content/book/24-prefixed-literals.md. */
 string_literal_attr = "@" "stringLiteral"
 ```
 
@@ -494,7 +494,7 @@ A dotted type name whose root is an in-scope type parameter denotes an associate
 type through that parameter's bounds: `P.Output` or `W.Wrapped<T>`. Otherwise,
 resolve it as a package-qualified type name. Associated references must match
 the declaration's type-parameter count and identify one declaring trait
-application. See [Advanced Generics](book/26-advanced-generics.md#268-associated-outputs).
+application. See [Advanced Generics](website/content/book/26-advanced-generics.md#268-associated-outputs).
 
 ---
 

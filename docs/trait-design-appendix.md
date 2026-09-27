@@ -107,7 +107,7 @@ the same signature require an explicit member; repeated paths to the same
 default application share it. Default bodies may not be `intrinsic`. Associated
 outputs in default bodies retain their implementation-dependent identity.
 See [trait completion](trait-completion-design.md) and the
-[advanced book examples](../book/26-advanced-generics.md#267-generic-trait-defaults).
+[advanced book examples](../website/content/book/26-advanced-generics.md#267-generic-trait-defaults).
 
 ---
 
@@ -180,7 +180,7 @@ Ambiguous members and incorrect associated argument counts are errors.
 
 A generic `use` continuation must return the resource's symbolic
 `R.Wrapped<U, E2>` result; it cannot assume that every resource chooses the same
-container. See [Generic Resource Helpers](../book/26-advanced-generics.md#generic-resource-helpers).
+container. See [Generic Resource Helpers](../website/content/book/26-advanced-generics.md#generic-resource-helpers).
 Associated-type defaults and GAT equality bindings remain unsupported.
 
 ### 5.4 Relation to Type Aliases

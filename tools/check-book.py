@@ -137,7 +137,7 @@ def main():
     parser.add_argument('--links-only', action='store_true')
     parser.add_argument('--example', action='append', help='Validate one named example while developing documentation')
     args = parser.parse_args()
-    pages = sorted((ROOT / 'book').glob('*.md'))
+    pages = sorted((ROOT / 'website/content/book').glob('*.md'))
     try:
         check_links([ROOT / 'README.md', *pages])
         if not args.links_only:

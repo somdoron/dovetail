@@ -6,11 +6,15 @@ WebAssembly with garbage collection and WASI component imports.
 
 The compiler and libraries are evolving. Use matching compiler/library versions;
 HTTP and TLS still need production hardening. Postgres and a full web framework
-are not provided yet. See the [library guide](book/22-stdlib.md) for current scope.
+are not provided yet. See the [library guide](website/content/book/22-stdlib.md) for current scope.
 
-Start with [Getting Started](book/01-getting-started.md) for installation, VS Code
-setup, and a complete first program. Continue with the [book](book/toc.md),
-[CLI guide](book/02-tool-commands.md), [container image guide](docs/container-images.md), and [standard-library guide](book/22-stdlib.md).
+Start with [Getting Started](website/content/book/01-getting-started.md) for installation, VS Code
+setup, and a complete first program. Continue with the [book](website/content/book/toc.md),
+[CLI guide](website/content/book/02-tool-commands.md), [container image guide](docs/container-images.md), and [standard-library guide](website/content/book/22-stdlib.md).
+
+The [Astro website](website/README.md) publishes these same chapters for readers
+and coding assistants, including Markdown exports and `llms.txt`. Preview locally
+with `npm --prefix website ci` and `npm --prefix website run dev`.
 
 Install the `dovetail` executable from crates.io:
 
@@ -35,7 +39,7 @@ python3 tools/check-book.py
 ```
 
 Book validation requires Python 3.11+ and checks local links and marked complete
-programs. See [what CI validates](book/validation.md). Use `cargo run --` during
+programs. See [what CI validates](website/content/book/validation.md). Use `cargo run --` during
 compiler development so validation uses the current source.
 
 Contributor references: [repository guidance](CLAUDE.md), [grammar](grammar.md),
