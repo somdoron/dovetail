@@ -777,9 +777,33 @@ module X509 =
                 i = i + 1
             eq
 
-    /// Validate `chain` (leaf first) against `trustAnchors` at `currentTime`.
-    /// Checks per-link signatures, validity windows, and chain linking, up to
-    /// `maxDepth`.
+    private function validateCertificate(cert: X509Certificate, now: Int64):
+        Result<Unit, X509Error> =
+        if now < cert.notBefore.epochSecond then
+            Error(X509Error.CertificateNotYetValid)
+        else if now > cert.notAfter.epochSecond then
+            Error(X509Error.CertificateExpired)
+        else if cert.hasUnrecognizedCritical then
+            Error(X509Error.ConstraintViolation("unrecognized critical extension"))
+        else
+            Ok(())
+
+    private function validateIssuer(issuer: X509Certificate, intermediates: Int32):
+        Result<Unit, X509Error> =
+        if issuer.hasBasicConstraints == false then
+            Error(X509Error.ConstraintViolation("issuer lacks basicConstraints cA=TRUE"))
+        else if issuer.isCa == false then
+            Error(X509Error.ConstraintViolation("issuer basicConstraints cA=FALSE"))
+        else if issuer.hasKeyUsage && (issuer.keyCertSign == false) then
+            Error(X509Error.ConstraintViolation("issuer keyUsage lacks keyCertSign"))
+        else if issuer.hasPathLen && (issuer.pathLen < intermediates) then
+            Error(X509Error.ConstraintViolation("path length constraint exceeded"))
+        else
+            Ok(())
+
+    /// Validate a leaf-first path, trying trusted issuers at every verified link.
+    /// Certificates beyond the selected trust anchor are not part of the path.
+    /// `maxDepth` bounds the supplied chain, including any unused suffix.
     public function validate(
         chain: List<X509Certificate>,
         trustAnchors: List<X509Certificate>,
@@ -787,97 +811,48 @@ module X509 =
         currentTime: Instant
     ): Result<Unit, X509Error> =
         if chain.isEmpty then try Result.Error(X509Error.MalformedCertificate("empty chain"))
-        // Counted once: `length` walks the list, and the depth bound is what
-        // keeps that walk short.
-        let depth = chain.length
-        if depth > maxDepth then try Result.Error(X509Error.ChainTooLong(maxDepth))
+        if chain.length > maxDepth then try Result.Error(X509Error.ChainTooLong(maxDepth))
         let now = currentTime.epochSecond
-        // Validity window for every cert in the chain.
-        for c in chain do
-            if now < c.notBefore.epochSecond then
-                try Result.Error(X509Error.CertificateNotYetValid)
-            else
-                if now > c.notAfter.epochSecond then
-                    try Result.Error(X509Error.CertificateExpired)
-                // RFC 5280 §4.2: a cert with a critical extension we cannot process MUST be
-                // rejected — an unhandled critical constraint (e.g. nameConstraints) must not
-                // be silently ignored, which would let a constrained sub-CA act unconstrained.
-                else
-                    if c.hasUnrecognizedCritical then
-                        try Result
-                            .Error(X509Error.ConstraintViolation("unrecognized critical extension"))
-        // Leaf (position 0) usage checks for TLS server authentication. Each is
-        // enforced only when its extension is PRESENT — an absent EKU or keyUsage
-        // means unrestricted (RFC 5280 §4.2.1.12, §4.2.1.3), so such certs still
-        // validate. A cert issued for a different purpose (EKU without serverAuth)
-        // or one whose keyUsage forbids signing must not be accepted as a server.
-        // Non-empty by the guard above.
         let leaf = chain.head
+        // Absent EKU/keyUsage means unrestricted; present extensions must
+        // permit TLS server authentication and signing.
         if leaf.hasEku && (leaf.ekuServerAuth == false) then
             try Result.Error(X509Error.ConstraintViolation("leaf EKU lacks serverAuth"))
         if leaf.hasKeyUsage && (leaf.keyUsageDigitalSignature == false) then
             try Result.Error(X509Error.ConstraintViolation("leaf keyUsage lacks digitalSignature"))
-        // Each cert signed by the next; the last must chain to a trust anchor.
-        // Walked as overlapping pairs rather than by index — a list has no O(1)
-        // `get`, and the pairs are exactly `(head, tail.head)` at each step.
-        let mutable pairs = chain
-        while !pairs.tail.isEmpty do
-            let c = pairs.head
-            let issuer = pairs.tail.head
-            if bytesEqual(c.issuerRaw, issuer.subjectRaw) == false then
-                try Result.Error(X509Error.MalformedCertificate("issuer/subject mismatch"))
-            else if verifySignature(c, issuer) == false then
-                try Result.Error(X509Error.SignatureVerificationFailed)
-            pairs = pairs.tail
-        // CA / basic-constraints checks on every *in-chain issuer* (positions
-        // 1..n-1): each one signs the certificate below it, so it must be a CA
-        // authorised to issue certificates. The leaf (position 0) is exempt, and
-        // the external trust anchor is trusted a priori (not re-validated here).
-        // `j` is still the position of `issuer` in the chain — the
-        // pathLenConstraint check below is stated in terms of it.
-        let mutable j = 1
-        let mutable issuers = chain.tail
-        while !issuers.isEmpty do
-            let issuer = issuers.head
-            // A cert that signs another MUST carry basicConstraints cA=TRUE. This
-            // rejects the "leaf signs a forged leaf" attack: a normal end-entity
-            // cert (no basicConstraints, or cA=FALSE) cannot act as an issuer.
-            if issuer.hasBasicConstraints == false then
-                try Result
-                    .Error(X509Error.ConstraintViolation("issuer lacks basicConstraints cA=TRUE"))
-            else
-                if issuer.isCa == false then
-                    try Result
-                        .Error(X509Error.ConstraintViolation("issuer basicConstraints cA=FALSE"))
-                // keyUsage, when present, MUST allow certificate signing.
-                else
-                    if issuer.hasKeyUsage && (issuer.keyCertSign == false) then
-                        try Result
-                            .Error(
-                            X509Error.ConstraintViolation("issuer keyUsage lacks keyCertSign")
-                        )
-                    // pathLenConstraint: the number of intermediate CAs between this
-                    // issuer and the leaf (there are j-1 of them) must not exceed it.
-                    else
-                        if issuer.hasPathLen && (issuer.pathLen < j - 1) then
-                            try Result
-                                .Error(
-                                X509Error.ConstraintViolation("path length constraint exceeded")
-                            )
-            j = j + 1
-            issuers = issuers.tail
-        // Top of chain must be signed by a trust anchor.
-        match chain.last with
-            case None => Error(X509Error.MalformedCertificate("empty chain"))
-            case Some(top) =>
-                let mutable anchored = false
-                for anchor in trustAnchors do
-                    if bytesEqual(top.issuerRaw, anchor.subjectRaw)
-                        && verifySignature(top, anchor) then
+        let mutable remaining = chain
+        let mutable position = 0
+        let mutable anchored = false
+        while !remaining.isEmpty && !anchored do
+            let cert = remaining.head
+            try validateCertificate(cert, now)
+            if position > 0 then try validateIssuer(cert, position - 1)
+            for anchor in trustAnchors do
+                // A name match only selects a candidate: the anchor's key must
+                // verify the current certificate's signature. In particular,
+                // WR2 can use the trusted GTS Root R1 without traversing the
+                // server's cross-signed R1 certificate toward GlobalSign.
+                if bytesEqual(cert.issuerRaw, anchor.subjectRaw)
+                    && verifySignature(cert, anchor) then
+                    let validity = validateCertificate(anchor, now)
+                    // Preserve support for an explicitly trusted self-signed
+                    // leaf. Any anchor issuing a distinct certificate must be
+                    // a CA and satisfy signing and path-length constraints.
+                    let constraints =
+                        if (position == 0) && bytesEqual(cert.tbsBytes, anchor.tbsBytes) then Ok(())
+                        else validateIssuer(anchor, position)
+                    if validity.isOk && constraints.isOk then
                         anchored = true
-                        // Stop scanning the rest of the trust store once anchored.
                         break
-                if anchored then Ok(()) else Error(X509Error.MissingTrustAnchor)
+            if !anchored && !remaining.tail.isEmpty then
+                let issuer = remaining.tail.head
+                if bytesEqual(cert.issuerRaw, issuer.subjectRaw) == false then
+                    try Result.Error(X509Error.MalformedCertificate("issuer/subject mismatch"))
+                if verifySignature(cert, issuer) == false then
+                    try Result.Error(X509Error.SignatureVerificationFailed)
+            remaining = remaining.tail
+            position = position + 1
+        if anchored then Ok(()) else Error(X509Error.MissingTrustAnchor)
 
 /// Minimal DER builder (test support).
 module DerBuild =
@@ -1528,3 +1503,29 @@ test "X509 parsePssParams decodes hash + salt, fails closed on bad params" =
     assert X509.parsePssParams(Array<Uint8>.empty()).isError
     // Fail closed: truncated params (a lone SEQUENCE tag byte).
     assert X509.parsePssParams([| 0x30u8 |]).isError
+
+test "X509 trust anchor subject match requires the correct signing key" =
+    let secret = SecretKey(Array<Uint8>.fill(32, 0x71u8))
+    let otherSecret = SecretKey(Array<Uint8>.fill(32, 0x72u8))
+    let publicKey = Ed25519.derivePublicKey(secret).value
+    let otherPublicKey = Ed25519.derivePublicKey(otherSecret).value
+    let extensions = DerBuild.extsBlock(DerBuild.basicConstraintsCa())
+    let anchor =
+        X509.parseCertificate(DerBuild.cert("root", "root", publicKey, secret, extensions)).require
+    let impostor =
+        X509
+            .parseCertificate(
+            DerBuild.cert("root", "root", otherPublicKey, otherSecret, extensions)
+        )
+            .require
+    let leaf =
+        X509
+            .parseCertificate(
+            DerBuild.cert("leaf", "root", publicKey, secret, Array<Uint8>.empty())
+        )
+            .require
+    let now = Instant.ofEpochSecond(1748736000i64)
+    assert X509.validate([leaf], [anchor], 10, now).isOk
+    assert X509.validate([leaf], [impostor], 10, now).isError
+    // A failed candidate must not hide a later valid anchor with the same name.
+    assert X509.validate([leaf], [impostor, anchor], 10, now).isOk
