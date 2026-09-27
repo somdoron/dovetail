@@ -1106,3 +1106,9 @@ function main(): Unit =
     )
     .expect("List stays covariant");
 }
+
+#[test]
+fn generic_variant_payloads_survive_variance_defaults() {
+    common::compile_and_run(include_str!("fixtures/genericVariantInference.dove"))
+        .expect("rigid payload type parameters survive defaults for unused variant parameters");
+}

@@ -71,6 +71,7 @@ impl TypeParamSubstitution {
 
     /// Resolve type params, defaulting covariant (`+T`) params to `Never`
     /// and contravariant (`-T`) params to `Any` when unresolved.
+    /// A bound rigid generic parameter is resolved evidence, not a placeholder.
     /// Returns `None` if any invariant param remains unresolved.
     pub fn resolve_with_variance_defaults(
         &self,
@@ -81,9 +82,7 @@ impl TypeParamSubstitution {
             .iter()
             .zip(variances.iter())
             .map(|(tp, variance)| match self.bindings.get(tp) {
-                Some(ty) if !matches!(ty, Type::TypeVariable(..) | Type::GenericParam(..)) => {
-                    Some(ty.clone())
-                }
+                Some(ty) if !matches!(ty, Type::TypeVariable(..)) => Some(ty.clone()),
                 _ => match variance {
                     Variance::Covariant => Some(Type::Never),
                     Variance::Contravariant => Some(Type::Any),
@@ -574,5 +573,50 @@ mod tests {
         // TypeVariable should still bind to Never (not short-circuit)
         assert!(sub.unify(&param, &Type::Never));
         assert_eq!(sub.get(&t), Some(&Type::Never));
+    }
+
+    #[test]
+    fn variance_defaults_preserve_rigid_generic_bindings() {
+        let bound = TypeParamName("T".into());
+        let missing = TypeParamName("E".into());
+        let caller_type = Type::GenericParam(TypeParamName("Value".into()), vec![], 7);
+        let mut substitution = TypeParamSubstitution::new();
+        assert!(substitution.unify(&Type::TypeVariable(bound.clone(), vec![]), &caller_type,));
+
+        for variance in [
+            Variance::Covariant,
+            Variance::Contravariant,
+            Variance::Invariant,
+        ] {
+            assert_eq!(
+                substitution.resolve_with_variance_defaults(
+                    &[bound.clone(), missing.clone()],
+                    &[variance, Variance::Covariant],
+                ),
+                Some(vec![caller_type.clone(), Type::Never]),
+            );
+        }
+    }
+
+    #[test]
+    fn variance_defaults_still_apply_to_unresolved_placeholders() {
+        let parameter = TypeParamName("T".into());
+        let mut substitution = TypeParamSubstitution::new();
+        substitution.insert(
+            parameter.clone(),
+            Type::TypeVariable(TypeParamName("Unknown".into()), vec![]),
+        );
+
+        for (variance, expected) in [
+            (Variance::Covariant, Some(vec![Type::Never])),
+            (Variance::Contravariant, Some(vec![Type::Any])),
+            (Variance::Invariant, None),
+        ] {
+            assert_eq!(
+                substitution
+                    .resolve_with_variance_defaults(std::slice::from_ref(&parameter), &[variance],),
+                expected,
+            );
+        }
     }
 }

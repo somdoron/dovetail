@@ -1,0 +1,144 @@
+package test
+
+import standard.yaml.Yaml
+import standard.yaml.YamlDecoder
+import standard.yaml.YamlError
+import standard.yaml.YamlErrorKind
+import standard.yaml.YamlValue
+
+@derive(YamlDecoder)
+ record Server =
+    host: String
+    port: Int32
+    workers: Option<Int32>
+
+@derive(YamlDecoder)
+ record Config =
+    servers: List<Server>
+
+@derive(YamlDecoder)
+ record Box<T> =
+    value: T
+
+@derive(YamlDecoder)
+ newtype Port = Int32
+
+@derive(YamlDecoder)
+ newtype OptionalPort = Option<Int32>
+
+@derive(YamlDecoder)
+ enum Mode =
+    Disabled
+    Named(String)
+    Pair(Int32, String)
+    Configured { port: Int32; host: String }
+
+@derive(YamlDecoder)
+ enum Choice<T> =
+    Value(T)
+    Absent
+
+test "derive reads nested block configuration" =
+    let yaml =
+        Yaml
+            .parse(
+            "servers:\n  - host: localhost\n    port: 8080\n  - host: other\n    port: 9000\n    workers: 4\n"
+        )
+            .require
+    let config = Config.fromYaml(yaml).require
+    let servers = config.servers.toArray()
+    assert servers.length == 2
+    assert servers.get(0).host == "localhost"
+    assert servers.get(0).workers.isNone
+    assert servers.get(1).workers.require == 4
+
+test "derive missing optional generic field" =
+    assert Box<Option<Int32>>.fromYaml(Yaml.parse("{}").require).require.value.isNone
+    assert Box<OptionalPort>.fromYaml(Yaml.parse("{}").require).require.value.value.isNone
+    assert Box<Int32>.fromYaml(Yaml.parse("{}").require).isError
+
+test "derive transparent newtype" =
+    assert Port.fromYaml(Yaml.parse("8080").require).require.value == 8080
+    assert Port.fromYaml(Yaml.parse("8080.5").require).isError
+
+test "derive rejects unknown and missing fields" =
+    assert Server.fromYaml(Yaml.parse("host: a\nport: 1\nworkres: 2").require).isError
+    assert Server.fromYaml(Yaml.parse("host: a").require).isError
+    assert Server.fromYaml(Yaml.parse("[]").require).isError
+    assert Server.fromYaml(Yaml.parse("host: a\nport: null").require).isError
+    assert Server
+        .fromYaml(Yaml.parse("host: a\nport: 1\nworkers: null").require)
+        .require
+        .workers
+        .isNone
+
+test "derive error path and source position" =
+    let result = Config.fromYaml(Yaml.parse("servers:\n  - host: a\n    port: wrong\n").require)
+    match result with
+        case Error(error) =>
+            assert error
+                .format()
+                == "servers[0].port: expected Integer, got String at line 3, column 11"
+        case _ => assert false
+
+test "derive all enum payload shapes" =
+    match Mode.fromYaml(Yaml.parse("type: Disabled").require).require with
+        case Mode.Disabled => ()
+        case _ => assert false
+    match Mode.fromYaml(Yaml.parse("{type: Named, value: hello}").require).require with
+        case Mode.Named(name) => assert name == "hello"
+        case _ => assert false
+    match Mode.fromYaml(Yaml.parse("{type: Pair, value: [4, hello]}").require).require with
+        case Mode.Pair(number, name) =>
+            assert number == 4
+            assert name == "hello"
+        case _ => assert false
+    match Mode.fromYaml(Yaml.parse("type: Configured\nport: 5\nhost: test").require).require with
+        case Mode.Configured { port; host } =>
+            assert port == 5
+            assert host == "test"
+        case _ => assert false
+    match Choice<Int32>.fromYaml(Yaml.parse("type: Value\nvalue: 7").require).require with
+        case Choice.Value(value) => assert value == 7
+        case _ => assert false
+
+test "derive enum errors" =
+    for text in [
+        "type: Unknown",
+        "type: Disabled\nvalue: 1",
+        "type: Pair\nvalue: [1]",
+        "type: Pair\nvalue: wrong",
+        "type: Configured\nport: 1",
+        "type: Named",
+        "{}"
+    ] do
+        assert Mode.fromYaml(Yaml.parse(text).require).isError
+    match Mode.fromYaml(Yaml.parse("type: Pair\nvalue: [wrong, name]").require) with
+        case Error(error) => assert error.format().startsWith("value[0]: expected Integer")
+        case _ => assert false
+
+test "primitive decoders are strict" =
+    assert Int32.fromYaml(Yaml.parse("2147483648").require).isError
+    assert Int32.fromYaml(Yaml.parse("-2147483649").require).isError
+    assert Int32.fromYaml(Yaml.parse("-2147483648").require).require == -2147483648
+    assert Int64.fromYaml(Yaml.parse("1.0").require).isError
+    assert String.fromYaml(Yaml.parse("true").require).isError
+    assert Bool.fromYaml(Yaml.parse("'true'").require).isError
+    assert Float64.fromYaml(Yaml.parse("7").require).require == 7.0
+
+test "array and tuple decoders" =
+    let values = Array<(Int32, String)>.fromYaml(Yaml.parse("[[1, one], [2, two]]").require).require
+    assert values.get(1)._1 == "two"
+    assert (Int32, Int32).fromYaml(Yaml.parse("[1]").require).isError
+    assert (Int32, Int32, Int32).fromYaml(Yaml.parse("[1,2,3]").require).require._2 == 3
+    assert (Int32, Int32, Int32, Int32).fromYaml(Yaml.parse("[1,2,3,4]").require).require._3 == 4
+    assert (Int32, Int32, Int32, Int32, Int32)
+        .fromYaml(Yaml.parse("[1,2,3,4,5]").require)
+        .require
+        ._4
+        == 5
+    assert (Int32, Int32, Int32, Int32, Int32, Int32)
+        .fromYaml(Yaml.parse("[1,2,3,4,5,6]").require)
+        .require
+        ._5
+        == 6

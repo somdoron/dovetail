@@ -1,0 +1,701 @@
+package standard.yaml
+
+import standard.collection.StringBuilder
+
+/// Cursor over the original Unicode scalars. CRLF consumes two offsets but one line.
+internal class YamlParser(
+    characters: Array<Char>,
+    mutable offset: Int32,
+    mutable line: Int32,
+    mutable column: Int32
+) =
+    internal function make(text: String): YamlParser = YamlParser(text.chars(), 0, 1, 1)
+
+    private function peek(self, ahead: Int32): Char =
+        let index = self.offset + ahead
+        if index < 0 || index >= self.characters.length then '\0' else self.characters.get(index)
+
+    private function ended(self): Bool = self.offset >= self.characters.length
+
+    private function position(self): YamlPosition =
+        YamlPosition { offset = self.offset; line = self.line; column = self.column }
+
+    private function advance(self): Unit =
+        if !self.ended() then
+            let character = self.peek(0)
+            self.offset = self.offset + 1
+            if character == '\r' then
+                if self.peek(0) == '\n' then self.offset = self.offset + 1
+                self.line = self.line + 1
+                self.column = 1
+            else if character == '\n' then
+                self.line = self.line + 1
+                self.column = 1
+            else
+                self.column = self.column + 1
+
+    private function node(self, start: YamlPosition, value: YamlValue): Yaml =
+        Yaml { value = value; span = Some(YamlSpan { start = start; end = self.position() }) }
+
+    private function error(self, kind: YamlErrorKind): YamlError =
+        YamlError.make(kind, Some(YamlSpan { start = self.position(); end = self.position() }))
+
+    private function expect(self, condition: Bool, message: String): Result<Unit, YamlError> =
+        if condition then Ok(()) else Error(self.error(YamlErrorKind.Syntax(message)))
+
+    private function horizontal(self): Unit =
+        while self.peek(0) == ' ' || self.peek(0) == '\t' do
+            self.advance()
+
+    private function lineEnd(self): Bool =
+        self.ended() || self.peek(0) == '\r' || self.peek(0) == '\n'
+
+    private function comment(self): Unit =
+        if self.peek(0) == '#' then
+            while !self.lineEnd() do
+                self.advance()
+
+    private function finishLine(self): Result<Unit, YamlError> =
+        self.horizontal()
+        if self.peek(0) == '#' then
+            try self.expect(self.separated(-1), "comments must be separated from values")
+        self.comment()
+        try self.expect(self.lineEnd(), "unexpected content after YAML value")
+        if !self.ended() then self.advance()
+        Ok(())
+
+    /// Leaves the cursor at the next content character (including its indentation).
+    private function nextContent(self): Result<Unit, YamlError> =
+        let mutable searching = true
+        while searching && !self.ended() do
+            while self.peek(0) == ' ' do
+                self.advance()
+            try self.expect(self.peek(0) != '\t', "tabs cannot be used for indentation")
+            self.comment()
+            if self.lineEnd() then
+                if !self.ended() then self.advance()
+            else
+                searching = false
+        Ok(())
+
+    private function separated(self, ahead: Int32): Bool =
+        let character = self.peek(ahead)
+        character
+            == ' '
+            || character == '\t'
+            || character == '\r'
+            || character == '\n'
+            || character == '\0'
+
+    private function marker(self, character: Char): Bool =
+        self
+            .column
+            == 1
+            && self.peek(0) == character
+            && self.peek(1) == character
+            && self.peek(2) == character
+            && self.separated(3)
+
+    private function documentEnd(self): Bool = self.marker('-') || self.marker('.')
+
+    private function dash(self): Bool = self.peek(0) == '-' && self.separated(1)
+
+    private function validateCharacters(self): Result<Unit, YamlError> =
+        while !self.ended() do
+            let character = self.peek(0)
+            let printable =
+                character
+                    == '\t'
+                    || character == '\r'
+                    || character == '\n'
+                    || character == '\u{85}'
+                    || (character >= ' ' && character <= '\u{7e}')
+                    || (character >= '\u{a0}' && character != '\u{fffe}' && character != '\u{ffff}')
+            try self.expect(printable, "non-printable character in YAML input")
+            self.advance()
+        self.offset = 0
+        self.line = 1
+        self.column = 1
+        Ok(())
+
+    internal function parse(self): Result<Yaml, YamlError> =
+        try self.validateCharacters()
+        if self.peek(0) == '\u{feff}' then
+            self.advance()
+            self.column = 1
+        try self.nextContent()
+        if self.marker('-') then
+            self.advance()
+            self.advance()
+            self.advance()
+            self.horizontal()
+            if self.lineEnd() || self.peek(0) == '#' then
+                try self.finishLine()
+                try self.nextContent()
+        if self.marker('-') then
+            try Error(self.error(YamlErrorKind.Unsupported("multiple documents")))
+        let start = self.position()
+        let yaml =
+            if self.ended() || self.marker('.') then self.node(start, YamlValue.Null)
+            else try self.block(self.column - 1, 0)
+        try self.nextContent()
+        if self.marker('.') then
+            self.advance()
+            self.advance()
+            self.advance()
+            try self.finishLine()
+            try self.nextContent()
+        if self.marker('-') then
+            try Error(self.error(YamlErrorKind.Unsupported("multiple documents")))
+        try self.expect(self.ended(), "unexpected content after YAML document")
+        Ok(yaml)
+
+    private function collectionDepth(self, depth: Int32): Result<Unit, YamlError> =
+        if depth >= 128 then Error(self.error(YamlErrorKind.NestingLimit)) else Ok(())
+
+    /// Finds a block mapping separator without interpreting colons inside quoted keys.
+    private function mappingAhead(self): Bool =
+        let mutable ahead = 0
+        let mutable quote = '\0'
+        let mutable found = false
+        let mutable scanning = true
+        while scanning do
+            let character = self.peek(ahead)
+            if character == '\0' || character == '\r' || character == '\n' then
+                scanning = false
+            else if quote != '\0' then
+                if character == '\\' && quote == '"' then
+                    ahead = ahead + 1
+                else if character == quote then
+                    if quote == '\'' && self.peek(ahead + 1) == '\'' then ahead = ahead + 1
+                    else quote = '\0'
+            else if (character == '\'' || character == '"') && ahead == 0 then
+                quote = character
+            else if character == ':' && self.separated(ahead + 1) then
+                found = true
+                scanning = false
+            else if character
+                == '['
+                || character == '{'
+                || (character == '#' && (ahead == 0 || self.separated(ahead - 1))) then
+                scanning = false
+            ahead = ahead + 1
+        found
+
+    private function block(self, indent: Int32, depth: Int32): Result<Yaml, YamlError> =
+        if self.dash() then
+            self.blockSequence(indent, depth)
+        else if self.mappingAhead() then
+            self.blockMapping(indent, depth)
+        else
+            let yaml = try self.inlineValue(indent, depth, false)
+            if self.column != 1 && !self.ended() then try self.finishLine()
+            try self.nextContent()
+            Ok(yaml)
+
+    private function blockSequence(self, indent: Int32, depth: Int32): Result<Yaml, YamlError> =
+        try self.collectionDepth(depth)
+        let start = self.position()
+        let mutable items: List<Yaml> = []
+        while !self.ended() && !self.documentEnd() && self.column - 1 == indent && self.dash() do
+            self.advance()
+            self.horizontal()
+            let value = try self.blockChild(indent, depth + 1, false)
+            items = items.prepend(value)
+        Ok(self.node(start, YamlValue.Sequence(items.reverse())))
+
+    private function blockMapping(self, indent: Int32, depth: Int32): Result<Yaml, YamlError> =
+        try self.collectionDepth(depth)
+        let start = self.position()
+        let mutable pairs: List<(Yaml, Yaml)> = []
+        while !self.ended()
+            && !self.documentEnd()
+            && self.column - 1 == indent
+            && self.mappingAhead() do
+            let key = try self.key(false)
+            try self.uniqueKey(pairs, key)
+            try self.expect(self.peek(0) == ':', "expected mapping separator")
+            self.advance()
+            self.horizontal()
+            let value = try self.blockChild(indent, depth + 1, true)
+            pairs = pairs.prepend((key, value))
+        Ok(self.node(start, YamlValue.Mapping(pairs.reverse())))
+
+    private function blockChild(self, parentIndent: Int32, depth: Int32, allowIndentless: Bool):
+        Result<Yaml, YamlError> =
+        let start = self.position()
+        if self.lineEnd() || self.peek(0) == '#' then
+            try self.finishLine()
+            try self.nextContent()
+            if !self.ended()
+                && !self.documentEnd()
+                && (
+                self
+                    .column
+                    - 1
+                    > parentIndent
+                    || (allowIndentless && self.column - 1 == parentIndent && self.dash())
+            ) then self.block(self.column - 1, depth)
+            else Ok(self.node(start, YamlValue.Null))
+        else if !allowIndentless && (self.dash() || self.mappingAhead()) then
+            self.block(self.column - 1, depth)
+        else
+            let value = try self.inlineValue(parentIndent, depth, false)
+            if self.column != 1 && !self.ended() then try self.finishLine()
+            try self.nextContent()
+            Ok(value)
+
+    private function uniqueKey(self, pairs: List<(Yaml, Yaml)>, key: Yaml):
+        Result<Unit, YamlError> =
+        let name = try String.fromYaml(key)
+        for pair in pairs do
+            let previous = try String.fromYaml(pair._0)
+            if name == previous then
+                try Error(YamlError.make(YamlErrorKind.DuplicateKey(name), key.span))
+        Ok(())
+
+    private function key(self, flow: Bool): Result<Yaml, YamlError> =
+        let start = self.position()
+        if self
+            .peek(0)
+            == '['
+            || self.peek(0) == '{'
+            || (self.peek(0) == '?' && self.separated(1)) then
+            try Error(self.error(YamlErrorKind.Unsupported("complex mapping keys")))
+        let quoted = self.peek(0) == '\'' || self.peek(0) == '"'
+        let key = if quoted then try self.quoted() else try self.plain(0, flow, true)
+        match key.value with
+            case YamlValue.Str(name) =>
+                if name == "<<" && !quoted then
+                    try Error(YamlError.make(YamlErrorKind.Unsupported("merge keys"), key.span))
+            case _ =>
+                try Error(
+                    YamlError.make(YamlErrorKind.Unsupported("non-string mapping keys"), key.span)
+                )
+        try self.expect(self.line == start.line, "mapping keys must fit on one line")
+        self.horizontal()
+        Ok(key)
+
+    private function flowSpace(self): Unit =
+        let mutable scanning = true
+        while scanning && !self.ended() do
+            self.horizontal()
+            self.comment()
+            if self.lineEnd() then self.advance() else scanning = false
+
+    private function flowCollection(self, depth: Int32): Result<Yaml, YamlError> =
+        try self.collectionDepth(depth)
+        let start = self.position()
+        let mapping = self.peek(0) == '{'
+        let closing = if mapping then '}' else ']'
+        self.advance()
+        self.flowSpace()
+        let mutable items: List<Yaml> = []
+        let mutable pairs: List<(Yaml, Yaml)> = []
+        while self.peek(0) != closing && !self.ended() do
+            if mapping then
+                let key = try self.key(true)
+                try self.uniqueKey(pairs, key)
+                try self.expect(self.peek(0) == ':', "expected ':' in flow mapping")
+                self.advance()
+                self.flowSpace()
+                let value =
+                    if self.peek(0) == ',' || self.peek(0) == closing then
+                        self.node(self.position(), YamlValue.Null)
+                    else
+                        try self.inlineValue(-1, depth + 1, true)
+                pairs = pairs.prepend((key, value))
+            else
+                let item = try self.inlineValue(-1, depth + 1, true)
+                items = items.prepend(item)
+            self.flowSpace()
+            try self
+                .expect(
+                self.peek(0) == ',' || self.peek(0) == closing,
+                "expected ',' or closing flow delimiter"
+            )
+            if self.peek(0) == ',' then
+                self.advance()
+                self.flowSpace()
+        try self.expect(self.peek(0) == closing, "unclosed flow collection")
+        self.advance()
+        Ok(
+            self
+                .node(
+                start,
+                if mapping then YamlValue.Mapping(pairs.reverse())
+                else YamlValue.Sequence(items.reverse())
+            )
+        )
+
+    private function inlineValue(self, indent: Int32, depth: Int32, flow: Bool):
+        Result<Yaml, YamlError> =
+        let character = self.peek(0)
+        if character
+            == '&'
+            || character == '*'
+            || character == '!'
+            || character == '%'
+            || ((character == '?' || character == '-') && self.separated(1)) then
+            Error(
+                self
+                    .error(
+                    YamlErrorKind
+                        .Unsupported("anchors, aliases, tags, directives, or explicit keys")
+                )
+            )
+        else if character == '[' || character == '{' then
+            self.flowCollection(depth)
+        else if character == '\'' || character == '"' then
+            self.quoted()
+        else if character == '|' || character == '>' then
+            try self.expect(!flow, "block strings are not allowed inside flow collections")
+            self.blockString(indent)
+        else
+            self.plain(indent, flow, false)
+
+    /// Folds physical line breaks in quoted and plain scalars; blank lines remain newlines.
+    private function foldedBreak(self): String =
+        self.advance()
+        self.horizontal()
+        let mutable blanks = 0
+        while !self.ended() && self.lineEnd() do
+            blanks = blanks + 1
+            self.advance()
+            self.horizontal()
+        let builder = StringBuilder.new()
+        if blanks == 0 then
+            builder.append(" ")
+            ()
+        else
+            let mutable index = 0
+            while index < blanks do
+                builder.append("\n")
+                index = index + 1
+        builder.toString()
+
+    private function quoted(self): Result<Yaml, YamlError> =
+        let start = self.position()
+        let quote = self.peek(0)
+        self.advance()
+        let builder = StringBuilder.new()
+        let mutable closed = false
+        while !self.ended() && !closed do
+            let character = self.peek(0)
+            if character == quote then
+                self.advance()
+                if quote == '\'' && self.peek(0) == '\'' then
+                    builder.appendChar('\'')
+                    self.advance()
+                else
+                    closed = true
+            else if character == '\\' && quote == '"' then
+                self.advance()
+                if self.lineEnd() && !self.ended() then
+                    let folded = self.foldedBreak()
+                    if folded != " " then
+                        builder.append(folded)
+                        ()
+                else
+                    builder.append(try self.escape())
+                    ()
+            else if self.lineEnd() then
+                builder.append(self.foldedBreak())
+                ()
+            else if character == ' ' || character == '\t' then
+                let whitespace = StringBuilder.new()
+                while self.peek(0) == ' ' || self.peek(0) == '\t' do
+                    whitespace.appendChar(self.peek(0))
+                    self.advance()
+                if !self.lineEnd() then
+                    builder.append(whitespace.toString())
+                    ()
+            else
+                try self.expect(character >= ' ', "control character in quoted string")
+                builder.appendChar(character)
+                self.advance()
+        try self.expect(closed, "unterminated quoted string")
+        Ok(self.node(start, YamlValue.Str(builder.toString())))
+
+    private function escape(self): Result<String, YamlError> =
+        let character = self.peek(0)
+        self.advance()
+        match character with
+            case '0' => Ok("\0")
+            case 'a' => Ok("\u{7}")
+            case 'b' => Ok("\u{8}")
+            case 't' => Ok("\t")
+            case '\t' => Ok("\t")
+            case 'n' => Ok("\n")
+            case 'v' => Ok("\u{b}")
+            case 'f' => Ok("\u{c}")
+            case 'r' => Ok("\r")
+            case 'e' => Ok("\u{1b}")
+            case ' ' => Ok(" ")
+            case '"' => Ok("\"")
+            case '/' => Ok("/")
+            case '\\' => Ok("\\")
+            case 'N' => Ok("\u{85}")
+            case '_' => Ok("\u{a0}")
+            case 'L' => Ok("\u{2028}")
+            case 'P' => Ok("\u{2029}")
+            case 'x' => self.hexEscape(2)
+            case 'u' => self.hexEscape(4)
+            case 'U' => self.hexEscape(8)
+            case _ => Error(self.error(YamlErrorKind.Syntax("unknown YAML escape")))
+
+    private function hexEscape(self, length: Int32): Result<String, YamlError> =
+        let mutable value = 0i64
+        let mutable index = 0
+        while index < length do
+            let digit = yamlDigit(self.peek(0))
+            try self.expect(digit >= 0 && digit < 16, "invalid hexadecimal escape")
+            value = value * 16i64 + digit.toInt64()
+            self.advance()
+            index = index + 1
+        try self
+            .expect(
+            value <= 1114111i64 && !(value >= 55296i64 && value <= 57343i64),
+            "escape is not a Unicode scalar"
+        )
+        // Construct UTF-8 explicitly; String.fromBytes validates the scalar representation.
+        let bytes = Array.fill(4, 0u8)
+        let length =
+            if value < 128i64 then
+                bytes.set(0, value.toUint8())
+                1
+            else if value < 2048i64 then
+                bytes.set(0, (192i64 + value / 64i64).toUint8())
+                bytes.set(1, (128i64 + value % 64i64).toUint8())
+                2
+            else if value < 65536i64 then
+                bytes.set(0, (224i64 + value / 4096i64).toUint8())
+                bytes.set(1, (128i64 + value / 64i64 % 64i64).toUint8())
+                bytes.set(2, (128i64 + value % 64i64).toUint8())
+                3
+            else
+                bytes.set(0, (240i64 + value / 262144i64).toUint8())
+                bytes.set(1, (128i64 + value / 4096i64 % 64i64).toUint8())
+                bytes.set(2, (128i64 + value / 64i64 % 64i64).toUint8())
+                bytes.set(3, (128i64 + value % 64i64).toUint8())
+                4
+        Ok(String.fromBytes(bytes, 0, length))
+
+    private function plain(self, indent: Int32, flow: Bool, key: Bool): Result<Yaml, YamlError> =
+        let start = self.position()
+        let first = self.peek(0)
+        try self
+            .expect(
+            first
+                != '@'
+                && first != '`'
+                && first != ']'
+                && first != '}'
+                && first != ','
+                && first != '\0',
+            "invalid plain scalar"
+        )
+        if first
+            == '&'
+            || first == '*'
+            || first == '!'
+            || first == '%'
+            || (first == '?' && self.separated(1)) then
+            try Error(
+                self
+                    .error(
+                    YamlErrorKind
+                        .Unsupported("anchors, aliases, tags, directives, or explicit keys")
+                )
+            )
+        let builder = StringBuilder.new()
+        let mutable scanning = true
+        while scanning && !self.ended() do
+            let character = self.peek(0)
+            let separator =
+                character
+                    == ':'
+                    && (
+                    self
+                        .separated(1)
+                        || (
+                        flow && (self.peek(1) == ',' || self.peek(1) == '}' || self.peek(1) == ']')
+                    )
+                )
+            if separator
+                || (
+                flow
+                    && (
+                    character
+                        == ','
+                        || character == ']'
+                        || character == '}'
+                        || character == '['
+                        || character == '{'
+                )
+            )
+                || (character == '#' && (self.offset == start.offset || self.separated(-1))) then
+                scanning = false
+            else
+                if self.lineEnd() then
+                    if key then
+                        scanning = false
+                    else
+                        // Look ahead without moving the cursor unless this line continues the scalar.
+                        let mutable ahead = 0
+                        let mutable nextIndent = 0
+                        let mutable breaks = 0
+                        let mutable looking = true
+                        while looking do
+                            if self.peek(ahead) == '\r' then
+                                ahead = ahead + 1
+                                if self.peek(ahead) == '\n' then ahead = ahead + 1
+                            else if self.peek(ahead) == '\n' then
+                                ahead = ahead + 1
+                            breaks = breaks + 1
+                            nextIndent = 0
+                            while self.peek(ahead) == ' ' do
+                                nextIndent = nextIndent + 1
+                                ahead = ahead + 1
+                            if self.peek(ahead) != '\r' && self.peek(ahead) != '\n' then
+                                looking = false
+                        let next = self.peek(ahead)
+                        if next
+                            != '\0'
+                            && next != '#'
+                            && (flow || nextIndent > indent)
+                            && !(nextIndent == 0 && (next == '-' || next == '.')) then
+                            let target = self.offset + ahead
+                            while self.offset < target do
+                                self.advance()
+                            if breaks == 1 then
+                                builder.append(" ")
+                                ()
+                            else
+                                let mutable index = 1
+                                while index < breaks do
+                                    builder.append("\n")
+                                    index = index + 1
+                        else
+                            scanning = false
+                else if character == ' ' || character == '\t' then
+                    let spaces = StringBuilder.new()
+                    while self.peek(0) == ' ' || self.peek(0) == '\t' do
+                        spaces.appendChar(self.peek(0))
+                        self.advance()
+                    if !self.lineEnd() && self.peek(0) != '#' then
+                        builder.append(spaces.toString())
+                        ()
+                else
+                    try self.expect(character >= ' ', "control character in plain scalar")
+                    builder.appendChar(character)
+                    self.advance()
+        let text = builder.toString().trim()
+        try self.expect(!text.isEmpty, "expected YAML scalar")
+        let value =
+            try resolveYamlScalar(text, Some(YamlSpan { start = start; end = self.position() }))
+        Ok(self.node(start, value))
+
+    private function blockString(self, parentIndent: Int32): Result<Yaml, YamlError> =
+        let start = self.position()
+        let folded = self.peek(0) == '>'
+        self.advance()
+        let mutable chomping = ' '
+        let mutable explicitIndent = 0
+        while self
+            .peek(0)
+            == '+'
+            || self.peek(0) == '-'
+            || (self.peek(0) >= '1' && self.peek(0) <= '9') do
+            let character = self.peek(0)
+            if character == '+' || character == '-' then
+                try self.expect(chomping == ' ', "duplicate chomping indicator")
+                chomping = character
+            else
+                try self.expect(explicitIndent == 0, "duplicate indentation indicator")
+                explicitIndent = yamlDigit(character)
+            self.advance()
+        try self.finishLine()
+        let mutable contentIndent =
+            if explicitIndent == 0 then -1 else parentIndent + explicitIndent
+        let mutable lines: List<(String, Bool, Bool)> = []
+        let mutable reading = true
+        let mutable largestLeadingBlank = 0
+        while reading && !self.ended() do
+            let mutable spaces = 0
+            while self.peek(spaces) == ' ' do
+                spaces = spaces + 1
+            let after = self.peek(spaces)
+            let blank = after == '\r' || after == '\n' || after == '\0'
+            if contentIndent < 0 && !blank then
+                contentIndent = spaces
+                try self
+                    .expect(
+                    largestLeadingBlank <= contentIndent,
+                    "leading blank line is more indented than block string"
+                )
+            if !blank && (spaces <= parentIndent || spaces < contentIndent) then
+                reading = false
+            else
+                if contentIndent < 0 && spaces > largestLeadingBlank then
+                    largestLeadingBlank = spaces
+                let strip =
+                    if contentIndent < 0 || spaces < contentIndent then spaces else contentIndent
+                let mutable index = 0
+                while index < strip do
+                    self.advance()
+                    index = index + 1
+                let builder = StringBuilder.new()
+                while !self.lineEnd() do
+                    builder.appendChar(self.peek(0))
+                    self.advance()
+                let hasBreak = !self.ended()
+                if hasBreak then self.advance()
+                lines =
+                    lines
+                        .prepend(
+                        (builder.toString(), spaces > contentIndent && contentIndent >= 0, hasBreak)
+                    )
+        let ordered = lines.reverse().toArray()
+        let builder = StringBuilder.new()
+        let mutable index = 0
+        let mutable previousMoreIndented = false
+        let mutable hasPreviousText = false
+        while index < ordered.length do
+            let current = ordered.get(index)
+            builder.append(current._0)
+            if current._2 then
+                let hasNext = index + 1 < ordered.length
+                let next = if hasNext then ordered.get(index + 1) else ("", false, false)
+                if folded
+                    && !current._0.isEmpty
+                    && hasNext
+                    && !next._0.isEmpty
+                    && !current._1
+                    && !next._1 then
+                    builder.append(" ")
+                    ()
+                else if folded
+                    && current._0.isEmpty
+                    && hasNext
+                    && !next._0.isEmpty
+                    && !next._1
+                    && hasPreviousText
+                    && !previousMoreIndented then
+                    ()
+                else
+                    builder.append("\n")
+                    ()
+            if !current._0.isEmpty then
+                previousMoreIndented = current._1
+                hasPreviousText = true
+            index = index + 1
+        let text = builder.toString()
+        let mutable end = text.length
+        while end > 0 && text.getChar(end - 1) == '\n' do
+            end = end - 1
+        let result =
+            if chomping == '+' then text
+            else if chomping == '-' then text.substring(0, end)
+            else text.substring(0, end) ++ (if end > 0 && end < text.length then "\n" else "")
+        Ok(self.node(start, YamlValue.Str(result)))

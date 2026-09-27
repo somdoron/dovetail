@@ -1,0 +1,126 @@
+package standard.yaml
+
+/// Recognizes Core decimal floats and retains enough decimal digits to distinguish
+/// every binary64 rounding boundary (including half of the smallest subnormal).
+internal function yamlFloat(text: String, negative: Bool): Option<Float64> =
+    let characters = text.chars()
+    let mutable index = 0
+    let mutable digits = 0
+    let mutable significant = 0
+    let mutable mantissa = BigInt.zero()
+    let ten = BigInt.fromInt32(10)
+    let mutable decimalExponent = 0
+    let mutable fractional = false
+    let mutable sticky = false
+    while index < characters.length do
+        let character = characters.get(index)
+        if character == '.' && !fractional then
+            fractional = true
+            index = index + 1
+        else if character >= '0' && character <= '9' then
+            let digit = yamlDigit(character)
+            digits = digits + 1
+            if significant > 0 || digit != 0 then
+                if significant < 1100 then
+                    mantissa = mantissa.multiply(ten).add(BigInt.fromInt32(digit))
+                    significant = significant + 1
+                    if fractional then decimalExponent = decimalExponent - 1
+                else
+                    if digit != 0 then
+                        sticky = true
+                    if !fractional then decimalExponent = decimalExponent + 1
+            else if fractional then
+                decimalExponent = decimalExponent - 1
+            index = index + 1
+        else
+            break
+    let mutable valid = digits > 0
+    let mutable exponent = 0
+    let mutable exponentNegative = false
+    if index
+        < characters.length
+        && (characters.get(index) == 'e' || characters.get(index) == 'E') then
+        index = index + 1
+        if index
+            < characters.length
+            && (characters.get(index) == '+' || characters.get(index) == '-') then
+            exponentNegative = characters.get(index) == '-'
+            index = index + 1
+        let start = index
+        while index
+            < characters.length
+            && characters.get(index) >= '0'
+            && characters.get(index) <= '9' do
+            // Beyond input length plus the binary64 range, only overflow/underflow is possible.
+            if exponent <= characters.length + 1100 then
+                exponent = exponent * 10 + yamlDigit(characters.get(index))
+            index = index + 1
+        if index == start then valid = false
+    if !valid || index != characters.length then
+        None
+    else
+        let scale = decimalExponent + (if exponentNegative then 0 - exponent else exponent)
+        let order = significant + scale
+        let bits =
+            if mantissa.isZero || order < -324 then 0i64
+            else if order > 309 then 9218868437227405312i64
+            else yamlDecimalBits(mantissa, scale, sticky)
+        // Setting the sign bit preserves negative zero and negative underflow.
+        let signedBits = if negative then bits + (-9223372036854775807i64 - 1i64) else bits
+        Some(signedBits.bitsToFloat64())
+
+/// Converts a positive decimal rational with integer arithmetic and one ties-to-even rounding.
+private function yamlDecimalBits(mantissa: BigInt, decimalExponent: Int32, sticky: Bool): Int64 =
+    let ten = BigInt.fromInt32(10)
+    let two = BigInt.fromInt32(2)
+    let mutable numerator = mantissa
+    let mutable denominator = BigInt.one()
+    let mutable scale = decimalExponent
+    while scale > 0 do
+        numerator = numerator.multiply(ten)
+        scale = scale - 1
+    while scale < 0 do
+        denominator = denominator.multiply(ten)
+        scale = scale + 1
+    let mutable exponent = 0
+    while numerator.compare(denominator.multiply(two)) != Ordering.Less do
+        denominator = denominator.multiply(two)
+        exponent = exponent + 1
+    while numerator.compare(denominator) == Ordering.Less do
+        numerator = numerator.multiply(two)
+        exponent = exponent - 1
+    if exponent > 1023 then
+        9218868437227405312i64
+    else
+        if exponent < -1075 then
+            0i64
+        else
+            if exponent == -1075 then
+                if numerator.compare(denominator) == Ordering.Greater || sticky then 1i64 else 0i64
+            else
+                let bits = if exponent < -1022 then exponent + 1074 else 52
+                let mutable remainder = numerator.subtract(denominator)
+                let mutable significand = 1i64
+                let mutable index = 0
+                while index < bits do
+                    remainder = remainder.multiply(two)
+                    significand = significand * 2i64
+                    if remainder.compare(denominator) != Ordering.Less then
+                        remainder = remainder.subtract(denominator)
+                        significand = significand + 1i64
+                    index = index + 1
+                let rounding = remainder.multiply(two).compare(denominator)
+                if rounding
+                    == Ordering.Greater
+                    || (rounding == Ordering.Equal && (sticky || significand % 2i64 != 0i64)) then
+                    significand = significand + 1i64
+                if exponent < -1022 then
+                    significand
+                else
+                    // Carrying the rounded significand also handles overflow to infinity.
+                    (
+                        exponent + 1022
+                    )
+                        .toInt64()
+                        * 4503599627370496i64
+                        + significand

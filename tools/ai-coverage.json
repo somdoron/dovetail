@@ -221,7 +221,8 @@
     "references": [
       "references/projects.md",
       "references/types.md",
-      "references/resources.md"
+      "references/resources.md",
+      "references/integrations.md"
     ],
     "reviews": [
       "reviews/dovetail-reviewer.md"

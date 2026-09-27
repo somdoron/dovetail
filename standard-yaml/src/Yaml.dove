@@ -1,0 +1,121 @@
+package standard.yaml
+
+/// A position in the original text. Offset counts Unicode scalars; line and column are one-based.
+public record YamlPosition =
+    offset: Int32
+    line: Int32
+    column: Int32
+
+/// Half-open source span in the original text.
+public record YamlSpan =
+    start: YamlPosition
+    end: YamlPosition
+
+/// A YAML node, retaining its source location for typed decoding diagnostics.
+public record Yaml =
+    value: YamlValue
+    span: Option<YamlSpan>
+
+public enum YamlValue =
+    Null
+    Boolean(Bool)
+    Integer(Int64)
+    Float(Float64)
+    Str(String)
+    Sequence(List<Yaml>)
+    Mapping(List<(Yaml, Yaml)>)
+
+module Yaml =
+    /// Reads one document in the supported YAML 1.2 Core subset.
+    public function parse(text: String): Result<Yaml, YamlError> = YamlParser.make(text).parse()
+
+    public function make(value: YamlValue): Yaml = Yaml { value = value; span = None }
+
+    public function typeName(self): String =
+        match self.value with
+            case YamlValue.Null => "Null"
+            case YamlValue.Boolean(_) => "Boolean"
+            case YamlValue.Integer(_) => "Integer"
+            case YamlValue.Float(_) => "Float"
+            case YamlValue.Str(_) => "String"
+            case YamlValue.Sequence(_) => "Sequence"
+            case YamlValue.Mapping(_) => "Mapping"
+
+    /// Shared by derived and custom decoders. Missing fields use the target decoder's policy.
+    public function field<T>(self, name: String): Result<T, YamlError>
+        where T: YamlDecoder =
+        let pairs = try self.mapping()
+        let mutable found: Option<Yaml> = None
+        for pair in pairs do
+            match pair._0.value with
+                case YamlValue.Str(key) => if key == name then found = Some(pair._1)
+                case _ => ()
+        let result =
+            match found with
+                case Some(node) =>
+                    match T.fromYaml(node) with
+                        case Ok(value) => Ok(value)
+                        case Error(error) => Error(error.withSpan(node.span))
+                case None => T.fromMissing()
+        match result with
+            case Ok(value) => Ok(value)
+            case Error(error) => Error(error.atField(name).withSpan(self.span))
+
+    public function mapping(self): Result<List<(Yaml, Yaml)>, YamlError> =
+        match self.value with
+            case YamlValue.Mapping(pairs) => Ok(pairs)
+            case _ => Error(self.typeError("Mapping"))
+
+    /// Enforces the complete field set before decoding a record or enum payload.
+    public function checkFields(self, allowed: List<String>): Result<Unit, YamlError> =
+        let pairs = try self.mapping()
+        let mutable seen: List<String> = []
+        for pair in pairs do
+            let key = try String.fromYaml(pair._0)
+            let mutable known = false
+            for name in allowed do
+                if name == key then known = true
+            let mutable duplicate = false
+            for name in seen do
+                if name == key then duplicate = true
+            if duplicate then
+                try Error(
+                    YamlError.make(YamlErrorKind.DuplicateKey(key), pair._0.span).atField(key)
+                )
+            if !known then
+                try Error(
+                    YamlError.make(YamlErrorKind.UnknownField(key), pair._0.span).atField(key)
+                )
+            seen = seen.prepend(key)
+        Ok(())
+
+    public function typeError(self, expected: String): YamlError =
+        YamlError.make(YamlErrorKind.TypeMismatch(expected, self.typeName()), self.span)
+
+    public function variantValues(self, length: Int32): Result<Array<Yaml>, YamlError> =
+        let value = try self.field<Yaml>("value")
+        match value.value with
+            case YamlValue.Sequence(items) =>
+                let values = items.toArray()
+                if values.length == length then
+                    Ok(values)
+                else
+                    Error(
+                        YamlError
+                            .make(YamlErrorKind.WrongLength(length), value.span)
+                            .atField("value")
+                    )
+            case _ => Error(value.typeError("Sequence").atField("value"))
+
+    public function variantElement<T>(self, node: Yaml, index: Int32): Result<T, YamlError>
+        where T: YamlDecoder =
+        match decodeYamlElement<T>(node, index) with
+            case Ok(value) => Ok(value)
+            case Error(error) => Error(error.atField("value"))
+
+    public function unknownVariant(self, name: String): YamlError =
+        let location =
+            match self.field<Yaml>("type") with
+                case Ok(node) => node.span
+                case Error(_) => self.span
+        YamlError.make(YamlErrorKind.UnknownVariant(name), location).atField("type")

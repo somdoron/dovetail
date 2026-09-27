@@ -76,6 +76,19 @@ trait = "standard.json.JsonDecoder"
 script = "macros/JsonDecoder.rhai"
 
 [[project]]
+name = "standard-yaml"
+root_package = "standard.yaml"
+depends = ["standard-collection"]
+packages = ["."]
+
+[[project.macro]]
+name = "YamlDecoder"
+package = "standard.yaml"
+kind = "derive"
+trait = "standard.yaml.YamlDecoder"
+script = "macros/YamlDecoder.rhai"
+
+[[project]]
 name = "standard-uri"
 root_package = "standard.uri"
 depends = ["standard-encoding"]

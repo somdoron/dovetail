@@ -105,7 +105,7 @@ from the consumer workspace. Dovetail resolves its manifest from the working dir
 | Acquisition, cleanup, scopes, streams and byte transports | [Resources and streams](references/resources.md) |
 | Package layout, imports, dependencies, lockfiles and library discovery | [Projects and libraries](references/projects.md) |
 | Testing, formatter, diagnostics and planned linter | [Development tools](references/tooling.md) |
-| Custom derives, components and prefixed string literals | [Language integrations](references/integrations.md) |
+| Custom derives, YAML decoding, components and prefixed string literals | [Language integrations](references/integrations.md) |
 | Filesystem roots/paths, networking, environment and guest arguments | [WASI](references/wasi.md) |
 | OCI configuration, build/push, runtimes and reproducibility | [Images](references/images.md) |
 | GitHub Actions installation, checks and publishing | [CI](references/ci.md) |

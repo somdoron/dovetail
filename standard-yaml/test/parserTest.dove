@@ -1,0 +1,218 @@
+package test
+
+import standard.yaml.Yaml
+import standard.yaml.YamlDecoder
+import standard.yaml.YamlValue
+import standard.yaml.YamlErrorKind
+
+function textValue(text: String): String = String.fromYaml(Yaml.parse(text).require).require
+
+test "empty document and empty values" =
+    for text in ["", " # comment\n", "---\n...\n", "null", "~", "NULL"] do
+        assert Option<Int32>.fromYaml(Yaml.parse(text).require).require.isNone
+    let yaml = Yaml.parse("empty:\nnext: null").require
+    assert yaml.field<Option<String>>("empty").require.isNone
+    assert yaml.field<Option<String>>("next").require.isNone
+
+test "Core scalar resolution" =
+    for text in ["true", "True", "TRUE"] do
+        assert Bool.fromYaml(Yaml.parse(text).require).require
+    for text in ["false", "False", "FALSE"] do
+        assert !Bool.fromYaml(Yaml.parse(text).require).require
+    for text in ["yes", "no", "on", "off", "2026-09-27", "1_000", "1e", "+0x10"] do
+        assert textValue(text) == text
+    assert Int64.fromYaml(Yaml.parse("0xFF").require).require == 255i64
+    assert Int64.fromYaml(Yaml.parse("0o17").require).require == 15i64
+    assert Int64.fromYaml(Yaml.parse("012").require).require == 12i64
+    assert Int64.fromYaml(Yaml.parse("+42").require).require == 42i64
+    assert Float64.fromYaml(Yaml.parse("1.25e2").require).require == 125.0
+    assert Float64.fromYaml(Yaml.parse(".5").require).require == 0.5
+    assert Float64.fromYaml(Yaml.parse("-2.").require).require == -2.0
+    let nan = Float64.fromYaml(Yaml.parse(".NaN").require).require
+    assert nan != nan
+    let infinity = Float64.fromYaml(Yaml.parse(".inf").require).require
+    assert infinity > 1.0e300
+    assert Float64.fromYaml(Yaml.parse("-.INF").require).require < -1.0e300
+
+test "integer limits preserve precision" =
+    assert Int64.fromYaml(Yaml.parse("9007199254740993").require).require == 9007199254740993i64
+    assert Int64
+        .fromYaml(Yaml.parse("9223372036854775807").require)
+        .require
+        == 9223372036854775807i64
+    assert Int64
+        .fromYaml(Yaml.parse("-9223372036854775808").require)
+        .require
+        == -9223372036854775807i64 - 1i64
+    for text in ["9223372036854775808", "-9223372036854775809", "0x8000000000000000"] do
+        assert Yaml.parse(text).isError
+
+test "quoted and plain strings preserve punctuation" =
+    assert textValue("'it''s # a: string'") == "it's # a: string"
+    assert textValue("\"true\"") == "true"
+    assert textValue("a#b") == "a#b"
+    assert textValue("http://example.test/a") == "http://example.test/a"
+    assert textValue("'&anchor *alias !tag %directive ?key <<'")
+        == "&anchor *alias !tag %directive ?key <<"
+    assert textValue("\"\\u03bb\\U0001F600\\x21\"") == "λ😀!"
+    assert textValue("\"line\\nnext\\tend\"") == "line\nnext\tend"
+    assert textValue("\"hello  \n   world\"") == "hello world"
+    assert textValue("'hello\n\n  world'") == "hello\nworld"
+    assert textValue("\"hello\\\n  world\"") == "helloworld"
+    assert textValue("hello\n  world") == "hello world"
+
+test "block string styles and chomping" =
+    assert textValue("|\n  hello\n  world\n") == "hello\nworld\n"
+    assert textValue("|-\n  hello\n\n") == "hello"
+    assert textValue("|+\n  hello\n\n") == "hello\n\n"
+    assert textValue(">\n  hello\n  world\n") == "hello world\n"
+    assert textValue(">-\n  hello\n\n  world\n") == "hello\nworld"
+    assert textValue("|2-\n   hello\n") == " hello"
+    assert textValue("|\n  no newline") == "no newline"
+    let yaml = Yaml.parse("text: |\n  hello\nnext: 2").require
+    assert yaml.field<String>("text").require == "hello\n"
+    assert yaml.field<Int32>("next").require == 2
+
+test "indentationless and compact nested sequences" =
+    let yaml = Yaml.parse("items:\n- one\n- two\nnext: 3").require
+    assert yaml.field<List<String>>("items").require.toArray().get(1) == "two"
+    assert yaml.field<Int32>("next").require == 3
+    let nested = List<List<Int32>>.fromYaml(Yaml.parse("- - 1\n  - 2\n- - 3\n").require).require
+    assert nested.toArray().get(0).toArray().get(1) == 2
+
+test "flow collections and comments" =
+    let yaml =
+        Yaml.parse("{\"name\":\"test\", values: [1, # comment\n 2,], empty: {}, missing: }").require
+    assert yaml.field<String>("name").require == "test"
+    assert yaml.field<List<Int32>>("values").require.toArray().length == 2
+    assert yaml.field<Option<Int32>>("missing").require.isNone
+    assert Yaml.parse("[]").isOk
+    assert Yaml.parse("{}").isOk
+
+test "document markers BOM CRLF and Unicode positions" =
+    let yaml = Yaml.parse("\u{feff}---\r\nname: λ😀\r\n...\r\n# end").require
+    let name = yaml.field<Yaml>("name").require
+    assert String.fromYaml(name).require == "λ😀"
+    assert name.span.require.start.line == 2
+    assert name.span.require.start.column == 7
+    assert name.span.require.end.offset - name.span.require.start.offset == 2
+    assert Yaml.parse("---\n1\n---\n2").isError
+
+test "duplicates compare decoded keys" =
+    for text in ["a: 1\na: 2", "{a: 1, 'a': 2}", "{'a': 1, \"\\x61\": 2}"] do
+        match Yaml.parse(text) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.DuplicateKey(name) => assert name == "a"
+                    case _ => assert false
+            case _ => assert false
+
+test "unsupported constructs fail explicitly" =
+    for text in [
+        "&a hello",
+        "*a",
+        "!custom hello",
+        "%YAML 1.2\n---\na: b",
+        "? [a, b]\n: c",
+        "1: value",
+        "<<: value"
+    ] do
+        match Yaml.parse(text) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.Unsupported(_) => ()
+                    case _ => assert false
+            case _ => assert false
+    assert Yaml.parse("'<<': value").isOk
+
+test "malformed inputs fail" =
+    for text in [
+        "[1",
+        "{a: 1",
+        "[1,,2]",
+        "[1 2]junk",
+        "\"unterminated",
+        "\"\\q\"",
+        "\"\\uD800\"",
+        "\"\\U00110000\"",
+        "a:\n\tb: 1",
+        "a: 1\n  b: 2",
+        "a: 1\nb",
+        "|0\n hi",
+        "|++\n hi",
+        "@reserved"
+    ] do
+        assert Yaml.parse(text).isError
+
+test "collection nesting limit" =
+    let mutable accepted = "0"
+    let mutable index = 0
+    while index < 128 do
+        accepted = "[" ++ accepted ++ "]"
+        index = index + 1
+    assert Yaml.parse(accepted).isOk
+    match Yaml.parse("[" ++ accepted ++ "]") with
+        case Error(error) =>
+            match error.kind with
+                case YamlErrorKind.NestingLimit => ()
+                case _ => assert false
+        case _ => assert false
+
+test "empty documents cannot hide an additional document" =
+    match Yaml.parse("---\n---\n") with
+        case Error(error) =>
+            match error.kind with
+                case YamlErrorKind.Unsupported(_) => ()
+                case _ => assert false
+        case _ => assert false
+
+test "folded strings preserve more-indented paragraphs" =
+    assert textValue(">-\n  first\n    indented\n\n  last\n") == "first\n  indented\n\nlast"
+    assert textValue(">-\n\n\n  text\n") == "\n\ntext"
+    assert textValue(">-\n  first\n\n\n  last\n") == "first\n\nlast"
+
+test "comments after quoted and flow values require separation" =
+    assert Yaml.parse("'text'#comment").isError
+    assert Yaml.parse("[1]#comment").isError
+    assert Yaml.parse("'text' #comment").isOk
+    assert Yaml.parse("[1] #comment").isOk
+
+test "complex flow keys are explicitly unsupported" =
+    for text in ["{[a]: b}", "{{a: b}: c}"] do
+        match Yaml.parse(text) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.Unsupported(_) => ()
+                    case _ => assert false
+            case _ => assert false
+
+test "floats round once including subnormals and signed zero" =
+    assert Float64.fromYaml(Yaml.parse("1.23").require).require == 1.23
+    assert Float64.fromYaml(Yaml.parse("0.000000123").require).require == 0.000000123
+    assert Float64
+        .fromYaml(Yaml.parse("1.7976931348623157e308").require)
+        .require
+        .toBits()
+        == 9218868437227405311i64
+    assert Float64.fromYaml(Yaml.parse("4.9406564584124654e-324").require).require.toBits() == 1i64
+    assert Float64
+        .fromYaml(Yaml.parse("2.2250738585072014e-308").require)
+        .require
+        .toBits()
+        == 4503599627370496i64
+    assert Float64
+        .fromYaml(Yaml.parse("9007199254740993.0").require)
+        .require
+        .toBits()
+        == 4845873199050653696i64
+    assert Float64
+        .fromYaml(Yaml.parse("-0.0").require)
+        .require
+        .toBits()
+        == -9223372036854775807i64 - 1i64
+    assert Float64
+        .fromYaml(Yaml.parse("-1e-999999999999999999999").require)
+        .require
+        .toBits()
+        == -9223372036854775807i64 - 1i64
+    assert Float64.fromYaml(Yaml.parse("1e99999999999999999999").require).require > 1.0e300

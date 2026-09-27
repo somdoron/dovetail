@@ -19,6 +19,9 @@ Check:
 - Virtual-time tests install TestClock, advance explicitly, and synchronize external
   I/O. Check that sleepers and sleeping finalizers can finish before scope exit;
   do not assume advancing one clock settles unrelated or independently scoped work.
+- YAML boundary code handles parse and decode failures, respects strict unknown-field
+  checking and optional-field semantics, and preserves error paths/source spans in
+  custom decoders. Do not assume the reader supports full YAML or encoding.
 - Mutable aliases do not invalidate snapshots; pattern coverage and casts are sound.
 - Imports, dependencies, visible APIs, named arguments, and supported features match
   this compiler. Do not recommend proposed defaults or nonexistent linter commands.

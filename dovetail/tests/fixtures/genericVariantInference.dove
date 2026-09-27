@@ -1,0 +1,35 @@
+package a
+
+enum Outcome<out V, out E> =
+    Value(V)
+    Failure(E)
+
+function preserve<T>(input: Option<Result<T, String>>): Result<T, String> =
+    let result =
+        match input with
+            case Some(value) =>
+                match value with
+                    case Ok(item) => Ok(item)
+                    case Error(message) => Error(message)
+            case None => Error("missing")
+    result
+
+function preserveFailure<E>(value: E): Result<Int32, E> =
+    let result = Error(value)
+    result
+
+function qualified<T>(value: T): Outcome<T, String> =
+    let result = Outcome.Value(value)
+    result
+
+function main(): Unit =
+    assert preserve<Int32>(Some(Ok(42))).require == 42
+    assert preserve<String>(Some(Ok("hello"))).require == "hello"
+    assert preserve<Int32>(None).isError
+    assert preserve<Int32>(Some(Error("bad"))).isError
+    match preserveFailure<String>("failure") with
+        case Error(message) => assert message == "failure"
+        case _ => assert false
+    match qualified<Int32>(7) with
+        case Outcome.Value(value) => assert value == 7
+        case _ => assert false

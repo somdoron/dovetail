@@ -109,10 +109,15 @@ The compiler and standard library ship a small set of derives. These are the mos
 | `Equatable` | `standard.prelude` | Structural equality (`equals`) |
 | `JsonEncoder` | `standard.json` | Convert the type to JSON (`toJson`) |
 | `JsonDecoder` | `standard.json` | Parse the type from JSON (`fromJson`) |
+| `YamlDecoder` | `standard.yaml` | Decode the type from YAML (`fromYaml`) |
 
-`Equatable` is available everywhere because the prelude is always in scope. `JsonEncoder` and `JsonDecoder` require a dependency on `standard.json`.
+`Equatable` is available everywhere because the prelude is always in scope. `JsonEncoder` and `JsonDecoder` require project `standard-json`; `YamlDecoder` requires project `standard-yaml`.
 
-All three follow the structural rule: for a record, each field is encoded/compared in turn; for an enum, each variant is handled; for a newtype, the single inner value carries through.
+YAML decoding rejects unknown fields and treats missing optional fields as `None`.
+Import `Yaml` and `YamlError` with `YamlDecoder`. See [YAML](22-stdlib.md#2211-yaml)
+for the supported input subset, enum representation, and error handling.
+
+These derives follow the structural rule: for a record, each field is encoded/compared in turn; for an enum, each variant is handled; for a newtype, the single inner value carries through.
 
 ```dovetail
 @derive(JsonEncoder)

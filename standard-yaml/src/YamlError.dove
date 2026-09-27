@@ -1,0 +1,78 @@
+package standard.yaml
+
+public enum YamlPathSegment =
+    Field(String)
+    Index(Int32)
+
+public enum YamlErrorKind =
+    Syntax(String)
+    Unsupported(String)
+    DuplicateKey(String)
+    TypeMismatch(String, String)
+    MissingValue
+    UnknownField(String)
+    UnknownVariant(String)
+    OutOfRange(String)
+    WrongLength(Int32)
+    NestingLimit
+
+public record YamlError =
+    kind: YamlErrorKind
+    span: Option<YamlSpan>
+    path: List<YamlPathSegment>
+
+module YamlError =
+    public function make(kind: YamlErrorKind, span: Option<YamlSpan>): YamlError =
+        YamlError { kind = kind; span = span; path = [] }
+
+    public function atField(self, name: String): YamlError =
+        YamlError {
+            kind = self.kind
+            span = self.span
+            path = self.path.prepend(YamlPathSegment.Field(name))
+        }
+
+    public function atIndex(self, index: Int32): YamlError =
+        YamlError {
+            kind = self.kind
+            span = self.span
+            path = self.path.prepend(YamlPathSegment.Index(index))
+        }
+
+    public function withSpan(self, fallback: Option<YamlSpan>): YamlError =
+        YamlError {
+            kind = self.kind
+            path = self.path
+            span = if self.span.isSome then self.span else fallback
+        }
+
+    public function format(self): String =
+        let mutable path = ""
+        for segment in self.path do
+            match segment with
+                case YamlPathSegment.Field(name) =>
+                    path = path ++ (if path.isEmpty then "" else ".") ++ name
+                case YamlPathSegment.Index(index) => path = path ++ "[" ++ index.format() ++ "]"
+        let message =
+            match self.kind with
+                case YamlErrorKind.Syntax(message) => message
+                case YamlErrorKind.Unsupported(feature) => "unsupported YAML feature: " ++ feature
+                case YamlErrorKind.DuplicateKey(key) => "duplicate key: " ++ key
+                case YamlErrorKind.TypeMismatch(expected, actual) =>
+                    "expected " ++ expected ++ ", got " ++ actual
+                case YamlErrorKind.MissingValue => "missing required value"
+                case YamlErrorKind.UnknownField(name) => "unknown field: " ++ name
+                case YamlErrorKind.UnknownVariant(name) => "unknown variant: " ++ name
+                case YamlErrorKind.OutOfRange(message) => "out of range: " ++ message
+                case YamlErrorKind.WrongLength(length) =>
+                    "expected sequence of length " ++ length.format()
+                case YamlErrorKind.NestingLimit => "YAML nesting exceeds 128 collections"
+        let location =
+            match self.span with
+                case Some(span) =>
+                    " at line "
+                        ++ span.start.line.format()
+                        ++ ", column "
+                        ++ span.start.column.format()
+                case None => ""
+        (if path.isEmpty then "" else path ++ ": ") ++ message ++ location

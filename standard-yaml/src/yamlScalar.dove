@@ -1,0 +1,68 @@
+package standard.yaml
+
+internal function yamlDigit(character: Char): Int32 =
+    let digits = "0123456789abcdef"
+    let upper = "0123456789ABCDEF"
+    let mutable result = -1
+    let mutable index = 0
+    while index < 16 do
+        if character == digits.getChar(index) || character == upper.getChar(index) then
+            result = index
+        index = index + 1
+    result
+
+internal function resolveYamlScalar(text: String, span: Option<YamlSpan>):
+    Result<YamlValue, YamlError> =
+    if text == "null" || text == "Null" || text == "NULL" || text == "~" then
+        Ok(YamlValue.Null)
+    else if text == "true" || text == "True" || text == "TRUE" then
+        Ok(YamlValue.Boolean(true))
+    else if text == "false" || text == "False" || text == "FALSE" then
+        Ok(YamlValue.Boolean(false))
+    else if text == ".nan" || text == ".NaN" || text == ".NAN" then
+        Ok(YamlValue.Float(9221120237041090560i64.bitsToFloat64()))
+    else
+        let negative = text.startsWith("-")
+        let signed = negative || text.startsWith("+")
+        let unsigned = if signed then text.substring(1, text.length) else text
+        if unsigned == ".inf" || unsigned == ".Inf" || unsigned == ".INF" then
+            let infinity = 9218868437227405312i64.bitsToFloat64()
+            Ok(YamlValue.Float(if negative then 0.0 - infinity else infinity))
+        else
+            let radix =
+                if !signed && text.startsWith("0x") then 16
+                else if !signed && text.startsWith("0o") then 8
+                else 10
+            let digits = if radix != 10 then text.substring(2, text.length) else unsigned
+            let mutable integer = !digits.isEmpty
+            for character in digits.chars() do
+                let digit = yamlDigit(character)
+                if digit < 0 || digit >= radix then integer = false
+            if integer then
+                parseYamlInteger(digits, radix, negative, span)
+            else if radix == 10 then
+                match yamlFloat(unsigned, negative) with
+                    case Some(value) => Ok(YamlValue.Float(value))
+                    case None => Ok(YamlValue.Str(text))
+            else
+                Ok(YamlValue.Str(text))
+
+/// Accumulate negatively so Int64.MIN is representable without an overflowing absolute value.
+private function parseYamlInteger(
+    digits: String,
+    radix: Int32,
+    negative: Bool,
+    span: Option<YamlSpan>
+): Result<YamlValue, YamlError> =
+    let base = radix.toInt64()
+    let limit = if negative then -9223372036854775807i64 - 1i64 else -9223372036854775807i64
+    let mutable value = 0i64
+    for character in digits.chars() do
+        let digit = yamlDigit(character).toInt64()
+        if value < limit / base then
+            try Error(YamlError.make(YamlErrorKind.OutOfRange("Int64"), span))
+        value = value * base
+        if value < limit + digit then
+            try Error(YamlError.make(YamlErrorKind.OutOfRange("Int64"), span))
+        value = value - digit
+    Ok(YamlValue.Integer(if negative then value else 0i64 - value))

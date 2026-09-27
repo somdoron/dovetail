@@ -288,3 +288,97 @@ and its generated bindings transitively. Connections/statements are resources;
 queries return async values. See the complete [SQLite example](17-components.md#173-using-sqlite)
 for parameters and transactions. The current SQLite build has filesystem-locking
 limitations and no WAL mode. Postgres and Redis clients are not provided yet.
+
+
+## 22.11 YAML
+
+Project `standard-yaml` exposes `standard.yaml`. It reads a documented subset of
+YAML 1.2 Core into a source-located tree, then decodes that tree into application
+types. Read files using the existing IO APIs and pass their text to `Yaml.parse`;
+YAML parsing itself performs no IO.
+
+**Complete example (checked in CI)** — `depends = ["standard-yaml"]`:
+
+<!-- book-example: {"name": "yaml", "depends": ["standard-yaml"]} -->
+```dovetail
+package yaml
+
+import standard.yaml.Yaml
+import standard.yaml.YamlDecoder
+import standard.yaml.YamlError
+
+@derive(YamlDecoder)
+record ServerConfig =
+    host: String
+    port: Int32
+    workers: Option<Int32>
+
+function readConfig(text: String): Result<ServerConfig, YamlError> =
+    let yaml = try Yaml.parse(text)
+    ServerConfig.fromYaml(yaml)
+
+function main(): Unit =
+    let config = readConfig("host: localhost\nport: 8080\n").require
+    assert config.host == "localhost"
+    assert config.port == 8080
+    assert config.workers.isNone
+
+test "read a typed YAML configuration" = main()
+```
+
+Import `Yaml` and `YamlError` alongside `YamlDecoder`: generated implementations
+use these names, just as the JSON derives use `Json` and `JsonError`.
+
+### Supported input
+
+The reader supports nested block and flow mappings/sequences, compact sequence
+entries, indentationless sequences as mapping values, plain and quoted strings,
+YAML double-quoted escapes, comments, and multiline strings. Literal (`|`) and
+folded (`>`) strings support chomping (`+`/`-`) and indentation indicators. Mapping
+keys must be strings and fit on one line. Duplicate decoded keys are errors.
+
+Unquoted scalars follow YAML 1.2 Core resolution: null, booleans, signed decimal
+integers, unsigned hexadecimal/octal integers, and decimal/exponent floats,
+including `.inf` and `.nan` spellings. `yes`, `no`, `on`, `off`, and dates remain
+strings; quote numeric or boolean-looking mapping keys to make them strings.
+Integers retain exact `Int64` values and overflow is an error. Floats round to
+`Float64`, including subnormals, signed zero, and overflow to infinity.
+
+`Yaml.parse` accepts one document with optional `---` and `...` markers, an
+optional leading BOM, and LF/CRLF line endings. Empty input produces null.
+Nesting is limited to 128 collection levels. Anchors, aliases, explicit tags,
+directives, complex/non-string keys, merge keys, and additional documents are
+rejected. This is a YAML subset, not a complete YAML implementation. There is no
+encoder or API for preserving comments and formatting.
+
+### Typed decoding and diagnostics
+
+`@derive(YamlDecoder)` supports records, enums, transparent newtypes, and generic
+types. Record decoders reject unknown fields. Missing required fields fail;
+missing or null `Option<T>` fields decode to `None`. No field defaults are inferred.
+The `fromMissing()` trait hook defaults to failure, while `Option<T>` supplies
+`None` and transparent newtypes delegate to their inner decoder. This also works
+when a generic field is instantiated with an optional type.
+
+Built-in decoders cover `Bool`, `String`, `Int32`, `Int64`, `Float64`, `Option<T>`,
+`List<T>`, `Array<T>`, tuples of arity two through six, and `Yaml` itself. Integer
+narrowing checks range; floats do not silently truncate to integers. An integer
+can decode as `Float64`, which may lose precision for large integer values.
+
+Enums use the same shapes as the JSON derives: `type` names the variant, a single
+positional payload goes in `value`, multiple positional payloads use a sequence
+in `value`, and named payload fields appear alongside `type`. Unknown variants,
+unknown fields, wrong payload lengths, and named payload fields conflicting with
+`type` are rejected.
+
+`Yaml` contains a `YamlValue` and optional `YamlSpan`; collections retain child
+nodes and mappings retain key nodes. `Yaml.make` constructs a node without a source
+location. For custom decoding, `yaml.field<T>(name)` applies missing-field policy
+and adds error context; `yaml.checkFields(names)` enforces the allowed field set.
+`YamlError` carries a structured kind, optional span, and field/index path.
+`error.format()` renders messages such as
+`servers[2].port: expected Integer, got String at line 8, column 11`.
+Positions count Unicode scalars: offsets are zero-based and lines/columns are
+one-based. Handle parse and decode errors as `Result` values at file boundaries.
+Decode public input shapes before applying domain validation; derives do not
+bypass private construction rules.

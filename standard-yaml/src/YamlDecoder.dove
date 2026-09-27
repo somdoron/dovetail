@@ -1,0 +1,155 @@
+package standard.yaml
+
+public trait YamlDecoder =
+    function fromYaml(yaml: Yaml): Result<Self, YamlError>
+
+    function fromMissing(): Result<Self, YamlError> =
+        Error(YamlError.make(YamlErrorKind.MissingValue, None))
+
+implement YamlDecoder for Bool =
+    public function fromYaml(yaml: Yaml): Result<Bool, YamlError> =
+        match yaml.value with
+            case YamlValue.Boolean(value) => Ok(value)
+            case _ => Error(yaml.typeError("Boolean"))
+
+implement YamlDecoder for String =
+    public function fromYaml(yaml: Yaml): Result<String, YamlError> =
+        match yaml.value with
+            case YamlValue.Str(value) => Ok(value)
+            case _ => Error(yaml.typeError("String"))
+
+implement YamlDecoder for Int64 =
+    public function fromYaml(yaml: Yaml): Result<Int64, YamlError> =
+        match yaml.value with
+            case YamlValue.Integer(value) => Ok(value)
+            case _ => Error(yaml.typeError("Integer"))
+
+implement YamlDecoder for Int32 =
+    public function fromYaml(yaml: Yaml): Result<Int32, YamlError> =
+        let value = try Int64.fromYaml(yaml)
+        if value < -2147483648i64 || value > 2147483647i64 then
+            Error(YamlError.make(YamlErrorKind.OutOfRange("Int32"), yaml.span))
+        else
+            Ok(value.toInt32())
+
+implement YamlDecoder for Float64 =
+    public function fromYaml(yaml: Yaml): Result<Float64, YamlError> =
+        match yaml.value with
+            case YamlValue.Float(value) => Ok(value)
+            case YamlValue.Integer(value) => Ok(value.toFloat64())
+            case _ => Error(yaml.typeError("Float or Integer"))
+
+implement<T> YamlDecoder for Option<T> where T: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<Option<T>, YamlError> =
+        match yaml.value with
+            case YamlValue.Null => Ok(None)
+            case _ => Ok(Some(try T.fromYaml(yaml)))
+
+    public function fromMissing(): Result<Option<T>, YamlError> = Ok(None)
+
+implement<T> YamlDecoder for List<T> where T: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<List<T>, YamlError> =
+        match yaml.value with
+            case YamlValue.Sequence(items) =>
+                let mutable decoded: List<T> = []
+                let mutable index = 0
+                for item in items do
+                    let value = try decodeYamlElement<T>(item, index)
+                    decoded = decoded.prepend(value)
+                    index = index + 1
+                Ok(decoded.reverse())
+            case _ => Error(yaml.typeError("Sequence"))
+
+implement<T> YamlDecoder for Array<T> where T: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<Array<T>, YamlError> =
+        Ok((try List<T>.fromYaml(yaml)).toArray())
+
+internal function decodeYamlElement<T>(yaml: Yaml, index: Int32): Result<T, YamlError>
+    where T: YamlDecoder =
+    match T.fromYaml(yaml) with
+        case Ok(value) => Ok(value)
+        case Error(error) => Error(error.atIndex(index).withSpan(yaml.span))
+
+implement<A, B> YamlDecoder for (A, B) where A: YamlDecoder, B: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<(A, B), YamlError> =
+        match yaml.value with
+            case YamlValue.Sequence([node0, node1]) =>
+                let value0 = try decodeYamlElement<A>(node0, 0)
+                let value1 = try decodeYamlElement<B>(node1, 1)
+                Ok((value0, value1))
+            case YamlValue.Sequence(_) =>
+                Error(YamlError.make(YamlErrorKind.WrongLength(2), yaml.span))
+            case _ => Error(yaml.typeError("Sequence"))
+
+implement<A, B, C> YamlDecoder for (A, B, C) where A: YamlDecoder, B: YamlDecoder, C: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<(A, B, C), YamlError> =
+        match yaml.value with
+            case YamlValue.Sequence([node0, node1, node2]) =>
+                let value0 = try decodeYamlElement<A>(node0, 0)
+                let value1 = try decodeYamlElement<B>(node1, 1)
+                let value2 = try decodeYamlElement<C>(node2, 2)
+                Ok((value0, value1, value2))
+            case YamlValue.Sequence(_) =>
+                Error(YamlError.make(YamlErrorKind.WrongLength(3), yaml.span))
+            case _ => Error(yaml.typeError("Sequence"))
+
+implement<A, B, C, D> YamlDecoder for (A, B, C, D)
+    where A: YamlDecoder,
+          B: YamlDecoder,
+          C: YamlDecoder,
+          D: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<(A, B, C, D), YamlError> =
+        match yaml.value with
+            case YamlValue.Sequence([node0, node1, node2, node3]) =>
+                let value0 = try decodeYamlElement<A>(node0, 0)
+                let value1 = try decodeYamlElement<B>(node1, 1)
+                let value2 = try decodeYamlElement<C>(node2, 2)
+                let value3 = try decodeYamlElement<D>(node3, 3)
+                Ok((value0, value1, value2, value3))
+            case YamlValue.Sequence(_) =>
+                Error(YamlError.make(YamlErrorKind.WrongLength(4), yaml.span))
+            case _ => Error(yaml.typeError("Sequence"))
+
+implement<A, B, C, D, E> YamlDecoder for (A, B, C, D, E)
+    where A: YamlDecoder,
+          B: YamlDecoder,
+          C: YamlDecoder,
+          D: YamlDecoder,
+          E: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<(A, B, C, D, E), YamlError> =
+        match yaml.value with
+            case YamlValue.Sequence([node0, node1, node2, node3, node4]) =>
+                let value0 = try decodeYamlElement<A>(node0, 0)
+                let value1 = try decodeYamlElement<B>(node1, 1)
+                let value2 = try decodeYamlElement<C>(node2, 2)
+                let value3 = try decodeYamlElement<D>(node3, 3)
+                let value4 = try decodeYamlElement<E>(node4, 4)
+                Ok((value0, value1, value2, value3, value4))
+            case YamlValue.Sequence(_) =>
+                Error(YamlError.make(YamlErrorKind.WrongLength(5), yaml.span))
+            case _ => Error(yaml.typeError("Sequence"))
+
+implement<A, B, C, D, E, F> YamlDecoder for (A, B, C, D, E, F)
+    where A: YamlDecoder,
+          B: YamlDecoder,
+          C: YamlDecoder,
+          D: YamlDecoder,
+          E: YamlDecoder,
+          F: YamlDecoder =
+    public function fromYaml(yaml: Yaml): Result<(A, B, C, D, E, F), YamlError> =
+        match yaml.value with
+            case YamlValue.Sequence([node0, node1, node2, node3, node4, node5]) =>
+                let value0 = try decodeYamlElement<A>(node0, 0)
+                let value1 = try decodeYamlElement<B>(node1, 1)
+                let value2 = try decodeYamlElement<C>(node2, 2)
+                let value3 = try decodeYamlElement<D>(node3, 3)
+                let value4 = try decodeYamlElement<E>(node4, 4)
+                let value5 = try decodeYamlElement<F>(node5, 5)
+                Ok((value0, value1, value2, value3, value4, value5))
+            case YamlValue.Sequence(_) =>
+                Error(YamlError.make(YamlErrorKind.WrongLength(6), yaml.span))
+            case _ => Error(yaml.typeError("Sequence"))
+
+/// Allows custom decoders to inspect a subtree without losing its source span.
+implement YamlDecoder for Yaml =
+    public function fromYaml(yaml: Yaml): Result<Yaml, YamlError> = Ok(yaml)
