@@ -17,13 +17,24 @@ implement JsonDecoder for Bool =
 implement JsonDecoder for Int32 =
     public function fromJson(json: Json): Result<Int32, JsonError> =
         match json with
-            case Json.Number(n) => Ok(n.toInt32())
+            case Json.Number(n) =>
+                if !(n >= -2147483648.0 && n < 2147483648.0) then
+                    Error(JsonError.OutOfRange("Int32"))
+                else
+                    let value = n.toInt32()
+                    if value.toFloat64() == n then Ok(value) else Error(JsonError.NonIntegralNumber)
             case _ => Error(JsonError.TypeError("Number", json.typeName()))
 
 implement JsonDecoder for Int64 =
     public function fromJson(json: Json): Result<Int64, JsonError> =
         match json with
-            case Json.Number(n) => Ok(n.toInt64())
+            case Json.Number(n) =>
+                // The positive bound is exclusive: Int64.MAX rounds up to 2^63 as Float64.
+                if !(n >= -9223372036854775808.0 && n < 9223372036854775808.0) then
+                    Error(JsonError.OutOfRange("Int64"))
+                else
+                    let value = n.toInt64()
+                    if value.toFloat64() == n then Ok(value) else Error(JsonError.NonIntegralNumber)
             case _ => Error(JsonError.TypeError("Number", json.typeName()))
 
 implement JsonDecoder for Float64 =
@@ -158,7 +169,7 @@ test "JsonDecoder Bool" =
 
 test "JsonDecoder Int32" =
     assert Int32.fromJson(Json.Number(42.0)).require == 42
-    assert Int32.fromJson(Json.Number(3.7)).require == 3
+    assert Int32.fromJson(Json.Number(3.7)).isError
     assert Int32.fromJson(Json.Null).isError
     assert Int32.fromJson(Json.Str("x")).isError
 

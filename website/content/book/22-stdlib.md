@@ -259,8 +259,13 @@ test "a record round trips through JSON" = main()
 ```
 
 The JSON tree stores numbers as `Float64`; do not assume arbitrary-precision integers
-or decimals round-trip through a JSON number losslessly. Private construction is
-also respected: a generated decoder cannot bypass a private constructor. Decode a
+or decimals round-trip through a JSON number losslessly. `Int32.fromJson` and
+`Int64.fromJson` reject fractional float values with `JsonError.NonIntegralNumber`
+and reject out-of-range or non-finite values with `JsonError.OutOfRange`, instead
+of truncating or trapping. These checks apply to the stored float: precision lost
+while parsing or encoding cannot be recovered, and a fractional input that rounds
+to an integer may still be accepted. Derived integer fields use the same decoders.
+Private construction is also respected: a generated decoder cannot bypass a private constructor. Decode a
 public input shape, then validate it through the private type's module.
 
 ## 22.9 Randomness and Crypto
@@ -343,6 +348,10 @@ including `.inf` and `.nan` spellings. `yes`, `no`, `on`, `off`, and dates remai
 strings; quote numeric or boolean-looking mapping keys to make them strings.
 Integers retain exact `Int64` values and overflow is an error. Floats round to
 `Float64`, including subnormals, signed zero, and overflow to infinity.
+Integer decoders accept only integer nodes: decimal/exponent float spellings such
+as `1.0` and `1e3` produce `TypeMismatch`, even when mathematically integral.
+`Int32` decoding checks its narrower range and returns `OutOfRange("Int32")`.
+Derived integer fields use these same checks and preserve exact `Int64` values.
 
 `Yaml.parse` accepts one document with optional `---` and `...` markers, an
 optional leading BOM, and LF/CRLF line endings. Empty input produces null.

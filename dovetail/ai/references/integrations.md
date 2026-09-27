@@ -23,3 +23,11 @@ Follow the [book access workflow](book.md) for version matching and offline fall
   records reject unknown fields; missing/null optional fields become `None`.
   Use the documented subset, not assumed support for aliases, tags, multiple
   documents, or encoding. Error paths and spans should survive custom decoding.
+
+- JSON integer decoders reject fractions and overflow in stored Float64 values
+  with typed errors. The current JSON tree still loses numeric text precision;
+  do not promise exact Int64 wire round trips or use post-float checks to validate
+  original numeric tokens. Derived integer fields inherit this limitation.
+- YAML integer nodes preserve Int64 exactly and Int32 narrowing is checked.
+  Decimal/exponent float nodes (including `1.0` and `1e3`) cannot decode as integers.
+  YAML has no encoder; do not suggest a serialization round-trip API.

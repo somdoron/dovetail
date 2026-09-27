@@ -142,3 +142,53 @@ test "array and tuple decoders" =
         .require
         ._5
         == 6
+
+@derive(YamlDecoder)
+ record IntegerFields =
+    smallest: Int64
+    largest: Int64
+    precise: List<Int64>
+    narrow: Int32
+
+test "derived integer fields preserve the full Int64 range" =
+    let text =
+        "smallest: -9223372036854775808\nlargest: 9223372036854775807\nprecise: [9007199254740991, 9007199254740992, 9007199254740993, -9007199254740991, -9007199254740992, -9007199254740993]\nnarrow: 2147483647"
+    let result = IntegerFields.fromYaml(Yaml.parse(text).require).require
+    assert result.smallest == -9223372036854775807i64 - 1i64
+    assert result.largest == 9223372036854775807i64
+    assert result.narrow == 2147483647
+    let values = result.precise.toArray()
+    assert values.get(0) == 9007199254740991i64
+    assert values.get(1) == 9007199254740992i64
+    assert values.get(2) == 9007199254740993i64
+    assert values.get(3) == -9007199254740991i64
+    assert values.get(4) == -9007199254740992i64
+    assert values.get(5) == -9007199254740993i64
+
+test "YAML integer decoding rejects decimal and exponent float nodes with typed errors" =
+    for text in ["1.5", "-1.5", "1.0", "1e3", "9007199254740993.0", "1e99999"] do
+        match Int64.fromYaml(Yaml.parse(text).require) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.TypeMismatch(expected, actual) =>
+                        assert expected == "Integer"
+                        assert actual == "Float"
+                    case _ => assert false
+            case _ => assert false
+        assert Int32.fromYaml(Yaml.parse(text).require).isError
+
+test "YAML integer overflow has typed errors" =
+    for text in ["9223372036854775808", "-9223372036854775809", "999999999999999999999999999999"] do
+        match Yaml.parse(text) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.OutOfRange(target) => assert target == "Int64"
+                    case _ => assert false
+            case _ => assert false
+    for text in ["2147483648", "-2147483649"] do
+        match Int32.fromYaml(Yaml.parse(text).require) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.OutOfRange(target) => assert target == "Int32"
+                    case _ => assert false
+            case _ => assert false

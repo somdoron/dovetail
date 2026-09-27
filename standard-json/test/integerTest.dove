@@ -1,0 +1,64 @@
+package test
+
+import standard.json.Json
+import standard.json.JsonDecoder
+import standard.json.JsonEncoder
+import standard.json.JsonError
+
+test "integer decoders reject fractional float nodes" =
+    for value in [1.5, -1.5, 0.0001, -0.0001] do
+        match Int32.fromJson(Json.Number(value)) with
+            case Error(JsonError.NonIntegralNumber) => ()
+            case _ => assert false
+        match Int64.fromJson(Json.Number(value)) with
+            case Error(JsonError.NonIntegralNumber) => ()
+            case _ => assert false
+
+test "integer decoders reject float overflow without trapping" =
+    for value in [2147483648.0, -2147483649.0, 1.0e100, -1.0e100] do
+        match Int32.fromJson(Json.Number(value)) with
+            case Error(JsonError.OutOfRange(target)) => assert target == "Int32"
+            case _ => assert false
+    for value in [9223372036854775808.0, -9223372036854777856.0, 1.0e100, -1.0e100] do
+        match Int64.fromJson(Json.Number(value)) with
+            case Error(JsonError.OutOfRange(target)) => assert target == "Int64"
+            case _ => assert false
+
+test "integer decoders reject nonfinite float nodes" =
+    for bits in [9218868437227405312i64, -4503599627370496i64, 9221120237041090560i64] do
+        assert Int32.fromJson(Json.Number(bits.bitsToFloat64())).isError
+        assert Int64.fromJson(Json.Number(bits.bitsToFloat64())).isError
+
+test "integer decoders accept integral float nodes within range" =
+    assert Int32.fromJson(Json.Number(-2147483648.0)).require == -2147483648
+    assert Int32.fromJson(Json.Number(2147483647.0)).require == 2147483647
+    assert Int64
+        .fromJson(Json.Number(-9223372036854775808.0))
+        .require
+        == -9223372036854775807i64 - 1i64
+    assert Int64.fromJson(Json.Number(9223372036854774784.0)).require == 9223372036854774784i64
+    assert Int64.fromJson(Json.Number(-0.0)).require == 0i64
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+ record IntegerFields =
+    wide: Int64
+    narrow: Int32
+
+test "derived integer decoders propagate fractional and range errors" =
+    for text in ["{\"wide\":1.5,\"narrow\":0}", "{\"wide\":0,\"narrow\":-1.5}"] do
+        match IntegerFields.fromJson(Json.parse(text).require) with
+            case Error(JsonError.NonIntegralNumber) => ()
+            case _ => assert false
+    for text in ["{\"wide\":1e100,\"narrow\":0}", "{\"wide\":0,\"narrow\":2147483648}"] do
+        match IntegerFields.fromJson(Json.parse(text).require) with
+            case Error(JsonError.OutOfRange(_)) => ()
+            case _ => assert false
+
+test "parsed ordinary exponent fractions are rejected" =
+    for text in ["15e-1", "-15e-1", "1e-3"] do
+        match Int64.fromJson(Json.parse(text).require) with
+            case Error(JsonError.NonIntegralNumber) => ()
+            case _ => assert false
+        assert Int32.fromJson(Json.parse(text).require).isError
+    assert Int64.fromJson(Json.parse("15e1").require).require == 150i64

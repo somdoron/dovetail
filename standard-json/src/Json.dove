@@ -23,6 +23,10 @@ public enum JsonError =
     ParseError(String, Int32)
     /// A type mismatch: expected the first type but found the second.
     TypeError(String, String)
+    /// A numeric value has a fractional component and cannot decode as an integer.
+    NonIntegralNumber
+    /// A numeric value is outside the target integer range (including non-finite floats).
+    OutOfRange(String)
     /// A required field was not present in the JSON object.
     MissingField(String)
     /// An application-specific error with a descriptive message.

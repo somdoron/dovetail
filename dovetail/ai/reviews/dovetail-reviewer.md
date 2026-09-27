@@ -22,6 +22,11 @@ Check:
 - YAML boundary code handles parse and decode failures, respects strict unknown-field
   checking and optional-field semantics, and preserves error paths/source spans in
   custom decoders. Do not assume the reader supports full YAML or encoding.
+- Numeric boundary checks reject fractions and overflow before unsafe conversion.
+  JSON currently stores Float64: checks after parsing cannot prove original-token
+  integrality or exact Int64 round trips. YAML integer nodes are exact, while its
+  integer decoders reject decimal/exponent float nodes. Derived fields inherit
+  primitive decoder behavior; include the textual wire path in round-trip tests.
 - Mutable aliases do not invalidate snapshots; pattern coverage and casts are sound.
 - Imports, dependencies, visible APIs, named arguments, and supported features match
   this compiler. Do not recommend proposed defaults or nonexistent linter commands.
