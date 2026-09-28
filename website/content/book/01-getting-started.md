@@ -260,13 +260,27 @@ to test the current source. See [Tool Commands](02-tool-commands.md) for more de
 
 ### VS Code Extension
 
-Dovetail provides a VS Code extension for the best development experience.
+Dovetail provides an extension for VS Code and Cursor for the best development experience.
 
 #### Installing the Extension
 
-Download `dovetail-language-<version>.vsix` from the matching
-[GitHub release](https://github.com/somdoron/dovetail/releases). In VS Code, run
-**Extensions: Install from VSIX...** from the Command Palette and select the file.
+Install **Dovetail Language** from the
+[Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=dovetail-lang.dovetail-language)
+for VS Code, or from [Open VSX](https://open-vsx.org/extension/dovetail-lang/dovetail-language)
+for Cursor. You can also install it from the terminal using your editor's CLI.
+
+**VS Code:**
+
+```sh
+code --install-extension dovetail-lang.dovetail-language
+```
+
+**Cursor:**
+
+```sh
+cursor --install-extension dovetail-lang.dovetail-language
+```
+
 Install the compiler separately using the installation instructions above.
 
 To build the extension from a repository checkout:
