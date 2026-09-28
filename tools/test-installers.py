@@ -80,6 +80,41 @@ esac
         self.assertIn('Checksum mismatch', result.stderr)
         self.assertEqual(self.executable.read_text(), 'existing installation')
 
+    def test_path_instructions_are_executable_and_preserve_existing_config(self):
+        self.asset('x86_64-unknown-linux-gnu')
+        self.env['HOME'] = str(self.root)
+        self.env.pop('ZDOTDIR', None)
+        self.destination = self.root / "bin with 'quotes' $dollars `backticks`"
+        for shell, system, filename in [
+            ('/bin/zsh', 'Darwin', '.zshrc'),
+            ('/bin/bash', 'Linux', '.bashrc'),
+            ('/bin/bash', 'Darwin', '.bash_profile'),
+            ('/bin/sh', 'Linux', '.profile'),
+        ]:
+            with self.subTest(shell=shell, system=system):
+                self.asset('x86_64-apple-darwin')
+                self.env.update(SHELL=shell, SYSTEM=system)
+                config = self.root / filename
+                config.write_text('# existing configuration\n')
+                result = self.run_installer('--version', 'v0.1.4')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(config.read_text(), '# existing configuration\n')
+                command = next(line.strip() for line in result.stdout.splitlines()
+                               if line.startswith('  printf '))
+                subprocess.run(['sh', '-c', command], env=self.env, check=True)
+                self.assertTrue(config.read_text().startswith('# existing configuration\n'))
+                check = subprocess.run(['sh', '-c', '. "$1"; command -v dovetail',
+                                        'sh', str(config)], env=self.env,
+                                       capture_output=True, text=True, check=True)
+                self.assertEqual(check.stdout.strip(), str(self.destination / 'dovetail'))
+
+    def test_no_path_instructions_when_directory_is_already_present(self):
+        self.asset('x86_64-unknown-linux-gnu')
+        self.env['PATH'] += ':' + str(self.destination)
+        result = self.run_installer('--version', 'v0.1.4')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn('not on your PATH', result.stdout)
+
     def test_ambiguous_checksum_preserves_installation(self):
         checksum = self.asset('x86_64-unknown-linux-gnu')
         checksum.write_text(checksum.read_text() * 2)

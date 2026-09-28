@@ -76,6 +76,10 @@ mkdir -p "$install_dir"
 [ ! -d "$install_dir/dovetail" ] || fail 'Installation target dovetail is a directory'
 # Stage on the destination filesystem so replacement is an atomic rename.
 cd "$install_dir"
+case "$install_dir" in
+    /*) ;;
+    *) install_dir=$(pwd) ;;
+esac
 staged=$(mktemp './.dovetail.XXXXXXXX')
 cp "$scratch/$asset" "$staged"
 chmod 755 "$staged"
@@ -84,5 +88,29 @@ staged=
 printf 'Installed Dovetail %s to %s\n' "$version" "$install_dir"
 case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
-    *) printf 'Add this directory to your PATH: %s\n' "$install_dir" ;;
+    *)
+        # Quote both the directory and the complete export line for copy/paste.
+        shell_quote() {
+            printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+        }
+        export_line="export PATH=$(shell_quote "$install_dir"):\$PATH"
+        printf '\n%s is not on your PATH.\n' "$install_dir"
+        login_shell=${SHELL:-sh}
+        case "${login_shell##*/}" in
+            zsh) shell_config=${ZDOTDIR:-$HOME}/.zshrc ;;
+            bash)
+                case "$(uname -s)" in
+                    Darwin) shell_config=$HOME/.bash_profile ;;
+                    *) shell_config=$HOME/.bashrc ;;
+                esac ;;
+            sh|dash|ksh) shell_config=$HOME/.profile ;;
+            *) shell_config= ;;
+        esac
+        if [ -n "$shell_config" ]; then
+            printf 'To add it permanently, run:\n\n'
+            printf '  printf '\''%%s\\n'\'' %s >> %s\n' "$(shell_quote "$export_line")" "$(shell_quote "$shell_config")"
+            printf '\nThen open a new terminal, or run this in your current shell:\n\n  %s\n' "$export_line"
+        else
+            printf 'Add this directory using your shell configuration. For a POSIX-compatible shell, run:\n\n  %s\n' "$export_line"
+        fi ;;
 esac

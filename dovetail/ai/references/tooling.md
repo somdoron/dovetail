@@ -6,6 +6,11 @@ Follow the [book access workflow](book.md) for version matching and offline fall
 Use the installed compiler's `--help` for exact flags. During compiler development
 use `cargo run --`. Use the intended consumer workspace as the working directory.
 
+If `dovetail` is not found after installation, check whether its install directory
+is on `PATH`. The macOS/Linux installer prints shell-specific commands when it is
+missing; it does not edit startup files itself. See
+[Getting started](https://dovetaillang.org/book/getting-started.md#12-installation-and-setup).
+
 Format changed sources, check the selected project, and run relevant tests. `check`
 does not exercise code generation or runtime behavior. Report which commands ran.
 Use real Dovetail workspaces for library/language validation, including failure cases.

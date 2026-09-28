@@ -183,7 +183,12 @@ compatible with the Ubuntu 24.04 build environment; Alpine/musl is not supported
 
 The default directory is `~/.local/bin` on macOS/Linux and
 `%LOCALAPPDATA%\Dovetail\bin` on Windows. Add it to your `PATH` as printed by the
-installer. The scripts do not edit your shell profile or Windows environment.
+installer. On macOS and Linux, if the directory is missing from `PATH`, the
+installer prints a command to append the setting to your shell configuration
+(`~/.zshrc` for Zsh, `~/.bashrc` for Bash on Linux, or `~/.bash_profile` for Bash
+on macOS). Run that command, then open a new terminal or run the printed `export`
+command to use Dovetail immediately. The scripts do not edit your shell profile
+or Windows environment.
 
 For a specific release or installation directory, download the script first:
 
