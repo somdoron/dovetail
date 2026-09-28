@@ -197,6 +197,37 @@ jobs:
         run: |
           gh release upload "$RELEASE_TAG" dist/*
 
+  publish-extension:
+    if: github.event_name == 'release'
+    needs: [build, build-extension]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vscode-dovetail
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vscode-dovetail/package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: vscode-extension
+          path: vscode-dovetail/release
+      - name: Publish extension to Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo 'Set the VSCE_PAT repository secret to a Marketplace publishing token.' >&2
+            exit 1
+          fi
+          sha256sum --check dovetail-language.vsix.sha256
+          ../node_modules/.bin/vsce publish --packagePath ./*.vsix
+        working-directory: vscode-dovetail/release
+
   publish-crate:
     if: github.event_name == 'release'
     needs: [build, verify-crate]

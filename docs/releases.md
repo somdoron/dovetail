@@ -1,7 +1,8 @@
 # Compiler releases
 
-The [release workflow](../.github/workflows/release.yml) builds official binaries
-and publishes the compiler package as `dovetail-lang` on crates.io. The installed
+The [release workflow](../.github/workflows/release.yml) builds official binaries,
+publishes the compiler package as `dovetail-lang` on crates.io, and publishes the
+VS Code extension to the Visual Studio Marketplace. The installed
 executable remains `dovetail`.
 
 Release notes: [0.1.3](releases/0.1.3.md), [0.1.2](releases/0.1.2.md).
@@ -13,6 +14,10 @@ permission to publish `dovetail-lang`, and store it in this GitHub repository's
 Actions secrets as `CARGO_REGISTRY_TOKEN`. The initial release requires permission
 to create the crate; later releases require ownership of it. Never commit the token.
 See Cargo's [publishing guide](https://doc.rust-lang.org/cargo/reference/publishing.html).
+
+Store a Marketplace publishing token in the repository's Actions secrets as
+`VSCE_PAT`. Its account must have publishing access to the `dovetail-lang`
+publisher. See the [VS Code automated publishing guide](https://code.visualstudio.com/api/working-with-extensions/continuous-integration#github-actions-automated-publishing).
 
 ## Publishing a version
 
@@ -32,9 +37,12 @@ workflow publishes to crates.io using the repository secret. A separate job
 attaches the platform executables, VS Code extension (`.vsix`), and checksums to
 the GitHub release after the extension's TypeScript compilation and packaging pass. The
 extension version must also match the release tag.
+The Marketplace publishing job waits for the platform builds and extension
+packaging, verifies the VSIX checksum, and publishes that same artifact using
+`VSCE_PAT`.
 
 Pull requests and manual workflow runs validate the package and build binaries
-without publishing. Crates.io versions cannot be overwritten; if publishing
+without publishing. Crates.io and Marketplace versions cannot be overwritten; if publishing
 succeeds but another job fails, rerun only the failed jobs.
 
 After publication, users can install with `cargo install dovetail-lang`, or add
@@ -42,9 +50,9 @@ After publication, users can install with `cargo install dovetail-lang`, or add
 
 ## VS Code Marketplace
 
-GitHub release assets let users install the extension with **Extensions: Install
-from VSIX...**. Marketplace publication is separate and is not automated by this
-workflow yet.
+The release workflow publishes Marketplace updates automatically. GitHub release
+assets also let users install the extension with **Extensions: Install from
+VSIX...**. For initial publisher setup or manual publication:
 
 1. Create a publisher in the
    [Visual Studio Marketplace management portal](https://marketplace.visualstudio.com/manage).
@@ -56,7 +64,7 @@ workflow yet.
    or upload it as an update to the existing extension. Each update needs a new
    version. Users who install from the Marketplace receive updates through VS Code.
 
-For CI automation, publish the already-built release VSIX using
+For a future migration to identity-based CI authentication, publish the already-built release VSIX using
 `vsce publish --packagePath <release.vsix> --azure-credential`. Configure Microsoft
 Entra ID workload identity federation and grant that identity access to the
 Marketplace publisher first. This keeps the store package identical to the
