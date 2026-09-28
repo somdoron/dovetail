@@ -79,7 +79,7 @@ fn workspace_discovery_is_local_and_includes_test_trees() {
     let root = directory.path();
     std::fs::write(
         root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.3"
+        r#"compiler-version = "0.1.4"
 [[dependencies]]
 git = "https://invalid.example/unavailable.git"
 rev = "0000000000000000000000000000000000000000"

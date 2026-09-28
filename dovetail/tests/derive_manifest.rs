@@ -123,7 +123,7 @@ function main(): Unit =
     // Dovetail.toml: mylib declares the macro, myapp depends on mylib.
     fs::write(
         root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.3"
+        r#"compiler-version = "0.1.4"
 [[project]]
 name = "mylib"
 root_package = "mylib"
@@ -160,7 +160,7 @@ fn test_manifest_macro_load_failure_surfaces_during_resolve() {
     // Note: macros/Tag.rhai is intentionally NOT created.
     fs::write(
         root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.3"
+        r#"compiler-version = "0.1.4"
 [[project]]
 name = "mylib"
 root_package = "mylib"
@@ -202,7 +202,7 @@ fn test_manifest_macro_unsupported_kind_surfaces_during_resolve() {
 
     fs::write(
         root.join("Dovetail.toml"),
-        r#"compiler-version = "0.1.3"
+        r#"compiler-version = "0.1.4"
 [[project]]
 name = "mylib"
 root_package = "mylib"

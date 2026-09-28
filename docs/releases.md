@@ -5,7 +5,7 @@ publishes the compiler package as `dovetail-lang` on crates.io, and publishes th
 VS Code extension to the Visual Studio Marketplace. The installed
 executable remains `dovetail`.
 
-Release notes: [0.1.3](releases/0.1.3.md), [0.1.2](releases/0.1.2.md).
+Release notes: [0.1.4](releases/0.1.4.md), [0.1.3](releases/0.1.3.md), [0.1.2](releases/0.1.2.md).
 
 ## One-time setup
 
