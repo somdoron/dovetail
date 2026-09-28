@@ -45,7 +45,7 @@ export async function prepare() {
   await syncFiles(new URL('../src/content/docs/', import.meta.url), docs);
   const publicFiles = createExports(pages);
   for (const file of await readdir(new URL('../static/', import.meta.url))) {
-    publicFiles.set(`/${file}`, await readFile(new URL(`../static/${file}`, import.meta.url), 'utf8'));
+    publicFiles.set(`/${file}`, await readFile(new URL(`../static/${file}`, import.meta.url)));
   }
   await syncFiles(new URL('../.generated/public/', import.meta.url), publicFiles);
   return pages;
@@ -59,10 +59,11 @@ export async function syncFiles(directory, files) {
     const destination = fileURLToPath(new URL(`.${path}`, directory));
     expected.add(destination);
     await mkdir(dirname(destination), { recursive: true });
-    const previous = await readFile(destination, 'utf8').catch((error) => {
+    const content = Buffer.isBuffer(body) ? body : Buffer.from(body);
+    const previous = await readFile(destination).catch((error) => {
       if (error.code !== 'ENOENT') throw error;
     });
-    if (previous !== body) await writeFile(destination, body);
+    if (!previous?.equals(content)) await writeFile(destination, content);
   }
   for (const entry of existing) {
     const path = join(entry.parentPath, entry.name);

@@ -30,6 +30,8 @@ export default defineConfig({
     },
     starlight({
       title: 'Dovetail',
+      logo: { src: './static/dovetail-logo.png', replacesTitle: false },
+      favicon: '/favicon.png',
       description: 'A language for business logic.',
       social: [{ icon: 'github', label: 'GitHub', href: REPOSITORY }],
       customCss: ['./src/styles/docs.css'],

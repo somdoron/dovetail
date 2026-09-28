@@ -16,10 +16,15 @@ test('repeated generation preserves root and nested outputs and removes stale fi
   const url = pathToFileURL(`${directory}/`);
   try {
     const outputs = createExports([page, next]);
+    const logo = await readFile(new URL('../static/dovetail-logo.png', import.meta.url));
+    outputs.set('/logo.png', logo);
     await syncFiles(url, outputs);
     await writeFile(new URL('obsolete.md', url), 'Old chapter');
     await syncFiles(url, outputs);
-    for (const [path, expected] of outputs) assert.equal(await readFile(new URL(`.${path}`, url), 'utf8'), expected);
+    for (const [path, expected] of outputs) {
+      const actual = await readFile(new URL(`.${path}`, url));
+      assert.deepEqual(actual, Buffer.isBuffer(expected) ? expected : Buffer.from(expected));
+    }
     assert.ok(!(await readdir(directory)).includes('obsolete.md'));
   } finally {
     await rm(directory, { recursive: true, force: true });

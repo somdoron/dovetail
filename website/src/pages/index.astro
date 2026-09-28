@@ -14,7 +14,7 @@ const chapters = [
     <meta name="viewport" content="width=device-width" />
     <meta name="description" content="Dovetail is an experimental programming language for business logic. Read the language book, try a first program, or explore the source." />
     <link rel="canonical" href={SITE} />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.png" type="image/png" sizes="128x128" />
     <link rel="describedby" href={`${SITE}/llms.txt`} />
     <meta name="theme-color" content="#131516" />
     <meta name="color-scheme" content="dark" />
@@ -24,7 +24,7 @@ const chapters = [
     <a class="skip" href="#main">Skip to content</a>
     <div class="shell">
       <header>
-        <a class="wordmark" href="/" aria-label="Dovetail home">dovetail</a>
+        <a class="wordmark" href="/" aria-label="Dovetail home"><img src="/dovetail-logo.png" width="40" height="40" alt="" />dovetail</a>
         <nav aria-label="Main navigation">
           <a href="/book/">Book</a>
           <a href={REPOSITORY}>GitHub <span aria-hidden="true">↗</span></a>
@@ -95,7 +95,7 @@ const chapters = [
   :global(:focus-visible) { outline: 2px solid #a8c5b5; outline-offset: 5px; }
   .shell { max-width: 828px; margin: 0 auto; padding: 0 32px; }
   header { display: flex; align-items: center; justify-content: space-between; min-height: 88px; border-bottom: 1px solid #2b2e2f; }
-  .wordmark { color: #e4e7e5; font-size: 17px; font-weight: 600; letter-spacing: -.4px; text-decoration: none; }
+  .wordmark { display: inline-flex; align-items: center; gap: 10px; color: #e4e7e5; font-size: 17px; font-weight: 600; letter-spacing: -.4px; text-decoration: none; }
   nav { display: flex; gap: 28px; font-size: 13px; }
   nav a { color: #a5adab; text-decoration: none; }
   .intro { padding-top: 64px; padding-bottom: 42px; }
