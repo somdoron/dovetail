@@ -1,0 +1,109 @@
+package standard.json
+
+/// JSON numbers retain integer and floating-point categories. Use the checked constructors.
+public enum JsonNumber private =
+    Integer(Int64)
+    Float(Float64)
+
+module JsonNumber =
+    public function fromInt32(value: Int32): JsonNumber = JsonNumber.Integer(value.toInt64())
+
+    public function fromInt64(value: Int64): JsonNumber = JsonNumber.Integer(value)
+
+    /// JSON has no NaN or infinity. Neither can be constructed as a JsonNumber.
+    public function fromFloat64(value: Float64): Result<JsonNumber, JsonError> =
+        let infinity = 9218868437227405312i64.bitsToFloat64()
+        if value > 0.0 - infinity && value < infinity then Ok(JsonNumber.Float(value))
+        else Error(JsonError.OutOfRange("finite Float64"))
+
+    /// Only integer nodes are accepted, including when a float has no fractional part.
+    public function toInt64(self): Result<Int64, JsonError> =
+        match self with
+            case JsonNumber.Integer(value) => Ok(value)
+            case JsonNumber.Float(_) => Error(JsonError.TypeError("Integer", "Float"))
+
+    public function toInt32(self): Result<Int32, JsonError> =
+        let value = try self.toInt64()
+        if value < -2147483648i64 || value > 2147483647i64 then Error(JsonError.OutOfRange("Int32"))
+        else Ok(value.toInt32())
+
+    /// Integer-to-Float64 conversion may round, particularly outside the exact range ±2^53.
+    public function toFloat64(self): Float64 =
+        match self with
+            case JsonNumber.Integer(value) => value.toFloat64()
+            case JsonNumber.Float(value) => value
+
+    /// Preserve the category on serialization, including whole-valued floats and negative zero.
+    public function format(self): String =
+        match self with
+            case JsonNumber.Integer(value) => value.format()
+            case JsonNumber.Float(value) =>
+                let text = value.format()
+                if text.contains(".") || text.contains("e") || text.contains("E") then text
+                else text ++ ".0"
+
+    /// Parses one complete numeric token without whitespace. Integer tokens must fit Int64.
+    public function parse(text: String): Result<JsonNumber, JsonError> =
+        if text.length > 268435456 || !validNumber(text) then
+            Error(JsonError.ParseError("invalid JSON number", 0))
+        else if text.contains(".") || text.contains("e") || text.contains("E") then
+            let negative = text.startsWith("-")
+            let unsigned = if negative then text.substring(1, text.length) else text
+            match jsonFloat(unsigned, negative) with
+                case Some(value) => fromFloat64(value)
+                case None => Error(JsonError.ParseError("invalid JSON number", 0))
+        else
+            parseInteger(text)
+
+    private function isDigit(text: String, index: Int32): Bool =
+        index < text.length && text.getChar(index) >= '0' && text.getChar(index) <= '9'
+
+    private function skipDigits(text: String, start: Int32): Int32 =
+        let mutable index = start
+        while isDigit(text, index) do
+            index = index + 1
+        index
+
+    private function validNumber(text: String): Bool =
+        let mutable index = if text.startsWith("-") then 1 else 0
+        if !isDigit(text, index) then
+            false
+        else
+            if text.getChar(index) == '0' then
+                index = index + 1
+            else
+                index = skipDigits(text, index)
+            let mutable valid = true
+            if index < text.length && text.getChar(index) == '.' then
+                index = index + 1
+                valid = isDigit(text, index)
+                index = skipDigits(text, index)
+            if index
+                < text.length
+                && (text.getChar(index) == 'e' || text.getChar(index) == 'E') then
+                index = index + 1
+                if index
+                    < text.length
+                    && (text.getChar(index) == '+' || text.getChar(index) == '-') then
+                    index = index + 1
+                valid = valid && isDigit(text, index)
+                index = skipDigits(text, index)
+            valid && index == text.length
+
+    /// Accumulate negatively so Int64.MIN never requires an overflowing absolute value.
+    private function parseInteger(text: String): Result<JsonNumber, JsonError> =
+        let negative = text.startsWith("-")
+        let limit = if negative then -9223372036854775807i64 - 1i64 else -9223372036854775807i64
+        let mutable index = if negative then 1 else 0
+        let mutable value = 0i64
+        while index < text.length do
+            let digit = jsonDigit(text.getChar(index)).toInt64()
+            if value < limit / 10i64 then try Error(JsonError.OutOfRange("Int64"))
+            value = value * 10i64
+            if value < limit + digit then try Error(JsonError.OutOfRange("Int64"))
+            value = value - digit
+            index = index + 1
+        Ok(JsonNumber.Integer(if negative then value else 0i64 - value))
+
+internal function jsonDigit(character: Char): Int32 =
+    String.fromChar(character).bytes().get(0).toInt32() - 48

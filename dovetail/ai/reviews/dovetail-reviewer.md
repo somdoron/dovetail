@@ -23,10 +23,12 @@ Check:
   checking and optional-field semantics, and preserves error paths/source spans in
   custom decoders. Do not assume the reader supports full YAML or encoding.
 - Numeric boundary checks reject fractions and overflow before unsafe conversion.
-  JSON currently stores Float64: checks after parsing cannot prove original-token
-  integrality or exact Int64 round trips. YAML integer nodes are exact, while its
-  integer decoders reject decimal/exponent float nodes. Derived fields inherit
-  primitive decoder behavior; include the textual wire path in round-trip tests.
+  JSON and YAML preserve Int64 integer tokens and reject decimal/exponent float
+  nodes for integer targets, even `1.0`. Check JSON migration to `JsonNumber`
+  helpers, parse-time Int64 overflow, checked Int32 narrowing, and intentional
+  Float64 precision loss. Non-finite JSON float construction fails; the infallible
+  float encoder maps it to null. Derived fields inherit primitive behavior;
+  test the textual wire path, including YAML records persisted as JSON.
 - Mutable aliases do not invalidate snapshots; pattern coverage and casts are sound.
 - Imports, dependencies, visible APIs, named arguments, and supported features match
   this compiler. Do not recommend proposed defaults or nonexistent linter commands.

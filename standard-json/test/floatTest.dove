@@ -1,0 +1,73 @@
+package test
+
+import standard.json.Json
+import standard.json.JsonNumber
+import standard.json.JsonDecoder
+import standard.json.JsonEncoder
+import standard.json.JsonError
+
+test "JSON floats round once including subnormals and signed zero" =
+    for text in [
+        "1.23",
+        "0.000000123",
+        "1.7976931348623157e308",
+        "4.9406564584124654e-324",
+        "2.2250738585072014e-308",
+        "9007199254740993.0",
+        "-0.0",
+        "-1e-999999999999999999999"
+    ] do
+        let value = Float64.fromJson(Json.parse(text).require).require
+        let wire = value.toJson().encode()
+        assert Float64.fromJson(Json.parse(wire).require).require.toBits() == value.toBits()
+    assert Float64.fromJson(Json.parse("1.23").require).require == 1.23
+    assert Float64
+        .fromJson(Json.parse("1.7976931348623157e308").require)
+        .require
+        .toBits()
+        == 9218868437227405311i64
+    assert Float64.fromJson(Json.parse("4.9406564584124654e-324").require).require.toBits() == 1i64
+    assert Float64
+        .fromJson(Json.parse("2.2250738585072014e-308").require)
+        .require
+        .toBits()
+        == 4503599627370496i64
+    assert Float64.fromJson(Json.parse("9007199254740993.0").require).require == 9007199254740992.0
+    assert Float64
+        .fromJson(Json.parse("-1e-999999999999999999999").require)
+        .require
+        .toBits()
+        == -9223372036854775807i64 - 1i64
+
+test "floating overflow is typed and huge exponents do not wrap" =
+    for text in ["1e309", "-1e309", "1e2147483648", "1e9999999999999999999999"] do
+        match Json.parse(text) with
+            case Error(JsonError.OutOfRange("finite Float64")) => ()
+            case _ => assert false
+    assert Float64.fromJson(Json.parse("0e9999999999999999999999").require).require == 0.0
+    assert Float64.fromJson(Json.parse("1e-2147483648").require).require == 0.0
+
+test "Float64 conversion of integer nodes explicitly rounds" =
+    assert Float64.fromJson(9007199254740993i64.toJson()).require == 9007199254740992.0
+    assert JsonNumber.fromInt64(9223372036854775807i64).toFloat64() == 9223372036854775808.0
+
+test "float serialization preserves category for whole values" =
+    for value in [0.0, -0.0, 42.0, 9007199254740992.0, 9223372036854775808.0, 1.0e100] do
+        let parsed = Json.parse(value.toJson().encode()).require
+        assert Int64.fromJson(parsed).isError
+        assert Float64.fromJson(parsed).require.toBits() == value.toBits()
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+ record FloatField =
+    value: Float64
+
+test "nonfinite convenience encoding produces null including derived fields" =
+    for bits in [9218868437227405312i64, -4503599627370496i64, 9221120237041090560i64] do
+        let value = bits.bitsToFloat64()
+        assert value.toJson().encode() == "null"
+        assert (FloatField { value = value }).toJson().encode() == "{\"value\":null}"
+    for value in [0.0, -0.0, 42.0, 1.23, 9223372036854775808.0] do
+        let original = FloatField { value = value }
+        let decoded = FloatField.fromJson(Json.parse(original.toJson().encode()).require).require
+        assert decoded.value.toBits() == value.toBits()

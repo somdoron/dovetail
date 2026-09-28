@@ -285,3 +285,10 @@ name = "sqlite-consumer-test"
 root_package = "consumer.sqlite"
 depends = ["standard-sqlite", "standard-io"]
 packages = ["."]
+
+# Cross-format regression coverage without coupling either serialization library to the other.
+[[project]]
+name = "standard-json-yaml-interop"
+root_package = "interop.jsonYaml"
+depends = ["standard-json", "standard-yaml"]
+packages = ["."]

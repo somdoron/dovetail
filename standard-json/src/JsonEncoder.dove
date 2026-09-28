@@ -11,15 +11,19 @@ implement JsonEncoder for Bool =
 
 /// Encodes an Int32 as a Json.Number value.
 implement JsonEncoder for Int32 =
-    public function toJson(self: Int32): Json = Json.Number(self.toFloat64())
+    public function toJson(self: Int32): Json = Json.Number(JsonNumber.fromInt32(self))
 
 /// Encodes an Int64 as a Json.Number value.
 implement JsonEncoder for Int64 =
-    public function toJson(self: Int64): Json = Json.Number(self.toFloat64())
+    public function toJson(self: Int64): Json = Json.Number(JsonNumber.fromInt64(self))
 
-/// Encodes a Float64 as a Json.Number value.
+/// Encodes finite floats as numbers; NaN and infinities become null.
+/// Use JsonNumber.fromFloat64 for checked construction instead.
 implement JsonEncoder for Float64 =
-    public function toJson(self: Float64): Json = Json.Number(self)
+    public function toJson(self: Float64): Json =
+        match JsonNumber.fromFloat64(self) with
+            case Ok(number) => Json.Number(number)
+            case Error(_) => Json.Null
 
 /// Encodes a String as a Json.Str value.
 implement JsonEncoder for String =
@@ -109,17 +113,17 @@ test "JsonEncoder for Bool" =
 
 test "JsonEncoder for Int32" =
     match 42.toJson() with
-        case Json.Number(n) => assert n == 42.0
+        case Json.Number(n) => assert n.toFloat64() == 42.0
         case _ => assert false
 
 test "JsonEncoder for Int64" =
     match 7i64.toJson() with
-        case Json.Number(n) => assert n == 7.0
+        case Json.Number(n) => assert n.toFloat64() == 7.0
         case _ => assert false
 
 test "JsonEncoder for Float64" =
     match 3.14.toJson() with
-        case Json.Number(n) => assert n == 3.14
+        case Json.Number(n) => assert n.toFloat64() == 3.14
         case _ => assert false
 
 test "JsonEncoder for String" =

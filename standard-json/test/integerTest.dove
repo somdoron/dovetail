@@ -1,43 +1,136 @@
 package test
 
 import standard.json.Json
+import standard.json.JsonNumber
 import standard.json.JsonDecoder
 import standard.json.JsonEncoder
 import standard.json.JsonError
 
-test "integer decoders reject fractional float nodes" =
-    for value in [1.5, -1.5, 0.0001, -0.0001] do
-        match Int32.fromJson(Json.Number(value)) with
-            case Error(JsonError.NonIntegralNumber) => ()
-            case _ => assert false
-        match Int64.fromJson(Json.Number(value)) with
-            case Error(JsonError.NonIntegralNumber) => ()
-            case _ => assert false
+function integerValues(): List<Int64> =
+    [
+        -9223372036854775807i64 - 1i64,
+        -9223372036854775807i64,
+        -9007199254740994i64,
+        -9007199254740993i64,
+        -9007199254740992i64,
+        -9007199254740991i64,
+        -2147483649i64,
+        -2147483648i64,
+        -1i64,
+        0i64,
+        1i64,
+        2147483647i64,
+        2147483648i64,
+        9007199254740991i64,
+        9007199254740992i64,
+        9007199254740993i64,
+        9007199254740994i64,
+        9223372036854775806i64,
+        9223372036854775807i64
+    ]
 
-test "integer decoders reject float overflow without trapping" =
-    for value in [2147483648.0, -2147483649.0, 1.0e100, -1.0e100] do
-        match Int32.fromJson(Json.Number(value)) with
+test "Int64 primitive and textual paths preserve exact integers" =
+    for value in integerValues() do
+        let number = JsonNumber.fromInt64(value)
+        assert number.toInt64().require == value
+        assert number.format() == value.format()
+        assert Int64.fromJson(value.toJson()).require == value
+        assert value.toJson().encode() == value.format()
+        assert Int64.fromJson(Json.parse(value.format()).require).require == value
+        assert Int64.fromJson(Json.parse(value.toJson().encode()).require).require == value
+
+test "Int32 boundaries and checked narrowing" =
+    for value in [-2147483648, -2147483647, -1, 0, 1, 2147483646, 2147483647] do
+        assert JsonNumber.fromInt32(value).toInt32().require == value
+        assert JsonNumber.fromInt32(value).toInt64().require == value.toInt64()
+        assert Int32.fromJson(Json.parse(value.toJson().encode()).require).require == value
+    for value in [
+        -2147483649i64,
+        2147483648i64,
+        -9223372036854775807i64 - 1i64,
+        9223372036854775807i64
+    ] do
+        match Int32.fromJson(Json.parse(value.format()).require) with
             case Error(JsonError.OutOfRange(target)) => assert target == "Int32"
             case _ => assert false
-    for value in [9223372036854775808.0, -9223372036854777856.0, 1.0e100, -1.0e100] do
-        match Int64.fromJson(Json.Number(value)) with
-            case Error(JsonError.OutOfRange(target)) => assert target == "Int64"
+
+test "integer token overflow propagates through nested JSON" =
+    for text in [
+        "9223372036854775808",
+        "-9223372036854775809",
+        "18446744073709551615",
+        "99999999999999999999999999999999999999"
+    ] do
+        for document in [text, "[0," ++ text ++ "]", "{\"value\":[" ++ text ++ "]}"] do
+            match Json.parse(document) with
+                case Error(JsonError.OutOfRange(target)) => assert target == "Int64"
+                case _ => assert false
+
+test "decimal and exponent tokens never decode as integers" =
+    for text in [
+        "1.0",
+        "-0.0",
+        "1e3",
+        "10e-1",
+        "15e-1",
+        "1e-3",
+        "1.5",
+        "-1.5",
+        "1.0000000000000001",
+        "9007199254740993.0",
+        "9223372036854775807.0",
+        "-9223372036854775809.0",
+        "2147483647.0000000001",
+        "1e100",
+        "1e-99999999999999999"
+    ] do
+        let json = Json.parse(text).require
+        match Int64.fromJson(json) with
+            case Error(JsonError.TypeError(expected, actual)) =>
+                assert expected == "Integer"
+                assert actual == "Float"
             case _ => assert false
+        assert Int32.fromJson(json).isError
+        assert Int64.fromJson(Json.parse(json.encode()).require).isError
 
-test "integer decoders reject nonfinite float nodes" =
+test "float constructors reject nonfinite values with typed errors" =
     for bits in [9218868437227405312i64, -4503599627370496i64, 9221120237041090560i64] do
-        assert Int32.fromJson(Json.Number(bits.bitsToFloat64())).isError
-        assert Int64.fromJson(Json.Number(bits.bitsToFloat64())).isError
+        match JsonNumber.fromFloat64(bits.bitsToFloat64()) with
+            case Error(JsonError.OutOfRange(target)) => assert target == "finite Float64"
+            case _ => assert false
+    for value in [0.0, -0.0, 1.0, 1.5, 2147483648.0, -9223372036854775808.0, 1.0e100] do
+        let number = JsonNumber.fromFloat64(value).require
+        assert number.toInt64().isError
+        assert number.toInt32().isError
+        assert number.toFloat64().toBits() == value.toBits()
 
-test "integer decoders accept integral float nodes within range" =
-    assert Int32.fromJson(Json.Number(-2147483648.0)).require == -2147483648
-    assert Int32.fromJson(Json.Number(2147483647.0)).require == 2147483647
-    assert Int64
-        .fromJson(Json.Number(-9223372036854775808.0))
-        .require
-        == -9223372036854775807i64 - 1i64
-    assert Int64.fromJson(Json.Number(9223372036854774784.0)).require == 9223372036854774784i64
-    assert Int64.fromJson(Json.Number(-0.0)).require == 0i64
+test "invalid number syntax is rejected at root and in collections" =
+    for text in [
+        "-",
+        "01",
+        "-01",
+        "1.",
+        "1e",
+        "1e+",
+        "1e-",
+        "-.1",
+        "+1",
+        ".1",
+        "0x10",
+        "1_000",
+        "NaN",
+        "Infinity"
+    ] do
+        assert JsonNumber.parse(text).isError
+        for document in [text, "[" ++ text ++ "]", "{\"value\":" ++ text ++ "}"] do
+            match Json.parse(document) with
+                case Error(JsonError.ParseError(_, _)) => ()
+                case _ => assert false
+    for text in ["", " 1", "1 ", "1 2"] do
+        assert JsonNumber.parse(text).isError
+    for text in ["[", "[1", "[1,]", "{", "{\"value\":1", "{\"value\":1,}"] do
+        assert Json.parse(text).isError
+    assert Int64.fromJson(Json.parse("-0").require).require == 0i64
 
 @derive(JsonEncoder)
 @derive(JsonDecoder)
@@ -45,20 +138,24 @@ test "integer decoders accept integral float nodes within range" =
     wide: Int64
     narrow: Int32
 
-test "derived integer decoders propagate fractional and range errors" =
-    for text in ["{\"wide\":1.5,\"narrow\":0}", "{\"wide\":0,\"narrow\":-1.5}"] do
-        match IntegerFields.fromJson(Json.parse(text).require) with
-            case Error(JsonError.NonIntegralNumber) => ()
-            case _ => assert false
-    for text in ["{\"wide\":1e100,\"narrow\":0}", "{\"wide\":0,\"narrow\":2147483648}"] do
-        match IntegerFields.fromJson(Json.parse(text).require) with
-            case Error(JsonError.OutOfRange(_)) => ()
-            case _ => assert false
+test "derived integer fields preserve exact values through JSON text" =
+    for value in integerValues() do
+        for narrow in [-2147483648, 2147483647] do
+            let original = IntegerFields { wide = value; narrow = narrow }
+            let wire = original.toJson().encode()
+            let decoded = IntegerFields.fromJson(Json.parse(wire).require).require
+            assert decoded.wide == value
+            assert decoded.narrow == narrow
 
-test "parsed ordinary exponent fractions are rejected" =
-    for text in ["15e-1", "-15e-1", "1e-3"] do
-        match Int64.fromJson(Json.parse(text).require) with
-            case Error(JsonError.NonIntegralNumber) => ()
+test "derived integer decoders propagate type and range errors" =
+    for text in [
+        "{\"wide\":1.0,\"narrow\":0}",
+        "{\"wide\":0,\"narrow\":1e3}",
+        "{\"wide\":1.0000000000000001,\"narrow\":0}"
+    ] do
+        match IntegerFields.fromJson(Json.parse(text).require) with
+            case Error(JsonError.TypeError("Integer", "Float")) => ()
             case _ => assert false
-        assert Int32.fromJson(Json.parse(text).require).isError
-    assert Int64.fromJson(Json.parse("15e1").require).require == 150i64
+    match IntegerFields.fromJson(Json.parse("{\"wide\":0,\"narrow\":2147483648}").require) with
+        case Error(JsonError.OutOfRange("Int32")) => ()
+        case _ => assert false

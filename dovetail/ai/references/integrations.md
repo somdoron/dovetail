@@ -24,10 +24,15 @@ Follow the [book access workflow](book.md) for version matching and offline fall
   Use the documented subset, not assumed support for aliases, tags, multiple
   documents, or encoding. Error paths and spans should survive custom decoding.
 
-- JSON integer decoders reject fractions and overflow in stored Float64 values
-  with typed errors. The current JSON tree still loses numeric text precision;
-  do not promise exact Int64 wire round trips or use post-float checks to validate
-  original numeric tokens. Derived integer fields inherit this limitation.
+- JSON uses `Json.Number(JsonNumber)`: construct integers with `fromInt32`/`fromInt64`
+  or primitive `toJson()`, and use checked `toInt32`/`toInt64` conversions. Integer
+  tokens outside Int64 fail at parse time; decimal/exponent forms are float nodes
+  and cannot decode as integers, even `1.0`. Ordinary derived Int64 fields round
+  trip exactly through text. Converting to Float64 may round.
+- Migrate old `Json.Number(float)` construction to checked `JsonNumber.fromFloat64`.
+  It rejects non-finite values; the infallible `Float64.toJson()` maps them to null,
+  including derived fields. Do not promise arbitrary-precision JSON or preservation
+  of numeric spelling; floats retain their category when serialized.
 - YAML integer nodes preserve Int64 exactly and Int32 narrowing is checked.
   Decimal/exponent float nodes (including `1.0` and `1e3`) cannot decode as integers.
   YAML has no encoder; do not suggest a serialization round-trip API.

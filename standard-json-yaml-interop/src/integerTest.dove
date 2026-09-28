@@ -1,0 +1,99 @@
+package interop.jsonYaml
+
+import standard.json.Json
+import standard.json.JsonDecoder
+import standard.json.JsonEncoder
+import standard.json.JsonError
+import standard.yaml.Yaml
+import standard.yaml.YamlDecoder
+import standard.yaml.YamlError
+import standard.yaml.YamlErrorKind
+
+@derive(JsonEncoder)
+@derive(JsonDecoder)
+@derive(YamlDecoder)
+ record AgentConfig =
+    identifier: Int64
+    limits: List<Int64>
+    narrow: Int32
+
+test "YAML record JSON record preserves exact integer fields and lists" =
+    let values =
+        [
+            -9223372036854775807i64 - 1i64,
+            -9223372036854775807i64,
+            -9007199254740994i64,
+            -9007199254740993i64,
+            -9007199254740992i64,
+            -9007199254740991i64,
+            -2147483649i64,
+            -2147483648i64,
+            -1i64,
+            0i64,
+            1i64,
+            2147483647i64,
+            2147483648i64,
+            9007199254740991i64,
+            9007199254740992i64,
+            9007199254740993i64,
+            9007199254740994i64,
+            9223372036854775806i64,
+            9223372036854775807i64
+        ]
+    for value in values do
+        for narrow in [-2147483648, 2147483647] do
+            let text =
+                "identifier: "
+                    ++ value.format()
+                    ++ "\nlimits: ["
+                    ++ value.format()
+                    ++ "]\nnarrow: "
+                    ++ narrow.format()
+            let original = AgentConfig.fromYaml(Yaml.parse(text).require).require
+            assert original.identifier == value
+            let wire = original.toJson().encode()
+            assert wire.contains(value.format())
+            let decoded = AgentConfig.fromJson(Json.parse(wire).require).require
+            assert decoded.identifier == value
+            assert decoded.limits.head == value
+            assert decoded.narrow == narrow
+
+test "YAML radix integer fields persist as exact decimal JSON numbers" =
+    let original =
+        AgentConfig
+            .fromYaml(
+            Yaml
+                .parse(
+                "identifier: 0x20000000000001\nlimits: [0o777777777777777777777]\nnarrow: 0x7fffffff"
+            )
+                .require
+        )
+            .require
+    let wire = original.toJson().encode()
+    assert wire
+        == "{\"identifier\":9007199254740993,\"limits\":[9223372036854775807],\"narrow\":2147483647}"
+    let decoded = AgentConfig.fromJson(Json.parse(wire).require).require
+    assert decoded.identifier == 9007199254740993i64
+    assert decoded.limits.head == 9223372036854775807i64
+    assert decoded.narrow == 2147483647
+
+test "derived YAML integer errors retain field and index diagnostics" =
+    for token in ["1.0", "1e3", "1.0000000000000001", ".inf"] do
+        let text = "identifier: 0\nlimits: [" ++ token ++ "]\nnarrow: 0"
+        match AgentConfig.fromYaml(Yaml.parse(text).require) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.TypeMismatch("Integer", "Float") =>
+                        assert error.format().startsWith("limits[0]:")
+                        assert error.span.isSome
+                    case _ => assert false
+            case _ => assert false
+    for token in ["2147483648", "-2147483649"] do
+        match AgentConfig
+            .fromYaml(Yaml.parse("identifier: 0\nlimits: []\nnarrow: " ++ token).require) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.OutOfRange("Int32") =>
+                        assert error.format().startsWith("narrow:")
+                    case _ => assert false
+            case _ => assert false

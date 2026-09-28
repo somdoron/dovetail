@@ -1,0 +1,119 @@
+package test
+
+import standard.yaml.Yaml
+import standard.yaml.YamlDecoder
+import standard.yaml.YamlValue
+import standard.yaml.YamlErrorKind
+
+function checkYamlInteger(text: String, expected: Int64): Unit =
+    let yaml = Yaml.parse(text).require
+    match yaml.value with
+        case YamlValue.Integer(value) => assert value == expected
+        case _ => assert false
+    assert Int64.fromYaml(yaml).require == expected
+
+test "YAML integer tokens and constructed nodes preserve Int64 boundaries" =
+    for value in [
+        -9223372036854775807i64 - 1i64,
+        -9223372036854775807i64,
+        -9007199254740994i64,
+        -9007199254740993i64,
+        -9007199254740992i64,
+        -9007199254740991i64,
+        -2147483649i64,
+        -2147483648i64,
+        -1i64,
+        0i64,
+        1i64,
+        2147483647i64,
+        2147483648i64,
+        9007199254740991i64,
+        9007199254740992i64,
+        9007199254740993i64,
+        9007199254740994i64,
+        9223372036854775806i64,
+        9223372036854775807i64
+    ] do
+        checkYamlInteger(value.format(), value)
+        assert Int64.fromYaml(Yaml.make(YamlValue.Integer(value))).require == value
+    for value in [-2147483648, -2147483647, 0, 2147483646, 2147483647] do
+        assert Int32.fromYaml(Yaml.parse(value.format()).require).require == value
+
+test "YAML Core integer syntax uses checked decimal octal and hexadecimal parsing" =
+    checkYamlInteger("+9223372036854775807", 9223372036854775807i64)
+    checkYamlInteger("-09223372036854775808", -9223372036854775807i64 - 1i64)
+    checkYamlInteger("0x7fffffffffffffff", 9223372036854775807i64)
+    checkYamlInteger("0o777777777777777777777", 9223372036854775807i64)
+    checkYamlInteger("0x20000000000001", 9007199254740993i64)
+    checkYamlInteger("0o400000000000000001", 9007199254740993i64)
+    checkYamlInteger("012", 12i64)
+    checkYamlInteger("-0", 0i64)
+    for text in [
+        "9223372036854775808",
+        "-9223372036854775809",
+        "0x8000000000000000",
+        "0o1000000000000000000000",
+        "9999999999999999999999999999"
+    ] do
+        for document in [text, "values: [" ++ text ++ "]"] do
+            match Yaml.parse(document) with
+                case Error(error) =>
+                    match error.kind with
+                        case YamlErrorKind.OutOfRange("Int64") => assert error.span.isSome
+                        case _ => assert false
+                case _ => assert false
+
+test "YAML unsupported numeric spellings stay strings and cannot decode as integers" =
+    for text in [
+        "+0x10",
+        "-0x10",
+        "-0o10",
+        "0b101",
+        "1_000",
+        "1:20",
+        "0x",
+        "0o8",
+        "1e",
+        "'42'",
+        "\"42\""
+    ] do
+        let yaml = Yaml.parse(text).require
+        assert String.fromYaml(yaml).isOk
+        match Int64.fromYaml(yaml) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.TypeMismatch("Integer", "String") => ()
+                    case _ => assert false
+            case _ => assert false
+
+test "YAML rounded fractions exponents and nonfinite nodes never decode as integers" =
+    for text in [
+        "1.0",
+        "1e3",
+        "10e-1",
+        "1.0000000000000001",
+        "2147483647.0000000001",
+        "-9223372036854775809.0",
+        "1e-2147483648",
+        "1e2147483648",
+        ".5",
+        "-2.",
+        ".nan",
+        ".inf",
+        "-.inf"
+    ] do
+        let yaml = Yaml.parse(text).require
+        assert Float64.fromYaml(yaml).isOk
+        match Int64.fromYaml(yaml) with
+            case Error(error) =>
+                match error.kind with
+                    case YamlErrorKind.TypeMismatch("Integer", "Float") => ()
+                    case _ => assert false
+            case _ => assert false
+        assert Int32.fromYaml(yaml).isError
+    assert Float64.fromYaml(Yaml.parse("9007199254740993").require).require == 9007199254740992.0
+    assert Float64
+        .fromYaml(Yaml.parse("-1e-2147483648").require)
+        .require
+        .toBits()
+        == -9223372036854775807i64 - 1i64

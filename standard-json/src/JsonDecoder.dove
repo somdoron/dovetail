@@ -17,30 +17,19 @@ implement JsonDecoder for Bool =
 implement JsonDecoder for Int32 =
     public function fromJson(json: Json): Result<Int32, JsonError> =
         match json with
-            case Json.Number(n) =>
-                if !(n >= -2147483648.0 && n < 2147483648.0) then
-                    Error(JsonError.OutOfRange("Int32"))
-                else
-                    let value = n.toInt32()
-                    if value.toFloat64() == n then Ok(value) else Error(JsonError.NonIntegralNumber)
+            case Json.Number(number) => number.toInt32()
             case _ => Error(JsonError.TypeError("Number", json.typeName()))
 
 implement JsonDecoder for Int64 =
     public function fromJson(json: Json): Result<Int64, JsonError> =
         match json with
-            case Json.Number(n) =>
-                // The positive bound is exclusive: Int64.MAX rounds up to 2^63 as Float64.
-                if !(n >= -9223372036854775808.0 && n < 9223372036854775808.0) then
-                    Error(JsonError.OutOfRange("Int64"))
-                else
-                    let value = n.toInt64()
-                    if value.toFloat64() == n then Ok(value) else Error(JsonError.NonIntegralNumber)
+            case Json.Number(number) => number.toInt64()
             case _ => Error(JsonError.TypeError("Number", json.typeName()))
 
 implement JsonDecoder for Float64 =
     public function fromJson(json: Json): Result<Float64, JsonError> =
         match json with
-            case Json.Number(n) => Ok(n)
+            case Json.Number(number) => Ok(number.toFloat64())
             case _ => Error(JsonError.TypeError("Number", json.typeName()))
 
 implement JsonDecoder for String =
@@ -168,26 +157,26 @@ test "JsonDecoder Bool" =
     assert Bool.fromJson(Json.Null).isError
 
 test "JsonDecoder Int32" =
-    assert Int32.fromJson(Json.Number(42.0)).require == 42
-    assert Int32.fromJson(Json.Number(3.7)).isError
+    assert Int32.fromJson(42.toJson()).require == 42
+    assert Int32.fromJson(3.7.toJson()).isError
     assert Int32.fromJson(Json.Null).isError
     assert Int32.fromJson(Json.Str("x")).isError
 
 test "JsonDecoder Int64" =
-    assert Int64.fromJson(Json.Number(42.0)).require == 42i64
+    assert Int64.fromJson(42.toJson()).require == 42i64
     assert Int64.fromJson(Json.Null).isError
 
 test "JsonDecoder Float64" =
-    assert Float64.fromJson(Json.Number(3.14)).require == 3.14
+    assert Float64.fromJson(3.14.toJson()).require == 3.14
     assert Float64.fromJson(Json.Str("x")).isError
 
 test "JsonDecoder String" =
     assert String.fromJson(Json.Str("hi")).require == "hi"
     assert String.fromJson(Json.Str("")).require == ""
-    assert String.fromJson(Json.Number(1.0)).isError
+    assert String.fromJson(1.toJson()).isError
 
 test "JsonDecoder TypeError carries Json type name" =
-    match Bool.fromJson(Json.Number(1.0)) with
+    match Bool.fromJson(1.toJson()) with
         case Error(JsonError.TypeError(expected, got)) =>
             assert expected == "Boolean"
             assert got == "Number"
@@ -213,7 +202,7 @@ test "JsonDecoder Array element error propagates" =
     let result = Array<Int32>.fromJson(parsed)
     assert result.isError
 
-test "JsonDecoder Array wrong root type" = assert Array<Int32>.fromJson(Json.Number(5.0)).isError
+test "JsonDecoder Array wrong root type" = assert Array<Int32>.fromJson(5.toJson()).isError
 
 test "JsonDecoder 2-tuple direct" =
     let parsed = Json.parse("[5,\"hi\"]").require

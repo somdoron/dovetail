@@ -1,8 +1,9 @@
-package standard.yaml
+package standard.json
 
-/// Recognizes Core decimal floats and retains enough decimal digits to distinguish
+/// Adapted from the YAML decimal converter, kept local to avoid a format-library dependency.
+/// Recognizes decimal floats and retains enough decimal digits to distinguish
 /// every binary64 rounding boundary (including half of the smallest subnormal).
-internal function yamlFloat(text: String, negative: Bool): Option<Float64> =
+internal function jsonFloat(text: String, negative: Bool): Option<Float64> =
     let characters = text.chars()
     let mutable index = 0
     let mutable digits = 0
@@ -18,7 +19,7 @@ internal function yamlFloat(text: String, negative: Bool): Option<Float64> =
             fractional = true
             index = index + 1
         else if character >= '0' && character <= '9' then
-            let digit = yamlDigit(character)
+            let digit = jsonDigit(character)
             digits = digits + 1
             if significant > 0 || digit != 0 then
                 if significant < 1100 then
@@ -53,7 +54,7 @@ internal function yamlFloat(text: String, negative: Bool): Option<Float64> =
             && characters.get(index) <= '9' do
             // Beyond input length plus the binary64 range, only overflow/underflow is possible.
             if exponent <= characters.length.toInt64() + 1100i64 then
-                exponent = exponent * 10i64 + yamlDigit(characters.get(index)).toInt64()
+                exponent = exponent * 10i64 + jsonDigit(characters.get(index)).toInt64()
             index = index + 1
         if index == start then valid = false
     if !valid || index != characters.length then
@@ -65,13 +66,13 @@ internal function yamlFloat(text: String, negative: Bool): Option<Float64> =
         let bits =
             if mantissa.isZero || order < -324i64 then 0i64
             else if order > 309i64 then 9218868437227405312i64
-            else yamlDecimalBits(mantissa, scale.toInt32(), sticky)
+            else jsonDecimalBits(mantissa, scale.toInt32(), sticky)
         // Setting the sign bit preserves negative zero and negative underflow.
         let signedBits = if negative then bits + (-9223372036854775807i64 - 1i64) else bits
         Some(signedBits.bitsToFloat64())
 
 /// Converts a positive decimal rational with integer arithmetic and one ties-to-even rounding.
-private function yamlDecimalBits(mantissa: BigInt, decimalExponent: Int32, sticky: Bool): Int64 =
+private function jsonDecimalBits(mantissa: BigInt, decimalExponent: Int32, sticky: Bool): Int64 =
     let ten = BigInt.fromInt32(10)
     let two = BigInt.fromInt32(2)
     let mutable numerator = mantissa

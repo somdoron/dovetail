@@ -40,7 +40,7 @@ test "derive: Point missing field is an error" =
         case _ => assert false
 
 test "derive: Point wrong root type is an error" =
-    let result = Point.fromJson(Json.Number(5.0))
+    let result = Point.fromJson(5.toJson())
     assert result.isError
     match result with
         case Error(JsonError.TypeError(expected, got)) =>
@@ -77,11 +77,11 @@ test "derive: newtype encodes transparently" =
     let c = Cents(199)
     let j = c.toJson()
     match j with
-        case Json.Number(n) => assert n == 199.0
+        case Json.Number(n) => assert n.toFloat64() == 199.0
         case _ => assert false
 
 test "derive: newtype decodes from bare value" =
-    let result = Cents.fromJson(Json.Number(50.0))
+    let result = Cents.fromJson(50.toJson())
     assert result.isOk
     assert result.require.value == 50
 

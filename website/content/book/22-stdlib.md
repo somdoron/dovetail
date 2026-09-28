@@ -248,9 +248,10 @@ import standard.json.JsonError
 @derive(JsonDecoder)
 record Message =
     text: String
+    identifier: Int64
 
 function main(): Unit =
-    let original = Message { text = "hello" }
+    let original = Message { text = "hello"; identifier = 9007199254740993i64 }
     let wire = original.toJson().encode()
     let decoded = Message.fromJson(Json.parse(wire).require).require
     assert decoded == original
@@ -258,13 +259,45 @@ function main(): Unit =
 test "a record round trips through JSON" = main()
 ```
 
-The JSON tree stores numbers as `Float64`; do not assume arbitrary-precision integers
-or decimals round-trip through a JSON number losslessly. `Int32.fromJson` and
-`Int64.fromJson` reject fractional float values with `JsonError.NonIntegralNumber`
-and reject out-of-range or non-finite values with `JsonError.OutOfRange`, instead
-of truncating or trapping. These checks apply to the stored float: precision lost
-while parsing or encoding cannot be recovered, and a fractional input that rounds
-to an integer may still be accepted. Derived integer fields use the same decoders.
+`Json.Number` contains a `JsonNumber`, which retains either an exact `Int64` or a
+finite `Float64`. Ordinary `Int32`/`Int64` fields and derived codecs preserve every
+valid integer through encoding and parsing; no application wrapper is needed.
+
+Integer tokens are parsed directly from decimal digits with checked arithmetic.
+An integer token outside Int64 fails during parsing with `JsonError.OutOfRange("Int64")`,
+even in a nested collection. There is no BigInt or exact-decimal JSON storage.
+`Int32` decoding additionally checks its own range with `OutOfRange("Int32")`.
+
+Decimal points and exponents select floating-point storage. Integer decoders reject
+**all** float nodes with `JsonError.TypeError("Integer", "Float")`, including `1.0`,
+`1e3`, `10e-1`, and fractions whose binary64 approximation is integral. Quoted numbers
+remain strings and are not coerced. This policy prevents prior floating-point rounding
+from making an invalid integer input appear valid.
+
+`JsonNumber.fromInt32` and `fromInt64` construct numbers exactly; `toInt32` and
+`toInt64` return checked Results. `JsonNumber.parse` validates a complete numeric
+token without whitespace. Construction of the `JsonNumber` enum is private: use
+these helpers instead of constructing its `Integer` or `Float` variants directly.
+
+`JsonNumber.fromFloat64` rejects NaN/infinity with `OutOfRange("finite Float64")`.
+Float parsing rounds to binary64, preserves signed zero and subnormals, allows
+underflow to signed zero, and rejects overflow to infinity with that same error.
+`Float64.fromJson` and `JsonNumber.toFloat64` accept both numeric categories;
+converting large integers to Float64 can lose precision. Float serialization retains
+a decimal point or exponent, so a whole-valued float stays a float after parsing.
+Original numeric spelling is not preserved.
+
+The infallible `Float64.toJson()` convenience encoder maps NaN/infinity to `Json.Null`,
+also in derived fields. Use `JsonNumber.fromFloat64` and propagate its Result when
+non-finite values must fail explicitly.
+
+**Migration from 0.1.3:** replace `Json.Number(42.0)` with
+`Json.Number(JsonNumber.fromFloat64(42.0).require)` for a known finite float, or
+`42.toJson()` for an integer. Code matching `Json.Number(number)` now receives
+`JsonNumber`; use its conversion helpers. Integral floats no longer decode as
+integers. `JsonError.NonIntegralNumber` remains as a legacy variant but is no longer
+returned by the primitive decoders. Integer JSON text remains unquoted decimal.
+
 Private construction is also respected: a generated decoder cannot bypass a private constructor. Decode a
 public input shape, then validate it through the private type's module.
 
@@ -352,6 +385,12 @@ Integer decoders accept only integer nodes: decimal/exponent float spellings suc
 as `1.0` and `1e3` produce `TypeMismatch`, even when mathematically integral.
 `Int32` decoding checks its narrower range and returns `OutOfRange("Int32")`.
 Derived integer fields use these same checks and preserve exact `Int64` values.
+Leading zeros are decimal (`012` is 12); `+42` is accepted. Hexadecimal `0x` and
+octal `0o` forms are unsigned and still limited to Int64.MAX. Signed radix forms,
+`0b` binary syntax, and underscore separators remain strings, so integer decoding
+fails with `TypeMismatch`. Quoted numeric text also remains a string.
+A record decoded from YAML can use derived JSON codecs to persist Int64 fields
+exactly; depend on both projects and import both sets of derive dependencies.
 
 `Yaml.parse` accepts one document with optional `---` and `...` markers, an
 optional leading BOM, and LF/CRLF line endings. Empty input produces null.
