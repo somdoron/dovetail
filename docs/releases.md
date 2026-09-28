@@ -2,7 +2,7 @@
 
 The [release workflow](../.github/workflows/release.yml) builds official binaries,
 publishes the compiler package as `dovetail-lang` on crates.io, and publishes the
-VS Code extension to the Visual Studio Marketplace. The installed
+VS Code extension to the Visual Studio Marketplace and Open VSX. The installed
 executable remains `dovetail`.
 
 Release notes: [0.1.4](releases/0.1.4.md), [0.1.3](releases/0.1.3.md), [0.1.2](releases/0.1.2.md).
@@ -18,6 +18,9 @@ See Cargo's [publishing guide](https://doc.rust-lang.org/cargo/reference/publish
 Store a Marketplace publishing token in the repository's Actions secrets as
 `VSCE_PAT`. Its account must have publishing access to the `dovetail-lang`
 publisher. See the [VS Code automated publishing guide](https://code.visualstudio.com/api/working-with-extensions/continuous-integration#github-actions-automated-publishing).
+
+For Open VSX, complete the publisher setup below and store its access token as
+the `OVSX_PAT` repository Actions secret.
 
 ## Publishing a version
 
@@ -37,12 +40,13 @@ workflow publishes to crates.io using the repository secret. A separate job
 attaches the platform executables, VS Code extension (`.vsix`), and checksums to
 the GitHub release after the extension's TypeScript compilation and packaging pass. The
 extension version must also match the release tag.
-The Marketplace publishing job waits for the platform builds and extension
-packaging, verifies the VSIX checksum, and publishes that same artifact using
-`VSCE_PAT`.
+The Visual Studio Marketplace and Open VSX publishing jobs wait for the platform
+builds and extension packaging, verify the VSIX checksum, and publish that same
+artifact using `VSCE_PAT` and `OVSX_PAT`, respectively. The jobs run independently
+so a failure in one registry can be retried without republishing to the other.
 
 Pull requests and manual workflow runs validate the package and build binaries
-without publishing. Crates.io and Marketplace versions cannot be overwritten; if publishing
+without publishing. Published versions cannot be overwritten; if publishing
 succeeds but another job fails, rerun only the failed jobs.
 
 After assets are uploaded, the workflow promotes the newest published release
@@ -91,6 +95,27 @@ Microsoft recommends identity-based publishing and documents retirement of globa
 Azure DevOps personal access tokens on December 1, 2026. See the official
 [extension publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension)
 for publisher registration and authentication setup.
+
+## Open VSX
+
+Create an Open VSX account using GitHub, link your Eclipse account, and accept
+the Eclipse Publisher Agreement. Generate an access token in your Open VSX
+settings and save it as the `OVSX_PAT` GitHub Actions secret.
+
+Before the first automated release, create the `dovetail-lang` namespace. With
+`OVSX_PAT` set in your local environment, run from `vscode-dovetail`:
+
+```sh
+npm ci
+npx --no-install ovsx create-namespace dovetail-lang
+```
+
+If the namespace already exists, ensure your account has publishing access.
+Namespace ownership verification is a separate step; see the official
+[Open VSX publishing guide](https://github.com/eclipse-openvsx/openvsx/wiki/Publishing-Extensions).
+The release workflow publishes the existing VSIX with the extension ID
+`dovetail-lang.dovetail-language`. Cursor uses Open VSX through its marketplace
+proxy, so availability in Cursor may lag publication to the registry.
 
 The extension requires a separately installed `dovetail` executable; the VSIX does
 not bundle platform-specific compiler binaries. Keep its combined `LICENSE` in sync

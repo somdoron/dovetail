@@ -277,6 +277,37 @@ jobs:
           ../node_modules/.bin/vsce publish --packagePath ./*.vsix
         working-directory: vscode-dovetail/release
 
+  publish-extension-openvsx:
+    if: github.event_name == 'release'
+    needs: [build, build-extension]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: vscode-dovetail
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: vscode-dovetail/package-lock.json
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: vscode-extension
+          path: vscode-dovetail/release
+      - name: Publish extension to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo 'Set the OVSX_PAT repository secret to an Open VSX publishing token.' >&2
+            exit 1
+          fi
+          sha256sum --check dovetail-language.vsix.sha256
+          ../node_modules/.bin/ovsx publish ./*.vsix
+        working-directory: vscode-dovetail/release
+
   publish-crate:
     if: github.event_name == 'release'
     needs: [build, verify-crate]
