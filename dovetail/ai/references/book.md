@@ -11,7 +11,8 @@ chapters needed to resolve the task; do not load the entire book by default.
    chapters through [llms.txt](https://dovetaillang.org/llms.txt).
    [llms-full.txt](https://dovetaillang.org/llms-full.txt) is for tasks requiring
    the complete reference, not routine skill startup.
-3. The website follows main, not necessarily the installed compiler. For a known
+3. The website follows the latest published release (including prereleases), which
+   may differ from the installed compiler. For a known
    release tag or commit, read `website/content/book/` at that revision in the
    [source repository](https://github.com/somdoron/dovetail/tree/main/website/content/book).
    Older revisions may store the book at repository-root `book/`; use the layout

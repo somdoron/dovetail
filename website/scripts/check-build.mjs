@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
+import { createInstallers } from './installers.mjs';
 import { createExports } from './prepare.mjs';
 import { readBook, SITE, htmlPath, markdownPath } from '../src/lib/book.mjs';
 
 const dist = new URL('../dist/', import.meta.url);
 const pages = await readBook();
+for (const [path, expected] of await createInstallers()) {
+  assert.equal(await readFile(new URL(`.${path}`, dist), 'utf8'), expected, path);
+}
 for (const [path, expected] of createExports(pages)) {
   assert.equal(await readFile(new URL(`.${path}`, dist), 'utf8'), expected, path);
 }

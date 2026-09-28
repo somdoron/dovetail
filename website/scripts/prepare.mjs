@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { SITE, REPOSITORY, readBook, htmlPath, markdownPath } from '../src/lib/book.mjs';
+import { createInstallers } from './installers.mjs';
 import { rewriteLinks } from '../src/lib/links.mjs';
 
 export function createExports(pages) {
@@ -14,7 +15,7 @@ export function createExports(pages) {
   outputs.set('/llms.txt', [
     '# Dovetail', '',
     '> A language for business logic, compiling to WebAssembly with typed errors and structured concurrency.', '',
-    'Read only the relevant Markdown chapters below. This site follows main; use the',
+    'Read only the relevant Markdown chapters below. This site follows the latest published release; use the',
     'book at your compiler/library revision when behavior differs. Chapters marked as',
     'design outlines do not imply implemented runtime features.', '',
     `The [complete book](${SITE}/llms-full.txt) is available when the whole reference is needed.`, '',
@@ -44,6 +45,7 @@ export async function prepare() {
   }
   await syncFiles(new URL('../src/content/docs/', import.meta.url), docs);
   const publicFiles = createExports(pages);
+  for (const [path, content] of await createInstallers()) publicFiles.set(path, content);
   for (const file of await readdir(new URL('../static/', import.meta.url))) {
     publicFiles.set(`/${file}`, await readFile(new URL(`../static/${file}`, import.meta.url)));
   }

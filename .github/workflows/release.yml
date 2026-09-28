@@ -9,6 +9,8 @@ on:
       - 'Cargo.lock'
       - 'Cargo.toml'
       - '.github/workflows/release.yml'
+      - 'tools/test-installers.*'
+      - 'website/**'
   release:
     types: [published]
   workflow_dispatch:
@@ -17,6 +19,18 @@ permissions:
   contents: read
 
 jobs:
+  verify-website:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python3 tools/test-installers.py
+      - run: npm --prefix website ci
+      - run: npm --prefix website run check
+      - run: npm --prefix website run build
+
   build-extension:
     runs-on: ubuntu-24.04
     defaults:
@@ -167,6 +181,10 @@ jobs:
           destination.with_name(destination.name + '.sha256').write_text(
               f'{digest}  {destination.name}\n', encoding='utf-8')
           PYTHON
+      - name: Verify Windows installer against the packaged executable
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: ./tools/test-installers.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: binary-${{ matrix.target }}
@@ -196,6 +214,37 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           gh release upload "$RELEASE_TAG" dist/*
+
+  promote-website:
+    if: github.event_name == 'release'
+    needs: [publish, verify-website]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    concurrency:
+      group: promote-release-website
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Advance the Render branch to the newest published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # Include prereleases: Dovetail currently publishes preview versions.
+          latest=$(gh api --paginate --slurp "repos/$GH_REPO/releases" \
+            --jq 'add | map(select(.draft == false)) | max_by(.published_at).tag_name')
+          if [ "$latest" != "$RELEASE_TAG" ]; then
+            echo "Skipping older release $RELEASE_TAG; newest published release is $latest."
+            exit 0
+          fi
+          # A leased push permits release tags off main without overwriting a concurrent update.
+          previous=$(git ls-remote origin refs/heads/render | cut -f1)
+          commit=$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")
+          git push --force-with-lease="refs/heads/render:$previous" origin "$commit:refs/heads/render"
 
   publish-extension:
     if: github.event_name == 'release'

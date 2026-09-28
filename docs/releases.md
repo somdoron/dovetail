@@ -45,8 +45,25 @@ Pull requests and manual workflow runs validate the package and build binaries
 without publishing. Crates.io and Marketplace versions cannot be overwritten; if publishing
 succeeds but another job fails, rerun only the failed jobs.
 
-After publication, users can install with `cargo install dovetail-lang`, or add
-`--locked` to use the release's recorded dependency versions.
+After assets are uploaded, the workflow promotes the newest published release
+(including prereleases) to the `render` branch. Configure Render once to build
+this branch with no build filters; see [website hosting](../website/README.md).
+Production documentation and the default installer version then match that release.
+A failed build/upload does not advance the branch. Rerunning an older release does
+not roll the website back. The workflow needs permission to update `render`,
+including non-fast-forward updates if release tags are on different branches.
+
+Users install with `curl -fsSL https://dovetaillang.org/install.sh | sh` or, in
+Windows PowerShell, `irm https://dovetaillang.org/install.ps1 | iex`. Cargo remains
+available with `cargo install dovetail-lang --locked`.
+
+The website build generates `/install.sh` and `/install.ps1` from
+`website/installers/`, pinning their default version to `dovetail/Cargo.toml`.
+The scripts download binaries and checksums from that GitHub release; the scripts
+themselves are served only by the website.
+
+Only bootstrap the `render` branch once the selected release contains the website
+installer-generation code. Older tags cannot serve these new endpoints.
 
 ## VS Code Marketplace
 

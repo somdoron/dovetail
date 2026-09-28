@@ -18,11 +18,21 @@ Coding assistants can discover Markdown chapters through [llms.txt](https://dove
 or read the [complete book as Markdown](https://dovetaillang.org/llms-full.txt).
 For local documentation development, see the [website guide](website/README.md).
 
-Install the `dovetail` executable from crates.io:
+Install the prebuilt `dovetail` executable on macOS or Linux:
 
 ```bash
-cargo install dovetail-lang
+curl -fsSL https://dovetaillang.org/install.sh | sh
 ```
+
+On Windows (PowerShell):
+
+```powershell
+irm https://dovetaillang.org/install.ps1 | iex
+```
+
+The installers verify SHA-256 checksums before installing. Follow their PATH
+instructions, then run `dovetail --version`. Rust is only needed when installing
+from source, including `cargo install dovetail-lang --locked`.
 
 From this checkout, with a Rust toolchain installed:
 

@@ -160,23 +160,45 @@ This is a high-level comparison of the design choices motivating Dovetail. Fast 
 
 ## 1.2 Installation and Setup
 
-### Prerequisites
+### Installing prebuilt binaries
 
-Before installing Dovetail, you need:
+No Rust toolchain is needed. The CLI includes the runtime used by `dovetail run`.
 
-- **Rust toolchain** - Install from [rustup.rs](https://rustup.rs/)
-- **Git** - If you want to build from a repository checkout
+On macOS (Intel or Apple Silicon) and Linux (x86_64 or ARM64, glibc):
 
-Verify Rust is installed:
-
-```bash
-rustc --version
-cargo --version
+```sh
+curl -fsSL https://dovetaillang.org/install.sh | sh
 ```
+
+On Windows x64, use PowerShell:
+
+```powershell
+irm https://dovetaillang.org/install.ps1 | iex
+```
+
+The scripts install the website's release and verify the executable's SHA-256
+checksum before replacing an existing installation. macOS and Linux require
+`curl` and either `sha256sum` or `shasum`. Linux binaries use glibc and need a system
+compatible with the Ubuntu 24.04 build environment; Alpine/musl is not supported.
+
+The default directory is `~/.local/bin` on macOS/Linux and
+`%LOCALAPPDATA%\Dovetail\bin` on Windows. Add it to your `PATH` as printed by the
+installer. The scripts do not edit your shell profile or Windows environment.
+
+For a specific release or installation directory, download the script first:
+
+```sh
+curl -fsSL https://dovetaillang.org/install.sh -o install.sh
+sh install.sh --version v0.1.4 --install-dir "$HOME/.local/bin"
+```
+
+PowerShell scripts accept `-Version v0.1.4` and `-InstallDir PATH`. Both scripts
+are served by this website and download binaries from the matching
+[GitHub release](https://github.com/somdoron/dovetail/releases).
 
 ### Installing with Cargo
 
-Install the Dovetail CLI from crates.io with:
+With a [Rust toolchain](https://rustup.rs/) installed, build the Dovetail CLI from crates.io with:
 
 ```bash
 cargo install dovetail-lang --locked
@@ -245,7 +267,7 @@ Dovetail provides a VS Code extension for the best development experience.
 Download `dovetail-language-<version>.vsix` from the matching
 [GitHub release](https://github.com/somdoron/dovetail/releases). In VS Code, run
 **Extensions: Install from VSIX...** from the Command Palette and select the file.
-Install the compiler separately with `cargo install dovetail-lang --locked`.
+Install the compiler separately using the installation instructions above.
 
 To build the extension from a repository checkout:
 
